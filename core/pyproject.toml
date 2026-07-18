@@ -12,6 +12,7 @@ dependencies = [
   "pymysql>=1.1",
   "redis>=5.2",
   "structlog>=24.4",
+  "numpy>=2.1", # DeterministicRNG（PCG64）；SimClock/RNG 為 P4 可重現性地基
 ]
 
 [build-system]

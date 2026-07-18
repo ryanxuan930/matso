@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-18（傍晚）：新增 **CLAUDE.md**（agent 自動載入的必讀流程）、**TASKS.md**（O 編號任務板，O<m>.<n> ≡ M<m>-<n>）、**docs/worklog/ 協定**（_TEMPLATE.md）。initial commit 完成。
-- 2026-07-18（下午）：**M0（O0.x）全部完成**。uv workspace + CI + compose 五服務 healthy + prisma init migration + schema_sync_check 通過，本地 14 項關卡全綠（見驗證紀錄）。
-- 下一步：**O1.1**（SimClock + DeterministicRNG，見 TASKS.md）。
+- 2026-07-18（傍晚）：**O1.1 完成**（branch `feat/o1.1-simclock-rng`）。SimClock + DeterministicRNG（numpy PCG64）+ 23 單元測試；pytest/mypy/ruff 全綠、牆鐘 grep gate 乾淨。worklog: docs/worklog/O1.1.md。
+- 2026-07-18（傍晚）：新增 CLAUDE.md / TASKS.md（O 編號）/ docs/worklog 協定。
+- 下一步：**O1.2**（Ledger writer + hash chain，見 TASKS.md）。
 
 ## 任務板
 
@@ -17,7 +17,8 @@
 | M0-3 | DONE | Claude (2026-07-18) | — | compose：mariadb(3307)/redis/qdrant/core/frontend 全 healthy；`up -d --wait` exit 0 |
 | M0-4 | DONE | Claude (2026-07-18) | — | init migration 已套用（db/prisma/migrations/20260718025607_init）；schema_sync_check.py：15 tables/118 columns 一致 |
 | M0-5 | DONE | Claude (2026-07-18) | — | .github/workflows/ci.yml：python/frontend/contracts/schema-sync/integration 五 job（**未在真 GitHub 跑過**，首次 push 後要盯） |
-| M1-1 ~ M1-6 | TODO | — | — | 從 M1-1 開始；規格見 SPEC_FULL §3、HOW_TO §4.1 |
+| O1.1 (M1-1) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.1-simclock-rng | SimClock + DeterministicRNG；23 測試綠；numpy 2.5.1 |
+| O1.2 ~ O1.6 | TODO | — | — | 從 O1.2 開始；規格見 SPEC_FULL §3/§15.3、HOW_TO §4.1 |
 | M2-1 ~ M2-5 | TODO | — | — | TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/GDAL 依賴屆時才加（ADR 001 註記） |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
@@ -52,9 +53,12 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - Checkpoint stateBlob >16MB 策略 = ADR 002（Open，M1-5 前決定）。
 - schema_sync_check v1 只比對 table/column/nullable/pk/型別大類；index/unique/FK 未比對（工具 docstring 有註記）。
 - 開發機為使用者共用機器：3306（mariadb_lan）、8080（pma_lan）已被占用；MATSO 用 3307/8000/3000/6333/6379。
+- **[O1.5 待辦]** DeterministicRNG 尚未實作 get_state/set_state（generator 狀態序列化）——checkpoint 中途復原時需要，O1.1 刻意不做（範圍紀律）。
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **M1-1**：實作 `core/app/engine/clock.py`（SimClock）與 `core/app/engine/rng.py`（DeterministicRNG，numpy PCG64 + SHA256 stream 折疊）。規格：HOW_TO §4.1。需加依賴 `numpy` 至 core。測試：同 seed 同序列、不同 stream 互不影響、SimClock 無牆鐘。
-2. 接著 M1-2（Ledger writer + hash chain + verify_ledger.py）——注意 TacticalEventLog 的 append-only 權限（SPEC_FULL §15.3）還需要一個 SQL grant 腳本，可放 ops/tools/。
-3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait` 一鍵起（mariadb 在 3307）。
+1. 認領 **O1.2**（Ledger writer + hash chain）。產出：`core/app/state/ledger.py`（LedgerWriter：seq 單調發號、selfHash=SHA256(prevHash‖canonical_json)、批次寫入、無 update/delete）、`ops/tools/verify_ledger.py`、`ops/tools/grant_ledger_readonly.sql`。規格：SPEC_FULL §15.3、TASKS.md O1.2。
+   - 可複用 O1.1 已建的 `core/app/engine/`（SimClock 供 tick，RNG 非本卡所需）；SQLAlchemy models 已在 `core/app/models/`（TacticalEventLog 有 seq/prevHash/selfHash 欄位）。
+   - canonical_json 需「鍵序不同→輸出相同」單元測試；整合測試連 compose MariaDB:3307。
+2. O1.1 在 feature branch `feat/o1.1-simclock-rng`，**尚未合併/推送**——由使用者決定合併時機。
+3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 在 3307）。
