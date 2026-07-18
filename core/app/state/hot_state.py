@@ -39,6 +39,7 @@ class HotStateStore(Protocol):
     def get_unit(self, unit_id: str) -> UnitState | None: ...
     def get_all(self) -> dict[str, UnitState]: ...
     def drain_diff(self) -> SessionDiff: ...
+    def restore(self, state: Mapping[str, Mapping[str, Any]]) -> None: ...
 
 
 class _BaseHotState:
@@ -101,6 +102,10 @@ class InMemoryHotState(_BaseHotState):
     def get_all(self) -> dict[str, UnitState]:
         return {k: dict(v) for k, v in self._store.items()}
 
+    def restore(self, state: Mapping[str, Mapping[str, Any]]) -> None:
+        self._store = {k: dict(v) for k, v in state.items()}
+        self._pending = {}
+
 
 class RedisHotState(_BaseHotState):
     """Redis-backed 熱狀態。key: session:{session_id}:unit:{unit_id}。"""
@@ -135,3 +140,11 @@ class RedisHotState(_BaseHotState):
             if raw is not None:
                 result[unit_id] = json.loads(raw)
         return result
+
+    def restore(self, state: Mapping[str, Mapping[str, Any]]) -> None:
+        # 清掉本 session 現有單位 key，再寫入快照狀態（復原/回滾，不產生 diff）
+        for key in list(self._redis.scan_iter(match=f"{self._prefix()}*")):
+            self._redis.delete(key)
+        for unit_id, unit_state in state.items():
+            self._redis.set(self._key(unit_id), json.dumps(dict(unit_state)))
+        self._pending = {}

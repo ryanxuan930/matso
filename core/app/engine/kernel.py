@@ -27,6 +27,7 @@ from app.engine.subsystems import (
     SensorSystem,
     TriggerChecker,
 )
+from app.state.checkpoint import Checkpointer
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
@@ -66,9 +67,13 @@ class Kernel:
         hot_state: HotStateStore,
         wall_clock: MonotonicClock,
         tick_budget_ms: int = 200,
+        checkpointer: Checkpointer | None = None,
+        checkpoint_interval: int = 300,
     ) -> None:
         if tick_budget_ms < 1:
             raise ValueError(f"tick_budget_ms 必須 >= 1，收到 {tick_budget_ms}")
+        if checkpoint_interval < 1:
+            raise ValueError(f"checkpoint_interval 必須 >= 1，收到 {checkpoint_interval}")
         self._session_id = session_id
         self._clock = clock
         self._order_source = order_source
@@ -83,6 +88,8 @@ class Kernel:
         self._hot_state = hot_state
         self._wall_clock = wall_clock
         self._tick_budget_ms = tick_budget_ms
+        self._checkpointer = checkpointer
+        self._checkpoint_interval = checkpoint_interval
         self._overrun_count = 0
 
     @property
@@ -123,6 +130,9 @@ class Kernel:
         # 廣播本 tick 的熱狀態增量（只含變動欄位）。子系統的狀態寫入路徑於 O3.4 接上，
         # 現階段 diff 可能為空——廣播空 diff 由 broadcaster 自行略過。
         await self._broadcaster.publish(now.tick, self._hot_state.drain_diff())
+        # 每 N ticks 存 checkpoint（SPEC_FULL §3.4，預設 300）。
+        if self._checkpointer is not None and now.tick % self._checkpoint_interval == 0:
+            self._checkpointer.checkpoint(self._session_id, now.tick, self._hot_state.get_all())
         self._clock.advance()
 
         return TickReport(

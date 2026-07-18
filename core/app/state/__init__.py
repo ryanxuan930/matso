@@ -9,6 +9,20 @@ from app.state.broadcaster import (
     RedisBroadcaster,
     build_state_diff_envelope,
 )
+from app.state.checkpoint import (
+    MAX_CHECKPOINT_BYTES,
+    Checkpointer,
+    CheckpointManager,
+    CheckpointRecord,
+    CheckpointTooLargeError,
+    RecoveryResult,
+    RollbackResult,
+    compute_state_hash,
+    deserialize_state,
+    recover,
+    rollback,
+    serialize_state,
+)
 from app.state.hot_state import (
     HotStateStore,
     InMemoryHotState,
@@ -30,14 +44,21 @@ from app.state.ledger import (
 
 __all__ = [
     "GENESIS_HASH",
+    "MAX_CHECKPOINT_BYTES",
     "RING_CAPACITY",
+    "CheckpointManager",
+    "CheckpointRecord",
+    "CheckpointTooLargeError",
+    "Checkpointer",
     "CollectingBroadcaster",
     "HotStateStore",
     "InMemoryHotState",
     "LedgerEvent",
     "LedgerWriter",
+    "RecoveryResult",
     "RedisBroadcaster",
     "RedisHotState",
+    "RollbackResult",
     "SessionDiff",
     "UnitDiff",
     "UnitState",
@@ -46,5 +67,10 @@ __all__ = [
     "canonical_json",
     "compute_diff",
     "compute_self_hash",
+    "compute_state_hash",
+    "deserialize_state",
+    "recover",
+    "rollback",
+    "serialize_state",
     "verify_chain",
 ]

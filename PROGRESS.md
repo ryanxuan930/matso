@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-18（晚）：**O1.4 完成**（branch `feat/o1.4-hot-state-diff`，stacked on O1.3）。Redis 熱狀態（single-writer，key session:{id}:unit:{id}）+ compute_diff + RedisBroadcaster（STATE_DIFF envelope + ring buffer 5000）+ Kernel 整合 drain/broadcast；20 新測試（含 6 Redis 整合）。81 passed。worklog: docs/worklog/O1.4.md。
-- 2026-07-18（傍晚）：O1.3（Kernel tick loop）、O1.2（Ledger + hash chain）、O1.1（SimClock + RNG）完成。
-- 下一步：**O1.5**（Checkpoint / rollback / 崩潰復原；先解 ADR 002）。
+- 2026-07-18（晚）：**O1.5 完成**（branch `feat/o1.5-checkpoint-recovery`，stacked on O1.4）。ADR 002（inline zstd LONGBLOB + 8MB 護欄）；CheckpointManager + recover + rollback（ROLLBACK 事件）+ Kernel 每 N ticks checkpoint；20 新測試（含 4 崩潰復原/rollback 整合）。101 passed。worklog: docs/worklog/O1.5.md。
+- 2026-07-18（晚）：O1.4（Redis 熱狀態 + diff）、O1.3（Kernel tick loop）、O1.2（Ledger）、O1.1（SimClock+RNG）完成。
+- 下一步：**O1.6**（Golden replay harness，M1 收尾）。
 
 ## 任務板
 
@@ -21,7 +21,8 @@
 | O1.2 (M1-2) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.2-ledger-hashchain (stacked) | LedgerWriter append-only + hash chain；verify_ledger CLI；grant SQL；config/db 基礎；45 passed（2 整合） |
 | O1.3 (M1-3) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.3-kernel-tick-loop (stacked) | Kernel tick loop + 子系統 Protocol/stub + TICK_OVERRUN（注入式牆鐘）；14 測試 |
 | O1.4 (M1-4) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.4-hot-state-diff (stacked) | Redis 熱狀態 single-writer + compute_diff + RedisBroadcaster（ring buffer 5000）+ Kernel drain/broadcast；20 測試（6 Redis 整合） |
-| O1.5 ~ O1.6 | TODO | — | — | 從 O1.5 開始；規格見 SPEC_FULL §3.4/§18；先解 ADR 002 |
+| O1.5 (M1-5) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.5-checkpoint-recovery (stacked) | ADR 002 + zstd checkpoint + recover + rollback（ROLLBACK 事件）+ Kernel 每 N ticks；20 測試（4 崩潰復原整合） |
+| O1.6 | TODO | — | — | M1 收尾（Golden replay harness）；規格見 SPEC_FULL §19.1 |
 | M2-1 ~ M2-5 | TODO | — | — | TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/GDAL 依賴屆時才加（ADR 001 註記） |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
@@ -56,7 +57,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - Checkpoint stateBlob >16MB 策略 = ADR 002（Open，M1-5 前決定）。
 - schema_sync_check v1 只比對 table/column/nullable/pk/型別大類；index/unique/FK 未比對（工具 docstring 有註記）。
 - 開發機為使用者共用機器：3306（mariadb_lan）、8080（pma_lan）已被占用；MATSO 用 3307/8000/3000/6333/6379。
-- **[O1.5 待辦]** DeterministicRNG 尚未實作 get_state/set_state（generator 狀態序列化）——checkpoint 中途復原時需要，O1.1 刻意不做（範圍紀律）。
+- **[O1.6/前滾待辦]** DeterministicRNG 尚未實作 get_state/set_state（generator 狀態序列化）。O1.5 的 recover 只保證「復原到 checkpoint 當下」；mid-interval crash 的完整前滾需 RNG state 或「從 checkpoint/從 0 重跑」（O1.6）。checkpoint 目前也只含單位熱狀態（未含 RNG state / order queue）。
 - **[事件 schema 議題]** TICK_OVERRUN 等引擎事件目前把結構化診斷塞進 `aiDecision` JSON 欄（schema 無中性欄）。事件類型變多前（O3 起），應檢討於 TacticalEventLog 加一個中性 `detail` JSON 欄（需 prisma migrate + ADR）。
 - **[O3.4 待辦]** 子系統（movement 等）實際寫入單位熱狀態的路徑未定；O1.4 只讓 Kernel 持有 hot_state 並 drain/broadcast，diff 現階段為空亦正確。single-writer 原則下子系統應經 Kernel 更新。
 - **[O1.4 已交付]** RedisBroadcaster 只到 Redis 落地（ring buffer/pub-sub）；WS 客戶端 fan-out（訂閱、faction 過濾、推前端）屬 O4.3。
@@ -64,8 +65,9 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O1.5**（Checkpoint / rollback / 崩潰復原）。**先解 ADR 002**（SimCheckpoint.stateBlob >16MB 策略：分片 vs 物件儲存）並寫 docs/adr/002。產出：`core/app/state/checkpoint.py`（zstd 快照、寫 SimCheckpoint 表）、rollback（本身寫 ROLLBACK Ledger 事件）、`recover(session_id)`（最近 checkpoint + 之後 Ledger 重播）。core 加 `zstandard` 依賴。規格：SPEC_FULL §3.4/§18（RPO=0/RTO≤5min）、TASKS.md O1.5。deps: O1.4（已完成）。
-   - **可直接複用**：`hot_state.get_all()`（完整狀態快照來源）、`InMemoryHotState`（restore 目標）、`LedgerWriter`（ROLLBACK 事件）、`SimCheckpoint` model 已存在（stateBlob/stateHash/tick）。
-   - 驗收：整合測試 跑 N ticks → 清 Redis 模擬崩潰 → recover → 狀態 hash 與崩潰前一致。
-2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3 ← O1.4（皆 stacked，**未合併/推送**）——由使用者決定合併時機。O1.5 應繼續 stack 在 O1.4 之上。
+1. 認領 **O1.6**（Golden replay harness，M1 收尾）。產出：`core/tests/replay/harness.py`（讀 Ledger 指令序列從頭重跑、比對最終 stateHash）、`ops/tools/rerecord_golden.py`、第一個 golden（空想定跑 100 ticks）；**移除 `core/tests/replay/test_golden_placeholder.py`**。規格：SPEC_FULL §19.1、TASKS.md O1.6。deps: O1.5（已完成）。
+   - **可直接複用**：`compute_state_hash`（app.state.checkpoint，比對用）、`Kernel`（全 no-op stub + NullMonotonicClock + InMemoryHotState + FakeOrderSource 即可確定性空跑）、`app.engine.SimClock`、`app.state.recover`。
+   - **設計提示**：replay 若採「從 tick 0 重跑」，DeterministicRNG 由 master_seed 自然重現，最單純、不需 RNG state 序列化。golden = 記錄 (master_seed, 指令序列) → 期望最終 stateHash。CI 已有 replay job 掛勾（跑 `-m golden`）。
+   - 驗收：golden replay 測試以真 golden 通過；手動改任一裁決常數會使 hash 比對失敗。
+2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3 ← O1.4 ← O1.5（皆 stacked，**未合併/推送**）——由使用者決定合併時機。O1.6 應繼續 stack 在 O1.5 之上。完成 O1.6 即 **M1 里程碑達成**。
 3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 3307 / redis 6379）。整合測試需 compose 起著才會實際執行（否則自動 skip）。

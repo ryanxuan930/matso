@@ -13,6 +13,7 @@ dependencies = [
   "redis>=5.2",
   "structlog>=24.4",
   "numpy>=2.1", # DeterministicRNG（PCG64）；SimClock/RNG 為 P4 可重現性地基
+  "zstandard>=0.23", # SimCheckpoint 狀態快照壓縮（ADR 002）
 ]
 
 [build-system]
