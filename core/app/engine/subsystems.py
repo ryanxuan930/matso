@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from app.engine.clock import SimTime
+from app.state.hot_state import SessionDiff
 from app.state.ledger import LedgerEvent
 
 
@@ -73,9 +74,9 @@ class TriggerChecker(Protocol):
 
 @runtime_checkable
 class Broadcaster(Protocol):
-    """增量狀態推播（O1.4 Redis diff / O4.3 WebSocket）。"""
+    """增量狀態推播（O1.4 Redis diff / O4.3 WebSocket）。diff 為本 tick 的 per-unit 變動欄位。"""
 
-    async def publish(self, tick: int) -> None: ...
+    async def publish(self, tick: int, diff: SessionDiff) -> None: ...
 
 
 @runtime_checkable
@@ -133,5 +134,5 @@ class NoOpTriggerChecker:
 
 
 class NoOpBroadcaster:
-    async def publish(self, tick: int) -> None:
+    async def publish(self, tick: int, diff: SessionDiff) -> None:
         return None

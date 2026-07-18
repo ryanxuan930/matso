@@ -27,6 +27,7 @@ from app.engine.subsystems import (
     SensorSystem,
     TriggerChecker,
 )
+from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
 _NS_PER_MS = 1_000_000
@@ -62,6 +63,7 @@ class Kernel:
         trigger_checker: TriggerChecker,
         broadcaster: Broadcaster,
         event_sink: EventSink,
+        hot_state: HotStateStore,
         wall_clock: MonotonicClock,
         tick_budget_ms: int = 200,
     ) -> None:
@@ -78,9 +80,15 @@ class Kernel:
         self._trigger_checker = trigger_checker
         self._broadcaster = broadcaster
         self._event_sink = event_sink
+        self._hot_state = hot_state
         self._wall_clock = wall_clock
         self._tick_budget_ms = tick_budget_ms
         self._overrun_count = 0
+
+    @property
+    def hot_state(self) -> HotStateStore:
+        """單位熱狀態；Kernel 為唯一寫入者（子系統經 Kernel 更新，O3.4 起）。"""
+        return self._hot_state
 
     @property
     def overrun_count(self) -> int:
@@ -112,7 +120,9 @@ class Kernel:
             events.append(self._build_overrun_event(now.tick, duration_ns))
 
         written = self._event_sink.append(self._session_id, events)
-        await self._broadcaster.publish(now.tick)
+        # 廣播本 tick 的熱狀態增量（只含變動欄位）。子系統的狀態寫入路徑於 O3.4 接上，
+        # 現階段 diff 可能為空——廣播空 diff 由 broadcaster 自行略過。
+        await self._broadcaster.publish(now.tick, self._hot_state.drain_diff())
         self._clock.advance()
 
         return TickReport(

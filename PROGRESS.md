@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-18（傍晚）：**O1.3 完成**（branch `feat/o1.3-kernel-tick-loop`，stacked on O1.2）。Kernel tick loop 骨架 + 子系統 Protocol/stub + TICK_OVERRUN（注入式牆鐘 MonotonicClock，真實時鐘在 runtime.py）；14 測試（含端到端接真 LedgerWriter）。59 passed。worklog: docs/worklog/O1.3.md。
-- 2026-07-18（傍晚）：O1.2 完成（Ledger + hash chain）、O1.1 完成（SimClock + RNG）。
-- 下一步：**O1.4**（Redis 熱狀態 + single-writer + diff）。
+- 2026-07-18（晚）：**O1.4 完成**（branch `feat/o1.4-hot-state-diff`，stacked on O1.3）。Redis 熱狀態（single-writer，key session:{id}:unit:{id}）+ compute_diff + RedisBroadcaster（STATE_DIFF envelope + ring buffer 5000）+ Kernel 整合 drain/broadcast；20 新測試（含 6 Redis 整合）。81 passed。worklog: docs/worklog/O1.4.md。
+- 2026-07-18（傍晚）：O1.3（Kernel tick loop）、O1.2（Ledger + hash chain）、O1.1（SimClock + RNG）完成。
+- 下一步：**O1.5**（Checkpoint / rollback / 崩潰復原；先解 ADR 002）。
 
 ## 任務板
 
@@ -20,7 +20,8 @@
 | O1.1 (M1-1) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.1-simclock-rng | SimClock + DeterministicRNG；23 測試綠；numpy 2.5.1 |
 | O1.2 (M1-2) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.2-ledger-hashchain (stacked) | LedgerWriter append-only + hash chain；verify_ledger CLI；grant SQL；config/db 基礎；45 passed（2 整合） |
 | O1.3 (M1-3) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.3-kernel-tick-loop (stacked) | Kernel tick loop + 子系統 Protocol/stub + TICK_OVERRUN（注入式牆鐘）；14 測試 |
-| O1.4 ~ O1.6 | TODO | — | — | 從 O1.4 開始；規格見 SPEC_FULL §3.4/§16.2 |
+| O1.4 (M1-4) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.4-hot-state-diff (stacked) | Redis 熱狀態 single-writer + compute_diff + RedisBroadcaster（ring buffer 5000）+ Kernel drain/broadcast；20 測試（6 Redis 整合） |
+| O1.5 ~ O1.6 | TODO | — | — | 從 O1.5 開始；規格見 SPEC_FULL §3.4/§18；先解 ADR 002 |
 | M2-1 ~ M2-5 | TODO | — | — | TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/GDAL 依賴屆時才加（ADR 001 註記） |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
@@ -57,12 +58,14 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 開發機為使用者共用機器：3306（mariadb_lan）、8080（pma_lan）已被占用；MATSO 用 3307/8000/3000/6333/6379。
 - **[O1.5 待辦]** DeterministicRNG 尚未實作 get_state/set_state（generator 狀態序列化）——checkpoint 中途復原時需要，O1.1 刻意不做（範圍紀律）。
 - **[事件 schema 議題]** TICK_OVERRUN 等引擎事件目前把結構化診斷塞進 `aiDecision` JSON 欄（schema 無中性欄）。事件類型變多前（O3 起），應檢討於 TacticalEventLog 加一個中性 `detail` JSON 欄（需 prisma migrate + ADR）。
-- **[O1.4 提醒]** Kernel 的 Broadcaster 目前是 stub；O1.4 需實作 Redis diff 版並在真實裝配時把 PerfCounterClock（app.runtime）注入 Kernel 的 wall_clock。
+- **[O3.4 待辦]** 子系統（movement 等）實際寫入單位熱狀態的路徑未定；O1.4 只讓 Kernel 持有 hot_state 並 drain/broadcast，diff 現階段為空亦正確。single-writer 原則下子系統應經 Kernel 更新。
+- **[O1.4 已交付]** RedisBroadcaster 只到 Redis 落地（ring buffer/pub-sub）；WS 客戶端 fan-out（訂閱、faction 過濾、推前端）屬 O4.3。
+- **[裝配提醒]** 真實裝配 Kernel 時：event_sink=LedgerWriter、hot_state=RedisHotState、broadcaster=RedisBroadcaster、wall_clock=app.runtime.PerfCounterClock。
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O1.4**（Redis 熱狀態 + single-writer + diff）。產出：`core/app/state/hot_state.py`（key `session:{id}:unit:{id}`，Kernel 唯一寫入者）、diff 計算器（只含變動欄位）、`core/app/state/broadcaster.py`（Redis diff 版，取代 subsystems.NoOpBroadcaster）。規格：SPEC_FULL §3.4/§16.2（STATE_DIFF payload）、TASKS.md O1.4。deps: O1.3（已完成）。
-   - **可直接複用**：`app.engine.Kernel`（把 event_sink=LedgerWriter、broadcaster=新 Redis broadcaster、wall_clock=app.runtime.PerfCounterClock 注入）、`app.config.Settings.redis_url`、redis 套件已在 core deps。
-   - 驗收：整合測試連 compose Redis（6379）：寫入→讀回 roundtrip；改 3 欄 → diff 恰含 3 欄。整合測試比照 test_ledger_mariadb 用 `integration` marker + 連不上自動 skip。
-2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3（皆 stacked，**未合併/推送**）——由使用者決定合併時機。O1.4 應繼續 stack 在 O1.3 之上。
+1. 認領 **O1.5**（Checkpoint / rollback / 崩潰復原）。**先解 ADR 002**（SimCheckpoint.stateBlob >16MB 策略：分片 vs 物件儲存）並寫 docs/adr/002。產出：`core/app/state/checkpoint.py`（zstd 快照、寫 SimCheckpoint 表）、rollback（本身寫 ROLLBACK Ledger 事件）、`recover(session_id)`（最近 checkpoint + 之後 Ledger 重播）。core 加 `zstandard` 依賴。規格：SPEC_FULL §3.4/§18（RPO=0/RTO≤5min）、TASKS.md O1.5。deps: O1.4（已完成）。
+   - **可直接複用**：`hot_state.get_all()`（完整狀態快照來源）、`InMemoryHotState`（restore 目標）、`LedgerWriter`（ROLLBACK 事件）、`SimCheckpoint` model 已存在（stateBlob/stateHash/tick）。
+   - 驗收：整合測試 跑 N ticks → 清 Redis 模擬崩潰 → recover → 狀態 hash 與崩潰前一致。
+2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3 ← O1.4（皆 stacked，**未合併/推送**）——由使用者決定合併時機。O1.5 應繼續 stack 在 O1.4 之上。
 3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 3307 / redis 6379）。整合測試需 compose 起著才會實際執行（否則自動 skip）。

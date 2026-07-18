@@ -23,6 +23,7 @@ from app.engine.subsystems import (
     NullMonotonicClock,
 )
 from app.models import Base, TacticalEventLog, WargameSession
+from app.state.hot_state import InMemoryHotState
 from app.state.ledger import LedgerEvent, LedgerWriter, verify_chain
 
 _NS_PER_MS = 1_000_000
@@ -102,9 +103,11 @@ class FakeStage:
 class FakeBroadcaster:
     def __init__(self, rec: Recorder) -> None:
         self._rec = rec
+        self.published: list[tuple[int, dict[str, dict[str, object]]]] = []
 
-    async def publish(self, tick: int) -> None:
+    async def publish(self, tick: int, diff: dict[str, dict[str, object]]) -> None:
         self._rec.order.append("broadcast")
+        self.published.append((tick, dict(diff)))
 
 
 class FakeEventSink:
@@ -126,6 +129,8 @@ def make_kernel(
     adjudicator_events: Sequence[LedgerEvent] = (),
     emit_stage_events: bool = False,
     tick_budget_ms: int = 200,
+    broadcaster: FakeBroadcaster | None = None,
+    hot_state: InMemoryHotState | None = None,
 ) -> Kernel:
     stage_type = "STAGE" if emit_stage_events else None
     return Kernel(
@@ -138,8 +143,9 @@ def make_kernel(
         comms=FakeStage(rec, "comms", stage_type),
         logistics=FakeStage(rec, "logistics", stage_type),
         trigger_checker=FakeStage(rec, "triggers", stage_type),
-        broadcaster=FakeBroadcaster(rec),
+        broadcaster=broadcaster or FakeBroadcaster(rec),
         event_sink=sink,
+        hot_state=hot_state or InMemoryHotState(),
         wall_clock=wall_clock or NullMonotonicClock(),
         tick_budget_ms=tick_budget_ms,
     )
@@ -208,6 +214,7 @@ async def test_empty_tick_appends_nothing() -> None:
         trigger_checker=NoOpTriggerChecker(),
         broadcaster=NoOpBroadcaster(),
         event_sink=sink,
+        hot_state=InMemoryHotState(),
         wall_clock=NullMonotonicClock(),
     )
     report = await kernel.run_tick()
@@ -352,6 +359,7 @@ async def test_kernel_writes_verifiable_chain_to_real_ledger(
         trigger_checker=NoOpTriggerChecker(),
         broadcaster=NoOpBroadcaster(),
         event_sink=LedgerWriter(session_factory),
+        hot_state=InMemoryHotState(),
         wall_clock=NullMonotonicClock(),
     )
     await kernel.run(5)
@@ -369,3 +377,41 @@ async def test_kernel_writes_verifiable_chain_to_real_ledger(
     assert len(rows) == 10  # 每 tick 2 事件 × 5 ticks
     assert [r.seq for r in rows] == list(range(10))
     assert verify_chain(rows).ok
+
+
+# ---------------- 熱狀態 diff 廣播整合 ----------------
+
+
+async def test_tick_broadcasts_drained_hot_state_diff() -> None:
+    # 模擬子系統於 tick 前寫入狀態（O3.4 起子系統經 Kernel 更新）→ 本 tick 應廣播該 diff
+    rec = Recorder()
+    broadcaster = FakeBroadcaster(rec)
+    hot_state = InMemoryHotState()
+    kernel = make_kernel(
+        rec=rec, sink=FakeEventSink(), broadcaster=broadcaster, hot_state=hot_state
+    )
+
+    hot_state.update_unit("u1", {"lat": 25.0, "lng": 121.5, "health": 100})
+    await kernel.run_tick()
+
+    assert broadcaster.published == [(0, {"u1": {"lat": 25.0, "lng": 121.5, "health": 100}})]
+    # drain 後累積清空：下一 tick 無變動 → 廣播空 diff
+    await kernel.run_tick()
+    assert broadcaster.published[1] == (1, {})
+
+
+async def test_broadcast_diff_only_changed_fields() -> None:
+    rec = Recorder()
+    broadcaster = FakeBroadcaster(rec)
+    hot_state = InMemoryHotState()
+    kernel = make_kernel(
+        rec=rec, sink=FakeEventSink(), broadcaster=broadcaster, hot_state=hot_state
+    )
+
+    hot_state.put_unit("u1", {"lat": 25.0, "lng": 121.5, "health": 100})
+    await kernel.run_tick()  # 廣播新單位全欄位
+
+    # 只改 health（3 欄中的 1 欄）→ 下一 tick diff 只含 health
+    hot_state.update_unit("u1", {"lat": 25.0, "lng": 121.5, "health": 80})
+    await kernel.run_tick()
+    assert broadcaster.published[1] == (1, {"u1": {"health": 80}})
