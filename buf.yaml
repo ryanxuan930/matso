@@ -1,0 +1,11 @@
+# buf 設定（M0-2）。CI: npx @bufbuild/buf lint / breaking（HOW_TO §3.4）
+# proto 採標準佈局 contracts/proto/<package path>/*.proto；其他契約格式留在 contracts/ 平面。
+version: v2
+modules:
+  - path: contracts/proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

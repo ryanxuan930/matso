@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "matso:weather_payload:0.1.0",
+  "title": "WeatherPayload",
+  "description": "Weather Module 標準化輸出（SPEC_FULL §5.2）。Core 只消費 effects，不解讀氣象學原始值。",
+  "type": "object",
+  "required": ["issued_at_sim_tick", "mode", "stale", "cells"],
+  "properties": {
+    "issued_at_sim_tick": { "type": "integer", "minimum": 0 },
+    "mode": { "enum": ["LIVE", "SYNTHETIC", "REPLAY"] },
+    "stale": { "type": "boolean", "description": "LIVE 來源失效降級時為 true；stale>30min Core 需告警" },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["h3_index", "effects"],
+        "properties": {
+          "h3_index": { "type": "string" },
+          "precipitation_mmhr": { "type": "number", "minimum": 0 },
+          "wind_ms": { "type": "number", "minimum": 0 },
+          "wind_dir_deg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+          "visibility_m": { "type": "number", "minimum": 0 },
+          "cloud_base_m": { "type": "number", "minimum": 0 },
+          "effects": {
+            "type": "object",
+            "required": [
+              "rf_attenuation_db",
+              "mobility_modifier",
+              "sensor_optical_modifier",
+              "sensor_ir_modifier",
+              "uav_operability",
+              "rotary_wing_operability",
+              "artillery_dispersion_modifier"
+            ],
+            "properties": {
+              "rf_attenuation_db": { "type": "number", "minimum": 0 },
+              "mobility_modifier": { "type": "number", "minimum": 0, "maximum": 1 },
+              "sensor_optical_modifier": { "type": "number", "minimum": 0, "maximum": 1 },
+              "sensor_ir_modifier": { "type": "number", "minimum": 0, "maximum": 1 },
+              "uav_operability": { "type": "boolean" },
+              "rotary_wing_operability": { "type": "boolean" },
+              "artillery_dispersion_modifier": { "type": "number", "minimum": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

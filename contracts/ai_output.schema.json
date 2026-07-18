@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "matso:ai_output:0.1.0",
+  "title": "AIOutput",
+  "description": "各 AI 角色結構化輸出（SPEC_FULL §9.2）。Guardrail G1 以本檔驗證；G2 檢查 reasoning_chain。$defs 依角色擴充。",
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["reasoning_chain", "confidence"],
+      "properties": {
+        "reasoning_chain": {
+          "type": "string",
+          "minLength": 80,
+          "description": "MUST 含 ≥3 個推理步驟（G2 另以步驟計數檢查）"
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cited_documents": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "tactical_order": {
+      "type": "object",
+      "required": ["unit_id", "order_type"],
+      "properties": {
+        "unit_id": { "type": "string" },
+        "order_type": { "enum": ["MOVE", "ENGAGE", "RECON", "RESUPPLY", "POSTURE", "HOLD"] },
+        "target_h3": { "type": "string" },
+        "target_unit_id": { "type": "string" },
+        "posture": { "type": "string" }
+      }
+    },
+    "opfor_decision": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "required": ["intent", "orders", "ihl_self_check"],
+          "properties": {
+            "intent": { "type": "string" },
+            "orders": { "type": "array", "items": { "$ref": "#/$defs/tactical_order" } },
+            "ihl_self_check": {
+              "type": "object",
+              "required": ["civilian_risk_assessed"],
+              "properties": {
+                "civilian_risk_assessed": { "type": "boolean" },
+                "notes": { "type": "string" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coa_recommendation": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "required": ["courses_of_action"],
+          "properties": {
+            "courses_of_action": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "required": ["name", "summary", "draft_orders", "risks"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "summary": { "type": "string" },
+                  "draft_orders": { "type": "array", "items": { "$ref": "#/$defs/tactical_order" } },
+                  "risks": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

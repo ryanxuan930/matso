@@ -1,0 +1,14 @@
+{
+  "name": "matso-db",
+  "private": true,
+  "scripts": {
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "generate": "prisma generate",
+    "studio": "prisma studio"
+  },
+  "devDependencies": {
+    "prisma": "^6.5.0",
+    "@prisma/client": "^6.5.0"
+  }
+}

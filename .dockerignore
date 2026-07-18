@@ -1,0 +1,14 @@
+# core 映像的建置 context = repo root（見 ops/compose/docker-compose.yml）
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.hypothesis
+platform/
+modules/terrain/data/
+docs/
+*.log
+*.md
+!contracts/**/*.md

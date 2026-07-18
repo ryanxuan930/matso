@@ -1,0 +1,104 @@
+# Core REST API v0.1.0 — OpenAPI 3.1 骨架（SPEC_FULL §16.1）
+# M0-2 補完全部 schema；platform/ 以 openapi-typescript 由本檔生成型別。
+openapi: 3.1.0
+info:
+  title: MATSO Core API
+  version: 0.1.0
+servers:
+  - url: /api/v1
+components:
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OrderId:
+      name: oid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TaskId:
+      name: tid
+      in: path
+      required: true
+      schema: { type: string }
+    PluginName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    Error:
+      type: object
+      description: 統一錯誤格式；error.code 枚舉於 M0-2 補齊
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, examples: [ORDER_OUT_OF_RANGE] }
+            message: { type: string }
+            details: { type: object }
+paths:
+  /auth/login:
+    post: { operationId: login, responses: { "200": { description: JWT pair } } }
+  /auth/refresh:
+    post: { operationId: refresh, responses: { "200": { description: New access token } } }
+  /sessions:
+    get: { operationId: listSessions, responses: { "200": { description: Role-filtered sessions } } }
+    post: { operationId: createSession, responses: { "201": { description: Created } } }
+  /sessions/{id}/lifecycle:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: sessionLifecycle
+      description: "action: START|PAUSE|RESUME|END|ROLLBACK (+checkpoint_tick)"
+      responses: { "200": { description: OK } }
+  /sessions/{id}/state:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get: { operationId: getState, description: faction-scoped 全量快照（重連用）, responses: { "200": { description: Snapshot } } }
+  /sessions/{id}/units:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get: { operationId: listUnits, responses: { "200": { description: faction-scoped units } } }
+  /sessions/{id}/orders:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: issueOrder
+      description: 回傳含物理預檢（precheck）結果；不可行立即 422 REJECTED
+      responses: { "201": { description: Order accepted (PENDING) }, "422": { description: Physics precheck failed } }
+  /sessions/{id}/orders/{oid}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { $ref: "#/components/parameters/OrderId" }
+    delete: { operationId: cancelOrder, responses: { "200": { description: Cancelled } } }
+  /sessions/{id}/ai/consult:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: aiConsult
+      description: "{role, query} → 202 + task_id（非同步；逾時 doctrine fallback）"
+      responses: { "202": { description: Task queued } }
+  /sessions/{id}/ai/tasks/{tid}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { $ref: "#/components/parameters/TaskId" }
+    get: { operationId: aiTaskStatus, responses: { "200": { description: Task status/result } } }
+  /sessions/{id}/injects:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post: { operationId: mselInject, description: White Cell only, responses: { "201": { description: Injected } } }
+  /sessions/{id}/ledger:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: queryLedger
+      description: "?after_seq=&types=  分頁、faction-scoped 投影"
+      responses: { "200": { description: Events } }
+  /sessions/{id}/aar:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get: { operationId: getAAR, responses: { "200": { description: AAR report } } }
+  /scenarios:
+    get: { operationId: listScenarios, responses: { "200": { description: Scenarios } } }
+    post: { operationId: uploadScenario, responses: { "201": { description: Validated & stored } } }
+  /admin/plugins:
+    get: { operationId: listPlugins, responses: { "200": { description: Plugin registry } } }
+  /admin/plugins/{name}/toggle:
+    parameters: [{ $ref: "#/components/parameters/PluginName" }]
+    post: { operationId: togglePlugin, responses: { "200": { description: Toggled } } }

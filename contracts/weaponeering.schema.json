@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "matso:weaponeering:0.1.0",
+  "title": "EquipmentBaseStats",
+  "description": "EquipmentTemplate.baseStats 的驗證 schema（SPEC_FULL §7.1）。裁決引擎為資料驅動：公式讀這裡，不寫死參數。依 category 選用對應 $defs。",
+  "$defs": {
+    "kinetic": {
+      "type": "object",
+      "required": ["max_range_m", "ph_by_range_band", "damage_by_armor_class", "ammo_types"],
+      "properties": {
+        "max_range_m": { "type": "number", "exclusiveMinimum": 0 },
+        "min_range_m": { "type": "number", "minimum": 0, "default": 0 },
+        "indirect_fire": { "type": "boolean", "default": false },
+        "ph_by_range_band": {
+          "type": "array",
+          "description": "由近到遠的 [range_max_m, base_ph] 對；區間內線性插值",
+          "items": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number", "minimum": 0, "maximum": 1 }] },
+          "minItems": 1
+        },
+        "damage_by_armor_class": {
+          "type": "object",
+          "description": "armor_class → damage（healthStatus 扣點）",
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        },
+        "ammo_types": { "type": "array", "items": { "type": "string" } },
+        "rate_per_tick": { "type": "number", "exclusiveMinimum": 0, "default": 1 }
+      }
+    },
+    "sensor": {
+      "type": "object",
+      "required": ["sensor_kind", "max_range_m", "detect_curve"],
+      "properties": {
+        "sensor_kind": { "enum": ["OPTICAL", "IR", "RADAR", "ACOUSTIC", "SIGINT"] },
+        "max_range_m": { "type": "number", "exclusiveMinimum": 0 },
+        "detect_curve": {
+          "type": "array",
+          "description": "[range_max_m, p_detect] 對；DETECTED→CLASSIFIED→IDENTIFIED 升級門檻由引擎係數推導",
+          "items": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number", "minimum": 0, "maximum": 1 }] }
+        }
+      }
+    },
+    "comms": {
+      "type": "object",
+      "required": ["band", "tx_power_dbm", "rx_sensitivity_dbm"],
+      "properties": {
+        "band": { "enum": ["LORA", "MESHTASTIC", "VHF", "UHF", "SATCOM"] },
+        "tx_power_dbm": { "type": "number" },
+        "rx_sensitivity_dbm": { "type": "number" },
+        "antenna_gain_dbi": { "type": "number", "default": 0 },
+        "mesh_capable": { "type": "boolean", "default": false }
+      }
+    },
+    "logistics": {
+      "type": "object",
+      "required": ["capacity"],
+      "properties": {
+        "capacity": {
+          "type": "object",
+          "description": "supply_class → 攜行量（AMMO/FUEL/WATER_FOOD/BATTERY）",
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "drone": {
+      "type": "object",
+      "required": ["endurance_ticks", "cruise_speed_ms", "weather_limits"],
+      "properties": {
+        "endurance_ticks": { "type": "integer", "exclusiveMinimum": 0 },
+        "cruise_speed_ms": { "type": "number", "exclusiveMinimum": 0 },
+        "weather_limits": {
+          "type": "object",
+          "properties": {
+            "max_wind_ms": { "type": "number" },
+            "min_visibility_m": { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}

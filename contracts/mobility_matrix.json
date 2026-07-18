@@ -1,0 +1,15 @@
+{
+  "$comment": "mobility_profile × terrain_class 通行成本（每 hex 基準成本倍率；-1 = 不可通行）。v0 佔位值 — 由想定 overrides/ 覆寫，M2-4 校準。SPEC_FULL §4.3",
+  "version": "0.1.0",
+  "profiles": {
+    "FOOT":    { "URBAN": 1.2, "FOREST": 1.5, "GRASSLAND": 1.0, "WETLAND": 2.5, "BARREN": 1.1, "WATER": -1,  "MOUNTAIN": 3.0 },
+    "WHEELED": { "URBAN": 1.0, "FOREST": 4.0, "GRASSLAND": 1.2, "WETLAND": -1,  "BARREN": 1.5, "WATER": -1,  "MOUNTAIN": -1 },
+    "TRACKED": { "URBAN": 1.1, "FOREST": 2.5, "GRASSLAND": 1.0, "WETLAND": 3.5, "BARREN": 1.2, "WATER": -1,  "MOUNTAIN": -1 },
+    "BOAT":    { "URBAN": -1,  "FOREST": -1,  "GRASSLAND": -1,  "WETLAND": 2.0, "BARREN": -1,  "WATER": 1.0, "MOUNTAIN": -1 },
+    "AIR":     { "URBAN": 1.0, "FOREST": 1.0, "GRASSLAND": 1.0, "WETLAND": 1.0, "BARREN": 1.0, "WATER": 1.0, "MOUNTAIN": 1.0 }
+  },
+  "slope_penalty": {
+    "$comment": "坡度附加成本：cost *= 1 + slope_factor * slope_deg / 45（AIR 除外）",
+    "FOOT": 1.0, "WHEELED": 3.0, "TRACKED": 2.0, "BOAT": 0.0, "AIR": 0.0
+  }
+}

@@ -1,0 +1,49 @@
+// Plugin 基礎契約 v1.0.0（SPEC_FULL §16.3, §17）
+// 所有 MATSO 插件 MUST 實作本服務；領域 RPC 另立各自的 proto。
+syntax = "proto3";
+
+package matso.plugin.v1;
+
+message Manifest {
+  string name = 1;             // 全域唯一，如 "terrain"
+  string kind = 2;             // TERRAIN / WEATHER / VISION / AI_ROLE / CUSTOM
+  string contract_version = 3; // semver；major 不合 Orchestrator 拒絕載入
+  repeated string capabilities = 4;
+}
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_STATE_HEALTHY = 1;
+  HEALTH_STATE_DEGRADED = 2; // 例：weather 進入 stale 模式
+  HEALTH_STATE_DOWN = 3;
+}
+
+message GetManifestRequest {}
+
+message GetManifestResponse {
+  Manifest manifest = 1;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  HealthState state = 1;
+  string detail = 2;
+}
+
+message ConfigureRequest {
+  string config_json = 1; // 由各插件自行定義 schema 並驗證
+}
+
+message ConfigureResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+service PluginBaseService {
+  rpc GetManifest(GetManifestRequest) returns (GetManifestResponse);
+  // Orchestrator 每 10s 呼叫；連續 3 次失敗 → DOWN 預案（SPEC_FULL §16.3）
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  // 熱更新設定（記入 Ledger 由 Core 負責）
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+}

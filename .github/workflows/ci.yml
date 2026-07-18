@@ -1,0 +1,125 @@
+# MATSO CI（HOW_TO.md §3.4）：lint → typecheck → unit → contract → schema-sync → integration → replay
+# 任一紅 = 不可合併。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python lint / type / unit / replay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest -q
+      - name: Golden replay (SPEC_FULL §19.1)
+        run: uv run pytest core/tests/replay -m golden -q
+
+  frontend:
+    name: Frontend lint / typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: platform/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  contracts:
+    name: Contract validation (buf / JSON Schema / OpenAPI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npx --yes @bufbuild/buf lint
+      - name: buf breaking (PR only, against main)
+        if: github.event_name == 'pull_request'
+        run: npx --yes @bufbuild/buf breaking --against '.git#branch=origin/main'
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run check-jsonschema --check-metaschema contracts/*.schema.json
+      - name: OpenAPI 3.1 validation
+        run: |
+          uv run python - <<'EOF'
+          import yaml
+          from openapi_spec_validator import validate
+          validate(yaml.safe_load(open("contracts/core_api.yaml")))
+          print("OPENAPI OK")
+          EOF
+
+  schema-sync:
+    name: Prisma migrate + SQLAlchemy drift check
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_DATABASE: matso
+          MARIADB_ROOT_PASSWORD: ci_root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: mysql://root:ci_root@127.0.0.1:3306/matso
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: db/package-lock.json
+      # 注意：不使用 prisma migrate diff 做 drift guard——MariaDB 的 JSON 底層是
+      # LONGTEXT+CHECK，diff 對所有 Json 欄位永久誤報 type changed（見 PROGRESS backlog）。
+      - name: Apply committed migrations
+        working-directory: db
+        run: |
+          npm ci
+          npx prisma migrate deploy
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: SQLAlchemy drift check
+        run: uv run python ops/tools/schema_sync_check.py
+
+  integration:
+    name: Compose stack up + healthchecks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & start full stack
+        working-directory: ops/compose
+        run: docker compose up -d --build --wait
+      - name: Core healthz smoke
+        run: curl -fsS http://localhost:8000/healthz
+      - name: Frontend smoke
+        run: curl -fsS -o /dev/null http://localhost:3000/
+      - name: Teardown
+        if: always()
+        working-directory: ops/compose
+        run: docker compose down -v

@@ -1,0 +1,85 @@
+// Terrain Module 領域契約 v0.1.0（SPEC_FULL §4.3）
+// SLA：GetElevation p99<5ms / CheckLos p99<20ms / GetPath p99<100ms /
+//      GetCellBatch p99<20ms / GetViewshed p99<200ms
+syntax = "proto3";
+
+package matso.terrain.v1;
+
+message LatLng {
+  double lat = 1; // WGS84
+  double lng = 2;
+}
+
+message Observer {
+  LatLng position = 1;
+  double height_agl_m = 2; // 天線/觀測具離地高
+}
+
+message GetElevationRequest {
+  LatLng position = 1;
+}
+
+message GetElevationResponse {
+  double elevation_m = 1;
+  bool water = 2; // DTED nodata → 海面
+}
+
+message CheckLosRequest {
+  Observer observer = 1;
+  Observer target = 2;
+}
+
+message CheckLosResponse {
+  bool visible = 1;
+  LatLng obstruction_point = 2; // visible=false 時的遮蔽點
+  double fresnel_clearance = 3; // RF 用（4/3 等效地球半徑）
+}
+
+message GetPathRequest {
+  string from_h3 = 1;
+  string to_h3 = 2;
+  string mobility_profile = 3; // FOOT / WHEELED / TRACKED / BOAT / AIR（mobility_matrix.json）
+}
+
+message GetPathResponse {
+  repeated string h3_path = 1; // 含起訖
+  double total_cost = 2;
+  int32 eta_ticks = 3;
+  bool reachable = 4;
+}
+
+message GetCellBatchRequest {
+  repeated string h3_index = 1;
+}
+
+message CellInfo {
+  string h3_index = 1;
+  LatLng center = 2;
+  double elevation_mean = 3;
+  double elevation_max = 4;
+  double slope_deg = 5;
+  string terrain_class = 6; // URBAN/FOREST/GRASSLAND/WETLAND/BARREN/WATER/MOUNTAIN
+  bool water = 7;
+  double mobility_cost = 8;
+}
+
+message GetCellBatchResponse {
+  repeated CellInfo cells = 1;
+}
+
+message GetViewshedRequest {
+  Observer observer = 1;
+  double radius_m = 2;
+}
+
+message GetViewshedResponse {
+  repeated string visible_h3 = 1;
+}
+
+service TerrainService {
+  rpc GetElevation(GetElevationRequest) returns (GetElevationResponse);
+  rpc CheckLos(CheckLosRequest) returns (CheckLosResponse);
+  rpc GetPath(GetPathRequest) returns (GetPathResponse);
+  rpc GetCellBatch(GetCellBatchRequest) returns (GetCellBatchResponse);
+  rpc GetViewshed(GetViewshedRequest) returns (GetViewshedResponse);
+}

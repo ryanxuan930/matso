@@ -1,0 +1,305 @@
+// MATSO 資料庫權威 schema（SPEC_FULL.md §15）
+// v0 draft — 由任務卡 M0-4 以 `prisma migrate dev` 驗證與定稿。
+// 注意：部分新表（Order, IntelContact 等）刻意使用純 String id 欄位而非 @relation，
+// M0-4 定稿時再決定哪些需要 FK 完整性（Ledger 類表傾向鬆耦合以利歸檔）。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. System & Environment Configurations
+// ==========================================
+
+model SystemConfiguration {
+  id                String   @id @default(uuid())
+  versionName       String
+  simTickRateMs     Int      @default(1000)
+  globalRules       Json // Dynamic ROE & active plugin registries
+  integrationConfig Json // Endpoints for Weather Module & ATAK servers
+  updatedAt         DateTime @updatedAt
+}
+
+model WargameSession {
+  id             String    @id @default(uuid())
+  name           String
+  scenarioId     String?
+  masterSeed     BigInt // P4 可重現性：所有 RNG 的根種子
+  mode           SessionMode @default(REALTIME)
+  startTime      DateTime  @default(now())
+  endTime        DateTime?
+  currentWeather Json // Processed output strictly from the Weather Module
+
+  units     TacticalUnit[]
+  eventLogs TacticalEventLog[]
+}
+
+enum SessionMode {
+  REALTIME
+  WEGO
+  IGO_UGO
+}
+
+// ==========================================
+// 2. Tactical Units & Fractal Command Chain
+// ==========================================
+
+enum UnitLevel {
+  THEATER
+  CORPS
+  DIVISION
+  BRIGADE
+  BATTALION
+  COMPANY
+  PLATOON
+  SQUAD
+  FIRETEAM
+  INDIVIDUAL
+}
+
+enum CommsState {
+  ONLINE
+  DEGRADED
+  OFFLINE
+}
+
+enum Faction {
+  BLUE
+  RED
+  WHITE_CELL
+  ALLIED
+}
+
+model TacticalUnit {
+  id        String         @id @default(uuid())
+  sessionId String
+  session   WargameSession @relation(fields: [sessionId], references: [id])
+
+  designation String
+  unitLevel   UnitLevel
+  faction     Faction
+
+  // Fractal Hierarchy (Self-Referential)
+  parentId String?
+  parent   TacticalUnit?  @relation("UnitHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  subUnits TacticalUnit[] @relation("UnitHierarchy")
+
+  // Extensible Properties & Live Telemetry
+  attributes   Json       @default("{}")
+  currentLat   Float? // WGS84
+  currentLng   Float? // WGS84
+  elevation    Float? // 由 Terrain Module 查詢
+  healthStatus Float      @default(100.0)
+  commsStatus  CommsState @default(ONLINE)
+
+  equipment  EquipmentInstance[]
+  eventsInit TacticalEventLog[]  @relation("Initiator")
+  eventsRecv TacticalEventLog[]  @relation("Target")
+}
+
+// ==========================================
+// 3. Weaponeering & Hardware RAG Database
+// ==========================================
+
+model EquipmentTemplate {
+  id        String              @id @default(uuid())
+  name      String
+  category  String // KINETIC, SENSOR, COMMS, LOGISTICS, DRONE
+  baseStats Json                @default("{}") // 需通過 contracts/weaponeering.schema.json 驗證
+  instances EquipmentInstance[]
+}
+
+model EquipmentInstance {
+  id           String            @id @default(uuid())
+  templateId   String
+  template     EquipmentTemplate @relation(fields: [templateId], references: [id])
+  ownerId      String
+  owner        TacticalUnit      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  currentState Json              @default("{}")
+}
+
+// ==========================================
+// 4. Immutable Event Ledger (For AAR & Replay)
+// ==========================================
+// append-only：應用層與 DB 權限層皆禁止 UPDATE/DELETE（SPEC_FULL §15.3）
+
+model TacticalEventLog {
+  id        String         @id @default(uuid())
+  sessionId String
+  session   WargameSession @relation(fields: [sessionId], references: [id])
+  seq       Int // session 內單調遞增，由 Kernel 發號
+  tick      Int
+  timestamp DateTime       @default(now())
+  eventType String
+
+  initiatorId String?
+  initiator   TacticalUnit? @relation("Initiator", fields: [initiatorId], references: [id])
+  targetId    String?
+  target      TacticalUnit? @relation("Target", fields: [targetId], references: [id])
+
+  // Context Snapshots for accurate AAR generation
+  weatherSnapshot Json
+  terrainModifier Float
+
+  // AI Adjudication & Diagnostics
+  reasoningChain String? @db.Text // Mandatory CoT (IHL compliance & transparency)
+  aiDecision     Json
+  damageCalc     Float?
+
+  // Tamper-evident hash chain (SPEC_FULL §15.3)
+  prevHash String
+  selfHash String
+
+  @@unique([sessionId, seq])
+  @@index([sessionId, timestamp])
+}
+
+// ==========================================
+// 5. Users & RBAC (SPEC_FULL §12)
+// ==========================================
+
+enum UserRole {
+  EXERCISE_DIRECTOR
+  WHITE_CELL_STAFF
+  COMMANDER
+  STAFF
+  OBSERVER
+  ANALYST
+  ADMIN
+}
+
+model User {
+  id           String               @id @default(uuid())
+  username     String               @unique
+  passwordHash String // Argon2id
+  totpSecret   String?
+  role         UserRole
+  createdAt    DateTime             @default(now())
+  participants SessionParticipant[]
+}
+
+model SessionParticipant {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  sessionId String
+  faction   Faction
+  role      UserRole
+  unitScope Json // 可指揮的單位 id 白名單（null = 全軍）
+
+  @@unique([userId, sessionId])
+}
+
+// ==========================================
+// 6. Scenario / Orders / Intel (SPEC_FULL §15.2)
+// ==========================================
+
+model Scenario {
+  id          String   @id @default(uuid())
+  name        String
+  version     String
+  packageBlob Bytes // Phase 1；>16MB 改物件儲存（見 ADR backlog）
+  checksum    String
+  createdBy   String
+  createdAt   DateTime @default(now())
+}
+
+enum OrderStatus {
+  PENDING
+  VALIDATED
+  EXECUTING
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+model Order {
+  id             String      @id @default(uuid())
+  sessionId      String
+  issuerId       String // SessionParticipant id 或 AI role 名
+  unitId         String
+  orderType      String // MOVE, ENGAGE, RECON, RESUPPLY, POSTURE, ...
+  payload        Json
+  status         OrderStatus @default(PENDING)
+  precheck       Json? // 物理預檢結果快照
+  issuedAtTick   Int
+  resolvedAtTick Int?
+
+  @@index([sessionId, status])
+}
+
+enum IntelFidelity {
+  DETECTED
+  CLASSIFIED
+  IDENTIFIED
+}
+
+model IntelContact {
+  id           String        @id @default(uuid())
+  sessionId    String
+  faction      Faction // 「誰看到的」
+  targetUnitId String // ground truth 連結（永不直接下發前端）
+  fidelity     IntelFidelity
+  lastSeenTick Int
+  lastSeenLat  Float
+  lastSeenLng  Float
+  errorRadiusM Float
+
+  @@index([sessionId, faction])
+}
+
+// ==========================================
+// 7. Checkpoints / AI Logs / AAR / Plugins
+// ==========================================
+
+model SimCheckpoint {
+  id        String   @id @default(uuid())
+  sessionId String
+  tick      Int
+  stateBlob Bytes // zstd 壓縮完整狀態
+  stateHash String // golden replay 驗證用
+  createdAt DateTime @default(now())
+
+  @@unique([sessionId, tick])
+}
+
+model AIInvocationLog {
+  id              String   @id @default(uuid())
+  sessionId       String?
+  role            String // STRATEGIC_PLANNER / OPFOR_COMMANDER / ...
+  adapter         String // LoRA adapter 版本
+  promptHash      String
+  request         Json
+  response        Json
+  latencyMs       Int
+  tokensIn        Int
+  tokensOut       Int
+  guardrailResult Json // G1–G6 通過/攔截明細
+  createdAt       DateTime @default(now())
+
+  @@index([sessionId, role])
+}
+
+model AARReport {
+  id          String   @id @default(uuid())
+  sessionId   String   @unique
+  narrative   Json // 結構化段落 + event id 引用
+  metrics     Json
+  generatedAt DateTime @default(now())
+}
+
+model PluginRegistry {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  kind        String // TERRAIN / WEATHER / VISION / AI_ROLE / CUSTOM
+  endpoint    String
+  contractVer String
+  healthState String // HEALTHY / DEGRADED / DOWN
+  config      Json
+  enabled     Boolean @default(true)
+}

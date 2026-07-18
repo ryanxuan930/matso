@@ -1,0 +1,43 @@
+# Nuxt dev/build outputs
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
+
+# Node dependencies
+node_modules
+
+# Logs
+logs
+*.log
+
+# Misc
+.DS_Store
+.fleet
+.idea
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+
+# Large geodata & model artifacts (never commit)
+modules/terrain/data/*.tiff
+modules/terrain/data/*.tif
+*.parquet
+*.gguf
+*.safetensors
+
+# Generated code (from contracts)
+platform/app/types/api.d.ts

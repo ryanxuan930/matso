@@ -1,0 +1,73 @@
+# MATSO uv workspace root（虛擬 package，不建置）— ADR 001
+# 共用工具設定（ruff / mypy / pytest）集中於此；各 member 只宣告自己的 runtime deps。
+
+[project]
+name = "matso-workspace"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["core", "modules/_sdk", "modules/terrain", "modules/weather", "ai"]
+
+[tool.uv.sources]
+matso-core = { workspace = true }
+matso-sdk = { workspace = true }
+matso-terrain = { workspace = true }
+matso-weather = { workspace = true }
+matso-ai = { workspace = true }
+
+[dependency-groups]
+dev = [
+  # workspace members（editable 安裝進根 venv，讓 uv run pytest / mypy 一次涵蓋）
+  "matso-core",
+  "matso-sdk",
+  "matso-terrain",
+  "matso-weather",
+  "matso-ai",
+  # 工具鏈
+  "ruff>=0.9",
+  "mypy>=1.14",
+  "pre-commit>=4.0",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.25",
+  "hypothesis>=6.120",
+  "httpx>=0.28",
+  # 契約驗證（CI contract job 用）
+  "check-jsonschema>=0.31",
+  "openapi-spec-validator>=0.7",
+]
+
+# ---------------- Lint / Format ----------------
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["core", "modules", "ai", "ops"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+# 專案註解/docstring 使用正體中文全形標點，RUF001-003 的 ambiguous-unicode 檢查全是誤報
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+# ---------------- Type Checking ----------------
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["core/app", "ops/tools"]
+
+[[tool.mypy.overrides]]
+module = ["pymysql.*"]
+ignore_missing_imports = true
+
+# ---------------- Tests ----------------
+
+[tool.pytest.ini_options]
+testpaths = ["core/tests"]
+asyncio_mode = "auto"
+markers = [
+  "golden: golden replay determinism tests (SPEC_FULL §19.1, harness lands in M1-6)",
+]
