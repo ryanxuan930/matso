@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-18（傍晚）：**O1.2 完成**（branch `feat/o1.2-ledger-hashchain`，stacked on O1.1）。LedgerWriter（append-only + hash chain）、verify_ledger CLI、grant SQL、DB 連線基礎（config/db）；45 passed（含 2 MariaDB 整合測試）。worklog: docs/worklog/O1.2.md。
-- 2026-07-18（傍晚）：O1.1 完成（SimClock + DeterministicRNG）。
-- 下一步：**O1.3**（Kernel tick loop，見 TASKS.md）。
+- 2026-07-18（傍晚）：**O1.3 完成**（branch `feat/o1.3-kernel-tick-loop`，stacked on O1.2）。Kernel tick loop 骨架 + 子系統 Protocol/stub + TICK_OVERRUN（注入式牆鐘 MonotonicClock，真實時鐘在 runtime.py）；14 測試（含端到端接真 LedgerWriter）。59 passed。worklog: docs/worklog/O1.3.md。
+- 2026-07-18（傍晚）：O1.2 完成（Ledger + hash chain）、O1.1 完成（SimClock + RNG）。
+- 下一步：**O1.4**（Redis 熱狀態 + single-writer + diff）。
 
 ## 任務板
 
@@ -19,7 +19,8 @@
 | M0-5 | DONE | Claude (2026-07-18) | — | .github/workflows/ci.yml：python/frontend/contracts/schema-sync/integration 五 job（**未在真 GitHub 跑過**，首次 push 後要盯） |
 | O1.1 (M1-1) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.1-simclock-rng | SimClock + DeterministicRNG；23 測試綠；numpy 2.5.1 |
 | O1.2 (M1-2) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.2-ledger-hashchain (stacked) | LedgerWriter append-only + hash chain；verify_ledger CLI；grant SQL；config/db 基礎；45 passed（2 整合） |
-| O1.3 ~ O1.6 | TODO | — | — | 從 O1.3 開始；規格見 SPEC_FULL §2.3/§3.3 |
+| O1.3 (M1-3) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.3-kernel-tick-loop (stacked) | Kernel tick loop + 子系統 Protocol/stub + TICK_OVERRUN（注入式牆鐘）；14 測試 |
+| O1.4 ~ O1.6 | TODO | — | — | 從 O1.4 開始；規格見 SPEC_FULL §3.4/§16.2 |
 | M2-1 ~ M2-5 | TODO | — | — | TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/GDAL 依賴屆時才加（ADR 001 註記） |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
@@ -55,11 +56,13 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - schema_sync_check v1 只比對 table/column/nullable/pk/型別大類；index/unique/FK 未比對（工具 docstring 有註記）。
 - 開發機為使用者共用機器：3306（mariadb_lan）、8080（pma_lan）已被占用；MATSO 用 3307/8000/3000/6333/6379。
 - **[O1.5 待辦]** DeterministicRNG 尚未實作 get_state/set_state（generator 狀態序列化）——checkpoint 中途復原時需要，O1.1 刻意不做（範圍紀律）。
+- **[事件 schema 議題]** TICK_OVERRUN 等引擎事件目前把結構化診斷塞進 `aiDecision` JSON 欄（schema 無中性欄）。事件類型變多前（O3 起），應檢討於 TacticalEventLog 加一個中性 `detail` JSON 欄（需 prisma migrate + ADR）。
+- **[O1.4 提醒]** Kernel 的 Broadcaster 目前是 stub；O1.4 需實作 Redis diff 版並在真實裝配時把 PerfCounterClock（app.runtime）注入 Kernel 的 wall_clock。
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O1.3**（Kernel tick loop）。產出：`core/app/engine/kernel.py`——tick 迴圈（SPEC_FULL §3.3 虛擬碼）、pending order queue drain、`TICK_OVERRUN` 事件（超預算寫 Ledger + 降頻）、各子系統 Protocol 介面（MovementSystem/SensorSystem/... 先接 no-op stub）。規格：SPEC_FULL §2.3/§3.3、TASKS.md O1.3。deps: O1.1, O1.2（皆已完成）。
-   - **可直接複用**：`app.engine.SimClock`（tick 推進）、`app.state.ledger.LedgerWriter`（Kernel 持有跨 tick、由 Kernel 發 seq——writer 的 memory tip cache 正為此設計）、`app.db` session factory。
-   - 驗收：fake 子系統驗證呼叫順序；慢子系統 → 觸發 TICK_OVERRUN；tick 預算可 config 注入。
-2. **分支鏈狀態**：O1.1（feat/o1.1-simclock-rng）← O1.2（feat/o1.2-ledger-hashchain，stacked）皆**未合併/推送**——由使用者決定合併時機。O1.3 應繼續 stack 在 O1.2 之上以保 PROGRESS 連續性。
-3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 在 3307）。整合測試需 compose 起著才會實際執行（否則自動 skip）。
+1. 認領 **O1.4**（Redis 熱狀態 + single-writer + diff）。產出：`core/app/state/hot_state.py`（key `session:{id}:unit:{id}`，Kernel 唯一寫入者）、diff 計算器（只含變動欄位）、`core/app/state/broadcaster.py`（Redis diff 版，取代 subsystems.NoOpBroadcaster）。規格：SPEC_FULL §3.4/§16.2（STATE_DIFF payload）、TASKS.md O1.4。deps: O1.3（已完成）。
+   - **可直接複用**：`app.engine.Kernel`（把 event_sink=LedgerWriter、broadcaster=新 Redis broadcaster、wall_clock=app.runtime.PerfCounterClock 注入）、`app.config.Settings.redis_url`、redis 套件已在 core deps。
+   - 驗收：整合測試連 compose Redis（6379）：寫入→讀回 roundtrip；改 3 欄 → diff 恰含 3 欄。整合測試比照 test_ledger_mariadb 用 `integration` marker + 連不上自動 skip。
+2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3（皆 stacked，**未合併/推送**）——由使用者決定合併時機。O1.4 應繼續 stack 在 O1.3 之上。
+3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 3307 / redis 6379）。整合測試需 compose 起著才會實際執行（否則自動 skip）。
