@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-18（傍晚）：**O1.1 完成**（branch `feat/o1.1-simclock-rng`）。SimClock + DeterministicRNG（numpy PCG64）+ 23 單元測試；pytest/mypy/ruff 全綠、牆鐘 grep gate 乾淨。worklog: docs/worklog/O1.1.md。
-- 2026-07-18（傍晚）：新增 CLAUDE.md / TASKS.md（O 編號）/ docs/worklog 協定。
-- 下一步：**O1.2**（Ledger writer + hash chain，見 TASKS.md）。
+- 2026-07-18（傍晚）：**O1.2 完成**（branch `feat/o1.2-ledger-hashchain`，stacked on O1.1）。LedgerWriter（append-only + hash chain）、verify_ledger CLI、grant SQL、DB 連線基礎（config/db）；45 passed（含 2 MariaDB 整合測試）。worklog: docs/worklog/O1.2.md。
+- 2026-07-18（傍晚）：O1.1 完成（SimClock + DeterministicRNG）。
+- 下一步：**O1.3**（Kernel tick loop，見 TASKS.md）。
 
 ## 任務板
 
@@ -18,7 +18,8 @@
 | M0-4 | DONE | Claude (2026-07-18) | — | init migration 已套用（db/prisma/migrations/20260718025607_init）；schema_sync_check.py：15 tables/118 columns 一致 |
 | M0-5 | DONE | Claude (2026-07-18) | — | .github/workflows/ci.yml：python/frontend/contracts/schema-sync/integration 五 job（**未在真 GitHub 跑過**，首次 push 後要盯） |
 | O1.1 (M1-1) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.1-simclock-rng | SimClock + DeterministicRNG；23 測試綠；numpy 2.5.1 |
-| O1.2 ~ O1.6 | TODO | — | — | 從 O1.2 開始；規格見 SPEC_FULL §3/§15.3、HOW_TO §4.1 |
+| O1.2 (M1-2) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.2-ledger-hashchain (stacked) | LedgerWriter append-only + hash chain；verify_ledger CLI；grant SQL；config/db 基礎；45 passed（2 整合） |
+| O1.3 ~ O1.6 | TODO | — | — | 從 O1.3 開始；規格見 SPEC_FULL §2.3/§3.3 |
 | M2-1 ~ M2-5 | TODO | — | — | TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/GDAL 依賴屆時才加（ADR 001 註記） |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
@@ -57,8 +58,8 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O1.2**（Ledger writer + hash chain）。產出：`core/app/state/ledger.py`（LedgerWriter：seq 單調發號、selfHash=SHA256(prevHash‖canonical_json)、批次寫入、無 update/delete）、`ops/tools/verify_ledger.py`、`ops/tools/grant_ledger_readonly.sql`。規格：SPEC_FULL §15.3、TASKS.md O1.2。
-   - 可複用 O1.1 已建的 `core/app/engine/`（SimClock 供 tick，RNG 非本卡所需）；SQLAlchemy models 已在 `core/app/models/`（TacticalEventLog 有 seq/prevHash/selfHash 欄位）。
-   - canonical_json 需「鍵序不同→輸出相同」單元測試；整合測試連 compose MariaDB:3307。
-2. O1.1 在 feature branch `feat/o1.1-simclock-rng`，**尚未合併/推送**——由使用者決定合併時機。
-3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 在 3307）。
+1. 認領 **O1.3**（Kernel tick loop）。產出：`core/app/engine/kernel.py`——tick 迴圈（SPEC_FULL §3.3 虛擬碼）、pending order queue drain、`TICK_OVERRUN` 事件（超預算寫 Ledger + 降頻）、各子系統 Protocol 介面（MovementSystem/SensorSystem/... 先接 no-op stub）。規格：SPEC_FULL §2.3/§3.3、TASKS.md O1.3。deps: O1.1, O1.2（皆已完成）。
+   - **可直接複用**：`app.engine.SimClock`（tick 推進）、`app.state.ledger.LedgerWriter`（Kernel 持有跨 tick、由 Kernel 發 seq——writer 的 memory tip cache 正為此設計）、`app.db` session factory。
+   - 驗收：fake 子系統驗證呼叫順序；慢子系統 → 觸發 TICK_OVERRUN；tick 預算可 config 注入。
+2. **分支鏈狀態**：O1.1（feat/o1.1-simclock-rng）← O1.2（feat/o1.2-ledger-hashchain，stacked）皆**未合併/推送**——由使用者決定合併時機。O1.3 應繼續 stack 在 O1.2 之上以保 PROGRESS 連續性。
+3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 在 3307）。整合測試需 compose 起著才會實際執行（否則自動 skip）。

@@ -70,4 +70,5 @@ testpaths = ["core/tests"]
 asyncio_mode = "auto"
 markers = [
   "golden: golden replay determinism tests (SPEC_FULL §19.1, harness lands in M1-6)",
+  "integration: needs external services via compose (MariaDB/Redis/...); skips if unreachable",
 ]
