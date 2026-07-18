@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-18（晚）：**O1.5 完成**（branch `feat/o1.5-checkpoint-recovery`，stacked on O1.4）。ADR 002（inline zstd LONGBLOB + 8MB 護欄）；CheckpointManager + recover + rollback（ROLLBACK 事件）+ Kernel 每 N ticks checkpoint；20 新測試（含 4 崩潰復原/rollback 整合）。101 passed。worklog: docs/worklog/O1.5.md。
-- 2026-07-18（晚）：O1.4（Redis 熱狀態 + diff）、O1.3（Kernel tick loop）、O1.2（Ledger）、O1.1（SimClock+RNG）完成。
-- 下一步：**O1.6**（Golden replay harness，M1 收尾）。
+- 2026-07-18（晚）：**O1.6 完成 → M1 里程碑達成**（模擬骨幹 O1.1–O1.6 全部完成）。branch `feat/o1.6-golden-replay`（stacked on O1.5）。golden replay harness + 2 goldens（empty_100、rng_walk_100）+ drift 偵測 + rerecord 工具；手動改常數驗證 hash 失敗。105 passed。worklog: docs/worklog/O1.6.md。
+- 2026-07-18（晚）：O1.5（checkpoint/復原）、O1.4（Redis 熱狀態）、O1.3（tick loop）、O1.2（Ledger）、O1.1（SimClock+RNG）完成。
+- 下一步：**M2 地理引擎**（O2.1 起；需 TW_ALL.tiff，未有時用合成夾具）。
 
 ## 任務板
 
@@ -22,8 +22,8 @@
 | O1.3 (M1-3) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.3-kernel-tick-loop (stacked) | Kernel tick loop + 子系統 Protocol/stub + TICK_OVERRUN（注入式牆鐘）；14 測試 |
 | O1.4 (M1-4) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.4-hot-state-diff (stacked) | Redis 熱狀態 single-writer + compute_diff + RedisBroadcaster（ring buffer 5000）+ Kernel drain/broadcast；20 測試（6 Redis 整合） |
 | O1.5 (M1-5) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.5-checkpoint-recovery (stacked) | ADR 002 + zstd checkpoint + recover + rollback（ROLLBACK 事件）+ Kernel 每 N ticks；20 測試（4 崩潰復原整合） |
-| O1.6 | TODO | — | — | M1 收尾（Golden replay harness）；規格見 SPEC_FULL §19.1 |
-| M2-1 ~ M2-5 | TODO | — | — | TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/GDAL 依賴屆時才加（ADR 001 註記） |
+| O1.6 (M1-6) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.6-golden-replay (stacked) | **M1 達成**。golden replay harness + 2 goldens + drift 偵測 + rerecord 工具；4 golden 測試 |
+| O2.1 ~ O2.5 | TODO | — | — | **M2 地理引擎，下一里程碑**。TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/h3 依賴屆時才加 |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
 | M5-1 ~ M5-4 | TODO | — | — | |
@@ -65,9 +65,12 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O1.6**（Golden replay harness，M1 收尾）。產出：`core/tests/replay/harness.py`（讀 Ledger 指令序列從頭重跑、比對最終 stateHash）、`ops/tools/rerecord_golden.py`、第一個 golden（空想定跑 100 ticks）；**移除 `core/tests/replay/test_golden_placeholder.py`**。規格：SPEC_FULL §19.1、TASKS.md O1.6。deps: O1.5（已完成）。
-   - **可直接複用**：`compute_state_hash`（app.state.checkpoint，比對用）、`Kernel`（全 no-op stub + NullMonotonicClock + InMemoryHotState + FakeOrderSource 即可確定性空跑）、`app.engine.SimClock`、`app.state.recover`。
-   - **設計提示**：replay 若採「從 tick 0 重跑」，DeterministicRNG 由 master_seed 自然重現，最單純、不需 RNG state 序列化。golden = 記錄 (master_seed, 指令序列) → 期望最終 stateHash。CI 已有 replay job 掛勾（跑 `-m golden`）。
-   - 驗收：golden replay 測試以真 golden 通過；手動改任一裁決常數會使 hash 比對失敗。
-2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3 ← O1.4 ← O1.5（皆 stacked，**未合併/推送**）——由使用者決定合併時機。O1.6 應繼續 stack 在 O1.5 之上。完成 O1.6 即 **M1 里程碑達成**。
+**M1（模擬骨幹）已完成。下一里程碑 M2（地理引擎）。**
+
+1. 認領 **O2.1**（DTED 載入與高程查詢）。產出：`modules/terrain/terrain/dted.py`（rasterio memory-mapped 載入、nodata→water、get_elevation）、合成夾具產生器 `modules/terrain/tests/make_fixture.py`。規格：SPEC_FULL §4.1/§4.3、TASKS.md O2.1。deps: 無（M2 起點）。
+   - **前置**：使用者需把 `TW_ALL.tiff` 放至 `modules/terrain/data/`（不入 git，.gitignore 已擋）。**沒有真檔時先用合成小型 GeoTIFF 夾具開發**（<1MB，入 git），真檔到位後跑 benchmark（p99<5ms、冷啟動<30s 為真檔限定）。
+   - **依賴**：`rasterio`、`numpy` 加到 modules/terrain（`cd modules/terrain` 改 pyproject → root `uv sync`）。GDAL 由 rasterio wheel 內帶。這是第一個引入重依賴的 module，注意 uv sync 時間（ADR 001 有註記可改分離策略）。
+   - 提醒：terrain 是 Core 硬依賴（DOWN→Session PAUSE），但那是 O2.5 插件化才接；O2.1–O2.4 先做純函式庫。
+2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3 ← O1.4 ← O1.5 ← O1.6（皆 stacked，**未合併/推送**）——由使用者決定合併時機。**建議使用者考慮此時把 M1 整條鏈合併到 main**（6 張卡、105 測試綠），再從 main 開 M2 分支，避免鏈太長。
 3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 3307 / redis 6379）。整合測試需 compose 起著才會實際執行（否則自動 skip）。
+4. **golden replay 維護**：改動確定性邏輯後跑 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。CI Linux 首跑 replay job 若因平台差異失敗，見 O1.6 worklog「CI 首跑觀察點」。
