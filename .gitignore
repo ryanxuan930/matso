@@ -44,3 +44,8 @@ modules/terrain/data/hexcache/
 
 # Generated code (from contracts)
 platform/app/types/api.d.ts
+
+# Coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
