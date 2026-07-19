@@ -67,8 +67,8 @@ module = ["pymysql.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["rasterio.*"]
-ignore_missing_imports = true # rasterio 無型別 stubs
+module = ["rasterio.*", "h3.*", "pyarrow.*"]
+ignore_missing_imports = true # 地理套件無型別 stubs
 
 # ---------------- Tests ----------------
 

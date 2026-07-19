@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-19：**O2.1 完成（M2 起點）**。branch `feat/o2.1-dted`（stacked on O1.7）。DtedMap（rasterio windowed 讀取、nodata→water、出界拋錯）+ **`MATSO_DTED_PATH` 環境變數注入**（真檔在外接硬碟，使用者需求）+ 合成 GeoTIFF 夾具（測試時生成）；SLA benchmark 掛 `realdata` marker 待真檔。151 passed / coverage 90.6%。worklog: docs/worklog/O2.1.md。
-- 2026-07-19：O1.7 完成（code review R1–R10/r11–r18 全數修復）。
-- 2026-07-18：M1 里程碑達成（O1.1–O1.6）。下一步：**O2.2**（Hex grid 預計算）。
+- 2026-07-19：**O2.2 完成**。branch `feat/o2.2-hexgrid`。H3 hex grid 預計算（DtedMap.sample_bbox 窗口讀取 → cell 屬性 → parquet）+ HexGridCache.get_cell_batch + precompute CLI + classify_terrain（坡度+高程）。**fallback 落地：預計算讀真檔一次 → parquet 快取放本地 → 查詢不需外接硬碟**。真檔驗證玉山 cell max 3947m（實際 3952m✓）。170 passed / coverage 96.76%。worklog: docs/worklog/O2.2.md。
+- 2026-07-19：O2.1 完成（DTED + MATSO_DTED_PATH 注入 + 真檔 realdata 驗證）、O1.7 完成（review 修復）。
+- 2026-07-18：M1 里程碑達成（O1.1–O1.6）。下一步：**O2.3**（LOS / Viewshed）。
 
 ## 任務板
 
@@ -24,8 +24,9 @@
 | O1.5 (M1-5) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.5-checkpoint-recovery (stacked) | ADR 002 + zstd checkpoint + recover + rollback（ROLLBACK 事件）+ Kernel 每 N ticks；20 測試（4 崩潰復原整合） |
 | O1.6 (M1-6) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.6-golden-replay (stacked) | **M1 達成**。golden replay harness + 2 goldens + drift 偵測 + rerecord 工具；4 golden 測試 |
 | O1.7 | DONE | Fable 5 (2026-07-19) | branch feat/o1.7-review-fixes (stacked) | code review 全數修復：ledgerSeq 錨定 + rollback 修正、TickPacer 降頻、detail 欄（migration）、CI 整合真跑 + coverage 96.77%、errors.py、Redis 批次化；130 單元 + 16 整合測試 |
-| O2.1 (M2-1) | DONE | Fable 5 (2026-07-19) | branch feat/o2.1-dted (stacked) | DtedMap + `MATSO_DTED_PATH` 路徑注入（外接硬碟）+ 合成夾具；23 測試（2 realdata 待真檔跑 SLA） |
-| O2.2 ~ O2.5 | TODO | — | — | 從 O2.2（Hex grid）開始；h3/pyarrow 依賴屆時才加 |
+| O2.1 (M2-1) | DONE | Fable 5 (2026-07-19) | branch feat/o2.1-dted (stacked) | DtedMap + `MATSO_DTED_PATH` 注入 + 合成夾具；真檔 realdata SLA 已驗證通過 |
+| O2.2 (M2-2) | DONE | Opus 4.8 (2026-07-19) | branch feat/o2.2-hexgrid (stacked) | H3 hex grid 預計算→parquet 快取（查詢不需硬碟）+ classify_terrain + CLI；17 測試 + 真檔驗證（玉山 3947m） |
+| O2.3 ~ O2.5 | TODO | — | — | 從 O2.3（LOS/Viewshed）開始 |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
 | M5-1 ~ M5-4 | TODO | — | — | |
@@ -103,10 +104,11 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O2.2**（Hex grid 預計算）。產出：離線預計算 CLI（H3 res 7–9 cell 屬性 → parquet 快取）、`get_cell_batch`；terrain_class 以坡度+高程規則推導。規格：SPEC_FULL §4.2/§4.3、TASKS.md O2.2。deps: O2.1（已完成）。
-   - **可直接複用**：`DtedMap`（⚠ cell 統計勿逐點 get_elevation N×N 次——用 rasterio 窗口批次讀取聚合）、合成夾具產生器（同一夾具測 hex 屬性）、`TerrainSettings`（parquet 快取路徑也用 env 注入模式，如 `MATSO_HEXCACHE_DIR`——外接硬碟使用者情境同 DTED）。
-   - 依賴：`h3`、`pyarrow` 加到 modules/terrain。陷阱見 HOW_TO §8（h3 內建距離勿當 A* heuristic 以外用途）。
-2. **外接硬碟情境（使用者環境）**：DTED 真檔以 `MATSO_DTED_PATH` 指定；realdata SLA benchmark 待真檔（見 backlog）。開發/CI 一律合成夾具，勿假設真檔存在。
-3. **分支鏈狀態**：main ← O1.1 ← … ← O1.7 ← O2.1（皆 stacked，**未合併/推送**）——建議把 M1+O1.7 段先合併回 main。
-4. 開發環境：`uv sync` 後一切在 repo root 跑；compose `docker compose up -d --wait`（mariadb 3307 / redis 6379）。**注意 OrbStack 可能隨機器休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
+1. 認領 **O2.3**（LOS / Viewshed）。產出：`check_los(observer, target)`、`get_viewshed(observer, radius)`（SPEC §4.3：30m 取樣、4/3 等效地球半徑、AGL）。規格：SPEC_FULL §4.3、TASKS.md O2.3。deps: O2.1。
+   - **可直接複用**：`DtedMap`（沿線取樣可用 get_elevation 或擴充窗口讀取）、合成夾具、真檔已驗證。
+   - GRASS 對照測試（≥98%）：GRASS 以 docker 跑，CI 可 skip、release 前必跑（TASKS O2.3）。
+   - ⚠ 真檔**無 overview**——viewshed 若要降採樣先 `gdaladdo` 建外部 .ovr。
+2. **外接硬碟情境（使用者環境 /Volumes/M200/Maps/）**：TW_ALL.tif / taiwan.osm.pbf / taiwan_drive.graphml 皆 env 注入（見 modules/terrain/.env.example）。**hex 快取設計已示範 fallback**：預計算讀真檔一次 → parquet（放本地）→ 查詢不需硬碟。O2.4 A* 同樣應吃 parquet 快取（不需真檔）。開發/CI 一律合成夾具。
+3. **分支鏈狀態**：main ← O1.1 ← … ← O1.7 ← O2.1 ← O2.2（皆 stacked，**未合併/推送**）——建議擇時把 M1+O1.7 段合併回 main。
+4. 開發環境：`uv sync` 一律在 **repo root**（子目錄跑會弄壞 workspace venv）；compose `docker compose up -d --wait`。**OrbStack 可能隨休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
 5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。

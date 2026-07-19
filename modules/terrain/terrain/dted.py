@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
+import numpy as np
 import rasterio
 from rasterio.windows import Window
 
@@ -26,6 +27,7 @@ from terrain.config import TerrainSettings
 from terrain.errors import DtedFileNotFoundError, OutOfBoundsError
 
 SEA_LEVEL_M = 0.0
+_METERS_PER_DEG_LAT = 111_320.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +36,21 @@ class ElevationResult:
 
     elevation_m: float
     water: bool
+
+
+@dataclass(frozen=True, slots=True)
+class WindowSample:
+    """一個 bbox 窗口的高程取樣（供 hex cell 聚合、坡度計算，O2.2）。
+
+    values：float64 陣列，nodata（海面）已轉為 np.nan。
+    x_res_m / y_res_m：像素在該窗口中心緯度的近似公尺尺寸（坡度換算用）。
+    valid_fraction：非 nodata 像素占比（水域判定用）。
+    """
+
+    values: np.ndarray
+    x_res_m: float
+    y_res_m: float
+    valid_fraction: float
 
 
 class DtedMap:
@@ -143,3 +160,50 @@ class DtedMap:
             return True
         nodata = self._nodata
         return nodata is not None and not math.isnan(nodata) and value == nodata
+
+    def sample_bbox(
+        self, min_lng: float, min_lat: float, max_lng: float, max_lat: float
+    ) -> WindowSample:
+        """讀取涵蓋 bbox 的窗口（一次 I/O），nodata→nan。供 hex cell 聚合（O2.2）。
+
+        bbox 部分超出 DTED 範圍時，僅讀取交集（窗口夾回影像內）；完全在界外 → OutOfBoundsError。
+        """
+        b = self._bounds
+        if max_lng < b.left or min_lng > b.right or max_lat < b.bottom or min_lat > b.top:
+            raise OutOfBoundsError(
+                f"bbox ({min_lng},{min_lat},{max_lng},{max_lat}) 與 DTED 範圍無交集"
+                f"（{self.bounds}）"
+            )
+        window = self._ds.window(min_lng, min_lat, max_lng, max_lat)
+        full = Window(0, 0, self._ds.width, self._ds.height)
+        window = window.round_offsets().round_lengths().intersection(full)
+        if window.width < 1 or window.height < 1:
+            window = Window(
+                min(max(int(window.col_off), 0), self._ds.width - 1),
+                min(max(int(window.row_off), 0), self._ds.height - 1),
+                1,
+                1,
+            )
+        raw = self._ds.read(1, window=window).astype(np.float64)
+        values = self._mask_nodata(raw)
+        valid = np.count_nonzero(~np.isnan(values))
+        valid_fraction = valid / values.size if values.size else 0.0
+
+        center_lat = (min_lat + max_lat) / 2.0
+        x_res_deg, y_res_deg = self._ds.res
+        x_res_m = x_res_deg * _METERS_PER_DEG_LAT * math.cos(math.radians(center_lat))
+        y_res_m = y_res_deg * _METERS_PER_DEG_LAT
+        return WindowSample(
+            values=values,
+            x_res_m=abs(x_res_m),
+            y_res_m=abs(y_res_m),
+            valid_fraction=valid_fraction,
+        )
+
+    def _mask_nodata(self, arr: np.ndarray) -> np.ndarray:
+        out = arr.copy()
+        out[np.isnan(out)] = np.nan
+        nodata = self._nodata
+        if nodata is not None and not math.isnan(nodata):
+            out[arr == nodata] = np.nan
+        return out
