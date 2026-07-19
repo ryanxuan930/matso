@@ -58,26 +58,38 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["core/app", "ops/tools"]
+files = ["core/app", "ops/tools", "modules/terrain/terrain"]
+# terrain 套件以 modules/terrain 為 root（獨立服務，不與 core 共 namespace）
+mypy_path = "modules/terrain"
 
 [[tool.mypy.overrides]]
 module = ["pymysql.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["rasterio.*"]
+ignore_missing_imports = true # rasterio 無型別 stubs
+
 # ---------------- Tests ----------------
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests"]
+testpaths = ["core/tests", "modules/terrain/tests"]
 asyncio_mode = "auto"
 markers = [
   "golden: golden replay determinism tests (SPEC_FULL §19.1, harness lands in M1-6)",
   "integration: needs external services via compose (MariaDB/Redis/...); skips if unreachable",
+  "realdata: needs the real DTED file (external drive + MATSO_DTED_PATH); skips otherwise",
+]
+filterwarnings = [
+  # rasterio 1.5.0 × numpy 2.5 的內部 reshape 棄用警告（上游相容問題，非本專案程式碼；
+  # rasterio 修復後移除此行——見 PROGRESS backlog）
+  "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
 ]
 
 # ---------------- Coverage（SPEC_FULL §19.3：core ≥80%；CI python job 強制） ----------------
 
 [tool.coverage.run]
-source = ["core/app"]
+source = ["core/app", "modules/terrain/terrain"]
 
 [tool.coverage.report]
 fail_under = 80

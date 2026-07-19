@@ -123,6 +123,14 @@ cd platform && npm install && npm run dev   # http://localhost:3000
 各服務讀 `.env`（範本 `.env.example` 必須維護、必須可跑）。關鍵變數：
 `DATABASE_URL, REDIS_URL, QDRANT_URL, OPENAI_BASE_URL`（指向 vLLM）, `TERRAIN_GRPC_ADDR, MASTER_SEED_OVERRIDE`（僅測試用）。
 
+**`MATSO_DTED_PATH`**：DTED 真檔（TW_ALL.tiff，數 GB）的路徑。開發機儲存空間有限時放外接硬碟：
+```bash
+export MATSO_DTED_PATH="/Volumes/<你的外接硬碟>/TW_ALL.tiff"
+```
+未設定時預設 `modules/terrain/data/TW_ALL.tiff`。**開發與 CI 不需要真檔**——terrain 測試用合成夾具
+（`modules/terrain/tests/make_fixture.py`）；真檔 benchmark（冷啟動/p99 SLA）掛 `realdata` marker，
+外接硬碟掛載且變數設定時才執行：`uv run pytest -m realdata`。
+
 ---
 
 ## 3. 工程規範

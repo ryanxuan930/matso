@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-19：**O1.7 完成（code review 全數修復）**。branch `feat/o1.7-review-fixes`（stacked on O1.6）。rollback×recover 三連 bug（ledgerSeq 錨定）、CI 整合真跑 + coverage gate（96.77%）、TickPacer 自動降頻、detail 診斷欄（migration `o17_detail_ledgerseq`）、errors.py、Redis 批次化 + to_thread、測試鷹架 dedup。130 單元 + 16 整合全綠。worklog: docs/worklog/O1.7.md。
-- 2026-07-18：M1 里程碑達成（O1.1–O1.6：SimClock/RNG、Ledger、tick loop、熱狀態、checkpoint、golden replay）。
-- 下一步：**M2 地理引擎**（O2.1 起；需 TW_ALL.tiff，未有時用合成夾具）。
+- 2026-07-19：**O2.1 完成（M2 起點）**。branch `feat/o2.1-dted`（stacked on O1.7）。DtedMap（rasterio windowed 讀取、nodata→water、出界拋錯）+ **`MATSO_DTED_PATH` 環境變數注入**（真檔在外接硬碟，使用者需求）+ 合成 GeoTIFF 夾具（測試時生成）；SLA benchmark 掛 `realdata` marker 待真檔。151 passed / coverage 90.6%。worklog: docs/worklog/O2.1.md。
+- 2026-07-19：O1.7 完成（code review R1–R10/r11–r18 全數修復）。
+- 2026-07-18：M1 里程碑達成（O1.1–O1.6）。下一步：**O2.2**（Hex grid 預計算）。
 
 ## 任務板
 
@@ -24,7 +24,8 @@
 | O1.5 (M1-5) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.5-checkpoint-recovery (stacked) | ADR 002 + zstd checkpoint + recover + rollback（ROLLBACK 事件）+ Kernel 每 N ticks；20 測試（4 崩潰復原整合） |
 | O1.6 (M1-6) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.6-golden-replay (stacked) | **M1 達成**。golden replay harness + 2 goldens + drift 偵測 + rerecord 工具；4 golden 測試 |
 | O1.7 | DONE | Fable 5 (2026-07-19) | branch feat/o1.7-review-fixes (stacked) | code review 全數修復：ledgerSeq 錨定 + rollback 修正、TickPacer 降頻、detail 欄（migration）、CI 整合真跑 + coverage 96.77%、errors.py、Redis 批次化；130 單元 + 16 整合測試 |
-| O2.1 ~ O2.5 | TODO | — | — | **M2 地理引擎，下一里程碑**。TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/h3 依賴屆時才加 |
+| O2.1 (M2-1) | DONE | Fable 5 (2026-07-19) | branch feat/o2.1-dted (stacked) | DtedMap + `MATSO_DTED_PATH` 路徑注入（外接硬碟）+ 合成夾具；23 測試（2 realdata 待真檔跑 SLA） |
+| O2.2 ~ O2.5 | TODO | — | — | 從 O2.2（Hex grid）開始；h3/pyarrow 依賴屆時才加 |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
 | M5-1 ~ M5-4 | TODO | — | — | |
@@ -84,6 +85,8 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ### 既有 backlog
 
+- **[O2.1 realdata 待辦]** DTED 真檔 SLA benchmark（冷啟動<30s、p99<5ms）待外接硬碟掛載後執行：`MATSO_DTED_PATH=/Volumes/<硬碟>/TW_ALL.tiff uv run pytest -m realdata`。不達標時的優化方向記於 terrain/dted.py docstring。
+- **[上游相容備忘]** rasterio 1.5.0 × numpy 2.5 內部 reshape DeprecationWarning——pyproject filterwarnings 以訊息精確過濾；rasterio 修復後移除該行。
 - **CI workflow 尚未在真 GitHub Actions 驗證過**（repo 無 remote/commit）。首次 push 後檢查五個 job。
 - schema 變更流程：因 ADR 004，PR checklist 必須人工確認「改 schema.prisma 必附 migration」。
 - SPEC_FULL §16.3 的 proto 片段仍寫 `service PluginBase`，實際契約已更名 `PluginBaseService`（buf SERVICE_SUFFIX）——下次改 SPEC_FULL 時順手更新。
@@ -98,12 +101,10 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-**M1（模擬骨幹）已完成。下一里程碑 M2（地理引擎）。**
-
-1. 認領 **O2.1**（DTED 載入與高程查詢）。產出：`modules/terrain/terrain/dted.py`（rasterio memory-mapped 載入、nodata→water、get_elevation）、合成夾具產生器 `modules/terrain/tests/make_fixture.py`。規格：SPEC_FULL §4.1/§4.3、TASKS.md O2.1。deps: 無（M2 起點）。
-   - **前置**：使用者需把 `TW_ALL.tiff` 放至 `modules/terrain/data/`（不入 git，.gitignore 已擋）。**沒有真檔時先用合成小型 GeoTIFF 夾具開發**（<1MB，入 git），真檔到位後跑 benchmark（p99<5ms、冷啟動<30s 為真檔限定）。
-   - **依賴**：`rasterio`、`numpy` 加到 modules/terrain（`cd modules/terrain` 改 pyproject → root `uv sync`）。GDAL 由 rasterio wheel 內帶。這是第一個引入重依賴的 module，注意 uv sync 時間（ADR 001 有註記可改分離策略）。
-   - 提醒：terrain 是 Core 硬依賴（DOWN→Session PAUSE），但那是 O2.5 插件化才接；O2.1–O2.4 先做純函式庫。
-2. **分支鏈狀態**：main ← O1.1 ← … ← O1.6 ← O1.7（皆 stacked，**未合併/推送**）——由使用者決定合併時機。**建議此時把整條鏈合併到 main**（M1 + review 修復、146 測試綠），再從 main 開 M2 分支。
-3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 3307 / redis 6379）。整合測試需 compose 起著才會實際執行（否則自動 skip）。
-4. **golden replay 維護**：改動確定性邏輯後跑 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。CI Linux 首跑 replay job 若因平台差異失敗，見 O1.6 worklog「CI 首跑觀察點」。
+1. 認領 **O2.2**（Hex grid 預計算）。產出：離線預計算 CLI（H3 res 7–9 cell 屬性 → parquet 快取）、`get_cell_batch`；terrain_class 以坡度+高程規則推導。規格：SPEC_FULL §4.2/§4.3、TASKS.md O2.2。deps: O2.1（已完成）。
+   - **可直接複用**：`DtedMap`（⚠ cell 統計勿逐點 get_elevation N×N 次——用 rasterio 窗口批次讀取聚合）、合成夾具產生器（同一夾具測 hex 屬性）、`TerrainSettings`（parquet 快取路徑也用 env 注入模式，如 `MATSO_HEXCACHE_DIR`——外接硬碟使用者情境同 DTED）。
+   - 依賴：`h3`、`pyarrow` 加到 modules/terrain。陷阱見 HOW_TO §8（h3 內建距離勿當 A* heuristic 以外用途）。
+2. **外接硬碟情境（使用者環境）**：DTED 真檔以 `MATSO_DTED_PATH` 指定；realdata SLA benchmark 待真檔（見 backlog）。開發/CI 一律合成夾具，勿假設真檔存在。
+3. **分支鏈狀態**：main ← O1.1 ← … ← O1.7 ← O2.1（皆 stacked，**未合併/推送**）——建議把 M1+O1.7 段先合併回 main。
+4. 開發環境：`uv sync` 後一切在 repo root 跑；compose `docker compose up -d --wait`（mariadb 3307 / redis 6379）。**注意 OrbStack 可能隨機器休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
+5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。

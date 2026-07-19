@@ -192,7 +192,9 @@ async def tick(self):
 
 ### 4.1 資料來源
 
-- **輸入**：`TW_ALL.tiff`（臺灣 DTED，WGS84 / EPSG:4326），PAMDataset metadata：
+- **輸入**：`TW_ALL.tiff`（臺灣 DTED，WGS84 / EPSG:4326）。**檔案路徑 MUST 可由環境變數
+  `MATSO_DTED_PATH` 指定**（真檔數 GB，常置於外接硬碟；開發/CI 以合成夾具替代，見 HOW_TO §2.3）。
+  PAMDataset metadata：
   - Min elevation: `-3.0099999904633` m（沿海／低於海平面）
   - Max elevation: `3691.3601074219` m（高山作戰）
   - Mean: `754.01758094214` m、Valid data: `34.99%`（其餘為海域 nodata → 視為海面 0m，標記 `water=true`）

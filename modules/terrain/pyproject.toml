@@ -3,8 +3,11 @@ name = "matso-terrain"
 version = "0.1.0"
 description = "MATSO Terrain Module — DTED / hex grid / LOS / A* (SPEC_FULL §4; implemented in M2)"
 requires-python = ">=3.12"
-# rasterio/GDAL/h3 等重依賴於 M2-1 加入，避免 M0 階段拖慢 uv sync
-dependencies = []
+dependencies = [
+  "rasterio>=1.4", # DTED GeoTIFF 讀取（wheel 內帶 GDAL）
+  "numpy>=2.1",
+  "pydantic-settings>=2.7", # MATSO_DTED_PATH 等環境設定（外接硬碟路徑注入）
+]
 
 [build-system]
 requires = ["hatchling"]
