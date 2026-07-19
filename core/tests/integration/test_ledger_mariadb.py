@@ -1,7 +1,6 @@
-"""Ledger 整合測試（連 compose 的 MariaDB:3307）。
+"""Ledger 整合測試（連 compose 的 MariaDB:3307；fixture 見 integration/conftest.py）。
 
 驗收（TASKS.md O1.2）：寫 100 事件 → verify 過；UPDATE 一筆 → verify 必須抓到。
-compose 未啟動時整個模組 skip。
 """
 
 from __future__ import annotations
@@ -9,34 +8,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import Engine, select, text, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db import make_engine, make_session_factory
 from app.models import TacticalEventLog, WargameSession
 from app.state.ledger import LedgerEvent, LedgerWriter, verify_chain
 
 pytestmark = pytest.mark.integration
-
-# 本機 compose MariaDB 對外 3307（root 帳號用於整合測試，可模擬竄改）
-DEV_DB_URL = "mysql+pymysql://root:matso_dev_root@localhost:3307/matso"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    eng = make_engine(DEV_DB_URL)
-    try:
-        with eng.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception as exc:  # 連不上就整組 skip
-        pytest.skip(f"MariaDB:3307 未就緒（compose 未啟動？）：{exc}")
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture
-def session_factory(engine: Engine) -> sessionmaker[Session]:
-    return make_session_factory(engine)
 
 
 @pytest.fixture

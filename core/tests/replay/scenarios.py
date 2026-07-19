@@ -19,6 +19,7 @@ from app.engine.subsystems import (
     NoOpAdjudicator,
     NoOpBroadcaster,
     NoOpCommsSystem,
+    NoOpEventSink,
     NoOpLogisticsSystem,
     NoOpMovementSystem,
     NoOpOrderSource,
@@ -33,11 +34,6 @@ MASTER_SEED = 20260718
 N_UNITS = 5
 # 整數格點四方向；PCG64 整數串跨平台穩定 → hash 不受浮點格式化影響
 _MOVES: tuple[tuple[int, int], ...] = ((1, 0), (-1, 0), (0, 1), (0, -1))
-
-
-class _NullSink:
-    def append(self, session_id: str, events: Sequence[LedgerEvent]) -> list[str]:
-        return []
 
 
 class RngWalkMovement:
@@ -77,7 +73,7 @@ def _base_kernel(hot: InMemoryHotState, movement: Any | None = None) -> Kernel:
         logistics=NoOpLogisticsSystem(),
         trigger_checker=NoOpTriggerChecker(),
         broadcaster=NoOpBroadcaster(),
-        event_sink=_NullSink(),
+        event_sink=NoOpEventSink(),
         hot_state=hot,
         wall_clock=NullMonotonicClock(),
     )

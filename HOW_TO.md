@@ -131,6 +131,7 @@ cd platform && npm install && npm run dev   # http://localhost:3000
 
 - **Lint/format**：ruff（`ruff check --fix` + `ruff format`）；**型別**：mypy --strict，零錯誤才可合併。
 - 全部 I/O 走 async；裁決引擎（`core/app/adjudication/`）例外——**純同步純函數**，輸入輸出皆為 frozen dataclass / Pydantic model，不碰 DB、不碰 Redis、不碰時鐘。
+  - 同步 driver（SQLAlchemy sync / redis-py）不得直接在 async 路徑上呼叫——以 `asyncio.to_thread` 包裝（Kernel 對 event_sink/checkpointer 的呼叫、RedisBroadcaster 內部即為範例）；順序仍由逐一 await 保證，不影響決定性。批次化優先於逐筆 I/O（pipeline/MGET）。
 - Pydantic v2 model 為 API 邊界；內部領域物件用 dataclass。
 - 例外處理：領域錯誤一律拋自訂例外（`core/app/errors.py` 統一定義，對應契約中的 error code），API 層統一轉 HTTP。
 

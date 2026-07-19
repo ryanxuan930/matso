@@ -38,6 +38,7 @@ dev = [
   # 契約驗證（CI contract job 用）
   "check-jsonschema>=0.31",
   "openapi-spec-validator>=0.7",
+  "pytest-cov>=7.1.0",
 ]
 
 # ---------------- Lint / Format ----------------
@@ -72,3 +73,12 @@ markers = [
   "golden: golden replay determinism tests (SPEC_FULL §19.1, harness lands in M1-6)",
   "integration: needs external services via compose (MariaDB/Redis/...); skips if unreachable",
 ]
+
+# ---------------- Coverage（SPEC_FULL §19.3：core ≥80%；CI python job 強制） ----------------
+
+[tool.coverage.run]
+source = ["core/app"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

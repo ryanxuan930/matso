@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from app.engine.clock import SimClock
@@ -126,13 +127,19 @@ class Kernel:
             self._overrun_count += 1
             events.append(self._build_overrun_event(now.tick, duration_ns))
 
-        written = self._event_sink.append(self._session_id, events)
+        # 同步 driver（SQLAlchemy/redis-py）以 to_thread 執行，避免阻塞 event loop
+        # （HOW_TO §3.1；O1.7/R9）。逐一 await → 順序不變 → 決定性不受影響。
+        written = await asyncio.to_thread(self._event_sink.append, self._session_id, events)
         # 廣播本 tick 的熱狀態增量（只含變動欄位）。子系統的狀態寫入路徑於 O3.4 接上，
         # 現階段 diff 可能為空——廣播空 diff 由 broadcaster 自行略過。
         await self._broadcaster.publish(now.tick, self._hot_state.drain_diff())
-        # 每 N ticks 存 checkpoint（SPEC_FULL §3.4，預設 300）。
+        # 每 N ticks 存 checkpoint（SPEC_FULL §3.4，預設 300），錨定當下 ledger tip seq。
         if self._checkpointer is not None and now.tick % self._checkpoint_interval == 0:
-            self._checkpointer.checkpoint(self._session_id, now.tick, self._hot_state.get_all())
+            state = await asyncio.to_thread(self._hot_state.get_all)
+            ledger_seq = self._event_sink.tip_seq(self._session_id)
+            await asyncio.to_thread(
+                self._checkpointer.checkpoint, self._session_id, now.tick, state, ledger_seq
+            )
         self._clock.advance()
 
         return TickReport(
@@ -149,11 +156,13 @@ class Kernel:
         return [await self.run_tick() for _ in range(n_ticks)]
 
     def _build_overrun_event(self, tick: int, duration_ns: int) -> LedgerEvent:
-        # 診斷事件；duration 為真實牆鐘（非決定性），僅在 overrun 時出現，不影響模擬 state。
+        # 診斷事件。duration 為真實牆鐘（非決定性）→ 放 detail（不入 hash chain，O1.7/R8）。
+        # 注意：事件「出現與否」仍取決於機器速度，故含 overrun 的生產 ledger 本就不可
+        # 由重播逐位元重現；golden replay 比對的是 stateHash（不受影響）。
         return LedgerEvent(
             event_type="TICK_OVERRUN",
             tick=tick,
-            ai_decision={
+            detail={
                 "duration_ms": duration_ns / _NS_PER_MS,
                 "budget_ms": self._tick_budget_ms,
             },

@@ -14,6 +14,7 @@ import sys
 
 from sqlalchemy import select
 
+from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.models import TacticalEventLog
 from app.state.ledger import verify_chain
@@ -29,7 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    engine = make_engine(_normalize_url(args.database_url) if args.database_url else None)
+    # URL 正規化統一走 Settings.sqlalchemy_url（O1.7/r13，勿在此複製 driver 映射邏輯）
+    url = Settings(database_url=args.database_url).sqlalchemy_url if args.database_url else None
+    engine = make_engine(url)
     session_factory = make_session_factory(engine)
 
     with session_factory() as db:
@@ -37,10 +40,10 @@ def main(argv: list[str] | None = None) -> int:
             select(TacticalEventLog)
             .where(TacticalEventLog.session_id == args.session)
             .order_by(TacticalEventLog.seq.asc())
+            .execution_options(yield_per=1000)  # streaming：大 session 不整批進記憶體（r15）
         )
-        events = list(db.execute(stmt).scalars().all())
+        result = verify_chain(db.execute(stmt).scalars())
 
-    result = verify_chain(events)
     if result.ok:
         print(f"OK：session {args.session} 的 {result.verified_count} 個事件 hash chain 完整。")
         return 0
@@ -50,13 +53,6 @@ def main(argv: list[str] | None = None) -> int:
         f"（已驗證 {result.verified_count} 筆）。\n原因：{result.reason}"
     )
     return 1
-
-
-def _normalize_url(url: str) -> str:
-    prefix = "mysql://"
-    if url.startswith(prefix):
-        return "mysql+pymysql://" + url[len(prefix) :]
-    return url
 
 
 if __name__ == "__main__":

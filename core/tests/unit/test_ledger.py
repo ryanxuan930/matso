@@ -1,16 +1,17 @@
-"""LedgerWriter / hash chain 單元測試（SQLite in-memory，不需 compose）。"""
+"""LedgerWriter / hash chain 單元測試（SQLite in-memory，不需 compose）。
+
+session_factory 由 core/tests/conftest.py 提供。
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from itertools import pairwise
 
 import pytest
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.models import Base, TacticalEventLog, WargameSession
+from app.models import TacticalEventLog, WargameSession
 from app.state.ledger import (
     GENESIS_HASH,
     LedgerEvent,
@@ -19,19 +20,6 @@ from app.state.ledger import (
     compute_self_hash,
     verify_chain,
 )
-
-
-@pytest.fixture
-def session_factory() -> Iterator[sessionmaker[Session]]:
-    # StaticPool：讓 in-memory DB 在多個 session 間共用同一連線
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    engine.dispose()
 
 
 @pytest.fixture
@@ -212,3 +200,43 @@ def test_verify_detects_deleted_event(
 
 def test_verify_empty_chain_ok() -> None:
     assert verify_chain([]).ok
+
+
+# ---------------- O1.7 回歸：多 writer tip 衝突 / detail 欄 ----------------
+
+
+def test_stale_tip_recovers_after_foreign_append(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """R1：另一 writer 寫入後，本 writer 的過期 tip 應自動重讀並續號（不拋 IntegrityError）。"""
+    a = LedgerWriter(session_factory)
+    b = LedgerWriter(session_factory)
+    a.append(session_id, [LedgerEvent(event_type="DETECTION", tick=0)])  # seq 0（a tip=0）
+    b.append(session_id, [LedgerEvent(event_type="DETECTION", tick=1)])  # seq 1（a tip 過期）
+    a.append(session_id, [LedgerEvent(event_type="DETECTION", tick=2)])  # 應偵測衝突→接 seq 2
+    rows = _ordered_events(session_factory, session_id)
+    assert [r.seq for r in rows] == [0, 1, 2]
+    assert verify_chain(rows).ok
+
+
+def test_tip_seq_reports_chain_tip(session_factory: sessionmaker[Session], session_id: str) -> None:
+    writer = LedgerWriter(session_factory)
+    assert writer.tip_seq(session_id) == -1  # 空 session
+    writer.append(session_id, [LedgerEvent(event_type="DETECTION", tick=i) for i in range(3)])
+    assert writer.tip_seq(session_id) == 2
+
+
+def test_detail_persisted_but_excluded_from_hash(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """R8：detail 落庫、但不入 hash——同內容不同 detail 的事件 selfHash 相同。"""
+    writer = LedgerWriter(session_factory)
+    writer.append(
+        session_id,
+        [LedgerEvent(event_type="TICK_OVERRUN", tick=0, detail={"duration_ms": 123.456})],
+    )
+    rows = _ordered_events(session_factory, session_id)
+    assert rows[0].detail == {"duration_ms": 123.456}
+    # verify_chain 以「不含 detail」的 canonical payload 重算 selfHash 仍通過
+    # → 證明 detail 不在 hash 範圍（牆鐘診斷不會破壞重播可重現性）
+    assert verify_chain(rows).ok

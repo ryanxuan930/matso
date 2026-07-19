@@ -54,8 +54,13 @@
 
 ### O1.6 Golden replay harness　[deps: O1.5]
 - **目標**：SPEC_FULL §19.1 的重播驗證機制 + CI 接入。
-- **產出**：`core/tests/replay/harness.py`（讀 ledger 指令序列重跑、比對 `stateHash`）、`ops/tools/rerecord_golden.py`、第一個 golden：空想定跑 100 ticks。移除 `test_golden_placeholder.py`。
+- **產出**：`core/tests/replay/harness.py`（重跑想定、比對 `stateHash`）、`ops/tools/rerecord_golden.py`、第一個 golden：空想定跑 100 ticks。移除 `test_golden_placeholder.py`。
 - **驗收**：`uv run pytest core/tests/replay -m golden` 以真 golden 通過；改動任一裁決常數（手動實驗）會使 hash 比對失敗。
+- **範圍註記（O1.7/R10）**：Phase 1 驗證「合成想定 + seed 決定性」；SPEC §3.2 字面的「讀 Ledger 指令序列重播」需 orders 存在，**列入 O3.1 驗收**。
+
+### O1.7 M0–M1 code review 修復（2026-07-19 完成）
+- **內容**：修復 review 發現 R1–R10 + r11–r18（清單見 PROGRESS.md backlog、worklog docs/worklog/O1.7.md）。
+- 重點：rollback×ledger×recover 三連 bug（ledgerSeq 錨定 + 較晚 checkpoint 刪除 + writer tip 衝突自復原）、CI 整合測試真跑 + coverage gate、TickPacer 自動降頻、detail 診斷欄（不入 hash）、Redis 批次化 + to_thread、errors.py、測試鷹架 dedup。
 
 ---
 
@@ -95,7 +100,7 @@
 ### O3.1 Order pipeline
 - **規格**：SPEC_FULL §2.3（八步生命週期）、§16.1；`Order` 表已存在。
 - **產出**：`core/app/orders/`——REST `POST /sessions/{id}/orders`（契約先補完 `contracts/core_api.yaml` 的 request/response schema）、validator、同步物理預檢（呼叫 terrain client，p99<50ms）、狀態機（PENDING→…→COMPLETED/REJECTED/CANCELLED 全轉移 + 非法轉移防護）。
-- **驗收**：schemathesis 對已實作端點通過；狀態機 property test；預檢失敗回 422 + error code。
+- **驗收**：schemathesis 對已實作端點通過；狀態機 property test；預檢失敗回 422 + error code。**加：ledger 指令序列重播想定接入 golden harness**（補完 SPEC §3.2 字面保證，O1.6 範圍註記 / O1.7/R10）。
 
 ### O3.2 交戰裁決　[deps: O3.1]
 - **規格**：SPEC_FULL §7.1；武器資料 schema `contracts/weaponeering.schema.json`。

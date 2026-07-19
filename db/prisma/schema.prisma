@@ -150,6 +150,9 @@ model TacticalEventLog {
   reasoningChain String? @db.Text // Mandatory CoT (IHL compliance & transparency)
   aiDecision     Json
   damageCalc     Float?
+  // 非證據性診斷（TICK_OVERRUN 耗時、ROLLBACK 中繼資料等）。
+  // ⚠ 刻意「不」納入 hash chain：可含非決定性值（牆鐘），入鏈會破壞重播可重現性（O1.7/R8）。
+  detail         Json?
 
   // Tamper-evident hash chain (SPEC_FULL §15.3)
   prevHash String
@@ -261,6 +264,9 @@ model SimCheckpoint {
   id        String   @id @default(uuid())
   sessionId String
   tick      Int
+  // 快照當下的 ledger tip seq。rollback 後 tick 非單調，seq 才是時間軸身分（O1.7/R3）：
+  // load_latest 依 ledgerSeq 排序、events_after 以 seq 計數。
+  ledgerSeq Int
   stateBlob Bytes // zstd 壓縮完整狀態
   stateHash String // golden replay 驗證用
   createdAt DateTime @default(now())

@@ -20,9 +20,10 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
-      - run: uv run pytest -q
+      - name: Unit tests + coverage gate (SPEC_FULL §19.3 ≥80%)
+        run: uv run pytest -q --cov --cov-report=term
       - name: Golden replay (SPEC_FULL §19.1)
-        run: uv run pytest core/tests/replay -m golden -q
+        run: uv run pytest core/tests/replay -m golden -q --no-cov
 
   frontend:
     name: Frontend lint / typecheck
@@ -108,7 +109,7 @@ jobs:
         run: uv run python ops/tools/schema_sync_check.py
 
   integration:
-    name: Compose stack up + healthchecks
+    name: Compose stack + integration tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,6 +120,31 @@ jobs:
         run: curl -fsS http://localhost:8000/healthz
       - name: Frontend smoke
         run: curl -fsS -o /dev/null http://localhost:3000/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: db/package-lock.json
+      - name: Apply migrations to compose MariaDB
+        working-directory: db
+        env:
+          DATABASE_URL: mysql://root:matso_dev_root@127.0.0.1:3307/matso
+        run: |
+          npm ci
+          npx prisma migrate deploy
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      # O1.7/R4：整合測試必須真的跑在活服務上；出現 skip 視同失敗（防假綠燈）
+      - name: Integration tests against live stack
+        run: |
+          set -o pipefail
+          uv run pytest core/tests/integration -m integration -q --no-cov | tee /tmp/itest.out
+          if grep -qE "skipped" /tmp/itest.out; then
+            echo "::error::integration tests were skipped — services unreachable?"
+            exit 1
+          fi
       - name: Teardown
         if: always()
         working-directory: ops/compose
