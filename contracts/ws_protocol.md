@@ -9,9 +9,13 @@
 { "v": 1, "seq": 10231, "tick": 4211, "type": "STATE_DIFF", "payload": {} }
 ```
 
-- `seq`：per-session 單調遞增（與 Ledger seq 同源）。
-- 重連補償：client 於 `HELLO` 帶 `last_seq`；server 從 Redis ring buffer（最近 5000 條）補送；
-  超出範圍 → 回 `RESYNC_REQUIRED`，client 走 `GET /sessions/{id}/state` 全量重同步。
+- `seq`：per-session 單調遞增的**傳輸層計數器**（Redis INCR；與 Ledger seq 為不同計數器）。
+  ⚠ 不耐 Redis 遺失：Redis 清空時 ring buffer 同滅，崩潰復原流程會呼叫
+  `RedisBroadcaster.reset_stream()` 讓新串流自 seq=1 重新起算。
+- 重連補償：client 於 `HELLO` 帶 `last_seq`；server 從 Redis ring buffer（最近 5000 條）補送。
+  `last_seq` **不在 ring buffer 現存 seq 範圍內**（缺口過大「或 seq 倒退」，即崩潰復原後的新串流）
+  → 一律回 `RESYNC_REQUIRED`，client 走 `GET /sessions/{id}/state` 全量重同步。
+  O4.3 實作 WS server 時 MUST 以「範圍檢查」而非「差值檢查」判斷（O1.7/R7）。
 
 ## 訊息型別
 

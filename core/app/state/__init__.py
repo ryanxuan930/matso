@@ -3,6 +3,7 @@
 Kernel 是 Redis 熱狀態的唯一寫入者（SPEC_FULL §3.4）；Ledger 為 append-only（§15.3）。
 """
 
+from app.errors import CheckpointTooLargeError, RollbackTargetNotFoundError
 from app.state.broadcaster import (
     RING_CAPACITY,
     CollectingBroadcaster,
@@ -14,7 +15,6 @@ from app.state.checkpoint import (
     Checkpointer,
     CheckpointManager,
     CheckpointRecord,
-    CheckpointTooLargeError,
     RecoveryResult,
     RollbackResult,
     compute_state_hash,
@@ -59,6 +59,7 @@ __all__ = [
     "RedisBroadcaster",
     "RedisHotState",
     "RollbackResult",
+    "RollbackTargetNotFoundError",
     "SessionDiff",
     "UnitDiff",
     "UnitState",

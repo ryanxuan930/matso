@@ -139,6 +139,8 @@ class TacticalEventLog(Base):
     reasoning_chain: Mapped[str | None] = mapped_column("reasoningChain", Text)
     ai_decision: Mapped[dict] = mapped_column("aiDecision", JSON)  # type: ignore[type-arg]
     damage_calc: Mapped[float | None] = mapped_column("damageCalc", Double)
+    # 非證據性診斷；刻意不入 hash chain（可含牆鐘等非決定性值，見 ledger.py）
+    detail: Mapped[dict | None] = mapped_column("detail", JSON)  # type: ignore[type-arg]
     prev_hash: Mapped[str] = mapped_column("prevHash", String(191))
     self_hash: Mapped[str] = mapped_column("selfHash", String(191))
 
@@ -220,6 +222,8 @@ class SimCheckpoint(Base):
     id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
     session_id: Mapped[str] = mapped_column("sessionId", String(191))
     tick: Mapped[int] = mapped_column("tick", Integer)
+    # 快照當下的 ledger tip seq——rollback 後 tick 非單調，seq 才是時間軸身分（O1.7/R3）
+    ledger_seq: Mapped[int] = mapped_column("ledgerSeq", Integer)
     state_blob: Mapped[bytes] = mapped_column("stateBlob", LargeBinary)
     state_hash: Mapped[str] = mapped_column("stateHash", String(191))
     created_at: Mapped[str] = mapped_column(

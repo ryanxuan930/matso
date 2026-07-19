@@ -1,7 +1,6 @@
-"""RedisHotState / RedisBroadcaster 整合測試（連 compose 的 Redis:6379）。
+"""RedisHotState / RedisBroadcaster 整合測試（連 compose 的 Redis:6379；fixture 見 conftest）。
 
 驗收（TASKS.md O1.4）：寫入→讀回 roundtrip；改 3 個欄位 → diff 恰含 3 欄。
-compose 未啟動時整個模組 skip。
 """
 
 from __future__ import annotations
@@ -17,19 +16,6 @@ from app.state.broadcaster import RING_CAPACITY, RedisBroadcaster
 from app.state.hot_state import RedisHotState
 
 pytestmark = pytest.mark.integration
-
-DEV_REDIS_URL = "redis://localhost:6379/0"
-
-
-@pytest.fixture(scope="module")
-def redis_client() -> Iterator[redis.Redis]:
-    client = redis.Redis.from_url(DEV_REDIS_URL, decode_responses=True)
-    try:
-        client.ping()
-    except Exception as exc:  # 連不上就整組 skip
-        pytest.skip(f"Redis:6379 未就緒（compose 未啟動？）：{exc}")
-    yield client
-    client.close()
 
 
 @pytest.fixture
@@ -86,6 +72,27 @@ async def test_broadcaster_skips_empty_diff(redis_client: redis.Redis, session_i
     bc = RedisBroadcaster(redis_client, session_id)
     await bc.publish(tick=0, diff={})
     assert redis_client.exists(f"session:{session_id}:ring") == 0
+
+
+async def test_reset_stream_clears_seq_and_ring(redis_client: redis.Redis, session_id: str) -> None:
+    """O1.7/R7：崩潰復原後傳輸層重置——seq 計數器與 ring buffer 一併清除，新串流從 1 起。"""
+    bc = RedisBroadcaster(redis_client, session_id)
+    await bc.publish(tick=0, diff={"u1": {"health": 80}})
+    assert redis_client.exists(f"session:{session_id}:ring") == 1
+    bc.reset_stream()
+    assert redis_client.exists(f"session:{session_id}:ring") == 0
+    assert redis_client.exists(f"session:{session_id}:broadcast_seq") == 0
+    await bc.publish(tick=1, diff={"u1": {"health": 60}})
+    ring = redis_client.lrange(f"session:{session_id}:ring", 0, -1)
+    assert json.loads(ring[0])["seq"] == 1  # 新串流重新起算
+
+
+def test_hot_state_rejects_bytes_client(session_id: str) -> None:
+    """O1.7/r18：非 decode_responses client 建構時即被拒（而非 checkpoint 時才爆）。"""
+    bytes_client = redis.Redis.from_url("redis://localhost:6379/0")  # 預設 bytes
+    with pytest.raises(ValueError, match="decode_responses"):
+        RedisHotState(bytes_client, session_id)
+    bytes_client.close()
 
 
 async def test_ring_buffer_capped(redis_client: redis.Redis, session_id: str) -> None:

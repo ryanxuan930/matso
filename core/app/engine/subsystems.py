@@ -81,9 +81,13 @@ class Broadcaster(Protocol):
 
 @runtime_checkable
 class EventSink(Protocol):
-    """事件寫入端。app.state.ledger.LedgerWriter 即滿足此介面。"""
+    """事件寫入端。app.state.ledger.LedgerWriter 即滿足此介面。
+
+    tip_seq：目前鏈尾 seq（空 session 為 -1），供 checkpoint 錨定 ledgerSeq（O1.7/R3）。
+    """
 
     def append(self, session_id: str, events: Sequence[LedgerEvent]) -> list[str]: ...
+    def tip_seq(self, session_id: str) -> int: ...
 
 
 # --------------------------------------------------------------------------
@@ -136,3 +140,13 @@ class NoOpTriggerChecker:
 class NoOpBroadcaster:
     async def publish(self, tick: int, diff: SessionDiff) -> None:
         return None
+
+
+class NoOpEventSink:
+    """丟棄事件的 sink（確定性 replay / 測試用）。"""
+
+    def append(self, session_id: str, events: Sequence[LedgerEvent]) -> list[str]:
+        return []
+
+    def tip_seq(self, session_id: str) -> int:
+        return -1

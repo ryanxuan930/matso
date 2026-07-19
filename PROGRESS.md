@@ -4,8 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-18（晚）：**O1.6 完成 → M1 里程碑達成**（模擬骨幹 O1.1–O1.6 全部完成）。branch `feat/o1.6-golden-replay`（stacked on O1.5）。golden replay harness + 2 goldens（empty_100、rng_walk_100）+ drift 偵測 + rerecord 工具；手動改常數驗證 hash 失敗。105 passed。worklog: docs/worklog/O1.6.md。
-- 2026-07-18（晚）：O1.5（checkpoint/復原）、O1.4（Redis 熱狀態）、O1.3（tick loop）、O1.2（Ledger）、O1.1（SimClock+RNG）完成。
+- 2026-07-19：**O1.7 完成（code review 全數修復）**。branch `feat/o1.7-review-fixes`（stacked on O1.6）。rollback×recover 三連 bug（ledgerSeq 錨定）、CI 整合真跑 + coverage gate（96.77%）、TickPacer 自動降頻、detail 診斷欄（migration `o17_detail_ledgerseq`）、errors.py、Redis 批次化 + to_thread、測試鷹架 dedup。130 單元 + 16 整合全綠。worklog: docs/worklog/O1.7.md。
+- 2026-07-18：M1 里程碑達成（O1.1–O1.6：SimClock/RNG、Ledger、tick loop、熱狀態、checkpoint、golden replay）。
 - 下一步：**M2 地理引擎**（O2.1 起；需 TW_ALL.tiff，未有時用合成夾具）。
 
 ## 任務板
@@ -23,6 +23,7 @@
 | O1.4 (M1-4) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.4-hot-state-diff (stacked) | Redis 熱狀態 single-writer + compute_diff + RedisBroadcaster（ring buffer 5000）+ Kernel drain/broadcast；20 測試（6 Redis 整合） |
 | O1.5 (M1-5) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.5-checkpoint-recovery (stacked) | ADR 002 + zstd checkpoint + recover + rollback（ROLLBACK 事件）+ Kernel 每 N ticks；20 測試（4 崩潰復原整合） |
 | O1.6 (M1-6) | DONE | Opus 4.8 (2026-07-18) | branch feat/o1.6-golden-replay (stacked) | **M1 達成**。golden replay harness + 2 goldens + drift 偵測 + rerecord 工具；4 golden 測試 |
+| O1.7 | DONE | Fable 5 (2026-07-19) | branch feat/o1.7-review-fixes (stacked) | code review 全數修復：ledgerSeq 錨定 + rollback 修正、TickPacer 降頻、detail 欄（migration）、CI 整合真跑 + coverage 96.77%、errors.py、Redis 批次化；130 單元 + 16 整合測試 |
 | O2.1 ~ O2.5 | TODO | — | — | **M2 地理引擎，下一里程碑**。TW_ALL.tiff 需放至 modules/terrain/data/（不入 git）；rasterio/h3 依賴屆時才加 |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
@@ -51,6 +52,38 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## Backlog / 發現的問題
 
+### 2026-07-19 M0–M1 code review 發現（10 主要 + 8 次要；修復卡 = O1.7，worklog: docs/worklog/O1.7.md）
+
+> **修復狀態（同日，O1.7）**：R1–R4、R6–R9、r11–r18 ✅ **全部修復**（含回歸測試）；
+> R5/R10 ✅ 規格與任務已對齊——「checkpoint 後前滾」與「ledger 指令序列重播」為 Phase 註記，
+> 實作列入 **O3.1 驗收**（SPEC §3.2/§18 已加註）。r16 的 regex→DMMF 解析升級留備忘（WARN 已改硬錯誤）。
+
+主要發現（依嚴重度；★ = 已實證重現）：
+- **[R1]★ rollback 後 LedgerWriter tip 快取過期** → Kernel 下一次 append 產生重複 seq → IntegrityError 停擺 tick loop。兩個 writer 實例間無快取失效機制（ledger.py `_tips`）。
+- **[R2]★ recover() 復活被 rollback 的狀態**：rollback 不刪較晚的 checkpoint，recover 無條件取最高 tick → 崩潰復原悄悄撤銷回滾（checkpoint.py load_latest）。
+- **[R3] events_after_checkpoint 以 tick 計數**，rollback 後 ledger tick 非單調 → 計數混入被棄世代。需以單調的 ledger seq 錨定 checkpoint（加 `ledgerSeq` 欄）。
+- **[R4] CI 整合測試假綠燈**：python job 無 DB/Redis services → 12 個整合測試全 skip；integration job 起了 compose 卻不跑 pytest。
+- **[R5] SPEC §18「RPO=0」與實作不符**：recover 只到 checkpoint 當下、無前滾、RecoveryResult 缺續跑資訊。實作已記 deferred，但 SPEC 文字未加 Phase 註記。
+- **[R6] SPEC §3.3 MUST「自動降頻」無任何實作**：overran/overrun_count 無消費者，runtime 節奏迴圈不存在。
+- **[R7] broadcast seq 存 Redis INCR 不耐 Redis 清空**（正是復原假設的崩潰模式）→ ws 重連補償契約失效；且 ws_protocol.md「與 Ledger seq 同源」與實作不符。
+- **[R8] TICK_OVERRUN 把牆鐘 duration_ms 寫進被 hash 的 aiDecision** → 生產 ledger 無法由重播重現（golden 不受影響）。應把非決定性診斷移出 hash 範圍（中性 `detail` 欄）。
+- **[R9] async tick path 上同步阻塞 I/O**（ledger commit / redis / checkpoint）違反 HOW_TO §3.1；RedisHotState 每單位 GET+SET 與 get_all N+1 → 500 單位時 ~150ms/tick 純網路等待。
+- **[R10] golden replay 未實作「讀 Ledger 指令序列重跑」**（SPEC §3.2 / TASKS O1.6 字面），目前只驗合成想定 seed 決定性；ledger-based 重播應明確改記為 O3.1 後補作。
+
+次要發現：
+- [r11] `core/app/errors.py` 未建（HOW_TO §3.1 要求領域錯誤集中定義）；rollback 的領域錯誤拋裸 ValueError。
+- [r12] 覆蓋率工具未接（SPEC §19.3 要求 ≥80% 無法量測）。
+- [r13] verify_ledger.py 的 `_normalize_url` 與 config.py `sqlalchemy_url` 重複同一段邏輯。
+- [r14] 測試鷹架重複：SQLite session_factory fixture ×3、no-op Kernel 建構 ×4、`_NullSink` ×2、DEV_DB/REDIS_URL ×2——無 conftest.py。
+- [r15] verify_ledger 全量載入事件（大 session 恐 OOM）；verify_chain 已收 Iterable，可 streaming。
+- [r16] schema_sync_check 對未知型別只 WARN 不 fail → 該欄 drift 永遠測不到（假綠燈）；model body regex 對未來含 `}` 的區塊會截斷。
+- [r17] `_BaseHotState` 用 NotImplementedError 而非 ABC abstractmethod（漏實作晚至 tick 中才爆）。
+- [r18] RedisHotState 隱性要求 `decode_responses=True`，建構時不驗證（bytes client → checkpoint 時 TypeError）。
+- （已反駁：RNG `_derive_seed` 冒號碰撞疑慮——master_seed 為 int，第一個冒號即無歧義分隔，映射單射。）
+- （設計約束備忘：compute_diff 不表達「欄位移除」——熱狀態欄位集固定的前提下成立，docstring 已註明；子系統設計時勿用刪 key 表達狀態。）
+
+### 既有 backlog
+
 - **CI workflow 尚未在真 GitHub Actions 驗證過**（repo 無 remote/commit）。首次 push 後檢查五個 job。
 - schema 變更流程：因 ADR 004，PR checklist 必須人工確認「改 schema.prisma 必附 migration」。
 - SPEC_FULL §16.3 的 proto 片段仍寫 `service PluginBase`，實際契約已更名 `PluginBaseService`（buf SERVICE_SUFFIX）——下次改 SPEC_FULL 時順手更新。
@@ -71,6 +104,6 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
    - **前置**：使用者需把 `TW_ALL.tiff` 放至 `modules/terrain/data/`（不入 git，.gitignore 已擋）。**沒有真檔時先用合成小型 GeoTIFF 夾具開發**（<1MB，入 git），真檔到位後跑 benchmark（p99<5ms、冷啟動<30s 為真檔限定）。
    - **依賴**：`rasterio`、`numpy` 加到 modules/terrain（`cd modules/terrain` 改 pyproject → root `uv sync`）。GDAL 由 rasterio wheel 內帶。這是第一個引入重依賴的 module，注意 uv sync 時間（ADR 001 有註記可改分離策略）。
    - 提醒：terrain 是 Core 硬依賴（DOWN→Session PAUSE），但那是 O2.5 插件化才接；O2.1–O2.4 先做純函式庫。
-2. **分支鏈狀態**：main ← O1.1 ← O1.2 ← O1.3 ← O1.4 ← O1.5 ← O1.6（皆 stacked，**未合併/推送**）——由使用者決定合併時機。**建議使用者考慮此時把 M1 整條鏈合併到 main**（6 張卡、105 測試綠），再從 main 開 M2 分支，避免鏈太長。
+2. **分支鏈狀態**：main ← O1.1 ← … ← O1.6 ← O1.7（皆 stacked，**未合併/推送**）——由使用者決定合併時機。**建議此時把整條鏈合併到 main**（M1 + review 修復、146 測試綠），再從 main 開 M2 分支。
 3. 開發環境：`uv sync` 後一切在 repo root 跑；compose 已可 `docker compose up -d --wait`（mariadb 3307 / redis 6379）。整合測試需 compose 起著才會實際執行（否則自動 skip）。
 4. **golden replay 維護**：改動確定性邏輯後跑 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。CI Linux 首跑 replay job 若因平台差異失敗，見 O1.6 worklog「CI 首跑觀察點」。

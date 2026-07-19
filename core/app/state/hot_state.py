@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import abc
 import json
 from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
@@ -42,28 +43,34 @@ class HotStateStore(Protocol):
     def restore(self, state: Mapping[str, Mapping[str, Any]]) -> None: ...
 
 
-class _BaseHotState:
-    """共用 diff 累積邏輯；子類別只需實作實際存取（_read/_write/get_all）。"""
+class _BaseHotState(abc.ABC):
+    """共用 diff 累積邏輯；子類別只需實作實際存取（_read/_write/get_all/restore）。
+
+    抽象方法（而非 NotImplementedError）：漏實作在類別定義/建構時即失敗，
+    而不是晚至 tick 中途才爆（O1.7/r17）。
+    """
 
     def __init__(self) -> None:
         self._pending: SessionDiff = {}
 
     # --- 子類別實作 ---
-    def _read(self, unit_id: str) -> UnitState | None:
-        raise NotImplementedError
+    @abc.abstractmethod
+    def _read(self, unit_id: str) -> UnitState | None: ...
 
-    def _write(self, unit_id: str, state: UnitState) -> None:
-        raise NotImplementedError
+    @abc.abstractmethod
+    def _write(self, unit_id: str, state: UnitState) -> None: ...
 
-    def get_all(self) -> dict[str, UnitState]:
-        raise NotImplementedError
+    @abc.abstractmethod
+    def get_all(self) -> dict[str, UnitState]: ...
+
+    @abc.abstractmethod
+    def restore(self, state: Mapping[str, Mapping[str, Any]]) -> None: ...
 
     # --- 共用 ---
     def put_unit(self, unit_id: str, state: Mapping[str, Any]) -> None:
         """部署/整體設定一個單位。新單位的所有欄位視為 diff（讓 client 學到它）。"""
-        snapshot = dict(state)
-        self._write(unit_id, snapshot)
-        self._pending[unit_id] = dict(snapshot)
+        self._write(unit_id, dict(state))
+        self._pending[unit_id] = dict(state)
 
     def update_unit(self, unit_id: str, changes: Mapping[str, Any]) -> UnitDiff:
         """套用部分更新（Kernel 唯一寫入者），回傳實際變動的欄位。"""
@@ -108,12 +115,28 @@ class InMemoryHotState(_BaseHotState):
 
 
 class RedisHotState(_BaseHotState):
-    """Redis-backed 熱狀態。key: session:{session_id}:unit:{unit_id}。"""
+    """Redis-backed 熱狀態。key: session:{session_id}:unit:{unit_id}。
+
+    效能設計（O1.7/R9）：Kernel 是唯一寫入者（SPEC_FULL §3.4），因此本實例維護
+    in-process mirror cache——讀取零 Redis 往返；Redis 是 write-through 副本，
+    供觀測者與崩潰復原使用。get_all 冷路徑以 scan + 單次 MGET 批次載入（非 N+1）；
+    restore 以 pipeline 一次往返。⚠ 若違反 single-writer（其他行程直寫單位 key），
+    mirror 會過期——那本身就是違反架構原則。
+    """
 
     def __init__(self, redis_client: redis.Redis, session_id: str) -> None:
         super().__init__()
+        kwargs = redis_client.connection_pool.connection_kwargs
+        if not kwargs.get("decode_responses"):
+            raise ValueError(
+                "RedisHotState 需要 decode_responses=True 的 client"
+                "（用 app.cache.make_redis 建立）；bytes client 會在 checkpoint "
+                "序列化時以 TypeError 失敗（O1.7/r18）"
+            )
         self._redis = redis_client
         self._session_id = session_id
+        self._cache: dict[str, UnitState] = {}
+        self._cache_complete = False  # True = cache 已涵蓋本 session 全部單位
 
     def _key(self, unit_id: str) -> str:
         return f"session:{self._session_id}:unit:{unit_id}"
@@ -122,29 +145,45 @@ class RedisHotState(_BaseHotState):
         return f"session:{self._session_id}:unit:"
 
     def _read(self, unit_id: str) -> UnitState | None:
+        cached = self._cache.get(unit_id)
+        if cached is not None:
+            return dict(cached)
+        if self._cache_complete:
+            return None  # 全量快照後 cache 即權威，miss = 不存在
         raw = self._redis.get(self._key(unit_id))
         if raw is None:
             return None
         loaded: UnitState = json.loads(raw)
+        self._cache[unit_id] = dict(loaded)
         return loaded
 
     def _write(self, unit_id: str, state: UnitState) -> None:
+        self._cache[unit_id] = dict(state)
         self._redis.set(self._key(unit_id), json.dumps(state))
 
     def get_all(self) -> dict[str, UnitState]:
+        if self._cache_complete:
+            return {k: dict(v) for k, v in self._cache.items()}
         prefix = self._prefix()
+        keys = list(self._redis.scan_iter(match=f"{prefix}*"))
         result: dict[str, UnitState] = {}
-        for key in self._redis.scan_iter(match=f"{prefix}*"):
-            unit_id = key[len(prefix) :]
-            raw = self._redis.get(key)
-            if raw is not None:
-                result[unit_id] = json.loads(raw)
+        if keys:
+            for key, raw in zip(keys, self._redis.mget(keys), strict=True):
+                if raw is not None:
+                    result[key[len(prefix) :]] = json.loads(raw)
+        self._cache = {k: dict(v) for k, v in result.items()}
+        self._cache_complete = True
         return result
 
     def restore(self, state: Mapping[str, Mapping[str, Any]]) -> None:
-        # 清掉本 session 現有單位 key，再寫入快照狀態（復原/回滾，不產生 diff）
-        for key in list(self._redis.scan_iter(match=f"{self._prefix()}*")):
-            self._redis.delete(key)
+        # 復原/回滾：清掉本 session 現有單位 key、寫入快照——單一 pipeline 往返，不產生 diff
+        stale_keys = list(self._redis.scan_iter(match=f"{self._prefix()}*"))
+        pipe = self._redis.pipeline()
+        if stale_keys:
+            pipe.delete(*stale_keys)
         for unit_id, unit_state in state.items():
-            self._redis.set(self._key(unit_id), json.dumps(dict(unit_state)))
+            pipe.set(self._key(unit_id), json.dumps(dict(unit_state)))
+        pipe.execute()
+        self._cache = {k: dict(v) for k, v in state.items()}
+        self._cache_complete = True
         self._pending = {}

@@ -70,8 +70,12 @@ def parse_prisma(text: str) -> dict[str, dict[str, ColumnSpec]]:
             elif base_type in _SCALAR_CATEGORY:
                 category = _SCALAR_CATEGORY[base_type]
             else:
-                print(f"[WARN] {model}.{field_name}: 未知型別 {base_type}，跳過")
-                continue
+                # 未知型別 = 硬錯誤（O1.7/r16）：若只 WARN 跳過，該欄從此不在比對範圍，
+                # 真 drift 永遠測不到（CI 假綠燈）。新 Prisma 型別需明確加入 _SCALAR_CATEGORY。
+                raise SystemExit(
+                    f"schema_sync_check：{model}.{field_name} 使用未知型別 {base_type}——"
+                    f"請將其加入 _SCALAR_CATEGORY 的映射後再跑（拒絕靜默跳過）"
+                )
             columns[field_name] = ColumnSpec(
                 name=field_name,
                 category=category,

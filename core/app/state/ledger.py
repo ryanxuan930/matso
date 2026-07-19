@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import TacticalEventLog
@@ -55,7 +56,7 @@ def canonical_event_payload(
     """建構進入 hash 的決定性欄位集合。
 
     ⚠ 寫入（LedgerWriter）與驗證（verify_chain）都必須經由本函式，兩者一致才能自我驗證。
-    刻意排除 id 與 timestamp（非決定性），確保 golden replay 可重現。
+    刻意排除 id、timestamp 與 detail（皆可含非決定性內容），確保 golden replay 可重現。
     """
     return {
         "sessionId": session_id,
@@ -94,6 +95,11 @@ class LedgerEvent:
     reasoning_chain: str | None = None
     ai_decision: dict[str, Any] = field(default_factory=dict)
     damage_calc: float | None = None
+    # 非證據性診斷（TICK_OVERRUN 耗時、ROLLBACK 中繼資料等）。
+    # ⚠ 刻意「不」納入 canonical_event_payload / hash chain：可含牆鐘等非決定性值，
+    # 入鏈會使生產 ledger 無法由確定性重播重現（O1.7/R8）。竄改 detail 不觸發 verify，
+    # 因此證據性欄位一律不得放這裡。
+    detail: dict[str, Any] | None = None
 
 
 class LedgerWriter:
@@ -109,9 +115,29 @@ class LedgerWriter:
         self._tips: dict[str, tuple[int, str]] = {}
 
     def append(self, session_id: str, events: Sequence[LedgerEvent]) -> list[str]:
-        """批次寫入事件，回傳各事件的 selfHash（依序）。空輸入回空清單。"""
+        """批次寫入事件，回傳各事件的 selfHash（依序）。空輸入回空清單。
+
+        tip 快取過期防護（O1.7/R1）：若另一個 writer 實例曾對同 session 寫入
+        （例：白軍 rollback 經 API 層的 writer），本 writer 的快取 seq 會撞
+        UniqueConstraint(sessionId, seq)——此時丟棄快取、自 DB 重讀鏈尾、重試一次。
+        """
         if not events:
             return []
+        try:
+            return self._append_once(session_id, events)
+        except IntegrityError:
+            self._tips.pop(session_id, None)
+            return self._append_once(session_id, events)
+
+    def tip_seq(self, session_id: str) -> int:
+        """目前鏈尾 seq（空 session 為 -1）。供 checkpoint 錨定 ledgerSeq（O1.7/R3）。"""
+        cached = self._tips.get(session_id)
+        if cached is not None:
+            return cached[0]
+        with self._session_factory() as db:
+            return self._tip(db, session_id)[0]
+
+    def _append_once(self, session_id: str, events: Sequence[LedgerEvent]) -> list[str]:
         with self._session_factory() as db:
             last_seq, prev_hash = self._tip(db, session_id)
             rows: list[TacticalEventLog] = []
@@ -146,6 +172,7 @@ class LedgerWriter:
                         reasoning_chain=ev.reasoning_chain,
                         ai_decision=ev.ai_decision,
                         damage_calc=ev.damage_calc,
+                        detail=ev.detail,
                         prev_hash=prev_hash,
                         self_hash=self_hash,
                     )
@@ -153,7 +180,11 @@ class LedgerWriter:
                 prev_hash = self_hash
                 hashes.append(self_hash)
             db.add_all(rows)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                raise
         self._tips[session_id] = (seq, prev_hash)
         return hashes
 

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.engine.clock import SimClock, SimTime
 from app.engine.kernel import Kernel
@@ -22,7 +21,7 @@ from app.engine.subsystems import (
     NoOpTriggerChecker,
     NullMonotonicClock,
 )
-from app.models import Base, TacticalEventLog, WargameSession
+from app.models import TacticalEventLog, WargameSession
 from app.state.hot_state import InMemoryHotState
 from app.state.ledger import LedgerEvent, LedgerWriter, verify_chain
 
@@ -117,6 +116,9 @@ class FakeEventSink:
     def append(self, session_id: str, events: Sequence[LedgerEvent]) -> list[str]:
         self.appended.append((session_id, list(events)))
         return [f"h{i}" for i in range(len(events))]
+
+    def tip_seq(self, session_id: str) -> int:
+        return sum(len(events) for _, events in self.appended) - 1
 
 
 def make_kernel(
@@ -278,7 +280,9 @@ async def test_overrun_emits_event_and_counts() -> None:
     _, events = sink.appended[0]
     overruns = [e for e in events if e.event_type == "TICK_OVERRUN"]
     assert len(overruns) == 1
-    assert overruns[0].ai_decision["budget_ms"] == 200
+    assert overruns[0].detail is not None
+    assert overruns[0].detail["budget_ms"] == 200
+    assert overruns[0].ai_decision == {}  # 診斷不入 aiDecision（O1.7/R8）
 
 
 async def test_overrun_does_not_drop_other_events() -> None:
@@ -324,17 +328,7 @@ async def test_run_negative_rejected() -> None:
         await kernel.run(-1)
 
 
-# ---------------- 端到端：真 LedgerWriter (SQLite) ----------------
-
-
-@pytest.fixture
-def session_factory() -> Iterator[sessionmaker[Session]]:
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(engine)
-    yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    engine.dispose()
+# ---------------- 端到端：真 LedgerWriter (SQLite；session_factory 來自 conftest) ----------------
 
 
 async def test_kernel_writes_verifiable_chain_to_real_ledger(
