@@ -85,7 +85,9 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ### 既有 backlog
 
-- **[O2.1 realdata 待辦]** DTED 真檔 SLA benchmark（冷啟動<30s、p99<5ms）待外接硬碟掛載後執行：`MATSO_DTED_PATH=/Volumes/<硬碟>/TW_ALL.tiff uv run pytest -m realdata`。不達標時的優化方向記於 terrain/dted.py docstring。
+- **[O2.1 realdata ✅ 已驗證]** 真檔 `/Volumes/M200/Maps/TW_ALL.tif`（1GB）SLA benchmark 已通過（冷啟動<30s、p99<5ms）。真檔 nodata=0.0、無 overview。
+- **[O2.3 待辦]** 真檔無 overview 金字塔——viewshed 降採樣需要時，以 gdaladdo 建外部 .ovr 或調整採樣。
+- **[外接硬碟 M200 資產]** TW_ALL.tif / taiwan.osm.pbf / taiwan_drive.graphml 皆在 `/Volumes/M200/Maps/`；路徑一律 env 注入（MATSO_DTED_PATH 等，見 modules/terrain/.env.example），未掛載時 try_open_default 降級、開發用合成夾具。
 - **[上游相容備忘]** rasterio 1.5.0 × numpy 2.5 內部 reshape DeprecationWarning——pyproject filterwarnings 以訊息精確過濾；rasterio 修復後移除該行。
 - **CI workflow 尚未在真 GitHub Actions 驗證過**（repo 無 remote/commit）。首次 push 後檢查五個 job。
 - schema 變更流程：因 ADR 004，PR checklist 必須人工確認「改 schema.prisma 必附 migration」。

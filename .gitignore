@@ -35,6 +35,9 @@ __pycache__/
 # Large geodata & model artifacts (never commit)
 modules/terrain/data/*.tiff
 modules/terrain/data/*.tif
+modules/terrain/data/*.pbf
+modules/terrain/data/*.graphml
+modules/terrain/data/hexcache/
 *.parquet
 *.gguf
 *.safetensors

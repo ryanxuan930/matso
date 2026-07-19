@@ -6,7 +6,15 @@ import time
 from pathlib import Path
 
 import pytest
-from make_fixture import NODATA, PEAK_LAT, PEAK_LNG, PEAK_M, expected_elevation, write_fixture
+from make_fixture import (
+    BASE_M,
+    BELOW_SEA_M,
+    PEAK_LAT,
+    PEAK_LNG,
+    PEAK_M,
+    expected_elevation,
+    write_fixture,
+)
 from terrain.config import TerrainSettings
 from terrain.dted import DtedMap, ElevationResult
 from terrain.errors import DtedFileNotFoundError, OutOfBoundsError
@@ -28,7 +36,7 @@ def dted(fixture_tiff: Path):  # type: ignore[no-untyped-def]
 def test_peak_elevation(dted: DtedMap) -> None:
     result = dted.get_elevation(PEAK_LAT, PEAK_LNG)
     assert not result.water
-    assert result.elevation_m == pytest.approx(PEAK_M, abs=TOL_M)
+    assert result.elevation_m == pytest.approx(BASE_M + PEAK_M, abs=TOL_M)
 
 
 @pytest.mark.parametrize(
@@ -37,7 +45,7 @@ def test_peak_elevation(dted: DtedMap) -> None:
         (23.75, 121.1),  # 山腰（西側）
         (23.6, 121.25),  # 山腰（南側）
         (23.9, 121.35),  # 山腳
-        (23.51, 121.01),  # 角落（遠處，趨近 0）
+        (23.55, 121.38),  # 山腳（近海側，仍屬陸地）
     ],
 )
 def test_known_points_match_closed_form(dted: DtedMap, lat: float, lng: float) -> None:
@@ -46,6 +54,14 @@ def test_known_points_match_closed_form(dted: DtedMap, lat: float, lng: float) -
     result = dted.get_elevation(lat, lng)
     assert not result.water
     assert result.elevation_m == pytest.approx(expected, abs=TOL_M)
+
+
+def test_below_sea_level_land_is_not_water(dted: DtedMap) -> None:
+    # SPEC §4.1 min -3.01m：低於海平面的陸地應回負高程、water=False（不得誤判為海）。
+    # 真檔 nodata=0.0，若把「負值」也當 nodata 就會錯——這是對齊真檔後的關鍵回歸。
+    result = dted.get_elevation(23.7, 121.02)  # lng < 121.05 → 低於海平面帶
+    assert not result.water
+    assert result.elevation_m == pytest.approx(BELOW_SEA_M, abs=0.01)
 
 
 def test_pixel_center_matches_closed_form_exactly(dted: DtedMap, fixture_tiff: Path) -> None:
@@ -60,15 +76,9 @@ def test_pixel_center_matches_closed_form_exactly(dted: DtedMap, fixture_tiff: P
 
 
 def test_nodata_is_sea(dted: DtedMap) -> None:
-    # lng > 121.4 的東側帶狀區為 nodata → 海面 0m / water=True（SPEC §4.1）
+    # lng > 121.4 的東側帶狀區為 nodata（0.0）→ 海面 0m / water=True（SPEC §4.1）
     result = dted.get_elevation(23.75, 121.45)
     assert result == ElevationResult(elevation_m=0.0, water=True)
-
-
-def test_raw_nodata_value_never_leaks(dted: DtedMap) -> None:
-    result = dted.get_elevation(23.9, 121.48)
-    assert result.water
-    assert result.elevation_m != NODATA  # -32768 不得外洩
 
 
 # ---------------- 邊界與錯誤 ----------------
@@ -117,14 +127,36 @@ def test_env_var_overrides_dted_path(fixture_tiff: Path, monkeypatch: pytest.Mon
 
 def test_default_path_points_to_repo_data_dir() -> None:
     settings = TerrainSettings()
-    assert settings.dted_path.name == "TW_ALL.tiff"
+    assert settings.dted_path.name == "TW_ALL.tif"  # 對齊真檔副檔名
     assert settings.dted_path.parent.name == "data"
 
 
 def test_open_default_missing_file_guides_user(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MATSO_DTED_PATH", "/Volumes/not-mounted/TW_ALL.tiff")
+    monkeypatch.setenv("MATSO_DTED_PATH", "/Volumes/not-mounted/TW_ALL.tif")
     with pytest.raises(DtedFileNotFoundError, match="外接硬碟"):
         DtedMap.open_default()
+
+
+# ---------------- fallback：外接硬碟未掛載時系統仍能運作（使用者需求） ----------------
+
+
+def test_try_open_default_returns_none_when_drive_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MATSO_DTED_PATH", "/Volumes/not-mounted/TW_ALL.tif")
+    assert not TerrainSettings().dted_available()
+    assert DtedMap.try_open_default() is None  # 不拋例外 → 上層可降級運作
+
+
+def test_try_open_default_opens_when_available(
+    fixture_tiff: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MATSO_DTED_PATH", str(fixture_tiff))
+    assert TerrainSettings().dted_available()
+    dted = DtedMap.try_open_default()
+    assert dted is not None
+    with dted:
+        assert not dted.get_elevation(PEAK_LAT, PEAK_LNG).water
 
 
 # ---------------- 確定性 ----------------

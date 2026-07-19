@@ -70,8 +70,20 @@ class DtedMap:
 
     @classmethod
     def open_default(cls, settings: TerrainSettings | None = None) -> DtedMap:
-        """依設定（env MATSO_DTED_PATH）開啟。"""
+        """依設定（env MATSO_DTED_PATH）開啟。檔案不存在則拋 DtedFileNotFoundError。"""
         return cls.open((settings or TerrainSettings()).dted_path)
+
+    @classmethod
+    def try_open_default(cls, settings: TerrainSettings | None = None) -> DtedMap | None:
+        """依設定開啟；DTED 不可用（外接硬碟未掛載）時回 None 而非拋例外。
+
+        供 terrain 服務 fallback 啟動：無 DTED 時可改用 hex 快取（O2.2）或標記 DEGRADED，
+        而非讓整個服務崩潰（使用者需求：未連外接硬碟時系統仍能運作）。
+        """
+        cfg = settings or TerrainSettings()
+        if not cfg.dted_available():
+            return None
+        return cls.open(cfg.dted_path)
 
     def close(self) -> None:
         self._ds.close()
