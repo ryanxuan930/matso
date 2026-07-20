@@ -59,6 +59,9 @@ class SyntheticWeather:
     def cell_ids(self) -> list[str]:
         return sorted(self._cells)
 
+    def is_stale(self) -> bool:
+        return False  # SYNTHETIC 為確定性腳本，永不 stale（WeatherProvider 介面）
+
     def interpolate(self, h3_index: str, sim_tick: int) -> RawWeather:
         frames = self._cells[h3_index]
         if sim_tick <= frames[0].tick:

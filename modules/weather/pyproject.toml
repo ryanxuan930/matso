@@ -7,6 +7,8 @@ dependencies = [
   "matso-sdk", # MatsoPlugin base + gRPC stubs（O5.1 插件化）
   "grpcio>=1.68", # gRPC server（WeatherService）
   "pydantic-settings>=2.7", # MATSO_WEATHER_* 環境設定
+  "h3>=4.1", # LIVE 測站→H3 cell 格網化（O5.2）
+  "httpx>=0.28", # CWA 開放資料 HTTP 拉取（O5.2）
 ]
 
 [build-system]

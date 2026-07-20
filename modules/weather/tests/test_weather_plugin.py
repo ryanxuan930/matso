@@ -57,3 +57,18 @@ def test_degraded_without_engine() -> None:
     with run_plugin(plugin) as h:
         m = h.manifest()
         assert m.name == "weather"  # 基礎服務仍在
+
+
+def test_live_stale_health_degraded() -> None:
+    from matso_sdk import HealthState
+    from weather.live import CwaFetchError, LiveWeather
+
+    class _Fail:
+        def fetch(self) -> list:  # type: ignore[type-arg]
+            raise CwaFetchError("no net")
+
+    live = LiveWeather(_Fail(), [], lambda: 0.0)
+    live.refresh()  # 失敗 → stale
+    plugin = WeatherPlugin(live)
+    state, _ = plugin.health()
+    assert state is HealthState.DEGRADED  # SPEC §16.3：weather stale → DEGRADED

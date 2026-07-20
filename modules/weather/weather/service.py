@@ -6,7 +6,7 @@ import grpc
 from matso_sdk._generated import weather_pb2, weather_pb2_grpc
 
 from weather.payload import WeatherMode, WeatherPayload
-from weather.synthetic import SyntheticWeather
+from weather.provider import WeatherProvider
 
 _MODE_TO_PROTO = {
     WeatherMode.LIVE: weather_pb2.WEATHER_MODE_LIVE,
@@ -16,13 +16,13 @@ _MODE_TO_PROTO = {
 
 
 class WeatherService(weather_pb2_grpc.WeatherServiceServicer):
-    def __init__(self, engine: SyntheticWeather) -> None:
-        self._engine = engine
+    def __init__(self, provider: WeatherProvider) -> None:
+        self._provider = provider
 
     def GetWeather(  # noqa: N802 (gRPC 產生的方法名)
         self, request: weather_pb2.GetWeatherRequest, context: grpc.ServicerContext
     ) -> weather_pb2.GetWeatherResponse:
-        return _to_proto(self._engine.payload_at(request.sim_tick))
+        return _to_proto(self._provider.payload_at(request.sim_tick))
 
 
 def _to_proto(payload: WeatherPayload) -> weather_pb2.GetWeatherResponse:

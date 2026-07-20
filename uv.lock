@@ -1028,6 +1028,8 @@ version = "0.1.0"
 source = { editable = "modules/weather" }
 dependencies = [
     { name = "grpcio" },
+    { name = "h3" },
+    { name = "httpx" },
     { name = "matso-sdk" },
     { name = "pydantic-settings" },
 ]
@@ -1035,6 +1037,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "grpcio", specifier = ">=1.68" },
+    { name = "h3", specifier = ">=4.1" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "matso-sdk", editable = "modules/_sdk" },
     { name = "pydantic-settings", specifier = ">=2.7" },
 ]

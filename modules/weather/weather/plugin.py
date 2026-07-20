@@ -1,7 +1,10 @@
-"""WeatherPlugin — 把 WeatherService 套進 MatsoPlugin（O5.1, SPEC §5/§17）。
+"""WeatherPlugin — 把 WeatherService 套進 MatsoPlugin（SPEC §5/§16.3/§17）。
 
-O5.1 只做 SYNTHETIC 模式（腳本關鍵影格插值）。LIVE（CWA）於 O5.2、REPLAY 於 AAR。
-無腳本時 health=DEGRADED（服務仍在，但無天氣資料）。
+支援 SYNTHETIC（O5.1 腳本插值）與 LIVE（O5.2 CWA 拉取），皆經 WeatherProvider 介面。
+健康狀態（SPEC §16.3「weather 進入 stale 模式 → DEGRADED」）：
+- 無 provider（無腳本/未設定）→ DEGRADED（無天氣資料）
+- provider stale（LIVE 拉取失敗）→ DEGRADED（降級為最後有效值）
+- 否則 → HEALTHY
 """
 
 from __future__ import annotations
@@ -10,17 +13,17 @@ import grpc
 from matso_sdk import HealthState, Manifest, MatsoPlugin, PluginKind
 from matso_sdk._generated import weather_pb2_grpc
 
+from weather.provider import WeatherProvider
 from weather.service import WeatherService
-from weather.synthetic import SyntheticWeather
 
 CONTRACT_VERSION = "0.1.0"
-_CAPABILITIES = ("GetWeather", "SYNTHETIC")
+_CAPABILITIES = ("GetWeather", "SYNTHETIC", "LIVE")
 
 
 class WeatherPlugin(MatsoPlugin):
-    def __init__(self, engine: SyntheticWeather | None) -> None:
-        self._engine = engine
-        self._service = WeatherService(engine) if engine is not None else None
+    def __init__(self, provider: WeatherProvider | None) -> None:
+        self._provider = provider
+        self._service = WeatherService(provider) if provider is not None else None
 
     @property
     def manifest(self) -> Manifest:
@@ -36,6 +39,8 @@ class WeatherPlugin(MatsoPlugin):
             weather_pb2_grpc.add_WeatherServiceServicer_to_server(self._service, server)
 
     def health(self) -> tuple[HealthState, str]:
-        if self._engine is None:
-            return HealthState.DEGRADED, "無 SYNTHETIC 腳本，天氣資料不可用"
-        return HealthState.HEALTHY, "SYNTHETIC 就緒"
+        if self._provider is None:
+            return HealthState.DEGRADED, "無天氣來源（無腳本 / CWA 未設定）"
+        if self._provider.is_stale():
+            return HealthState.DEGRADED, "天氣來源 stale（LIVE 拉取失敗，用最後有效值）"
+        return HealthState.HEALTHY, "天氣來源就緒"
