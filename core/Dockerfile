@@ -7,6 +7,9 @@ WORKDIR /workspace
 
 COPY . .
 RUN uv sync --frozen --no-dev --package matso-core
+# gRPC stubs 不入 git（ADR 005）——core 於 import 時鏈到 matso_sdk._generated
+# （app.api.deps → app.plugins.TerrainClient），故 build 內產生。grpcio-tools 僅 build 期臨時取得。
+RUN uv run --no-dev --with grpcio-tools python ops/tools/gen_proto.py
 
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 --start-period=15s \

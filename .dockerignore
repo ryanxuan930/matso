@@ -6,6 +6,11 @@
 **/.mypy_cache
 **/.ruff_cache
 **/.hypothesis
+# gRPC 產生的 stubs 不入 build context——一律於映像 build 內 gen_proto 重新產生
+# （避免把本機可能過期/不存在的 _generated 烘進映像；與 CI 乾淨 checkout 行為一致）
+**/_generated/
+.coverage
+coverage.xml
 platform/
 modules/terrain/data/
 docs/
