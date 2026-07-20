@@ -1,0 +1,68 @@
+// Comms/EW Module 領域契約 v0.1.0（SPEC_FULL §6）
+// 整合 Terrain（遮蔽附加損耗）+ Weather（RF 衰減）輸出，算鏈路預算 + mesh 連通。
+// 標準化輸出＝每單位鏈路狀態（ONLINE/DEGRADED/OFFLINE）；Core 消費狀態並強制 §6.2 戰術後果。
+syntax = "proto3";
+
+package matso.comms.v1;
+
+enum LinkState {
+  LINK_STATE_UNSPECIFIED = 0;
+  LINK_STATE_ONLINE = 1;    // margin > 6dB
+  LINK_STATE_DEGRADED = 2;  // 0 <= margin <= 6dB
+  LINK_STATE_OFFLINE = 3;   // margin < 0dB 或 mesh 孤島
+}
+
+message CommsUnit {
+  string unit_id = 1;
+  string faction = 2;         // 連通只在同 faction 內（己方 mesh）
+  double lat = 3;             // WGS84
+  double lng = 4;
+  double tx_power_dbm = 5;    // 發射功率
+  double antenna_gain_db = 6; // 收發天線增益總和
+  double rx_sensitivity_dbm = 7; // 接收靈敏度（門檻）
+  double freq_mhz = 8;        // 載波頻率（FSPL 用）
+  bool is_command_node = 9;   // 指揮節點（mesh 連通的錨點；己方 COP 根）
+}
+
+// 地形遮蔽附加損耗（Core 由 terrain CheckLos/fresnel_clearance 填；缺項＝自由空間視線）
+message LinkObstruction {
+  string unit_a = 1;
+  string unit_b = 2;
+  double extra_loss_db = 3; // >= 0，繞射/遮蔽附加衰減
+}
+
+// 每單位天氣 RF 衰減（Core 由 weather payload 的 rf_attenuation_db 填）
+message WeatherAttenuation {
+  string unit_id = 1;
+  double rf_attenuation_db = 2; // >= 0
+}
+
+message ComputeLinksRequest {
+  int32 sim_tick = 1;
+  repeated CommsUnit units = 2;
+  repeated LinkObstruction obstructions = 3;
+  repeated WeatherAttenuation weather = 4;
+  double jamming_db = 5; // Phase 1.5 EW 佔位（全域干擾底噪，預設 0）
+}
+
+message UnitLink {
+  string peer_id = 1;
+  double margin_db = 2;
+  LinkState state = 3; // 該直接鏈路的品質（診斷用）
+}
+
+message UnitComms {
+  string unit_id = 1;
+  LinkState state = 2;         // 該單位最終狀態（含 mesh 連通判定）
+  repeated UnitLink links = 3; // 直接鏈路（供白軍/AAR 研判）
+}
+
+message ComputeLinksResponse {
+  int32 issued_at_sim_tick = 1;
+  repeated UnitComms units = 2;
+}
+
+service CommsService {
+  // 重算全體單位鏈路狀態（鏈路預算 + mesh 連通）。通訊 tick 獨立於模擬 tick。
+  rpc ComputeLinks(ComputeLinksRequest) returns (ComputeLinksResponse);
+}

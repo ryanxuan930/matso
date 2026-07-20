@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 class PluginKind(enum.StrEnum):
     TERRAIN = "TERRAIN"
     WEATHER = "WEATHER"
+    COMMS = "COMMS"
     VISION = "VISION"
     AI_ROLE = "AI_ROLE"
     CUSTOM = "CUSTOM"

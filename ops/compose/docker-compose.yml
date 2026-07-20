@@ -1,6 +1,6 @@
 # MATSO Phase 1 拓撲（SPEC_FULL §20.1）
 # AI 節點不在 compose 內：獨立主機跑 vLLM，core 以 OPENAI_BASE_URL 指向。
-# 尚未加入：terrain/weather（M2/M5）、tileserver、prometheus/grafana（M0 後續卡）。
+# 尚未加入：tileserver、prometheus/grafana（M0 後續卡）。
 name: matso
 
 services:
@@ -57,6 +57,13 @@ services:
     # volumes:
     #   - ${WEATHER_SCRIPTS:-./weather-scripts}:/data:ro   # 想定天氣腳本掛載
     ports: ["50052:50052"]
+
+  comms:
+    build:
+      context: ../..
+      dockerfile: modules/comms/Dockerfile
+    # 純確定性服務（無外部資料來源）：起得來即 HEALTHY。地形/天氣/EW 由 Core 於呼叫時攜入。
+    ports: ["50053:50053"]
 
   core:
     build:

@@ -24,6 +24,7 @@ PROTOS = [
     ROOT / "contracts" / "proto" / "matso" / "plugin" / "v1" / "plugin_base.proto",
     ROOT / "contracts" / "proto" / "matso" / "terrain" / "v1" / "terrain.proto",
     ROOT / "contracts" / "proto" / "matso" / "weather" / "v1" / "weather.proto",
+    ROOT / "contracts" / "proto" / "matso" / "comms" / "v1" / "comms.proto",
 ]
 
 _INIT_DOC = (

@@ -1,5 +1,6 @@
 """Core 端插件客戶端（gRPC）。Terrain 為 Phase 1 硬依賴（SPEC §16.3/§17）。"""
 
+from app.plugins.comms_client import CommsClient
 from app.plugins.terrain_client import (
     BreakerState,
     CircuitBreaker,
@@ -12,6 +13,7 @@ from app.plugins.weather_client import WeatherClient
 __all__ = [
     "BreakerState",
     "CircuitBreaker",
+    "CommsClient",
     "HealthMonitor",
     "SessionController",
     "TerrainClient",

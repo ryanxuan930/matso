@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-21：**O5.4 完成 → M5 里程碑達成**。branch `feat/o5.4-comms`（stack 於 o5.3）。Comms/EW 模組（`modules/comms/`，套 _sdk）：鏈路預算 `margin=tx+gains−FSPL−obstruction−weather−jamming`（§6.1）+ margin→ONLINE/DEGRADED/OFFLINE（6/0 dB）+ **networkx mesh 兩級子圖連通至指揮錨點、孤島→OFFLINE**。Core `app/comms` 強制 **§6.2 三列戰術後果**（ONLINE 即時 / DEGRADED 指令延遲 N ticks+回報降頻+敵情粒度下降 / OFFLINE 拒收+COP 位置凍結）+ CommsClient（非硬依賴→全 ONLINE 降級）。契約先行 comms.proto。46 測試（§6.2 逐列 + mesh + 端到端真插件 gRPC）；comms 核心 100%。453 passed；docker 容器 healthy。worklog: docs/worklog/O5.4.md。
 - 2026-07-21：**O5.3 完成**。branch `feat/o5.3-weather-integration`（stack 於 o5.2）。天氣效果整合：Core `app/weather`（CellEffects/WeatherState + 效果→env weather_modifier 映射）+ WeatherClient（gRPC→WeatherState；非硬依賴，不可達→CLEAR 降級）。**驗收：暴雨 vs 晴天同交戰 p_hit=晴×0.4、200 次命中數差>30；偵測/聚合亦可觀測不同**。13 測試；app/weather + weather_client 100%。407 passed。worklog: docs/worklog/O5.3.md。
 - 2026-07-21：**O5.2 完成**。branch `feat/o5.2-weather-live`（stack 於 o5.1）。Weather LIVE 模式：CwaHttpSource 拉 CWA → 最近測站格網化 → LIVE payload；**斷網→stale=true（保留最後有效值）、恢復→自動回 LIVE**、stale>30min 告警；stale→插件 DEGRADED（SPEC §16.3）。WeatherProvider 介面統一 SYNTHETIC/LIVE。24 測試（狀態機/格網化/CWA 解析）。394 passed / cov 97.33%。worklog: docs/worklog/O5.2.md。
 - 2026-07-21：**O5.1 完成**。branch `feat/o5.1-weather-skeleton`（**從 main 開**——M1–M3 已 fast-forward 合併回 main）。Weather 模組骨架套 _sdk：SYNTHETIC 關鍵影格插值（線性 + 風向最短角）→ effects 映射 → 符合 weather_payload.schema.json 的格網化效果係數。weather.proto（契約先行）+ WeatherPlugin/Service + compose 服務（50052）。23 測試（插值/effects/schema/harness）；weather 近 100%。379 passed。worklog: docs/worklog/O5.1.md。
@@ -51,7 +52,7 @@
 | O5.1 (M5-1) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.1-weather-skeleton | Weather 骨架套 _sdk：SYNTHETIC 關鍵影格插值 + effects 映射 + weather.proto + 插件/compose；23 測試（插值/schema 驗證）；weather 近 100% |
 | O5.2 (M5-2) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.2-weather-live (stacked) | CWA LIVE 模式：CwaHttpSource + 格網化 + stale 狀態機（斷網→stale、恢復→LIVE、30min 告警）+ stale→DEGRADED；WeatherProvider 統一介面；24 測試 |
 | O5.3 (M5-3) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.3-weather-integration (stacked) | 天氣效果整合：app/weather（效果→env weather_modifier 映射）+ WeatherClient（非硬依賴→CLEAR 降級）；驗收暴雨 vs 晴天可觀測不同；13 測試；100% |
-| M5-4 | TODO | — | — | O5.4 Comms 模組（可與 M4/M6 平行） |
+| O5.4 (M5-4) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.4-comms (stacked) | **M5 達成**。Comms/EW：鏈路預算（§6.1 公式 + 6/0 dB 門檻）+ networkx mesh 兩級子圖連通至指揮錨點（孤島→OFFLINE）；Core 強制 §6.2 三列後果（指令延遲/COP 凍結/敵情粒度）+ CommsClient（非硬依賴→全 ONLINE）；46 測試（§6.2 逐列 + 端到端真插件）；docker healthy |
 | M6-1 ~ M6-6 | TODO | — | — | 需 vLLM 節點；eval runner 路徑 = matso_ai.evals.run |
 | M7-1 ~ M7-5 | TODO | — | — | |
 | M8-1 ~ M8-4 | TODO | — | — | |
@@ -115,7 +116,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - **[O2.1 realdata ✅ 已驗證]** 真檔 `/Volumes/M200/Maps/TW_ALL.tif`（1GB）SLA benchmark 已通過（冷啟動<30s、p99<5ms）。真檔 nodata=0.0、無 overview。
 - **[O2.3 待辦]** 真檔無 overview 金字塔——viewshed 降採樣需要時，以 gdaladdo 建外部 .ovr 或調整採樣。
 - **[O2.3 GRASS 對照 release-gated]** modules/terrain/tests/grass_compare/ 骨架完成（確定性抽樣可測）；`_grass_visibility`（docker osgeo/grass-gis r.viewshed 呼叫 + raster↔點取樣）為 release 前必完成的 TODO。CI 自動 skip（grass marker）。
-- **[O2.3 交接]** check_los 的 fresnel_clearance = 幾何最小餘隙（公尺）；真菲涅耳半徑（需頻率）於 comms O5.4。
+- **[O2.3→O5.4 交接]** check_los 的 fresnel_clearance = 幾何最小餘隙（公尺）。O5.4 comms 模組的鏈路預算吃 `obstruction_db`（繞射/遮蔽附加損耗）作為注入項，保持模組純；**由 terrain fresnel_clearance/LOS 換算成 dB 的映射屬部署層**（Core 每通訊 tick 從 terrain CheckLos 填 request，同 O3.6/O5.3 注入慣例），尚未接活。
 - **[外接硬碟 M200 資產]** TW_ALL.tif / taiwan.osm.pbf / taiwan_drive.graphml 皆在 `/Volumes/M200/Maps/`；路徑一律 env 注入（MATSO_DTED_PATH 等，見 modules/terrain/.env.example），未掛載時 try_open_default 降級、開發用合成夾具。
 - **[上游相容備忘]** rasterio 1.5.0 × numpy 2.5 內部 reshape DeprecationWarning——pyproject filterwarnings 以訊息精確過濾；rasterio 修復後移除該行。
 - **CI workflow 尚未在真 GitHub Actions 驗證過**（repo 無 remote/commit）。首次 push 後檢查五個 job。
@@ -132,7 +133,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-**M0–M3 已合併回 main + CI 全綠。O5.1（Weather 骨架）完成。** 兩條平行路可續：
+**M0–M3 已合併回 main + CI 全綠。M5 環境模組全數完成（O5.1–O5.4：Weather LIVE/SYNTHETIC + 效果整合 + Comms/EW）。** 剩餘主線：**M4 前端**（O4.1 起）與 **M6 AI Phase 1**（需 vLLM 節點）。兩條平行路可續：
 
 1. **M4 前端 COP（O4.1 起）**：認證 + lobby（login/JWT/refresh；後端 auth 端點同卡，Argon2id+JWT）。驗收：Playwright 登入→lobby、錯誤密碼被拒、token refresh。**注意**：platform/ 仍是 Nuxt 初始模板；API 型別一律由 `contracts/core_api.yaml` 生成（禁手寫）；元件放 `platform/app/components/<區域>/`。先讀 SPEC §13。
 2. **M5 環境模組續做（O5.2/O5.3）**：
