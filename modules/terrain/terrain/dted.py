@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -207,3 +208,45 @@ class DtedMap:
         if nodata is not None and not math.isnan(nodata):
             out[arr == nodata] = np.nan
         return out
+
+    def line_sampler(
+        self, min_lng: float, min_lat: float, max_lng: float, max_lat: float
+    ) -> Callable[[float, float], float]:
+        """讀取一次涵蓋 bbox 的窗口，回傳純記憶體高程取樣函式（LOS/Viewshed 用；nodata→0 海面）。
+
+        LOS 沿線可能上百點——整條線 bbox 一次讀入記憶體，避免逐點 rasterio I/O（p99 關鍵）。
+        取樣為最近像素；水域（nodata）視為海面 0m（視線掠過海面）。bbox 界外部分夾回影像。
+        """
+        pad = 3  # 像素邊界緩衝（大圓微彎 / 邊界像素）
+        x_res_deg, y_res_deg = self._ds.res
+        window = self._ds.window(
+            min_lng - pad * x_res_deg,
+            min_lat - pad * y_res_deg,
+            max_lng + pad * x_res_deg,
+            max_lat + pad * y_res_deg,
+        )
+        full = Window(0, 0, self._ds.width, self._ds.height)
+        window = window.round_offsets().round_lengths().intersection(full)
+        if window.width < 1 or window.height < 1:
+            window = Window(
+                min(max(int(window.col_off), 0), self._ds.width - 1),
+                min(max(int(window.row_off), 0), self._ds.height - 1),
+                1,
+                1,
+            )
+        row_off, col_off = int(window.row_off), int(window.col_off)
+        arr = self._ds.read(1, window=window)
+        height, width = arr.shape
+        nodata = self._nodata
+        nodata_valid = nodata is not None and not math.isnan(nodata)
+
+        def sample(lat: float, lng: float) -> float:
+            row, col = self._ds.index(lng, lat)
+            lr = min(max(row - row_off, 0), height - 1)
+            lc = min(max(col - col_off, 0), width - 1)
+            value = float(arr[lr, lc])
+            if math.isnan(value) or (nodata_valid and value == nodata):
+                return SEA_LEVEL_M
+            return value
+
+        return sample

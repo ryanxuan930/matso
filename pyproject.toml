@@ -79,6 +79,7 @@ markers = [
   "golden: golden replay determinism tests (SPEC_FULL §19.1, harness lands in M1-6)",
   "integration: needs external services via compose (MariaDB/Redis/...); skips if unreachable",
   "realdata: needs the real DTED file (external drive + MATSO_DTED_PATH); skips otherwise",
+  "grass: cross-checks against GRASS r.viewshed via docker (O2.3); CI skip, run before release",
 ]
 filterwarnings = [
   # rasterio 1.5.0 × numpy 2.5 的內部 reshape 棄用警告（上游相容問題，非本專案程式碼；

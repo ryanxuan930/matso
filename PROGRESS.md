@@ -4,9 +4,9 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
-- 2026-07-19：**O2.2 完成**。branch `feat/o2.2-hexgrid`。H3 hex grid 預計算（DtedMap.sample_bbox 窗口讀取 → cell 屬性 → parquet）+ HexGridCache.get_cell_batch + precompute CLI + classify_terrain（坡度+高程）。**fallback 落地：預計算讀真檔一次 → parquet 快取放本地 → 查詢不需外接硬碟**。真檔驗證玉山 cell max 3947m（實際 3952m✓）。170 passed / coverage 96.76%。worklog: docs/worklog/O2.2.md。
-- 2026-07-19：O2.1 完成（DTED + MATSO_DTED_PATH 注入 + 真檔 realdata 驗證）、O1.7 完成（review 修復）。
-- 2026-07-18：M1 里程碑達成（O1.1–O1.6）。下一步：**O2.3**（LOS / Viewshed）。
+- 2026-07-19：**O2.3 完成**。branch `feat/o2.3-los-viewshed`。check_los（大圓取樣 + 4/3 等效地球半徑曲率 + AGL；全線最小餘隙 + 遮蔽點）、get_viewshed（radius 內 h3 cell）。效能關鍵：DtedMap.line_sampler 整線 bbox 一次讀入記憶體 → check_los p99<20ms、viewshed p99<200ms（真檔驗證）。玉山遮蔽測試通過。GRASS 對照骨架（release-gated）。184 passed / coverage 96.81%。worklog: docs/worklog/O2.3.md。
+- 2026-07-19：O2.2（hex grid+parquet 快取）、O2.1（DTED+路徑注入）、O1.7（review 修復）完成。
+- 2026-07-18：M1 里程碑達成。下一步：**O2.4**（A* 路徑）。
 
 ## 任務板
 
@@ -26,7 +26,8 @@
 | O1.7 | DONE | Fable 5 (2026-07-19) | branch feat/o1.7-review-fixes (stacked) | code review 全數修復：ledgerSeq 錨定 + rollback 修正、TickPacer 降頻、detail 欄（migration）、CI 整合真跑 + coverage 96.77%、errors.py、Redis 批次化；130 單元 + 16 整合測試 |
 | O2.1 (M2-1) | DONE | Fable 5 (2026-07-19) | branch feat/o2.1-dted (stacked) | DtedMap + `MATSO_DTED_PATH` 注入 + 合成夾具；真檔 realdata SLA 已驗證通過 |
 | O2.2 (M2-2) | DONE | Opus 4.8 (2026-07-19) | branch feat/o2.2-hexgrid (stacked) | H3 hex grid 預計算→parquet 快取（查詢不需硬碟）+ classify_terrain + CLI；17 測試 + 真檔驗證（玉山 3947m） |
-| O2.3 ~ O2.5 | TODO | — | — | 從 O2.3（LOS/Viewshed）開始 |
+| O2.3 (M2-3) | DONE | Opus 4.8 (2026-07-19) | branch feat/o2.3-los-viewshed (stacked) | check_los（大圓+4/3曲率+AGL）+ get_viewshed；line_sampler 一次讀入記憶體達 p99；17 測試（含玉山遮蔽真檔）+ GRASS 對照骨架 |
+| O2.4 ~ O2.5 | TODO | — | — | 從 O2.4（A* 路徑）開始 |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
 | M5-1 ~ M5-4 | TODO | — | — | |
@@ -88,6 +89,8 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 - **[O2.1 realdata ✅ 已驗證]** 真檔 `/Volumes/M200/Maps/TW_ALL.tif`（1GB）SLA benchmark 已通過（冷啟動<30s、p99<5ms）。真檔 nodata=0.0、無 overview。
 - **[O2.3 待辦]** 真檔無 overview 金字塔——viewshed 降採樣需要時，以 gdaladdo 建外部 .ovr 或調整採樣。
+- **[O2.3 GRASS 對照 release-gated]** modules/terrain/tests/grass_compare/ 骨架完成（確定性抽樣可測）；`_grass_visibility`（docker osgeo/grass-gis r.viewshed 呼叫 + raster↔點取樣）為 release 前必完成的 TODO。CI 自動 skip（grass marker）。
+- **[O2.3 交接]** check_los 的 fresnel_clearance = 幾何最小餘隙（公尺）；真菲涅耳半徑（需頻率）於 comms O5.4。
 - **[外接硬碟 M200 資產]** TW_ALL.tif / taiwan.osm.pbf / taiwan_drive.graphml 皆在 `/Volumes/M200/Maps/`；路徑一律 env 注入（MATSO_DTED_PATH 等，見 modules/terrain/.env.example），未掛載時 try_open_default 降級、開發用合成夾具。
 - **[上游相容備忘]** rasterio 1.5.0 × numpy 2.5 內部 reshape DeprecationWarning——pyproject filterwarnings 以訊息精確過濾；rasterio 修復後移除該行。
 - **CI workflow 尚未在真 GitHub Actions 驗證過**（repo 無 remote/commit）。首次 push 後檢查五個 job。
@@ -104,11 +107,11 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O2.3**（LOS / Viewshed）。產出：`check_los(observer, target)`、`get_viewshed(observer, radius)`（SPEC §4.3：30m 取樣、4/3 等效地球半徑、AGL）。規格：SPEC_FULL §4.3、TASKS.md O2.3。deps: O2.1。
-   - **可直接複用**：`DtedMap`（沿線取樣可用 get_elevation 或擴充窗口讀取）、合成夾具、真檔已驗證。
-   - GRASS 對照測試（≥98%）：GRASS 以 docker 跑，CI 可 skip、release 前必跑（TASKS O2.3）。
-   - ⚠ 真檔**無 overview**——viewshed 若要降採樣先 `gdaladdo` 建外部 .ovr。
-2. **外接硬碟情境（使用者環境 /Volumes/M200/Maps/）**：TW_ALL.tif / taiwan.osm.pbf / taiwan_drive.graphml 皆 env 注入（見 modules/terrain/.env.example）。**hex 快取設計已示範 fallback**：預計算讀真檔一次 → parquet（放本地）→ 查詢不需硬碟。O2.4 A* 同樣應吃 parquet 快取（不需真檔）。開發/CI 一律合成夾具。
-3. **分支鏈狀態**：main ← O1.1 ← … ← O1.7 ← O2.1 ← O2.2（皆 stacked，**未合併/推送**）——建議擇時把 M1+O1.7 段合併回 main。
+1. 認領 **O2.4**（A* 路徑）。產出：`get_path(from_h3, to_h3, mobility_profile)`（SPEC §4.3）。規格：SPEC_FULL §4.3、TASKS.md O2.4。deps: O2.2（已完成）。
+   - **可直接複用**：`HexGridCache`（cell 屬性/mobility_cost，**查詢不需硬碟**——A* 只吃 parquet）、`contracts/mobility_matrix.json`（profile×terrain_class + slope_penalty）、h3 鄰接（grid_ring/grid_disk）。
+   - A* 成本建議：`cell.mobility_cost × mobility_matrix[profile][terrain_class]`（-1 = 不可通行）+ slope_penalty；heuristic = h3 中心 haversine ÷ 最小可能成本。
+   - property test：路徑成本 ≤ 任一鄰接替代；不可達回 reachable=false；BOAT 不能走陸、WHEELED 不進 WATER（HOW_TO §8 陷阱：h3 內建距離勿當 heuristic 以外用途）。
+2. **外接硬碟情境（/Volumes/M200/Maps/）**：三個資產 env 注入（modules/terrain/.env.example）。**hex 快取已示範 fallback**：預計算讀真檔一次 → parquet（本地）→ 查詢不需硬碟。O2.4 A* 只讀 parquet 快取。開發/CI 一律合成夾具。
+3. **分支鏈狀態**：main ← O1.1 ← … ← O2.1 ← O2.2 ← O2.3（皆 stacked，**未合併/推送**）——建議擇時把已完成段合併回 main。
 4. 開發環境：`uv sync` 一律在 **repo root**（子目錄跑會弄壞 workspace venv）；compose `docker compose up -d --wait`。**OrbStack 可能隨休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
 5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。

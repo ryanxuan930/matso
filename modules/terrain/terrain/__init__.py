@@ -12,6 +12,7 @@ from terrain.hexgrid import (
     classify_terrain,
     write_parquet,
 )
+from terrain.los import LosResult, Observer, check_los, get_viewshed
 
 __version__ = "0.1.0"
 
@@ -23,6 +24,8 @@ __all__ = [
     "ElevationResult",
     "HexGridBuilder",
     "HexGridCache",
+    "LosResult",
+    "Observer",
     "OutOfBoundsError",
     "TerrainClass",
     "TerrainError",
@@ -30,6 +33,8 @@ __all__ = [
     "WindowSample",
     "__version__",
     "base_mobility_cost",
+    "check_los",
     "classify_terrain",
+    "get_viewshed",
     "write_parquet",
 ]
