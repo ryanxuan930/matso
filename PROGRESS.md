@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-20：**O3.2 完成**。branch `feat/o3.2-engagement`。交戰裁決 `resolve_engagement`（SPEC §7.1，**純同步純函數、AI 永不裁決物理**）：合法性→P_hit（乘法係數，夾 [0,1]）→ 確定性擲骰（注入 RNG）→ 傷害 → ENGAGEMENT_RESOLVED 事件。資料驅動（WeaponProfile ← baseStats，對 weaponeering.schema.json 驗證）+ 3 種 KINETIC 種子模板。23 測試（Hypothesis property：距離↑P_hit 不增、係數=1 退化、彈藥=0 REJECTED）；adjudication 覆蓋率 98%。305 passed。worklog: docs/worklog/O3.2.md。
 - 2026-07-20：**O3.1 完成（M3 起點）**。branch `feat/o3.1-order-pipeline`。Order pipeline：`POST/DELETE /sessions/{id}/orders`、狀態機（唯一權威 + 非法轉移防護）、validator（單位/權限/語法）、物理預檢（PhysicsGateway 注入，MOVE 可達/ENGAGE LOS，不可行 422 REJECTED、terrain down 503）、統一錯誤格式。契約先行（core_api.yaml Order schema + error code enum）。**ledger 指令序列重播 golden（R10）**。36 測試（含 schemathesis 契約 fuzz）。281 passed / cov 96.31%。worklog: docs/worklog/O3.1.md。
 - 2026-07-20：**O2.5 完成 → M2 里程碑達成**。branch `feat/o2.5-terrain-plugin`。Terrain 插件化：`modules/_sdk`（MatsoPlugin base + gRPC server 樣板 + graceful shutdown + 測試 harness）、terrain 套 SDK（TerrainService 5 RPC 委派純函數 + 進入點 + Dockerfile）、Core client（斷路器 + 健檢監視器 3-strikes → DOWN → PAUSE session）、compose terrain 服務。**離線 codegen（grpcio-tools，ADR 005，產物不入 git）**。244 passed / cov 96.55% / mypy(46)。真子行程 smoke + realdata 通過。worklog: docs/worklog/O2.5.md。
 - 2026-07-20：**O2.4 完成**。branch `feat/o2.4-astar-path`。A* 路徑 `get_path(cache,from,to,profile)`——成本以 `contracts/mobility_matrix.json` 契約公式（`-1=不可通行`）、admissible heuristic（保證最佳）、確定性破同分。查詢只吃 HexGridCache（parquet，不需硬碟）。22 測試（Dijkstra 交叉驗證最佳性 + 繞行/牆/水陸 + realdata）。206 passed / coverage 96.81%。worklog: docs/worklog/O2.4.md。
@@ -33,7 +34,8 @@
 | O2.4 (M2-4) | DONE | Opus 4.8 (2026-07-20) | branch feat/o2.4-astar-path (stacked) | A* `get_path`：契約成本公式 + admissible heuristic（最佳）+ 確定性；22 測試（Dijkstra 交叉驗證 + 繞行/牆/水陸 + realdata）；查詢不需硬碟 |
 | O2.5 (M2-5) | DONE | Opus 4.8 (2026-07-20) | branch feat/o2.5-terrain-plugin (stacked) | **M2 達成**。_sdk（MatsoPlugin + gRPC 樣板 + harness）+ terrain 插件（5 RPC + Dockerfile）+ Core client（斷路器 + 健檢 3-strikes→DOWN→PAUSE）+ compose；離線 codegen（ADR 005）；38 新測試 |
 | O3.1 (M3-1) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.1-order-pipeline (stacked) | Order pipeline：REST POST/DELETE + 狀態機 + validator + 物理預檢（gateway 注入）+ 統一錯誤；契約先行；ledger 指令序列重播 golden（R10）；36 測試（含 schemathesis） |
-| M3-2 ~ M3-6 | TODO | — | — | O3.2 交戰裁決起 |
+| O3.2 (M3-2) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.2-engagement (stacked) | 交戰裁決 resolve_engagement（純同步純函數，§7.1 五步）+ WeaponProfile（資料驅動）+ 3 種 KINETIC 種子；Hypothesis property（單調/退化/彈藥0）；adjudication cov 98% |
+| M3-3 ~ M3-6 | TODO | — | — | O3.3 偵測與 intel store 起 |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
 | M5-1 ~ M5-4 | TODO | — | — | |
 | M6-1 ~ M6-6 | TODO | — | — | 需 vLLM 節點；eval runner 路徑 = matso_ai.evals.run |
@@ -116,12 +118,13 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O3.2（交戰裁決）**。規格：SPEC_FULL §7.1、`contracts/weaponeering.schema.json`、TASKS.md O3.2。deps: O3.1（已完成）。
-   - 產出：`core/app/adjudication/engagement.py`（**純同步純函數**，輸入 EnvSnapshot，不做 RPC——HOW_TO §4.2 五步）+ 3 種 KINETIC 武器模板。
-   - 驗收：Hypothesis property（距離↑→P_hit 單調不增；係數=1 退化 base；彈藥=0 必 REJECTED）；覆蓋率 ≥95%。
-   - **與 O3.1 銜接**：precheck 的 ENGAGE 目前只查 LOS；射程/彈藥檢查（error code `ORDER_OUT_OF_RANGE`/`ORDER_NO_AMMO` 已在契約 enum 預留）可於 O3.2 補上武器資料後加回 precheck。
-2. **O3.1 已交付的可複用件**：狀態機（`app.orders.state_machine`，唯一權威）、`PhysicsGateway` 注入模式、統一錯誤處理（`app.api.errors`，MatsoError→契約 Error）。O3.4 移動執行需 `DbOrderSource`（drain VALIDATED→EXECUTING）+ tick_source 接活 SimClock（目前佔位回 0）。
-3. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前必須先 `uv run python ops/tools/gen_proto.py`（產 `matso_sdk/_generated`，不入 git）。CI python job / terrain Dockerfile 已自動化。
-4. **分支鏈狀態**：main ← O1.1 ← … ← O2.4 ← O2.5 ← O3.1（皆 stacked，**未合併/推送**）——M2 已完成，建議擇時把 O1.x–O2.x 段合併回 main。
+1. 認領 **O3.3（偵測與 intel store）**。規格：SPEC_FULL §7.2、`IntelContact` 表、TASKS.md O3.3。deps: O3.1。**faction-scope 是後端責任**。
+   - 產出：sensor sweep（H3 k-ring 預過濾）、DETECTED→CLASSIFIED→IDENTIFIED 升級、`core/app/intel/store.py`、faction-scoped 查詢 API。
+   - 驗收：k-ring 過濾正確性；**RED token 查詢永遠拿不到 BLUE ground truth 的 contract test**（此測試從此進 CI 常駐）。
+   - **可複用**：sensor baseStats 已有 schema（weaponeering.schema.json `sensor` $def）；裁決純函數模式（O3.2 resolve_engagement）為範本；terrain client 查 LOS/距離。
+2. **可複用件**：`app.adjudication`（純函數裁決範本 + WeaponProfile 資料驅動）、`app.orders.state_machine`、`PhysicsGateway` 注入、統一錯誤處理（`app.api.errors`）。
+3. **O3.x 回接備忘**：(a) O3.1 precheck 的 ENGAGE 可用 `WeaponProfile.in_envelope` 補射程/彈藥檢查（error code 已預留）；(b) O3.3/O3.6 把 `resolve_engagement` 接入 kernel Adjudicator 時須錄新 golden；(c) O3.4 移動執行需 DbOrderSource + tick_source 接活 SimClock。
+4. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前先 `uv run python ops/tools/gen_proto.py`。CI/Dockerfile 已自動化。
+5. **分支鏈狀態**：main ← O1.1 ← … ← O2.5 ← O3.1 ← O3.2（皆 stacked，**未合併/推送**）——M2 已完成，建議擇時把 O1.x–O2.x 段合併回 main。
 4. 開發環境：`uv sync` 一律在 **repo root**（子目錄跑會弄壞 workspace venv）；compose `docker compose up -d --wait`。**OrbStack 可能隨休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
 5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。
