@@ -5,6 +5,12 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /workspace
 
+# rasterio/GDAL wheel 執行期需要的系統庫（bookworm-slim 已精簡掉）：
+# libexpat1（XML 解析，GDAL 依賴）。缺它 import rasterio 會 ImportError libexpat.so.1。
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libexpat1 \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
 # 安裝 terrain（含 matso-sdk workspace 依賴，editable）
