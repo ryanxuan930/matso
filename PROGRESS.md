@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-21：**O5.3 完成**。branch `feat/o5.3-weather-integration`（stack 於 o5.2）。天氣效果整合：Core `app/weather`（CellEffects/WeatherState + 效果→env weather_modifier 映射）+ WeatherClient（gRPC→WeatherState；非硬依賴，不可達→CLEAR 降級）。**驗收：暴雨 vs 晴天同交戰 p_hit=晴×0.4、200 次命中數差>30；偵測/聚合亦可觀測不同**。13 測試；app/weather + weather_client 100%。407 passed。worklog: docs/worklog/O5.3.md。
 - 2026-07-21：**O5.2 完成**。branch `feat/o5.2-weather-live`（stack 於 o5.1）。Weather LIVE 模式：CwaHttpSource 拉 CWA → 最近測站格網化 → LIVE payload；**斷網→stale=true（保留最後有效值）、恢復→自動回 LIVE**、stale>30min 告警；stale→插件 DEGRADED（SPEC §16.3）。WeatherProvider 介面統一 SYNTHETIC/LIVE。24 測試（狀態機/格網化/CWA 解析）。394 passed / cov 97.33%。worklog: docs/worklog/O5.2.md。
 - 2026-07-21：**O5.1 完成**。branch `feat/o5.1-weather-skeleton`（**從 main 開**——M1–M3 已 fast-forward 合併回 main）。Weather 模組骨架套 _sdk：SYNTHETIC 關鍵影格插值（線性 + 風向最短角）→ effects 映射 → 符合 weather_payload.schema.json 的格網化效果係數。weather.proto（契約先行）+ WeatherPlugin/Service + compose 服務（50052）。23 測試（插值/effects/schema/harness）；weather 近 100%。379 passed。worklog: docs/worklog/O5.1.md。
 - 2026-07-21：**M0–M3 已合併回 main + CI 全綠**（default branch 改為 main；修復 3 個 CI 問題：benchmark 效能測試 CI 排除、terrain Dockerfile libexpat1、core Dockerfile gen_proto）。
@@ -49,7 +50,8 @@
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile）；O4.1 認證+lobby 起（與 O5 可平行） |
 | O5.1 (M5-1) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.1-weather-skeleton | Weather 骨架套 _sdk：SYNTHETIC 關鍵影格插值 + effects 映射 + weather.proto + 插件/compose；23 測試（插值/schema 驗證）；weather 近 100% |
 | O5.2 (M5-2) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.2-weather-live (stacked) | CWA LIVE 模式：CwaHttpSource + 格網化 + stale 狀態機（斷網→stale、恢復→LIVE、30min 告警）+ stale→DEGRADED；WeatherProvider 統一介面；24 測試 |
-| M5-3 ~ M5-4 | TODO | — | — | O5.3 天氣效果整合起 |
+| O5.3 (M5-3) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.3-weather-integration (stacked) | 天氣效果整合：app/weather（效果→env weather_modifier 映射）+ WeatherClient（非硬依賴→CLEAR 降級）；驗收暴雨 vs 晴天可觀測不同；13 測試；100% |
+| M5-4 | TODO | — | — | O5.4 Comms 模組（可與 M4/M6 平行） |
 | M6-1 ~ M6-6 | TODO | — | — | 需 vLLM 節點；eval runner 路徑 = matso_ai.evals.run |
 | M7-1 ~ M7-5 | TODO | — | — | |
 | M8-1 ~ M8-4 | TODO | — | — | |

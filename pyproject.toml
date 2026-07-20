@@ -106,6 +106,7 @@ module = [
   "terrain.service",
   "terrain.plugin",
   "app.plugins.terrain_client",
+  "app.plugins.weather_client",
   "weather.service",
   "weather.plugin",
 ]

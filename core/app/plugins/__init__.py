@@ -7,6 +7,7 @@ from app.plugins.terrain_client import (
     SessionController,
     TerrainClient,
 )
+from app.plugins.weather_client import WeatherClient
 
 __all__ = [
     "BreakerState",
@@ -14,4 +15,5 @@ __all__ = [
     "HealthMonitor",
     "SessionController",
     "TerrainClient",
+    "WeatherClient",
 ]
