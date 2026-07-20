@@ -23,6 +23,7 @@ OUT = ROOT / "modules" / "_sdk" / "matso_sdk" / "_generated"
 PROTOS = [
     ROOT / "contracts" / "proto" / "matso" / "plugin" / "v1" / "plugin_base.proto",
     ROOT / "contracts" / "proto" / "matso" / "terrain" / "v1" / "terrain.proto",
+    ROOT / "contracts" / "proto" / "matso" / "weather" / "v1" / "weather.proto",
 ]
 
 _INIT_DOC = (

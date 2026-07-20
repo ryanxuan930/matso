@@ -47,6 +47,17 @@ services:
     #   - ${M200_MAPS:-/Volumes/M200/Maps}:/data:ro   # 外接硬碟掛載（開發機）
     ports: ["50051:50051"]
 
+  weather:
+    build:
+      context: ../..
+      dockerfile: modules/weather/Dockerfile
+    environment:
+      # SYNTHETIC 腳本路徑（想定提供）。未掛載時 DEGRADED 但服務仍在（O5.1）。
+      MATSO_WEATHER_SCRIPT_PATH: ${MATSO_WEATHER_SCRIPT_PATH:-/data/synthetic_weather.json}
+    # volumes:
+    #   - ${WEATHER_SCRIPTS:-./weather-scripts}:/data:ro   # 想定天氣腳本掛載
+    ports: ["50052:50052"]
+
   core:
     build:
       context: ../..

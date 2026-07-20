@@ -1026,6 +1026,18 @@ requires-dist = [
 name = "matso-weather"
 version = "0.1.0"
 source = { editable = "modules/weather" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "matso-sdk" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio", specifier = ">=1.68" },
+    { name = "matso-sdk", editable = "modules/_sdk" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
+]
 
 [[package]]
 name = "matso-workspace"

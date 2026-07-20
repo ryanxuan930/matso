@@ -1,0 +1,49 @@
+// Weather Module 領域契約 v0.1.0（SPEC_FULL §5.2）
+// 標準化輸出＝格網化效果係數；Core 只消費 effects，不解讀氣象學原始值。
+// 權威資料契約為 contracts/weather_payload.schema.json，本 proto 為其 gRPC 傳輸鏡像。
+syntax = "proto3";
+
+package matso.weather.v1;
+
+enum WeatherMode {
+  WEATHER_MODE_UNSPECIFIED = 0;
+  WEATHER_MODE_LIVE = 1;       // CWA 開放資料
+  WEATHER_MODE_SYNTHETIC = 2;  // 想定腳本關鍵影格插值
+  WEATHER_MODE_REPLAY = 3;     // 歷史重播（AAR / golden）
+}
+
+message WeatherEffects {
+  double rf_attenuation_db = 1;             // >= 0
+  double mobility_modifier = 2;             // [0,1]
+  double sensor_optical_modifier = 3;       // [0,1]
+  double sensor_ir_modifier = 4;            // [0,1]
+  bool uav_operability = 5;
+  bool rotary_wing_operability = 6;
+  double artillery_dispersion_modifier = 7; // >= 1
+}
+
+message WeatherCell {
+  string h3_index = 1;
+  double precipitation_mmhr = 2;
+  double wind_ms = 3;
+  double wind_dir_deg = 4;
+  double visibility_m = 5;
+  double cloud_base_m = 6;
+  WeatherEffects effects = 7;
+}
+
+message GetWeatherRequest {
+  int32 sim_tick = 1;
+}
+
+message GetWeatherResponse {
+  int32 issued_at_sim_tick = 1;
+  WeatherMode mode = 2;
+  bool stale = 3; // LIVE 來源失效降級（>30min Core 告警）；SYNTHETIC 恆 false
+  repeated WeatherCell cells = 4;
+}
+
+service WeatherService {
+  // 取某模擬 tick 的格網化天氣效果（天氣 tick 獨立於模擬 tick，SYNTHETIC 為插值）
+  rpc GetWeather(GetWeatherRequest) returns (GetWeatherResponse);
+}

@@ -3,7 +3,11 @@ name = "matso-weather"
 version = "0.1.0"
 description = "MATSO Weather Module — CWA LIVE / SYNTHETIC / REPLAY (SPEC_FULL §5; implemented in M5)"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "matso-sdk", # MatsoPlugin base + gRPC stubs（O5.1 插件化）
+  "grpcio>=1.68", # gRPC server（WeatherService）
+  "pydantic-settings>=2.7", # MATSO_WEATHER_* 環境設定
+]
 
 [build-system]
 requires = ["hatchling"]

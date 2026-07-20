@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-21：**O5.1 完成**。branch `feat/o5.1-weather-skeleton`（**從 main 開**——M1–M3 已 fast-forward 合併回 main）。Weather 模組骨架套 _sdk：SYNTHETIC 關鍵影格插值（線性 + 風向最短角）→ effects 映射 → 符合 weather_payload.schema.json 的格網化效果係數。weather.proto（契約先行）+ WeatherPlugin/Service + compose 服務（50052）。23 測試（插值/effects/schema/harness）；weather 近 100%。379 passed。worklog: docs/worklog/O5.1.md。
+- 2026-07-21：**M0–M3 已合併回 main + CI 全綠**（default branch 改為 main；修復 3 個 CI 問題：benchmark 效能測試 CI 排除、terrain Dockerfile libexpat1、core Dockerfile gen_proto）。
 - 2026-07-21：**O3.6 完成 → M3 里程碑達成**。branch `feat/o3.6-scripted-battle`。腳本對戰 DoD：真 Kernel 組裝 + 純 API 驅動，把 O3.1–O3.5 全接起來——藍軍移動 → 紅軍偵測到 → 交戰 → 紅血 100→60 + ENGAGEMENT_RESOLVED 入 Ledger → 雙方 intel 視圖各自成立（fog of war 隔離）。新增 kernel 接線 EngageOrderSource/EngagementAdjudicator/SensorSweepSystem。DoD 測試常駐 CI（本地 SQLite + 注入假件）。360 passed。worklog: docs/worklog/O3.6.md。
 - 2026-07-20：**O3.5 完成**。branch `feat/o3.5-lanchester`。聚合裁決 `resolve_aggregate_tick`（SPEC §7.1 末段，純同步純函數）：營級以上用隨機化 Lanchester（square/linear 混合 × 隨機化）逐 tick 遞減雙方戰力，**戰損夾 [0,當前戰力] → 能量守恆**。should_aggregate（閾值 = scenario aggregate_adjudication_level）。9 property 測試（能量守恆 Hypothesis、同 seed 同結果、強者勝、湮滅夾 0）；aggregate.py 100%。355 passed。worklog: docs/worklog/O3.5.md。
 - 2026-07-20：**O3.4 完成**。branch `feat/o3.4-movement`。移動執行 MovementSystem（step=admit+advance）：MOVE order（VALIDATED）→ terrain path → 逐 tick 推進單位位置（hot_state, single-writer）+ 油料 stub；抵達→COMPLETED、地形中斷→停斷點+MOVE_INTERRUPTED、油盡→HALTED_FUEL。DbOrderStore（狀態機轉移，from_h3 由 DB 座標推導）+ TerrainClientPlanner。**驗收整合測試通過**（下 MOVE 令→N ticks→位置=終點+order COMPLETED）。13 測試、movement ~100%。346 passed。worklog: docs/worklog/O3.4.md。
@@ -44,7 +46,8 @@
 | O3.5 (M3-5) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.5-lanchester (stacked) | 聚合裁決 resolve_aggregate_tick（隨機化 Lanchester，純同步純函數）+ should_aggregate（閾值）；能量守恆 property（Hypothesis）+ 同 seed 同結果；aggregate.py 100% |
 | O3.6 (M3-6) | DONE | Opus 4.8 (2026-07-21) | branch feat/o3.6-scripted-battle (stacked) | **M3 達成**。腳本對戰 DoD：真 Kernel + 純 API 驅動全流程（移動→偵測→交戰→戰損入帳→intel 各自成立）；kernel 接線 EngageOrderSource/EngagementAdjudicator/SensorSweepSystem；DoD 常駐 CI |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile）；O4.1 認證+lobby 起（與 O5 可平行） |
-| M5-1 ~ M5-4 | TODO | — | — | |
+| O5.1 (M5-1) | DONE | Opus 4.8 (2026-07-21) | branch feat/o5.1-weather-skeleton | Weather 骨架套 _sdk：SYNTHETIC 關鍵影格插值 + effects 映射 + weather.proto + 插件/compose；23 測試（插值/schema 驗證）；weather 近 100% |
+| M5-2 ~ M5-4 | TODO | — | — | O5.2 CWA LIVE 模式起 |
 | M6-1 ~ M6-6 | TODO | — | — | 需 vLLM 節點；eval runner 路徑 = matso_ai.evals.run |
 | M7-1 ~ M7-5 | TODO | — | — | |
 | M8-1 ~ M8-4 | TODO | — | — | |
@@ -125,13 +128,14 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. **M3 已全數完成**（O3.1–O3.6，裁決核心 + 腳本對戰 DoD 綠）。下一里程碑 **M4（前端 COP）從 O4.1 起**（認證 + lobby）——**與 O5（環境模組）可平行**。先讀 SPEC_FULL §13。
-   - O4.1：認證 + lobby（login/JWT/refresh；後端 auth 端點也在此卡，Argon2id+JWT）。驗收：Playwright 登入→lobby、錯誤密碼被拒、token refresh。
-   - **注意**：platform/ 仍是 Nuxt 初始模板；API 型別一律由 `contracts/core_api.yaml` 生成（禁手寫）。前端元件放 `platform/app/components/<區域>/`。
-   - 或先做 **O5.1**（Weather module 骨架，套 `_sdk`）——與 M4 平行，補環境係數（EnvSnapshot/DetectionEnv/AggregateEnv 的 weather_modifier）。
-2. **M3 交接（真實部署組裝）**：kernel↔API↔terrain 的正式接線（gRPC TerrainClient/TerrainGatewayAdapter、真 LedgerWriter、Redis hot_state、DB 呼叫 to_thread 包裝、tick_source 接活 SimClock）於 M4/部署階段；O3.6 已以注入假件證明子系統協同正確。聚合裁決分流（should_aggregate）於 O7.1 想定就緒後接入 kernel。
-3. **可複用件**：`app.adjudication`（engagement + aggregate + 接線 EngagementAdjudicator/EngageOrderSource）、`app.movement`、`app.intel`（sweep/store/service/sensor_system，faction 隔離）、`app.orders`（狀態機 + service）、統一錯誤處理、`PhysicsGateway` 注入。
-4. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前先 `uv run python ops/tools/gen_proto.py`。CI/Dockerfile 已自動化。
-5. **分支鏈狀態**：main ← O1.1 ← … ← O3.4 ← O3.5 ← O3.6（皆 stacked，**未合併/推送**）——**M2/M3 已完成，強烈建議擇時把 O1.x–O3.x 段合併回 main**（分支鏈已很長）。
-4. 開發環境：`uv sync` 一律在 **repo root**（子目錄跑會弄壞 workspace venv）；compose `docker compose up -d --wait`。**OrbStack 可能隨休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
-5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。
+**M0–M3 已合併回 main + CI 全綠。O5.1（Weather 骨架）完成。** 兩條平行路可續：
+
+1. **M4 前端 COP（O4.1 起）**：認證 + lobby（login/JWT/refresh；後端 auth 端點同卡，Argon2id+JWT）。驗收：Playwright 登入→lobby、錯誤密碼被拒、token refresh。**注意**：platform/ 仍是 Nuxt 初始模板；API 型別一律由 `contracts/core_api.yaml` 生成（禁手寫）；元件放 `platform/app/components/<區域>/`。先讀 SPEC §13。
+2. **M5 環境模組續做（O5.2/O5.3）**：
+   - O5.2 CWA LIVE 模式（API 拉取、格網化、stale 降級 + 30min 告警）；effects_mapping.yaml 外部化 + White Cell 熱調整。
+   - **O5.3 天氣效果整合**——把 O5.1 的 effects 接進裁決/偵測/移動：EnvSnapshot/DetectionEnv/AggregateEnv 的 weather_modifier（目前佔位 1.0）由 weather client（gRPC）每天氣 tick 填入。驗收：暴雨 vs 晴天同交戰結果分佈可觀測不同（固定 seed 比係數）。
+3. **M3 交接（真實部署組裝）**：kernel↔API↔terrain/weather 的正式接線（gRPC client、真 LedgerWriter、Redis hot_state、DB 呼叫 to_thread、tick_source 接活 SimClock）於 M4/部署階段；O3.6 已以注入假件證明子系統協同正確。聚合裁決分流（should_aggregate）於 O7.1 想定就緒後接入 kernel。
+4. **可複用件**：`app.adjudication`/`app.movement`/`app.intel`/`app.orders`、統一錯誤處理、`PhysicsGateway` 注入；`matso_sdk`（MatsoPlugin + harness）；weather/terrain 插件範本。
+5. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前先 `uv run python ops/tools/gen_proto.py`（含 plugin_base/terrain/weather 三 proto）。CI/Dockerfile 已自動化。
+6. **分支狀態**：main = M0–M3（已推送、CI 綠）。`feat/o5.1-weather-skeleton` 從 main 開，待合併。
+7. 開發環境：`uv sync` 一律在 **repo root**；compose `docker compose up -d --wait`。**CI 效能測試**：夾具版 p99 標 `benchmark`、CI 以 `-m "not benchmark"` 排除（本機仍跑）。golden 改動後 `uv run python ops/tools/rerecord_golden.py`。
