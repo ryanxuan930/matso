@@ -17,6 +17,9 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
+      # gRPC stubs 不入 git（ADR 005）——lint/type/test 前先離線產生
+      - name: Generate gRPC stubs (O2.5)
+        run: uv run python ops/tools/gen_proto.py
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy

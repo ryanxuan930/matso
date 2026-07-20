@@ -34,6 +34,19 @@ services:
       interval: 10s
       retries: 5
 
+  terrain:
+    build:
+      context: ../..
+      dockerfile: modules/terrain/Dockerfile
+    environment:
+      # 地理資產在外接硬碟——路徑一律 env 注入（絕不寫死）。未掛載時服務仍啟動（DEGRADED/DOWN），
+      # 由 Core 健檢決定預案。掛載真檔時：解除下方 volumes 註解並指向掛載點。
+      MATSO_DTED_PATH: ${MATSO_DTED_PATH:-/data/TW_ALL.tif}
+      MATSO_HEX_CACHE_DIR: ${MATSO_HEX_CACHE_DIR:-/data/hexcache}
+    # volumes:
+    #   - ${M200_MAPS:-/Volumes/M200/Maps}:/data:ro   # 外接硬碟掛載（開發機）
+    ports: ["50051:50051"]
+
   core:
     build:
       context: ../..
@@ -42,10 +55,12 @@ services:
       DATABASE_URL: mysql://root:${DB_ROOT_PASSWORD:-matso_dev_root}@mariadb:3306/matso
       REDIS_URL: redis://redis:6379/0
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8080/v1}
+      TERRAIN_GRPC_TARGET: ${TERRAIN_GRPC_TARGET:-terrain:50051}
     ports: ["8000:8000"]
     depends_on:
       mariadb: { condition: service_healthy }
       redis: { condition: service_healthy }
+      terrain: { condition: service_healthy }
 
   frontend:
     build:

@@ -28,6 +28,7 @@ dev = [
   "matso-weather",
   "matso-ai",
   # 工具鏈
+  "grpcio-tools>=1.68", # proto → Python stubs 離線 codegen（ops/tools/gen_proto.py, O2.5）
   "ruff>=0.9",
   "mypy>=1.14",
   "pre-commit>=4.0",
@@ -47,6 +48,8 @@ dev = [
 target-version = "py312"
 line-length = 100
 src = ["core", "modules", "ai", "ops"]
+# gRPC 產生的 stubs（不入 git、非本專案手寫）不受 lint/format 管轄
+extend-exclude = ["**/_generated/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
@@ -58,9 +61,11 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["core/app", "ops/tools", "modules/terrain/terrain"]
-# terrain 套件以 modules/terrain 為 root（獨立服務，不與 core 共 namespace）
-mypy_path = "modules/terrain"
+files = ["core/app", "ops/tools", "modules/terrain/terrain", "modules/_sdk/matso_sdk"]
+# terrain/sdk 套件各以自身 module root（獨立服務，不與 core 共 namespace）
+mypy_path = "modules/terrain:modules/_sdk"
+# 產生的 gRPC stubs 不型別檢查（protobuf 產物，不入 git）
+exclude = ["modules/_sdk/matso_sdk/_generated/"]
 
 [[tool.mypy.overrides]]
 module = ["pymysql.*"]
@@ -70,10 +75,33 @@ ignore_missing_imports = true
 module = ["rasterio.*", "h3.*", "pyarrow.*"]
 ignore_missing_imports = true # 地理套件無型別 stubs
 
+[[tool.mypy.overrides]]
+module = ["grpc", "grpc.*", "matso_sdk._generated.*"]
+ignore_missing_imports = true # grpcio 無 stubs；_generated 為 protobuf 產物
+
+[[tool.mypy.overrides]]
+# 這些類別繼承 gRPC 產生的 servicer 基底（型別為 Any）——strict 的 subclassing-any 於此放行
+module = ["matso_sdk._base_servicer", "terrain.service"]
+disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+# gRPC 邊界模組：呼叫 protobuf 產生的（無型別）stub/servicer 工廠、回傳其結果。
+# 這些是與外部產物的介面，untyped-call / any-return 屬預期；其餘 strict 檢查照舊。
+module = [
+  "matso_sdk._base_servicer",
+  "matso_sdk.server",
+  "matso_sdk.harness",
+  "terrain.service",
+  "terrain.plugin",
+  "app.plugins.terrain_client",
+]
+disallow_untyped_calls = false
+warn_return_any = false
+
 # ---------------- Tests ----------------
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "modules/terrain/tests"]
+testpaths = ["core/tests", "modules/terrain/tests", "modules/_sdk/tests"]
 asyncio_mode = "auto"
 markers = [
   "golden: golden replay determinism tests (SPEC_FULL §19.1, harness lands in M1-6)",

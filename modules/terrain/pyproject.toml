@@ -9,6 +9,8 @@ dependencies = [
   "pydantic-settings>=2.7", # MATSO_DTED_PATH 等環境設定（外接硬碟路徑注入）
   "h3>=4.1", # H3 六角網格
   "pyarrow>=18.0", # parquet 快取讀寫
+  "matso-sdk", # MatsoPlugin base + gRPC stubs（O2.5 插件化）
+  "grpcio>=1.68", # gRPC server（TerrainService）
 ]
 
 [build-system]

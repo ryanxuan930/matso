@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-20：**O2.5 完成 → M2 里程碑達成**。branch `feat/o2.5-terrain-plugin`。Terrain 插件化：`modules/_sdk`（MatsoPlugin base + gRPC server 樣板 + graceful shutdown + 測試 harness）、terrain 套 SDK（TerrainService 5 RPC 委派純函數 + 進入點 + Dockerfile）、Core client（斷路器 + 健檢監視器 3-strikes → DOWN → PAUSE session）、compose terrain 服務。**離線 codegen（grpcio-tools，ADR 005，產物不入 git）**。244 passed / cov 96.55% / mypy(46)。真子行程 smoke + realdata 通過。worklog: docs/worklog/O2.5.md。
 - 2026-07-20：**O2.4 完成**。branch `feat/o2.4-astar-path`。A* 路徑 `get_path(cache,from,to,profile)`——成本以 `contracts/mobility_matrix.json` 契約公式（`-1=不可通行`）、admissible heuristic（保證最佳）、確定性破同分。查詢只吃 HexGridCache（parquet，不需硬碟）。22 測試（Dijkstra 交叉驗證最佳性 + 繞行/牆/水陸 + realdata）。206 passed / coverage 96.81%。worklog: docs/worklog/O2.4.md。
 - 2026-07-19：**O2.3 完成**。branch `feat/o2.3-los-viewshed`。check_los（大圓取樣 + 4/3 等效地球半徑曲率 + AGL；全線最小餘隙 + 遮蔽點）、get_viewshed（radius 內 h3 cell）。效能關鍵：DtedMap.line_sampler 整線 bbox 一次讀入記憶體 → check_los p99<20ms、viewshed p99<200ms（真檔驗證）。玉山遮蔽測試通過。GRASS 對照骨架（release-gated）。184 passed / coverage 96.81%。worklog: docs/worklog/O2.3.md。
 - 2026-07-19：O2.2（hex grid+parquet 快取）、O2.1（DTED+路徑注入）、O1.7（review 修復）完成。
@@ -29,7 +30,7 @@
 | O2.2 (M2-2) | DONE | Opus 4.8 (2026-07-19) | branch feat/o2.2-hexgrid (stacked) | H3 hex grid 預計算→parquet 快取（查詢不需硬碟）+ classify_terrain + CLI；17 測試 + 真檔驗證（玉山 3947m） |
 | O2.3 (M2-3) | DONE | Opus 4.8 (2026-07-19) | branch feat/o2.3-los-viewshed (stacked) | check_los（大圓+4/3曲率+AGL）+ get_viewshed；line_sampler 一次讀入記憶體達 p99；17 測試（含玉山遮蔽真檔）+ GRASS 對照骨架 |
 | O2.4 (M2-4) | DONE | Opus 4.8 (2026-07-20) | branch feat/o2.4-astar-path (stacked) | A* `get_path`：契約成本公式 + admissible heuristic（最佳）+ 確定性；22 測試（Dijkstra 交叉驗證 + 繞行/牆/水陸 + realdata）；查詢不需硬碟 |
-| O2.5 | TODO | — | — | Terrain 插件化（_sdk + gRPC + Core client + compose）= M2 收尾 |
+| O2.5 (M2-5) | DONE | Opus 4.8 (2026-07-20) | branch feat/o2.5-terrain-plugin (stacked) | **M2 達成**。_sdk（MatsoPlugin + gRPC 樣板 + harness）+ terrain 插件（5 RPC + Dockerfile）+ Core client（斷路器 + 健檢 3-strikes→DOWN→PAUSE）+ compose；離線 codegen（ADR 005）；38 新測試 |
 | M3-1 ~ M3-6 | TODO | — | — | |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
 | M5-1 ~ M5-4 | TODO | — | — | |
@@ -54,6 +55,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-18：DB 權威 = db/prisma/schema.prisma；Python 端 SQLAlchemy 唯讀跟隨（SPEC_FULL §15.4）。
 - 2026-07-18：hex grid 採 H3 res 8 預設；路徑規劃自寫 A*（HOW_TO §8）。
 - 2026-07-18：SPEC.md 保留為歷史文件；一切以 SPEC_FULL.md 為準。
+- 2026-07-20：gRPC codegen 用 grpcio-tools 離線產生（非 buf generate），產物不入 git（ADR 005；因 SPEC §18 air-gapped）。buf lint/breaking 仍保留。
 
 ## Backlog / 發現的問題
 
@@ -109,11 +111,12 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O2.5**（Terrain 插件化）= M2 收尾。規格：SPEC_FULL §16.3/§17、TASKS.md O2.5、`contracts/proto/matso/terrain/v1/terrain.proto` + `plugin_base.proto`。deps: O2.1–O2.4（皆完成）。工作量較大：
-   - 先實作 `modules/_sdk/`（`MatsoPlugin` base：gRPC server、manifest、health、註冊、graceful shutdown + 測試 harness）→ terrain 套 SDK（GetElevation/CheckLos/GetPath/GetCellBatch/GetViewshed 已有純函數，包成 gRPC service）→ Core client `core/app/plugins/terrain_client.py`（circuit breaker + 「Terrain DOWN → Session PAUSE」）→ compose 加 terrain 服務。
-   - proto codegen 進 build（buf generate，產物不入 git）。**可直接複用**：get_elevation/check_los/get_viewshed/get_path/HexGridCache 皆已就緒且純函數。
-   - 驗收：_sdk harness 整合測試；compose 全 stack `--wait` 綠；kill terrain 容器 → Core 30s 內標 DOWN 並 PAUSE session。
-2. **外接硬碟情境（/Volumes/M200/Maps/）**：三個資產 env 注入（modules/terrain/.env.example）。**hex 快取已示範 fallback**：預計算讀真檔一次 → parquet（本地）→ 查詢不需硬碟。get_path/get_cell_batch 只讀 parquet 快取。開發/CI 一律合成夾具。
-3. **分支鏈狀態**：main ← O1.1 ← … ← O2.2 ← O2.3 ← O2.4（皆 stacked，**未合併/推送**）——建議擇時把已完成段合併回 main。
+1. **M2 已全數完成**（O2.1–O2.5）。下一里程碑 **M3（裁決核心）從 O3.1（Order pipeline）起**。規格：SPEC_FULL §2.3（八步生命週期）/§7 全文/§16.1、TASKS.md O3.1。deps: O2.4（terrain path 已就緒）。
+   - **開工前先讀 SPEC §7 全文**（裁決核心）。O3.1 產出：REST `POST /sessions/{id}/orders`（先補完 `contracts/core_api.yaml`）、validator、**同步物理預檢（呼叫 terrain client，p99<50ms）**、狀態機。
+   - **terrain client 已就緒**：`core/app/plugins/TerrainClient`（斷路器 + deadline）+ `HealthMonitor`（DOWN→PAUSE）。O3.1 裝配時把 `SessionController` 接到真 session 暫停、TerrainClient 接到 order 預檢。
+   - O3.1 另含：ledger 指令序列重播想定接入 golden harness（補 O1.6 範圍註記 / O1.7 R10）。
+2. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前必須先 `uv run python ops/tools/gen_proto.py`（產 `matso_sdk/_generated`，不入 git）。CI python job / terrain Dockerfile 已自動化。
+3. **外接硬碟情境（/Volumes/M200/Maps/）**：路徑一律 env 注入。terrain 插件未掛載硬碟仍啟動（health=DEGRADED/DOWN，不崩潰）；compose terrain 服務 volumes 留註解範本。開發/CI 一律合成夾具。
+4. **分支鏈狀態**：main ← O1.1 ← … ← O2.3 ← O2.4 ← O2.5（皆 stacked，**未合併/推送**）——**M2 已完成，建議擇時把 O1.x–O2.x 段合併回 main**。
 4. 開發環境：`uv sync` 一律在 **repo root**（子目錄跑會弄壞 workspace venv）；compose `docker compose up -d --wait`。**OrbStack 可能隨休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
 5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。

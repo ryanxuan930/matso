@@ -15,6 +15,8 @@ from terrain.hexgrid import (
 from terrain.los import LosResult, Observer, check_los, get_viewshed
 from terrain.mobility import MobilityMatrix
 from terrain.pathfind import PathResult, get_path
+from terrain.plugin import TerrainPlugin, build_from_settings
+from terrain.service import TerrainService
 
 __version__ = "0.1.0"
 
@@ -33,10 +35,13 @@ __all__ = [
     "PathResult",
     "TerrainClass",
     "TerrainError",
+    "TerrainPlugin",
+    "TerrainService",
     "TerrainSettings",
     "WindowSample",
     "__version__",
     "base_mobility_cost",
+    "build_from_settings",
     "check_los",
     "classify_terrain",
     "get_path",

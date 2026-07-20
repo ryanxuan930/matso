@@ -23,3 +23,9 @@ class RollbackTargetNotFoundError(MatsoError):
     """指定的 rollback 目標 tick 沒有對應的 checkpoint。"""
 
     error_code = "ROLLBACK_TARGET_NOT_FOUND"
+
+
+class TerrainUnavailableError(MatsoError):
+    """Terrain 插件不可達（gRPC 失敗或斷路器開啟）。物理預檢硬依賴——上層應 PAUSE session。"""
+
+    error_code = "TERRAIN_UNAVAILABLE"

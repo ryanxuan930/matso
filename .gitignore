@@ -42,8 +42,9 @@ modules/terrain/data/hexcache/
 *.gguf
 *.safetensors
 
-# Generated code (from contracts)
+# Generated code (from contracts) — regenerate via ops/tools/gen_proto.py / buf
 platform/app/types/api.d.ts
+modules/_sdk/matso_sdk/_generated/
 
 # Coverage artifacts
 .coverage

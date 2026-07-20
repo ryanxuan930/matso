@@ -3,7 +3,10 @@ name = "matso-sdk"
 version = "0.1.0"
 description = "MatsoPlugin base class + integration test harness (SPEC_FULL §17; implemented by M2-5)"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "grpcio>=1.68",   # gRPC server/client 執行期（插件框架 + 產生的 stubs）
+  "protobuf>=5.28", # 產生 stubs 的執行期依賴
+]
 
 [build-system]
 requires = ["hatchling"]
