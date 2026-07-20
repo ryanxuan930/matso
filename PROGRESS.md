@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-21：**O3.6 完成 → M3 里程碑達成**。branch `feat/o3.6-scripted-battle`。腳本對戰 DoD：真 Kernel 組裝 + 純 API 驅動，把 O3.1–O3.5 全接起來——藍軍移動 → 紅軍偵測到 → 交戰 → 紅血 100→60 + ENGAGEMENT_RESOLVED 入 Ledger → 雙方 intel 視圖各自成立（fog of war 隔離）。新增 kernel 接線 EngageOrderSource/EngagementAdjudicator/SensorSweepSystem。DoD 測試常駐 CI（本地 SQLite + 注入假件）。360 passed。worklog: docs/worklog/O3.6.md。
 - 2026-07-20：**O3.5 完成**。branch `feat/o3.5-lanchester`。聚合裁決 `resolve_aggregate_tick`（SPEC §7.1 末段，純同步純函數）：營級以上用隨機化 Lanchester（square/linear 混合 × 隨機化）逐 tick 遞減雙方戰力，**戰損夾 [0,當前戰力] → 能量守恆**。should_aggregate（閾值 = scenario aggregate_adjudication_level）。9 property 測試（能量守恆 Hypothesis、同 seed 同結果、強者勝、湮滅夾 0）；aggregate.py 100%。355 passed。worklog: docs/worklog/O3.5.md。
 - 2026-07-20：**O3.4 完成**。branch `feat/o3.4-movement`。移動執行 MovementSystem（step=admit+advance）：MOVE order（VALIDATED）→ terrain path → 逐 tick 推進單位位置（hot_state, single-writer）+ 油料 stub；抵達→COMPLETED、地形中斷→停斷點+MOVE_INTERRUPTED、油盡→HALTED_FUEL。DbOrderStore（狀態機轉移，from_h3 由 DB 座標推導）+ TerrainClientPlanner。**驗收整合測試通過**（下 MOVE 令→N ticks→位置=終點+order COMPLETED）。13 測試、movement ~100%。346 passed。worklog: docs/worklog/O3.4.md。
 - 2026-07-20：**O3.3 完成**。branch `feat/o3.3-intel-sensor`。偵測 + per-faction intel store（SPEC §7.2/§13.3）：sensor sweep（**H3 k-ring 空間預過濾 O(N²)→近線性**，與暴力全配對等價驗證）、DETECTED→CLASSIFIED→IDENTIFIED 分級、IntelStore（faction-scoped 強制）、ContactView 去識別化投影、GET /intel?faction=。**RED 拿不到 BLUE ground truth contract test 進 CI 常駐**。29 測試、intel 模組 100% 覆蓋。333 passed。worklog: docs/worklog/O3.3.md。
@@ -41,8 +42,8 @@
 | O3.3 (M3-3) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.3-intel-sensor (stacked) | 偵測 + per-faction intel store：sensor sweep（H3 k-ring 預過濾，vs 暴力等價）+ DETECTED→CLASSIFIED→IDENTIFIED + faction-scoped 查詢/去識別化；RED≠BLUE ground truth contract test（CI 常駐）；intel 100% |
 | O3.4 (M3-4) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.4-movement (stacked) | 移動執行 MovementSystem（admit+advance）：MOVE→path→逐 tick 推進 + 油料 stub；抵達/地形中斷/油盡；DbOrderStore 狀態機轉移 + TerrainClientPlanner；驗收整合測試通過；13 測試 |
 | O3.5 (M3-5) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.5-lanchester (stacked) | 聚合裁決 resolve_aggregate_tick（隨機化 Lanchester，純同步純函數）+ should_aggregate（閾值）；能量守恆 property（Hypothesis）+ 同 seed 同結果；aggregate.py 100% |
-| M3-6 | TODO | — | — | O3.6 腳本對戰驗收（M3 DoD）——把 O3.1–O3.5 全接入 kernel + 錄 golden |
-| M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
+| O3.6 (M3-6) | DONE | Opus 4.8 (2026-07-21) | branch feat/o3.6-scripted-battle (stacked) | **M3 達成**。腳本對戰 DoD：真 Kernel + 純 API 驅動全流程（移動→偵測→交戰→戰損入帳→intel 各自成立）；kernel 接線 EngageOrderSource/EngagementAdjudicator/SensorSweepSystem；DoD 常駐 CI |
+| M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile）；O4.1 認證+lobby 起（與 O5 可平行） |
 | M5-1 ~ M5-4 | TODO | — | — | |
 | M6-1 ~ M6-6 | TODO | — | — | 需 vLLM 節點；eval runner 路徑 = matso_ai.evals.run |
 | M7-1 ~ M7-5 | TODO | — | — | |
@@ -124,14 +125,13 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. 認領 **O3.6（腳本對戰驗收，M3 的 DoD）**。規格：TASKS.md O3.6。deps: O3.1–O3.4（皆完成）。**此測試綠 = M3 里程碑完成**。
-   - 產出：`core/tests/integration/test_scripted_battle.py`——**純 API 驅動**：藍軍移動 → 紅軍偵測到 → 交戰 → 戰損入帳 → 雙方 intel 視圖各自正確。
-   - **kernel 組裝**：把 O3.1–O3.5 全接入 kernel 想定：movement=MovementSystem(DbOrderStore, TerrainClientPlanner)、adjudicator=分流個體（engagement, O3.2）/聚合（Lanchester, O3.5，依 should_aggregate）、sensors=sweep→intel.store（O3.3）。DB sync 呼叫以 asyncio.to_thread 包裝（HOW_TO §3.1）；tick_source 接活 SimClock（O3.1 佔位回 0）。
-   - **接入後錄 golden**（HOW_TO §4.2 步驟 5）——這是把裁決/偵測/移動全部接入後的第一個真實戰鬥 golden。
-   - env_for（sweep 的 LOS）/ passable（movement 地形事件）/ AggregateEnv 的 terrain 係數由 kernel 經 terrain client 收集。
-2. **可複用件**：`app.adjudication`（engagement + aggregate Lanchester）、`app.movement`（MovementSystem + Protocol 注入）、`app.intel`（sweep/store/service，faction 隔離）、`app.orders`（狀態機 + service）、統一錯誤處理。
-3. **O3.x 回接備忘**：(a) O3.1 precheck 的 ENGAGE 可用 `WeaponProfile.in_envelope` 補射程/彈藥；(b) intel API 的 faction 於 O7.5 RBAC 改由認證主體推導；(c) 各 Env 係數（LOS/天氣/地形）由 kernel 收集，裁決/偵測純函數永不 RPC。
+1. **M3 已全數完成**（O3.1–O3.6，裁決核心 + 腳本對戰 DoD 綠）。下一里程碑 **M4（前端 COP）從 O4.1 起**（認證 + lobby）——**與 O5（環境模組）可平行**。先讀 SPEC_FULL §13。
+   - O4.1：認證 + lobby（login/JWT/refresh；後端 auth 端點也在此卡，Argon2id+JWT）。驗收：Playwright 登入→lobby、錯誤密碼被拒、token refresh。
+   - **注意**：platform/ 仍是 Nuxt 初始模板；API 型別一律由 `contracts/core_api.yaml` 生成（禁手寫）。前端元件放 `platform/app/components/<區域>/`。
+   - 或先做 **O5.1**（Weather module 骨架，套 `_sdk`）——與 M4 平行，補環境係數（EnvSnapshot/DetectionEnv/AggregateEnv 的 weather_modifier）。
+2. **M3 交接（真實部署組裝）**：kernel↔API↔terrain 的正式接線（gRPC TerrainClient/TerrainGatewayAdapter、真 LedgerWriter、Redis hot_state、DB 呼叫 to_thread 包裝、tick_source 接活 SimClock）於 M4/部署階段；O3.6 已以注入假件證明子系統協同正確。聚合裁決分流（should_aggregate）於 O7.1 想定就緒後接入 kernel。
+3. **可複用件**：`app.adjudication`（engagement + aggregate + 接線 EngagementAdjudicator/EngageOrderSource）、`app.movement`、`app.intel`（sweep/store/service/sensor_system，faction 隔離）、`app.orders`（狀態機 + service）、統一錯誤處理、`PhysicsGateway` 注入。
 4. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前先 `uv run python ops/tools/gen_proto.py`。CI/Dockerfile 已自動化。
-5. **分支鏈狀態**：main ← O1.1 ← … ← O3.3 ← O3.4 ← O3.5（皆 stacked，**未合併/推送**）——M2 已完成，建議擇時把 O1.x–O2.x 段合併回 main。
+5. **分支鏈狀態**：main ← O1.1 ← … ← O3.4 ← O3.5 ← O3.6（皆 stacked，**未合併/推送**）——**M2/M3 已完成，強烈建議擇時把 O1.x–O3.x 段合併回 main**（分支鏈已很長）。
 4. 開發環境：`uv sync` 一律在 **repo root**（子目錄跑會弄壞 workspace venv）；compose `docker compose up -d --wait`。**OrbStack 可能隨休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
 5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。
