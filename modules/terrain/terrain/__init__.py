@@ -13,6 +13,8 @@ from terrain.hexgrid import (
     write_parquet,
 )
 from terrain.los import LosResult, Observer, check_los, get_viewshed
+from terrain.mobility import MobilityMatrix
+from terrain.pathfind import PathResult, get_path
 
 __version__ = "0.1.0"
 
@@ -25,8 +27,10 @@ __all__ = [
     "HexGridBuilder",
     "HexGridCache",
     "LosResult",
+    "MobilityMatrix",
     "Observer",
     "OutOfBoundsError",
+    "PathResult",
     "TerrainClass",
     "TerrainError",
     "TerrainSettings",
@@ -35,6 +39,7 @@ __all__ = [
     "base_mobility_cost",
     "check_los",
     "classify_terrain",
+    "get_path",
     "get_viewshed",
     "write_parquet",
 ]
