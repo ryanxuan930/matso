@@ -40,6 +40,7 @@ dev = [
   "check-jsonschema>=0.31",
   "openapi-spec-validator>=0.7",
   "pytest-cov>=7.1.0",
+  "schemathesis>=4", # Order 端點契約 fuzz（O3.1 驗收；v4 支援 OpenAPI 3.1）
 ]
 
 # ---------------- Lint / Format ----------------
@@ -55,6 +56,10 @@ extend-exclude = ["**/_generated/**"]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
 # 專案註解/docstring 使用正體中文全形標點，RUF001-003 的 ambiguous-unicode 檢查全是誤報
 ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI 依賴注入慣例：Depends/Query/Path 於參數預設值呼叫是刻意設計，非 B008 錯誤
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]
 
 # ---------------- Type Checking ----------------
 

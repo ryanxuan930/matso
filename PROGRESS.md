@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-20：**O3.1 完成（M3 起點）**。branch `feat/o3.1-order-pipeline`。Order pipeline：`POST/DELETE /sessions/{id}/orders`、狀態機（唯一權威 + 非法轉移防護）、validator（單位/權限/語法）、物理預檢（PhysicsGateway 注入，MOVE 可達/ENGAGE LOS，不可行 422 REJECTED、terrain down 503）、統一錯誤格式。契約先行（core_api.yaml Order schema + error code enum）。**ledger 指令序列重播 golden（R10）**。36 測試（含 schemathesis 契約 fuzz）。281 passed / cov 96.31%。worklog: docs/worklog/O3.1.md。
 - 2026-07-20：**O2.5 完成 → M2 里程碑達成**。branch `feat/o2.5-terrain-plugin`。Terrain 插件化：`modules/_sdk`（MatsoPlugin base + gRPC server 樣板 + graceful shutdown + 測試 harness）、terrain 套 SDK（TerrainService 5 RPC 委派純函數 + 進入點 + Dockerfile）、Core client（斷路器 + 健檢監視器 3-strikes → DOWN → PAUSE session）、compose terrain 服務。**離線 codegen（grpcio-tools，ADR 005，產物不入 git）**。244 passed / cov 96.55% / mypy(46)。真子行程 smoke + realdata 通過。worklog: docs/worklog/O2.5.md。
 - 2026-07-20：**O2.4 完成**。branch `feat/o2.4-astar-path`。A* 路徑 `get_path(cache,from,to,profile)`——成本以 `contracts/mobility_matrix.json` 契約公式（`-1=不可通行`）、admissible heuristic（保證最佳）、確定性破同分。查詢只吃 HexGridCache（parquet，不需硬碟）。22 測試（Dijkstra 交叉驗證最佳性 + 繞行/牆/水陸 + realdata）。206 passed / coverage 96.81%。worklog: docs/worklog/O2.4.md。
 - 2026-07-19：**O2.3 完成**。branch `feat/o2.3-los-viewshed`。check_los（大圓取樣 + 4/3 等效地球半徑曲率 + AGL；全線最小餘隙 + 遮蔽點）、get_viewshed（radius 內 h3 cell）。效能關鍵：DtedMap.line_sampler 整線 bbox 一次讀入記憶體 → check_los p99<20ms、viewshed p99<200ms（真檔驗證）。玉山遮蔽測試通過。GRASS 對照骨架（release-gated）。184 passed / coverage 96.81%。worklog: docs/worklog/O2.3.md。
@@ -31,7 +32,8 @@
 | O2.3 (M2-3) | DONE | Opus 4.8 (2026-07-19) | branch feat/o2.3-los-viewshed (stacked) | check_los（大圓+4/3曲率+AGL）+ get_viewshed；line_sampler 一次讀入記憶體達 p99；17 測試（含玉山遮蔽真檔）+ GRASS 對照骨架 |
 | O2.4 (M2-4) | DONE | Opus 4.8 (2026-07-20) | branch feat/o2.4-astar-path (stacked) | A* `get_path`：契約成本公式 + admissible heuristic（最佳）+ 確定性；22 測試（Dijkstra 交叉驗證 + 繞行/牆/水陸 + realdata）；查詢不需硬碟 |
 | O2.5 (M2-5) | DONE | Opus 4.8 (2026-07-20) | branch feat/o2.5-terrain-plugin (stacked) | **M2 達成**。_sdk（MatsoPlugin + gRPC 樣板 + harness）+ terrain 插件（5 RPC + Dockerfile）+ Core client（斷路器 + 健檢 3-strikes→DOWN→PAUSE）+ compose；離線 codegen（ADR 005）；38 新測試 |
-| M3-1 ~ M3-6 | TODO | — | — | |
+| O3.1 (M3-1) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.1-order-pipeline (stacked) | Order pipeline：REST POST/DELETE + 狀態機 + validator + 物理預檢（gateway 注入）+ 統一錯誤；契約先行；ledger 指令序列重播 golden（R10）；36 測試（含 schemathesis） |
+| M3-2 ~ M3-6 | TODO | — | — | O3.2 交戰裁決起 |
 | M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile） |
 | M5-1 ~ M5-4 | TODO | — | — | |
 | M6-1 ~ M6-6 | TODO | — | — | 需 vLLM 節點；eval runner 路徑 = matso_ai.evals.run |
@@ -56,14 +58,17 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-18：hex grid 採 H3 res 8 預設；路徑規劃自寫 A*（HOW_TO §8）。
 - 2026-07-18：SPEC.md 保留為歷史文件；一切以 SPEC_FULL.md 為準。
 - 2026-07-20：gRPC codegen 用 grpcio-tools 離線產生（非 buf generate），產物不入 git（ADR 005；因 SPEC §18 air-gapped）。buf lint/breaking 仍保留。
+- 2026-07-20：契約 fuzz 用 schemathesis **v4**（v3 不支援 FastAPI 產生的 OpenAPI 3.1）；order 端點只斷言「不 5xx」。ruff B008 放行 FastAPI `Depends()` 慣例。
 
 ## Backlog / 發現的問題
 
 ### 2026-07-19 M0–M1 code review 發現（10 主要 + 8 次要；修復卡 = O1.7，worklog: docs/worklog/O1.7.md）
 
 > **修復狀態（同日，O1.7）**：R1–R4、R6–R9、r11–r18 ✅ **全部修復**（含回歸測試）；
-> R5/R10 ✅ 規格與任務已對齊——「checkpoint 後前滾」與「ledger 指令序列重播」為 Phase 註記，
-> 實作列入 **O3.1 驗收**（SPEC §3.2/§18 已加註）。r16 的 regex→DMMF 解析升級留備忘（WARN 已改硬錯誤）。
+> **R10 ✅ 已於 O3.1 實作**——ledger 指令序列重播接入 golden harness（`order_replay_60`，同序列→同 stateHash）。
+> R5（checkpoint 後前滾 / RPO=0）：orders 已落地（O3.1），但「由 checkpoint 後的 ledger 指令重播前滾」
+> 尚未接進 recover()，留待 O3.4 移動執行 + O8.1 重播服務（SPEC §18 已加 Phase 註記）。
+> r16 的 regex→DMMF 解析升級留備忘（WARN 已改硬錯誤）。
 
 主要發現（依嚴重度；★ = 已實證重現）：
 - **[R1]★ rollback 後 LedgerWriter tip 快取過期** → Kernel 下一次 append 產生重複 seq → IntegrityError 停擺 tick loop。兩個 writer 實例間無快取失效機制（ledger.py `_tips`）。
@@ -111,12 +116,12 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## 下一步建議（給下一個接手的 agent）
 
-1. **M2 已全數完成**（O2.1–O2.5）。下一里程碑 **M3（裁決核心）從 O3.1（Order pipeline）起**。規格：SPEC_FULL §2.3（八步生命週期）/§7 全文/§16.1、TASKS.md O3.1。deps: O2.4（terrain path 已就緒）。
-   - **開工前先讀 SPEC §7 全文**（裁決核心）。O3.1 產出：REST `POST /sessions/{id}/orders`（先補完 `contracts/core_api.yaml`）、validator、**同步物理預檢（呼叫 terrain client，p99<50ms）**、狀態機。
-   - **terrain client 已就緒**：`core/app/plugins/TerrainClient`（斷路器 + deadline）+ `HealthMonitor`（DOWN→PAUSE）。O3.1 裝配時把 `SessionController` 接到真 session 暫停、TerrainClient 接到 order 預檢。
-   - O3.1 另含：ledger 指令序列重播想定接入 golden harness（補 O1.6 範圍註記 / O1.7 R10）。
-2. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前必須先 `uv run python ops/tools/gen_proto.py`（產 `matso_sdk/_generated`，不入 git）。CI python job / terrain Dockerfile 已自動化。
-3. **外接硬碟情境（/Volumes/M200/Maps/）**：路徑一律 env 注入。terrain 插件未掛載硬碟仍啟動（health=DEGRADED/DOWN，不崩潰）；compose terrain 服務 volumes 留註解範本。開發/CI 一律合成夾具。
-4. **分支鏈狀態**：main ← O1.1 ← … ← O2.3 ← O2.4 ← O2.5（皆 stacked，**未合併/推送**）——**M2 已完成，建議擇時把 O1.x–O2.x 段合併回 main**。
+1. 認領 **O3.2（交戰裁決）**。規格：SPEC_FULL §7.1、`contracts/weaponeering.schema.json`、TASKS.md O3.2。deps: O3.1（已完成）。
+   - 產出：`core/app/adjudication/engagement.py`（**純同步純函數**，輸入 EnvSnapshot，不做 RPC——HOW_TO §4.2 五步）+ 3 種 KINETIC 武器模板。
+   - 驗收：Hypothesis property（距離↑→P_hit 單調不增；係數=1 退化 base；彈藥=0 必 REJECTED）；覆蓋率 ≥95%。
+   - **與 O3.1 銜接**：precheck 的 ENGAGE 目前只查 LOS；射程/彈藥檢查（error code `ORDER_OUT_OF_RANGE`/`ORDER_NO_AMMO` 已在契約 enum 預留）可於 O3.2 補上武器資料後加回 precheck。
+2. **O3.1 已交付的可複用件**：狀態機（`app.orders.state_machine`，唯一權威）、`PhysicsGateway` 注入模式、統一錯誤處理（`app.api.errors`，MatsoError→契約 Error）。O3.4 移動執行需 `DbOrderSource`（drain VALIDATED→EXECUTING）+ tick_source 接活 SimClock（目前佔位回 0）。
+3. **codegen 提醒（ADR 005）**：乾淨 checkout 後、跑測試/mypy 前必須先 `uv run python ops/tools/gen_proto.py`（產 `matso_sdk/_generated`，不入 git）。CI python job / terrain Dockerfile 已自動化。
+4. **分支鏈狀態**：main ← O1.1 ← … ← O2.4 ← O2.5 ← O3.1（皆 stacked，**未合併/推送**）——M2 已完成，建議擇時把 O1.x–O2.x 段合併回 main。
 4. 開發環境：`uv sync` 一律在 **repo root**（子目錄跑會弄壞 workspace venv）；compose `docker compose up -d --wait`。**OrbStack 可能隨休眠而停**——整合測試全 skip 時先 `open -a OrbStack`。
 5. **golden replay 維護**：改動確定性邏輯後 `uv run python ops/tools/rerecord_golden.py` 重錄並在 PR 說明。

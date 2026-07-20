@@ -16,6 +16,7 @@ dependencies = [
   "zstandard>=0.23", # SimCheckpoint 狀態快照壓縮（ADR 002）
   "matso-sdk", # Terrain plugin client：gRPC stubs（plugin_base + terrain）（O2.5）
   "grpcio>=1.68", # gRPC client（TerrainClient + 健檢/斷路器）
+  "h3>=4.1", # 單位座標 → hex（Order 物理預檢的移動起點，O3.1）
 ]
 
 [build-system]

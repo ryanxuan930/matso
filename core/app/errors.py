@@ -1,16 +1,27 @@
 """領域例外統一定義（HOW_TO §3.1）。
 
-規則：領域錯誤一律拋此處定義的自訂例外；API 層（O3.1 起）統一轉為契約的 error code。
+規則：領域錯誤一律拋此處定義的自訂例外；API 層統一轉為契約的 error code（見 app.api.errors）。
 建構參數驗證（型別/範圍防呆）仍用內建 ValueError——那是程式設計錯誤，不是領域錯誤。
+
+每個例外帶 `error_code`（對應 contracts/core_api.yaml 的 Error.code 枚舉）與 `http_status`
+（API 層轉 HTTP 狀態碼用）；`details` 供結構化補充（如預檢各項結果）。
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 
 class MatsoError(Exception):
     """所有 MATSO 領域例外的基底。error_code 對應 contracts/core_api.yaml 的 Error.code。"""
 
     error_code = "INTERNAL_ERROR"
+    http_status = 500
+
+    def __init__(self, message: str = "", *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message or self.error_code)
+        self.message = message or self.error_code
+        self.details = details or {}
 
 
 class CheckpointTooLargeError(MatsoError):
@@ -29,3 +40,56 @@ class TerrainUnavailableError(MatsoError):
     """Terrain 插件不可達（gRPC 失敗或斷路器開啟）。物理預檢硬依賴——上層應 PAUSE session。"""
 
     error_code = "TERRAIN_UNAVAILABLE"
+    http_status = 503  # 服務暫時不可用（terrain DOWN）
+
+
+# ---------------- Order pipeline（O3.1） ----------------
+
+
+class SessionNotFoundError(MatsoError):
+    error_code = "SESSION_NOT_FOUND"
+    http_status = 404
+
+
+class OrderNotFoundError(MatsoError):
+    error_code = "ORDER_NOT_FOUND"
+    http_status = 404
+
+
+class OrderValidationError(MatsoError):
+    """語法/單位存在性等驗證失敗（步驟 [1]）。error_code 由建構者指定（見 orders.validator）。"""
+
+    error_code = "ORDER_INVALID"
+    http_status = 422
+
+    def __init__(
+        self, message: str, *, error_code: str, details: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(message, details=details)
+        self.error_code = error_code  # 實例層覆寫（不同驗證項不同 code）
+
+
+class OrderPermissionError(MatsoError):
+    """下令者無權對該單位下令（faction/角色）。"""
+
+    error_code = "ORDER_PERMISSION_DENIED"
+    http_status = 403
+
+
+class PrecheckFailedError(MatsoError):
+    """物理預檢不可行（步驟 [2]）——立即 REJECTED，回 422 + 具體 code + 各項結果。"""
+
+    http_status = 422
+
+    def __init__(
+        self, message: str, *, error_code: str, details: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(message, details=details)
+        self.error_code = error_code
+
+
+class IllegalOrderTransitionError(MatsoError):
+    """非法的 Order 狀態轉移（如取消已完成的指令）。"""
+
+    error_code = "ORDER_INVALID_TRANSITION"
+    http_status = 409

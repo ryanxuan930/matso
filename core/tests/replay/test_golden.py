@@ -34,6 +34,13 @@ async def test_replay_is_reproducible() -> None:
     assert a.state_hash == b.state_hash
 
 
+async def test_order_sequence_replay_reproducible() -> None:
+    # O1.7/R10：同一「Ledger 指令序列」重播 → 相同最終 stateHash（SPEC §3.2）。
+    a = await run_replay(SCENARIOS["order_replay_60"])
+    b = await run_replay(SCENARIOS["order_replay_60"])
+    assert a.state_hash == b.state_hash
+
+
 async def test_golden_detects_logic_drift() -> None:
     # 改變一個「邏輯常數」（RNG stream_id）→ 最終狀態不同 → hash 必變。
     # 證明 harness 抓得到 drift（滿足 O1.6 驗收「改常數 → hash 比對失敗」）。

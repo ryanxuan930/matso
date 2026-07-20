@@ -1,10 +1,14 @@
-"""FastAPI 進入點。M0 階段僅提供 healthz；REST/WS 端點於 M3+ 依 contracts/core_api.yaml 實作。"""
+"""FastAPI 進入點。healthz + Order pipeline（O3.1）；其餘 REST/WS 端點依里程碑逐步實作。"""
 
 from fastapi import FastAPI
 
 from app import __version__
+from app.api import install_error_handlers, orders_router
 
 app = FastAPI(title="MATSO Core Orchestrator", version=__version__)
+
+install_error_handlers(app)
+app.include_router(orders_router)
 
 
 @app.get("/healthz")

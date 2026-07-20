@@ -31,15 +31,77 @@ components:
   schemas:
     Error:
       type: object
-      description: 統一錯誤格式；error.code 枚舉於 M0-2 補齊
+      description: 統一錯誤格式（app.api.errors 產出）
+      required: [error]
       properties:
         error:
           type: object
           required: [code, message]
           properties:
-            code: { type: string, examples: [ORDER_OUT_OF_RANGE] }
+            code:
+              type: string
+              description: error code 枚舉（O3.1 Order pipeline 部分）
+              enum:
+                - INTERNAL_ERROR
+                - SESSION_NOT_FOUND
+                - ORDER_NOT_FOUND
+                - ORDER_INVALID_PAYLOAD
+                - ORDER_UNIT_NOT_FOUND
+                - ORDER_PERMISSION_DENIED
+                - ORDER_INVALID_TRANSITION
+                - ORDER_UNIT_NO_POSITION
+                - ORDER_UNREACHABLE
+                - ORDER_TARGET_NOT_FOUND
+                - ORDER_NO_LOS
+                - ORDER_OUT_OF_RANGE
+                - ORDER_NO_AMMO
+                - ORDER_PRECHECK_FAILED
+                - TERRAIN_UNAVAILABLE
             message: { type: string }
             details: { type: object }
+    OrderType:
+      type: string
+      enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE]
+    OrderStatus:
+      type: string
+      enum: [PENDING, VALIDATED, EXECUTING, COMPLETED, REJECTED, CANCELLED]
+    OrderRequest:
+      type: object
+      required: [unit_id, order_type, issuer_id]
+      properties:
+        unit_id: { type: string, minLength: 1 }
+        order_type: { $ref: "#/components/schemas/OrderType" }
+        payload:
+          type: object
+          description: "依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?}"
+        issuer_id: { type: string, minLength: 1, description: SessionParticipant id（auth 落地前由 body 帶入） }
+    PrecheckCheck:
+      type: object
+      required: [name, passed]
+      properties:
+        name: { type: string }
+        passed: { type: boolean }
+        detail: { type: string }
+    PrecheckResult:
+      type: object
+      required: [feasible, checks]
+      properties:
+        feasible: { type: boolean }
+        checks: { type: array, items: { $ref: "#/components/schemas/PrecheckCheck" } }
+        reason: { type: [string, "null"] }
+    OrderResponse:
+      type: object
+      required: [id, unit_id, order_type, status, issued_at_tick]
+      properties:
+        id: { type: string }
+        unit_id: { type: string }
+        order_type: { type: string }
+        status: { $ref: "#/components/schemas/OrderStatus" }
+        precheck:
+          oneOf:
+            - $ref: "#/components/schemas/PrecheckResult"
+            - type: "null"
+        issued_at_tick: { type: integer }
 paths:
   /auth/login:
     post: { operationId: login, responses: { "200": { description: JWT pair } } }
@@ -64,13 +126,36 @@ paths:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:
       operationId: issueOrder
-      description: 回傳含物理預檢（precheck）結果；不可行立即 422 REJECTED
-      responses: { "201": { description: Order accepted (PENDING) }, "422": { description: Physics precheck failed } }
+      description: 驗證 + 物理預檢；通過 → 201 VALIDATED，不可行 → 422（order 落庫為 REJECTED）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderRequest" }
+      responses:
+        "201":
+          description: Order validated & queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderResponse" }
+        "403": { description: Permission denied, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Session not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Validation or physics precheck failed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: Terrain plugin unavailable, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/orders/{oid}:
     parameters:
       - { $ref: "#/components/parameters/SessionId" }
       - { $ref: "#/components/parameters/OrderId" }
-    delete: { operationId: cancelOrder, responses: { "200": { description: Cancelled } } }
+    delete:
+      operationId: cancelOrder
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderResponse" }
+        "404": { description: Order not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Order not cancellable (illegal transition), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/ai/consult:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:
