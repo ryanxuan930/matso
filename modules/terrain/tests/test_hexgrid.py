@@ -143,6 +143,7 @@ def test_get_cell_batch_partial(builder: HexGridBuilder, tmp_path: Path) -> None
     assert missing not in result
 
 
+@pytest.mark.benchmark
 def test_cache_query_p99_under_20ms(builder: HexGridBuilder, tmp_path: Path) -> None:
     import h3
 

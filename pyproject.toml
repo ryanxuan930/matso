@@ -114,6 +114,7 @@ markers = [
   "integration: needs external services via compose (MariaDB/Redis/...); skips if unreachable",
   "realdata: needs the real DTED file (external drive + MATSO_DTED_PATH); skips otherwise",
   "grass: cross-checks against GRASS r.viewshed via docker (O2.3); CI skip, run before release",
+  "benchmark: 夾具版效能 SLA（p99）——絕對時間依硬體而定，共享 CI runner 不穩，故 CI 排除（-m 'not benchmark'），於本機/真檔驗（真檔版標 realdata）",
 ]
 filterwarnings = [
   # rasterio 1.5.0 × numpy 2.5 的內部 reshape 棄用警告（上游相容問題，非本專案程式碼；

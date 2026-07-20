@@ -345,6 +345,7 @@ def test_endpoint_not_in_cache_unreachable() -> None:
 # ---------------- 效能 ----------------
 
 
+@pytest.mark.benchmark
 def test_get_path_p99_under_100ms() -> None:
     cache = make_cache(uniform_patch(CENTER, 6, TerrainClass.GRASSLAND))  # 較大區域
     origin = h3.latlng_to_cell(*CENTER, RES)

@@ -130,6 +130,7 @@ def test_viewshed_rejects_nonpositive_radius(dted: DtedMap) -> None:
 # ---------------- 效能 ----------------
 
 
+@pytest.mark.benchmark
 def test_check_los_p99_under_20ms(dted: DtedMap) -> None:
     latencies: list[float] = []
     for _ in range(200):
@@ -141,6 +142,7 @@ def test_check_los_p99_under_20ms(dted: DtedMap) -> None:
     assert p99 < 0.020, f"check_los p99 {p99 * 1000:.2f}ms ≥ 20ms（SPEC §4.3）"
 
 
+@pytest.mark.benchmark
 def test_viewshed_p99_under_200ms(dted: DtedMap) -> None:
     observer = Observer(lat=23.75, lng=121.25, height_agl_m=5)
     latencies: list[float] = []
