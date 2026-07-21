@@ -53,6 +53,11 @@ class FactionRelations:
     def is_neutral(self, a: str, b: str) -> bool:
         return self.relation(a, b) is Relation.NEUTRAL
 
+    def declarations(self) -> list[tuple[str, str, Relation]]:
+        """明確宣告的（非預設）配對，供想定匯出（O7.3）。回傳確定性排序。"""
+        out = [(min(p), max(p), rel) for p, rel in self._pairs.items()]
+        return sorted(out, key=lambda t: (t[0], t[1]))
+
     def set_relation(self, a: str, b: str, rel: Relation, *, tick: int) -> LedgerEvent:
         """局中調整關係（宣戰/停火）→ 回 FACTION_RELATION_CHANGED 事件供寫入 Ledger。"""
         if a == b:
