@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from app.errors import FactionInvalidError
+from app.factions.relations import FactionRelations, Relation
 
 # 保留字：統裁視角、非交戰方。
 WHITE_CELL = "WHITE_CELL"
@@ -37,6 +38,8 @@ def validate_faction_id(value: str, *, allow_white_cell: bool = True) -> str:
 __all__ = [
     "FACTION_ID_PATTERN",
     "WHITE_CELL",
+    "FactionRelations",
+    "Relation",
     "is_valid_faction_id",
     "validate_faction_id",
 ]

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import h3
 
 from app.engine.rng import DeterministicRNG
+from app.factions import FactionRelations
 from app.intel.sensor import (
     ERROR_RADIUS_M,
     DetectionEnv,
@@ -68,8 +69,14 @@ def sweep(
     rng: DeterministicRNG,
     tick: int,
     resolution: int = 8,
+    relations: FactionRelations | None = None,
 ) -> list[Contact]:
-    """對所有感測器跑偵測掃描，回傳確定性排序的 Contact 清單。"""
+    """對所有感測器跑偵測掃描，回傳確定性排序的 Contact 清單。
+
+    偵測對象＝NEUTRAL 或 HOSTILE（§12.1）；己方與 ALLIED 不成 contact（盟軍經共享視圖，非偵測）。
+    relations=None 時退回全 HOSTILE 預設（僅同陣營互不偵測，與 N 方前的語義相容）。
+    """
+    rel = relations or FactionRelations()
     cand_list = sorted(candidates, key=lambda c: c.unit_id)
     index = _build_cell_index(cand_list, resolution)
     edge_m = float(h3.average_hexagon_edge_length(resolution, unit="m"))
@@ -77,7 +84,7 @@ def sweep(
     contacts: list[Contact] = []
     for observer in sorted(observers, key=lambda o: o.unit_id):
         near = _candidates_near(observer, index, edge_m, resolution)
-        for target, range_m in _pairs_in_range(observer, near):
+        for target, range_m in _pairs_in_range(observer, near, rel):
             env = env_for(observer, target)
             p = detect_probability(observer.sensor, range_m, env)
             roll = rng.random()  # 每個射程內敵對配對擲一次（順序固定 → 確定性）
@@ -121,12 +128,12 @@ def _candidates_near(
 
 
 def _pairs_in_range(
-    observer: SensorUnit, candidates: list[TargetUnit]
+    observer: SensorUnit, candidates: list[TargetUnit], relations: FactionRelations
 ) -> Iterator[tuple[TargetUnit, float]]:
-    """敵對且在射程內的 (target, range_m)，按 unit_id 排序（與暴力全配對同序）。"""
+    """可偵測（NEUTRAL/HOSTILE）且在射程內的 (target, range_m)，按 unit_id 排序。"""
     for target in candidates:
-        if target.faction == observer.faction:
-            continue  # 己方不列為 contact
+        if relations.is_allied(observer.faction, target.faction):
+            continue  # 己方 / 盟軍不列為 contact（§12.1）
         range_m = _haversine_m(observer.lat, observer.lng, target.lat, target.lng)
         if range_m <= observer.sensor.max_range_m:
             yield target, range_m

@@ -67,6 +67,7 @@ components:
                 - ORDER_OUT_OF_RANGE
                 - ORDER_NO_AMMO
                 - ORDER_PRECHECK_FAILED
+                - ORDER_ROE_VIOLATION
                 - TERRAIN_UNAVAILABLE
                 - FACTION_INVALID
                 - AI_DISABLED
