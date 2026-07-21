@@ -8,7 +8,7 @@
 > **編號規則**：`O<里程碑>.<序號>` ≡ HOW_TO.md §5 的 `M<里程碑>-<序號>`（同一張卡的兩種編號）。
 > 任務內容以本檔為準；HOW_TO §5 為摘要。**M0（O0.x）已全部完成**，見 PROGRESS.md。
 >
-> **依賴**：O1 → O2 → O3 → {O4, O5 可平行} → O6 → O7 → O8。跨里程碑不可跳做，里程碑內依各任務標注的 `[deps]`。
+> **依賴**：O1 → O2 → O3 → {O4, O5 可平行} → O6 → O7 → O8。**O9（文檔轉換，SPEC_INGEST.md）獨立可平行**，只餵資料不被依賴。跨里程碑不可跳做，里程碑內依各任務標注的 `[deps]`。
 
 ---
 
@@ -153,11 +153,11 @@
 | 任務 | 內容 | 驗收重點 |
 |------|------|----------|
 | O6.1 | vLLM client + RoleManager（OpenAI-compatible、LoRA 熱切換、角色批次佇列、OPFOR 優先、`AIInvocationLog` 全記錄） | 無 vLLM 時以錄放 mock 測試；佇列優先權測試 |
-| O6.2 | Guardrail Gateway G1–G6（`guardrail_profiles.yaml`；攔截=Ledger 事件） | 覆蓋率 ≥95%；每個 G 有至少一個「必攔」案例測試 |
-| O6.3 | RAG 管線（入庫 CLI、Qdrant collections、bge-m3、引用查核 API 供 G5） | 入庫→檢索→引用查核 roundtrip 測試 |
-| O6.4 | 五角色 prompts + output schemas + eval cases（SPEC_FULL §9.1 表） | `matso_ai.evals.run` 全綠；schema 通過率 ≥98% |
-| O6.5 | OPFOR 自主迴路（事件驅動→產令→護欄→物理預檢→pending） | O3.6 想定中紅軍無人操作仍合理應對（錄放 mock 下可重現） |
-| O6.6 | eval gate 進 CI（SPEC_FULL §19.4 四門檻） | CI eval job 綠（用錄放 mock；真模型 eval 為手動觸發 workflow） |
+| O6.2 | **AI 運作模式（§9.0）**＋Guardrail Gateway G1–G6（`guardrail_profiles.yaml`；攔截=Ledger 事件；G5 模式感知：`AI_BARE`/空庫時非空引用=捏造） | 覆蓋率 ≥95%；每個 G 有至少一個「必攔」案例；`AI_OFF` 下 AI 端點回 `AI_DISABLED`；模式切換測試 |
+| O6.3 | RAG 管線（入庫 CLI、Qdrant collections **含 doctrine_general**、bge-m3、引用查核 API 供 G5）；**空語料是常態**：空庫回空結果+`index_empty`，上游降級 `AI_BARE` 不失敗；只吃 markdown（PDF 走 SPEC_INGEST/O9） | 入庫→檢索→引用查核 roundtrip；**空庫降級測試**（0 語料下 AI 呼叫仍成功且引用為空） |
+| O6.4 | 五角色 prompts（**依模式適配**：`AI_BARE` 版不含引用要求）+ output schemas + eval runner；eval cases 盡力而為（語料/軍方資料未到位前可少量或缺） | `matso_ai.evals.run` 全綠；schema 通過率 ≥98%；**案例庫空時 schema-only + `EVAL_CORPUS_EMPTY` 警告**（§19.4 條件式 gate） |
+| O6.5 | OPFOR 自主迴路（事件驅動→產令→護欄→物理預檢→pending）；**尊重 ai_mode**（`AI_OFF` 不啟動；`AI_BARE` 無引用） | O3.6 想定中紅軍無人操作仍合理應對（錄放 mock 下可重現）；`AI_OFF` 時紅軍完全由人操作（傳統兵推回歸測試） |
+| O6.6 | eval gate 進 CI（SPEC_FULL §19.4 四門檻，**條件式**） | CI eval job 綠（錄放 mock；案例空→schema-only+警告；真模型 eval 為手動觸發 workflow） |
 
 ## O7 想定與白軍
 
@@ -177,6 +177,14 @@
 | O8.2 | 統計儀表板（SPEC_FULL §14.2 指標預計算 job + 圖表） | 指標數字與 Ledger 手算抽查一致 |
 | O8.3 | AI 敘事報告（AAR_ANALYST；段落引用 event id 可點擊跳轉） | 引用的 event id 100% 存在（自動查核） |
 | O8.4 | 匯出（PDF + JSON/CSV + 匿名化選項） | 匿名化後無使用者名/單位真名 |
+
+## O9 文檔轉換子系統（規格：**SPEC_INGEST.md**；獨立於 M6，可平行；語料到位前不阻塞 O6）
+
+| 任務 | 內容 | 驗收重點 |
+|------|------|----------|
+| O9.1 | Ingest P1：文字 PDF → staging markdown（PyMuPDF 抽取、章節偵測、~512 token 分節、錨點自動編、front-matter 骨架）+ `promote` CLI（格式校驗 + 強制 reviewer → corpus/） | 合成 PDF fixture roundtrip；promote 拒收壞 front-matter/重覆錨點；未 promote 內容入庫 CLI 不可見 |
+| O9.2 | Ingest P2：OCR fallback（本機 tesseract/PaddleOCR，模型檔 env 注入 + 缺失降級「僅文字層」）+ 節級信心分級 | 掃描頁 fixture → 產出含 confidence；低信心節進報告；斷網可跑（air-gapped） |
+| O9.3 | Ingest P3：表格轉換 + 告警註記、`report` 彙總、與 O6.3 入庫串接端到端 | inbox→staging→promote→ingest→檢索命中 全鏈路測試 |
 
 ---
 
