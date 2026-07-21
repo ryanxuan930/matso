@@ -69,20 +69,20 @@ ROLE_REGISTRY: dict[Role, RoleConfig] = {
         system_prompt=_PLACEHOLDER + "身為情報官，把零散 detection 融合為敵情判斷並附信心度。",
         adapter="intel-v1",
         priority=40,
-        output_schema_ref="base",
+        output_schema_ref="intel_assessment",
     ),
     Role.WHITE_CELL_ASSISTANT: RoleConfig(
         role=Role.WHITE_CELL_ASSISTANT,
         system_prompt=_PLACEHOLDER + "身為統裁輔助，建議注入事件、偵測推演失衡。",
         adapter="whitecell-v1",
         priority=30,
-        output_schema_ref="base",
+        output_schema_ref="whitecell_advice",
     ),
     Role.AAR_ANALYST: RoleConfig(
         role=Role.AAR_ANALYST,
         system_prompt=_PLACEHOLDER + "身為賽後分析官，從 Ledger 產生敘事與教訓。",
         adapter="aar-v1",
         priority=10,  # 賽後，非即時
-        output_schema_ref="base",
+        output_schema_ref="aar_narrative",
     ),
 }
