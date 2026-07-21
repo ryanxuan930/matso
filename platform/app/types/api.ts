@@ -133,10 +133,48 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description faction-scoped 單位（一般角色見己方；全知見全部） */
+        /** @description faction-scoped 單位（一般角色見己方；全知見全部；White Cell 可 as_faction 切換視角） */
         get: operations["listUnits"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/inject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description White Cell ad-hoc 事件注入（SPEC §11.3）。限 EXERCISE_DIRECTOR / WHITE_CELL_STAFF。 */
+        post: operations["injectEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description White Cell 時間控制（PAUSE/RESUME/ROLLBACK，SPEC §12/§3.4）。限統裁。 */
+        post: operations["sessionControl"];
         delete?: never;
         options?: never;
         head?: never;
@@ -337,7 +375,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -401,6 +439,21 @@ export interface components {
              * @enum {string}
              */
             mode: "REALTIME" | "WEGO" | "IGO_UGO";
+        };
+        InjectRequest: {
+            event_type: string;
+            payload?: Record<string, never>;
+            /** @description 受眾陣營（null＝廣播） */
+            faction?: string | null;
+        };
+        InjectResponse: {
+            seq: number;
+        };
+        ControlRequest: {
+            /** @enum {string} */
+            action: "PAUSE" | "RESUME" | "ROLLBACK";
+            /** @description ROLLBACK 目標 tick */
+            target_tick?: number | null;
         };
         /** @enum {string} */
         OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE";
@@ -661,7 +714,10 @@ export interface operations {
     };
     listUnits: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description White Cell 視角切換——以某陣營視角過濾（O7.4）；非全知者使用→403 */
+                as_faction?: string;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["SessionId"];
@@ -680,6 +736,76 @@ export interface operations {
                 };
             };
             /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    injectEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Injected */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InjectResponse"];
+                };
+            };
+            /** @description Not White Cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sessionControl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControlRequest"];
+            };
+        };
+        responses: {
+            /** @description Control event emitted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InjectResponse"];
+                };
+            };
+            /** @description Not White Cell */
             403: {
                 headers: {
                     [name: string]: unknown;

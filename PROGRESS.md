@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-22：**M7（O7 想定與白軍）達成——O7.1–O7.5 全數完成**。O7.3 想定編輯器（匯出/匯入 roundtrip，Python dump+load 等價測試 + 前端編輯頁）；O7.4 **白軍控制台**（`?as_faction` 視角切換[限全知]、時間控制 `/control` PAUSE/RESUME/ROLLBACK[限 White Cell]、注入、事件流）；O7.5 **RBAC 完整化**——**7 角色×4 端點存取矩陣 contract test** + 收口 intel 端點安全漏洞（原**未認證 + 信任 client faction**→改認證+主體推導+越權 403）+ 統一 is_white_cell/is_omniscient。**676 passed**、mypy 148、前端 lint/typecheck/build 綠。O7 分支疊在 main（含 M6+多陣營）上未推。剩餘掛帳：refresh 撤銷（C5）、建局角色 gate（C8）、kernel↔MSEL/control/relations 部署接線。下一步 **M8 AAR**。
+- 2026-07-21：**O7.1 + O7.2 完成（想定管理起步）**。O7.1 scenario schema 補完（factions/relations/orbat/victory 任意陣營）+ **loader**（JSON Schema + 語意驗證、**精確錯誤路徑**、建 FactionRelations、`create_session_from_scenario` 開局建 session/units）+ 官方想定 **tutorial-platoon**。O7.2 **MSEL 觸發引擎**（condition DSL：time/faction_eliminated/strength_below/unit_in_region/all/any，與 victory 共用；`MselEngine` 邊緣觸發 fire-once 實作 TriggerChecker）+ **ad-hoc inject 端點**（`POST /sessions/{id}/inject`，限 White Cell）。**638 passed**、mypy 146。M6+多陣營已合併 main（PR #5，CI 綠）。O7.1/O7.2 分支疊在 main 上未推。**kernel 綁 MselEngine/victory + relations 熱狀態 → O7.4/部署層**。
 - 2026-07-21：**N 方對抗 + 關係矩陣全數實作（O6.7–O6.10）**。faction 由 enum→想定定義字串 id（O6.7，含契約漂移修正 + migration）；**FactionRelations 關係矩陣**（O6.8，ALLIED/NEUTRAL/HOSTILE、對稱、未宣告預設 HOSTILE、局中調整→FACTION_RELATION_CHANGED 事件）為敵我判斷單一權威——整合進 intel sweep（ALLIED 不成 contact）、ENGAGE 預檢（只能打 HOSTILE，否則 ORDER_ROE_VIOLATION）；聚合裁決泛化（O6.9，(force_a,force_b) + N 方 HOSTILE 配對逐一裁決，golden 免重錄）；前端 affiliation 由關係推導 + faction 顏色（O6.10）。**驗收：黃軍同時見紅藍、盟軍互不偵、BLUE 打己方被 ROE 攔、三方混戰合圍者掉血最多**。617 backend passed、mypy 142、18 E2E 綠。分支 feat/o6.7..o6.10 疊在 feat/o6-ai-modes-spec 上。剩：kernel↔多方接線、scenario 宣告 factions/relations（O7.1）、White Cell 調關係（O7.4）。
 - 2026-07-21：**多陣營設計定案（ADR 006 + SPEC §12.1 + TASKS O6.7–O6.10）**。盤點結論：偵測/fog-of-war/faction-scoped API/單位級裁決**已 N 方友善**；寫死兩軍的 blocker＝victory_conditions enum[BLUE,RED]、聚合裁決 blue/red 參數與事件欄、封閉 Faction enum（且 core_api 契約漂移 WHITE/GREEN）、無敵友關係模型、前端二元敵我。設計：**faction=想定定義字串 id**（WHITE_CELL 保留字）+ **關係矩陣 ALLIED/NEUTRAL/HOSTILE**（對稱、未宣告預設 HOSTILE、White Cell 局中調整→FACTION_RELATION_CHANGED 事件）；敵我判斷收斂單一關係服務（新紅線）。O7.1 依賴 O6.7。聚合泛化需 golden 重錄（O6.9）。
 - 2026-07-21：**M6 AI Phase 1 全數完成（O6.1–O6.6）**——**RAG/eval 皆空下仍完整可運作**。鏈路：AI 模式（§9.0 AI_OFF 傳統兵推/AI_BARE 無 RAG/AI_FULL）→ client+RoleManager（O6.1）→ Guardrail Gateway G1–G6（O6.2，core、不可 bypass、G5 模式感知、攔截入 Ledger）→ RAG 空庫降級（O6.3，Qdrant+doctrine_general）→ prompts+eval runner（O6.4，§19.4）→ OPFOR 迴路 decider→護欄→物理預檢→fallback（O6.5，無繞過物理特權）→ eval 進 CI（O6.6，空庫 schema-only 綠 + 真模型手動 workflow）。全套 589 passed、mypy 140、guardrails 98%。分支 feat/o6.2..o6.6 疊在 feat/o6-ai-modes-spec 上，未推。**部署層待接**：真 vLLM/bge-m3/Qdrant 服務、kernel↔迴路、WargameSession.aiMode 欄（O7.4）。
@@ -99,6 +101,26 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-20：契約 fuzz 用 schemathesis **v4**（v3 不支援 FastAPI 產生的 OpenAPI 3.1）；order 端點只斷言「不 5xx」。ruff B008 放行 FastAPI `Depends()` 慣例。
 
 ## Backlog / 發現的問題
+
+### O6 → O7 交接項（2026-07-21，M6 + 多陣營完成後）
+
+**部署層接線（介面皆已備注入點，接線即可）**：
+- **AI 迴路 ↔ kernel**：kernel 事件 → 建 context → `run_opfor_turn`（注入 RoleManager-decider +
+  TerrainGatewayAdapter feasibility + QdrantCitationVerifier + scenario no_strike + relations）→ orders 落 pending → `intervention_events` 寫 Ledger。
+- **真 AI 後端**：vLLM（`OPENAI_BASE_URL`）、bge-m3 模型檔（env 注入路徑）、Qdrant 服務；`RecordingClient` 錄 fixtures 供 CI `ReplayClient`。
+- **聚合裁決分流**：kernel `should_aggregate` → `resolve_multiway_tick`（session forces + FactionRelations）。
+- **AIInvocationLog / AI_DISABLED 端點**：目前無 AI REST 端點；O6.5 迴路接 kernel 時於入口 `require_ai_enabled`。
+
+**多陣營待接（O7 依賴）**：
+- **O7.1 依賴 O6.7**：scenario `factions:`（id/顯示名/顏色）+ `relations:`（上三角，未宣告預設 HOSTILE）+ victory_conditions 任意陣營；loader 建 `FactionRelations` 注入 session、驗證（未知/保留字/非法關係→精確錯誤）。
+- **session 熱狀態載入 relations**：OrderService / sweep / 聚合的 `relations` 目前為注入參數（預設全 HOSTILE）；O7.1 由 scenario 載入、White Cell（O7.4）局中 `set_relation` 寫 Ledger + 熱狀態。
+- **WargameSession.aiMode 欄位**（§9.0 per-session 模式持久化）→ O7.4 白軍控制台（局中切模式）；目前為 `resolve_ai_mode` 的設定預設。
+- **下令目標改用真 intel contacts**：O6.10 為 E2E 便利在 `STUB_GATEWAY` 下讓 `GET /units` 全放行；O7 UX 應改由偵測到的敵方 contact 選 ENGAGE 目標，移除該 affordance。
+- **前端 faction palette**：`buildUnitFeatures` 已收 palette 參數；O7.1 由 scenario `factions[].color` 注入取代 `DEFAULT_FACTION_COLORS`。
+
+**其他 O6 部署掛帳**：
+- **SPEC_INGEST / O9**（文檔轉換）與 doctrine 語料仍待人備；RAG/eval 空為合法常態，AI 自動降級 AI_BARE。
+- **真模型 eval** 為手動 workflow（`ai-eval-manual.yml`），需可達 vLLM 端點。
 
 ### 2026-07-19 M0–M1 code review 發現（10 主要 + 8 次要；修復卡 = O1.7，worklog: docs/worklog/O1.7.md）
 

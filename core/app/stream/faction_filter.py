@@ -11,14 +11,18 @@ from typing import Any
 
 from app.models import UserRole
 
-# 全知視角角色（統裁/白軍/管理）：見 ground truth 全部訊息（SPEC §12）。
-OMNISCIENT_ROLES = frozenset(
-    {UserRole.EXERCISE_DIRECTOR, UserRole.WHITE_CELL_STAFF, UserRole.ADMIN}
-)
+# White Cell（統裁）：可注入事件 / 時間控制 / 修改關係（SPEC §12）。ADMIN 為系統管理，非統裁。
+WHITE_CELL_ROLES = frozenset({UserRole.EXERCISE_DIRECTOR, UserRole.WHITE_CELL_STAFF})
+# 全知視角角色（統裁 + 管理）：見 ground truth 全部（含 god view / 視角切換）。
+OMNISCIENT_ROLES = WHITE_CELL_ROLES | {UserRole.ADMIN}
 
 
 def is_omniscient(role: UserRole) -> bool:
     return role in OMNISCIENT_ROLES
+
+
+def is_white_cell(role: UserRole) -> bool:
+    return role in WHITE_CELL_ROLES
 
 
 def is_visible(envelope: dict[str, Any], faction: str, omniscient: bool) -> bool:

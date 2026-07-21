@@ -81,3 +81,31 @@ def test_non_participant_403(session_factory: sessionmaker[Session]) -> None:
         f"/api/v1/sessions/{world.session_id}/units", headers=_bearer(order_token(oid))
     )
     assert r.status_code == 403
+
+
+def test_white_cell_viewpoint_switch(session_factory: sessionmaker[Session]) -> None:
+    """O7.4：White Cell 視角切換——as_faction=RED 只見紅、BLUE 只見藍、無參數見全部。"""
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    base = f"/api/v1/sessions/{world.session_id}/units"
+
+    red = client.get(base, params={"as_faction": "RED"}, headers=_auth(world, white=True))
+    assert [u["id"] for u in red.json()] == [world.red_unit_id]
+
+    blue = client.get(base, params={"as_faction": "BLUE"}, headers=_auth(world, white=True))
+    assert [u["id"] for u in blue.json()] == [world.blue_unit_id]
+
+    god = client.get(base, headers=_auth(world, white=True))
+    assert {u["id"] for u in god.json()} == {world.blue_unit_id, world.red_unit_id}
+
+
+def test_non_white_cell_cannot_switch_viewpoint(session_factory: sessionmaker[Session]) -> None:
+    """一般角色不得以 as_faction 窺視他陣營（越權防護）。"""
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    r = client.get(
+        f"/api/v1/sessions/{world.session_id}/units",
+        params={"as_faction": "RED"},
+        headers=_auth(world),  # 藍方 COMMANDER
+    )
+    assert r.status_code == 403

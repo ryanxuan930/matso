@@ -145,6 +145,24 @@ components:
         name: { type: string, minLength: 1 }
         scenario_id: { type: [string, "null"] }
         mode: { type: string, enum: [REALTIME, WEGO, IGO_UGO], default: REALTIME }
+    InjectRequest:
+      type: object
+      required: [event_type]
+      properties:
+        event_type: { type: string, minLength: 1 }
+        payload: { type: object }
+        faction: { type: [string, "null"], description: 受眾陣營（null＝廣播） }
+    InjectResponse:
+      type: object
+      required: [seq]
+      properties:
+        seq: { type: integer }
+    ControlRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [PAUSE, RESUME, ROLLBACK] }
+        target_tick: { type: [integer, "null"], description: ROLLBACK 目標 tick }
     OrderType:
       type: string
       enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE]
@@ -276,7 +294,13 @@ paths:
     get:
       operationId: listUnits
       security: [{ bearerAuth: [] }]
-      description: faction-scoped 單位（一般角色見己方；全知見全部）
+      description: faction-scoped 單位（一般角色見己方；全知見全部；White Cell 可 as_faction 切換視角）
+      parameters:
+        - name: as_faction
+          in: query
+          required: false
+          schema: { type: string }
+          description: White Cell 視角切換——以某陣營視角過濾（O7.4）；非全知者使用→403
       responses:
         "200":
           description: Units
@@ -284,6 +308,42 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/UnitView" } }
         "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/inject:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: injectEvent
+      security: [{ bearerAuth: [] }]
+      description: White Cell ad-hoc 事件注入（SPEC §11.3）。限 EXERCISE_DIRECTOR / WHITE_CELL_STAFF。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InjectRequest" }
+      responses:
+        "201":
+          description: Injected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InjectResponse" }
+        "403": { description: Not White Cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/control:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: sessionControl
+      security: [{ bearerAuth: [] }]
+      description: White Cell 時間控制（PAUSE/RESUME/ROLLBACK，SPEC §12/§3.4）。限統裁。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ControlRequest" }
+      responses:
+        "201":
+          description: Control event emitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InjectResponse" }
+        "403": { description: Not White Cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/orders:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:
