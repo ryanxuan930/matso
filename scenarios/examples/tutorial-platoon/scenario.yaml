@@ -1,0 +1,23 @@
+# 官方想定 #1：教學用小型（一個排級遭遇戰）。SPEC_FULL §11.1 / §12.1。
+name: Tutorial — Platoon Meeting Engagement
+version: "1.0"
+description: 藍紅兩排於隘口遭遇，供教學與 loader 驗收。
+bbox: [120.9, 23.6, 121.4, 23.9]
+mode: REALTIME
+tick_rate_ms: 1000
+hex_resolution: 8
+aggregate_adjudication_level: BATTALION
+factions:
+  - { id: BLUE, display_name: 藍軍, color: "#3b7dd8" }
+  - { id: RED, display_name: 紅軍, color: "#d83b3b" }
+relations:
+  - [BLUE, RED, HOSTILE]
+victory_conditions:
+  - faction: BLUE
+    condition: { type: eliminate, target_faction: RED }
+  - faction: RED
+    condition: { type: eliminate, target_faction: BLUE }
+files:
+  orbat:
+    BLUE: orbat/blue.yaml
+    RED: orbat/red.yaml

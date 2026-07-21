@@ -1,0 +1,5 @@
+faction: BLUE
+units:
+  - { designation: "B-CO", unit_level: COMPANY, lat: 23.72, lng: 121.10 }
+  - { designation: "B-1PLT", unit_level: PLATOON, lat: 23.73, lng: 121.12, parent: "B-CO" }
+  - { designation: "B-2PLT", unit_level: PLATOON, lat: 23.71, lng: 121.11, parent: "B-CO" }

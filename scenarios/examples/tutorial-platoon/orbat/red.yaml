@@ -1,0 +1,4 @@
+faction: RED
+units:
+  - { designation: "R-CO", unit_level: COMPANY, lat: 23.80, lng: 121.30 }
+  - { designation: "R-1PLT", unit_level: PLATOON, lat: 23.81, lng: 121.31, parent: "R-CO" }
