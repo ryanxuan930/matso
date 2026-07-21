@@ -4,7 +4,9 @@ from app.adjudication.aggregate import (
     AggregateEnv,
     AggregateForce,
     AggregateResult,
+    MultiwayResult,
     resolve_aggregate_tick,
+    resolve_multiway_tick,
     should_aggregate,
 )
 from app.adjudication.engagement import (
@@ -25,11 +27,13 @@ __all__ = [
     "AggregateResult",
     "EngagementResult",
     "EnvSnapshot",
+    "MultiwayResult",
     "Resolution",
     "Shooter",
     "Target",
     "WeaponProfile",
     "resolve_aggregate_tick",
     "resolve_engagement",
+    "resolve_multiway_tick",
     "should_aggregate",
 ]

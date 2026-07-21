@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.engine.rng import DeterministicRNG
+from app.factions import FactionRelations
 from app.models.enums import UnitLevel
 from app.state.ledger import LedgerEvent
 
@@ -49,61 +50,121 @@ class AggregateEnv:
 
 @dataclass(frozen=True, slots=True)
 class AggregateResult:
-    blue_strength_after: float
-    red_strength_after: float
-    blue_loss: float
-    red_loss: float
+    """兩力交戰結果（中性 a/b；SPEC §12.1/ADR 006：不綁 blue/red）。"""
+
+    a_strength_after: float
+    b_strength_after: float
+    a_loss: float
+    b_loss: float
     coefficients: dict[str, float]
     events: list[LedgerEvent]
 
 
+def _pair_event(
+    force_a: AggregateForce,
+    force_b: AggregateForce,
+    env: AggregateEnv,
+    a_loss: float,
+    b_loss: float,
+    coefficients: dict[str, float],
+    tick: int,
+) -> LedgerEvent:
+    return LedgerEvent(
+        event_type="AGGREGATE_ENGAGEMENT_RESOLVED",
+        tick=tick,
+        initiator_id=force_a.unit_id,
+        target_id=force_b.unit_id,
+        terrain_modifier=env.terrain_modifier,
+        damage_calc=a_loss + b_loss,
+        ai_decision={
+            "initiator_loss": a_loss,
+            "target_loss": b_loss,
+            "initiator_strength_after": force_a.strength - a_loss,
+            "target_strength_after": force_b.strength - b_loss,
+            "coefficients": coefficients,
+        },
+    )
+
+
 def resolve_aggregate_tick(
-    blue: AggregateForce,
-    red: AggregateForce,
+    force_a: AggregateForce,
+    force_b: AggregateForce,
     env: AggregateEnv,
     rng: DeterministicRNG,
     tick: int,
 ) -> AggregateResult:
     """一個 tick 的 Lanchester 消耗。雙方同時以 tick 前戰力互算（對稱）。"""
-    roll_b = rng.random()  # 藍方承受的隨機化
-    roll_r = rng.random()  # 紅方承受的隨機化
+    roll_a = rng.random()  # force_a 承受的隨機化
+    roll_b = rng.random()  # force_b 承受的隨機化
 
-    blue_loss = min(blue.strength, _incoming_loss(red, blue, env, roll_b))
-    red_loss = min(red.strength, _incoming_loss(blue, red, env, roll_r))
-    blue_after = blue.strength - blue_loss
-    red_after = red.strength - red_loss
+    a_loss = min(force_a.strength, _incoming_loss(force_b, force_a, env, roll_a))
+    b_loss = min(force_b.strength, _incoming_loss(force_a, force_b, env, roll_b))
 
     coefficients = {
         "aimed_fraction": env.aimed_fraction,
         "terrain": env.terrain_modifier,
         "weather": env.weather_modifier,
         "variance": env.variance,
-        "blue_lethality": blue.lethality,
-        "red_lethality": red.lethality,
+        "initiator_lethality": force_a.lethality,
+        "target_lethality": force_b.lethality,
     }
-    event = LedgerEvent(
-        event_type="AGGREGATE_ENGAGEMENT_RESOLVED",
-        tick=tick,
-        initiator_id=blue.unit_id,
-        target_id=red.unit_id,
-        terrain_modifier=env.terrain_modifier,
-        damage_calc=blue_loss + red_loss,
-        ai_decision={
-            "blue_loss": blue_loss,
-            "red_loss": red_loss,
-            "blue_strength_after": blue_after,
-            "red_strength_after": red_after,
-            "coefficients": coefficients,
-        },
-    )
+    event = _pair_event(force_a, force_b, env, a_loss, b_loss, coefficients, tick)
     return AggregateResult(
-        blue_strength_after=blue_after,
-        red_strength_after=red_after,
-        blue_loss=blue_loss,
-        red_loss=red_loss,
+        a_strength_after=force_a.strength - a_loss,
+        b_strength_after=force_b.strength - b_loss,
+        a_loss=a_loss,
+        b_loss=b_loss,
         coefficients=coefficients,
         events=[event],
     )
+
+
+@dataclass(frozen=True, slots=True)
+class MultiwayResult:
+    """多方混戰一個 tick 的結果：各 force 的 tick 後戰力 + 每個敵對配對一則事件。"""
+
+    strength_after: dict[str, float]
+    events: list[LedgerEvent]
+
+
+def resolve_multiway_tick(
+    forces: list[AggregateForce],
+    relations: FactionRelations,
+    env: AggregateEnv,
+    rng: DeterministicRNG,
+    tick: int,
+) -> MultiwayResult:
+    """N 方混戰（§12.1/ADR 006）：對每一 HOSTILE 配對逐一裁決（配對確定性排序）。
+
+    每 force 承受**所有敵對配對**的戰損（以 tick 前戰力互算），最後一次夾至 [0, 戰力]——
+    同時對多敵作戰者可被合圍殲滅，能量守恆（總戰損 ≤ 總戰力）仍成立。
+    """
+    ordered = sorted(forces, key=lambda f: f.unit_id)
+    raw_loss: dict[str, float] = {f.unit_id: 0.0 for f in ordered}
+    events: list[LedgerEvent] = []
+
+    for i, force_a in enumerate(ordered):
+        for force_b in ordered[i + 1 :]:
+            if not relations.is_hostile(force_a.faction, force_b.faction):
+                continue
+            roll_a = rng.random()
+            roll_b = rng.random()
+            la = _incoming_loss(force_b, force_a, env, roll_a)
+            lb = _incoming_loss(force_a, force_b, env, roll_b)
+            raw_loss[force_a.unit_id] += la
+            raw_loss[force_b.unit_id] += lb
+            coefficients = {
+                "aimed_fraction": env.aimed_fraction,
+                "terrain": env.terrain_modifier,
+                "weather": env.weather_modifier,
+                "variance": env.variance,
+                "initiator_lethality": force_a.lethality,
+                "target_lethality": force_b.lethality,
+            }
+            events.append(_pair_event(force_a, force_b, env, la, lb, coefficients, tick))
+
+    strength_after = {f.unit_id: f.strength - min(f.strength, raw_loss[f.unit_id]) for f in ordered}
+    return MultiwayResult(strength_after=strength_after, events=events)
 
 
 def _incoming_loss(
