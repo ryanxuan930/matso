@@ -85,9 +85,21 @@ services:
       context: ../../platform
     environment:
       NUXT_PUBLIC_API_BASE: http://core:8000
+      # 離線 tile server URL（瀏覽器可達）。預設空 → 地圖以背景+經緯網格+hex 離線渲染（O4.2）。
+      # 啟用底圖：掛載 .mbtiles + `docker compose --profile tiles up` + 設 TILE_URL=http://localhost:8081
+      NUXT_PUBLIC_TILE_URL: ${TILE_URL:-}
     ports: ["3000:3000"]
     depends_on:
       core: { condition: service_healthy }
+
+  # 離線向量瓦片服務（O4.2，SPEC §13.2）。**opt-in profile**：預設 / CI 不啟動（無 .mbtiles）。
+  # 真 Taiwan 瓦片在外接硬碟 M200——路徑 env 注入（絕不寫死），未掛載時本服務不啟動、地圖降級。
+  tileserver:
+    image: maptiler/tileserver-gl-light:latest
+    profiles: ["tiles"]
+    volumes:
+      - ${MBTILES_DIR:-/Volumes/M200/Maps/tiles}:/data:ro
+    ports: ["8081:8080"]
 
 volumes:
   mariadb-data:

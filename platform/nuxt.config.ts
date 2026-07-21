@@ -5,10 +5,17 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
   modules: ['@nuxt/fonts', '@nuxt/scripts', '@nuxt/eslint', '@pinia/nuxt'],
+  // MapLibre GL 樣式表本地打包（不引外部 CDN，air-gapped）
+  css: ['maplibre-gl/dist/maplibre-gl.css'],
+  // 元件依區域分目錄（components/<區域>/）但以檔名自動匯入（不加路徑前綴），HOW_TO §3.2
+  components: [{ path: '~/components', pathPrefix: false }],
   runtimeConfig: {
     public: {
       // Core REST 位址（endpoints 在 /api/v1）。compose 由 NUXT_PUBLIC_API_BASE 注入。
       apiBase: 'http://localhost:8000',
+      // 離線 tile server（O4.2）。空字串＝無底圖（地圖仍以背景+經緯網格+hex 離線渲染）。
+      // compose 由 NUXT_PUBLIC_TILE_URL 注入（tileserver-gl，掛載 M200 的 .mbtiles 時）。
+      tileUrl: '',
     },
   },
   vite: {

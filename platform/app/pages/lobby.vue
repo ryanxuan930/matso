@@ -61,7 +61,13 @@ onMounted(async () => {
       <p v-if="loading" data-testid="lobby-loading">載入中…</p>
       <p v-else-if="sessions.length === 0" data-testid="lobby-empty">目前沒有推演，建立一個開始。</p>
       <ul v-else data-testid="session-list">
-        <li v-for="s in sessions" :key="s.id" class="session">
+        <li
+          v-for="s in sessions"
+          :key="s.id"
+          class="session"
+          data-testid="session-item"
+          @click="navigateTo(`/session/${s.id}/cop`)"
+        >
           <span class="name">{{ s.name }}</span>
           <span class="meta">{{ s.mode }} · {{ s.status }}</span>
           <span v-if="s.my_faction" class="faction">{{ s.my_faction }}</span>
@@ -131,6 +137,10 @@ ul {
   border: 1px solid #334155;
   border-radius: 0.375rem;
   background: #1e293b;
+  cursor: pointer;
+}
+.session:hover {
+  border-color: #2563eb;
 }
 .name {
   font-weight: 600;
