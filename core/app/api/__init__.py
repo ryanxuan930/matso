@@ -5,6 +5,7 @@ from app.api.errors import install_error_handlers
 from app.api.intel import router as intel_router
 from app.api.lobby import router as lobby_router
 from app.api.orders import router as orders_router
+from app.api.units import router as units_router
 from app.api.ws import router as ws_router
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "intel_router",
     "lobby_router",
     "orders_router",
+    "units_router",
     "ws_router",
 ]

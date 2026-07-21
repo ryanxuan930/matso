@@ -10,31 +10,18 @@ issuer 由認證 token 推導（SPEC §12：前端不可信）——非該 sessi
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db, get_order_service
+from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
-from app.errors import OrderPermissionError
-from app.models import SessionParticipant
 from app.orders.schemas import OrderRequest, OrderResponse
 from app.orders.service import OrderService
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["orders"])
 
-
-def _participant(db: Session, user: CurrentUser, session_id: str) -> SessionParticipant:
-    """解析下令者於此 session 的參與者身分；非參與者 → 403。"""
-    participant = db.execute(
-        select(SessionParticipant).where(
-            SessionParticipant.user_id == user.id,
-            SessionParticipant.session_id == session_id,
-        )
-    ).scalar_one_or_none()
-    if participant is None:
-        raise OrderPermissionError(f"非此 session 參與者：{user.username}")
-    return participant
+_participant = require_participant
 
 
 @router.get("/{session_id}/orders", response_model=list[OrderResponse])

@@ -42,16 +42,52 @@ def main() -> None:
         Base.metadata.create_all(engine)  # throwaway dev/e2e DB 才建表
 
     with Session(engine) as db:
-        existing = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
-        if existing is not None:
-            existing.password_hash = hash_password(password)
-            existing.role = role
-            db.commit()
+        user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
+        if user is not None:
+            user.password_hash = hash_password(password)
+            user.role = role
             print(f"✓ 更新種子使用者 {username}（{role.value}）")
-            return
-        db.add(User(username=username, password_hash=hash_password(password), role=role))
+        else:
+            user = User(username=username, password_hash=hash_password(password), role=role)
+            db.add(user)
+            print(f"✓ 建立種子使用者 {username}（{role.value}）")
         db.commit()
-        print(f"✓ 建立種子使用者 {username}（{role.value}）")
+        if os.environ.get("SEED_SESSION"):
+            _seed_session(db, user)
+
+
+def _seed_session(db: Session, user: User) -> None:
+    """E2E 下令流程：固定 id 的 session + 藍軍單位 + 該使用者為藍方 COMMANDER 參與者。"""
+    from app.models import Faction, SessionParticipant, TacticalUnit, UnitLevel, WargameSession
+
+    sid = os.environ.get("SEED_SESSION_ID", "e2e-orders")
+    if db.get(WargameSession, sid) is not None:
+        print(f"✓ session {sid} 已存在，略過")
+        return
+    db.add(WargameSession(id=sid, name="E2E 下令演習", master_seed=42, current_weather={}))
+    db.flush()
+    for i in range(3):
+        db.add(
+            TacticalUnit(
+                session_id=sid,
+                designation=f"B{i + 1}",
+                unit_level=UnitLevel.PLATOON,
+                faction=Faction.BLUE,
+                current_lat=23.75 + i * 0.02,
+                current_lng=121.25 + i * 0.02,
+            )
+        )
+    db.add(
+        SessionParticipant(
+            user_id=user.id,
+            session_id=sid,
+            faction=Faction.BLUE,
+            role=UserRole.COMMANDER,
+            unit_scope=[],
+        )
+    )
+    db.commit()
+    print(f"✓ 建立 E2E session {sid}（3 藍軍單位 + {user.username} 為 BLUE COMMANDER）")
 
 
 if __name__ == "__main__":

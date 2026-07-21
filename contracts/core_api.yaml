@@ -121,6 +121,18 @@ components:
         mode: { type: string }
         status: { type: string }
         my_faction: { type: [string, "null"], description: 呼叫者在此 session 的陣營（非參與者為 null） }
+    UnitView:
+      type: object
+      required: [id, designation, unit_level, faction, health, comms]
+      properties:
+        id: { type: string }
+        designation: { type: string }
+        unit_level: { type: string }
+        faction: { type: string }
+        lat: { type: [number, "null"] }
+        lng: { type: [number, "null"] }
+        health: { type: number }
+        comms: { type: string }
     CreateSessionRequest:
       type: object
       required: [name]
@@ -256,7 +268,17 @@ paths:
     get: { operationId: getState, description: faction-scoped 全量快照（重連用）, responses: { "200": { description: Snapshot } } }
   /sessions/{id}/units:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
-    get: { operationId: listUnits, responses: { "200": { description: faction-scoped units } } }
+    get:
+      operationId: listUnits
+      security: [{ bearerAuth: [] }]
+      description: faction-scoped 單位（一般角色見己方；全知見全部）
+      responses:
+        "200":
+          description: Units
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/UnitView" } }
+        "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/orders:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:
