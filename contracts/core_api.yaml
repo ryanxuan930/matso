@@ -68,6 +68,8 @@ components:
                 - ORDER_NO_AMMO
                 - ORDER_PRECHECK_FAILED
                 - TERRAIN_UNAVAILABLE
+                - AI_DISABLED
+                - AI_OUTPUT_REJECTED
             message: { type: string }
             details: { type: object }
     UserRole:

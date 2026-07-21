@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     # E2E/開發用：以許可式 stub 取代真 terrain 物理預檢（env STUB_GATEWAY=1）。正式部署絕不設。
     stub_gateway: bool = False
+    # AI 運作模式預設（env MATSO_AI_MODE，SPEC_FULL §9.0）。AI_OFF＝傳統兵推（保守預設）。
+    # per-session override 於 O6.5 落地；此為 session 未指定時的回退預設。
+    ai_mode: str = "AI_OFF"
+    # 當前部署 adapter 是否為 ≤8-bit 量化（觸發護欄 G6 加嚴，SPEC_FULL §10）。
+    ai_adapter_quantized: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:

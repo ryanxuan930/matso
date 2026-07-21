@@ -89,8 +89,8 @@ module = ["pymysql.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["rasterio.*", "h3.*", "pyarrow.*", "networkx.*"]
-ignore_missing_imports = true # 地理/圖論套件無完整型別 stubs
+module = ["rasterio.*", "h3.*", "pyarrow.*", "networkx.*", "yaml", "jsonschema", "jsonschema.*"]
+ignore_missing_imports = true # 地理/圖論/yaml/jsonschema 套件無完整型別 stubs
 
 [[tool.mypy.overrides]]
 module = ["grpc", "grpc.*", "matso_sdk._generated.*"]

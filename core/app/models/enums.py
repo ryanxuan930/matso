@@ -58,3 +58,14 @@ class IntelFidelity(enum.StrEnum):
     DETECTED = "DETECTED"
     CLASSIFIED = "CLASSIFIED"
     IDENTIFIED = "IDENTIFIED"
+
+
+class AiMode(enum.StrEnum):
+    """AI 運作模式（SPEC_FULL §9.0）。預設 AI_OFF＝傳統兵推。
+
+    O6.2 以此 enum + 設定預設實作；per-session 持久化欄位於 O6.5（session 驅動 AI 時）補上。
+    """
+
+    AI_OFF = "AI_OFF"  # AI 全停用，紅軍由人操作
+    AI_BARE = "AI_BARE"  # AI 啟用但無 RAG，引用必空
+    AI_FULL = "AI_FULL"  # 完整管線（RAG + 引用查核）
