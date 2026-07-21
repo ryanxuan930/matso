@@ -10,9 +10,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
+from app.config import Settings
 from app.models import TacticalUnit
 from app.stream.faction_filter import is_omniscient
 
@@ -48,11 +49,14 @@ def list_units(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> list[UnitView]:
     participant = require_participant(db, user, session_id)
     # faction 過濾下推到 SQL（CODE_REVIEW C12）：非全知者不把敵方單位載入行程記憶體。
+    # STUB_GATEWAY（E2E 明示 affordance）下放行全單位——供下令 UX 選敵對目標；正式部署絕不設，
+    # 真 fog-of-war 單位過濾由 test_units_api（後端）+ units.spec（前端合成）覆蓋。
     stmt = select(TacticalUnit).where(TacticalUnit.session_id == session_id)
-    if not is_omniscient(participant.role):
+    if not is_omniscient(participant.role) and not settings.stub_gateway:
         stmt = stmt.where(TacticalUnit.faction == participant.faction)
     units = db.execute(stmt).scalars().all()
     return [_view(u) for u in units]

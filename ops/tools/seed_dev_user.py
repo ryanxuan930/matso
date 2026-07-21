@@ -77,6 +77,17 @@ def _seed_session(db: Session, user: User) -> None:
                 current_lng=121.25 + i * 0.02,
             )
         )
+    # 敵對陣營目標（RED）——供 ENGAGE E2E 選為 hostile 目標（ROE 允許，§12.1/O6.8）。
+    db.add(
+        TacticalUnit(
+            session_id=sid,
+            designation="R1",
+            unit_level=UnitLevel.PLATOON,
+            faction="RED",
+            current_lat=23.80,
+            current_lng=121.30,
+        )
+    )
     db.add(
         SessionParticipant(
             user_id=user.id,
