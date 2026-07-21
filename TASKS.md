@@ -162,14 +162,14 @@
 ## O6+ 多陣營（N-faction + 關係矩陣；SPEC_FULL §12.1、ADR 006；**O7.1 依賴 O6.7**）
 
 > 設計定案 2026-07-21：faction 由封閉 enum 改為想定定義字串 id（`WHITE_CELL` 保留字）；
-> 關係矩陣 `ALLIED/NEUTRAL/HOSTILE`（對稱、未宣告預設 NEUTRAL、White Cell 可局中調整→
+> 關係矩陣 `ALLIED/NEUTRAL/HOSTILE`（對稱、未宣告預設 HOSTILE、White Cell 可局中調整→
 > `FACTION_RELATION_CHANGED` 事件）。紅線：敵我判斷一律經 `core/app/factions/` 關係服務，
 > 禁止子系統自行 `faction != mine` 判敵。
 
 | 任務 | 內容 | 驗收重點 |
 |------|------|----------|
 | O6.7 | 資料模型與契約遷移：prisma `enum Faction`→`String`（migration，ADR 004 流程）+ core `Faction` 降為保留字/驗證 + 契約修漂移（core_api BLUE/RED/WHITE/GREEN → string pattern）+ scenario.schema.json `factions:`/`relations:`/victory_conditions 任意陣營 + 前端型別 | schema-sync 綠；既有 BLUE/RED 測試以「字串實例」照過；未知 faction 於 API 被拒；`WHITE_CELL` 不可入 orbat/矩陣（驗證測試） |
-| O6.8 | 關係矩陣服務 `core/app/factions/`（載入/查詢/局中調整→Ledger 事件）+ 整合：intel sweep 配對依關係（ALLIED 不成 contact）、ENGAGE 預檢拒 ALLIED/NEUTRAL、G4 攔 friendly-fire/攻中立、WS audience | 三方矩陣單元測試（含預設 NEUTRAL、對稱性、宣戰/停火事件重播）；「藍打盟軍/中立 → 422/G4 攔」測試；黃軍觀測者同時偵測藍與紅 |
+| O6.8 | 關係矩陣服務 `core/app/factions/`（載入/查詢/局中調整→Ledger 事件）+ 整合：intel sweep 配對依關係（ALLIED 不成 contact）、ENGAGE 預檢拒 ALLIED/NEUTRAL、G4 攔 friendly-fire/攻中立、WS audience | 三方矩陣單元測試（含預設 HOSTILE、對稱性、宣戰/停火事件重播）；「藍打盟軍/中立 → 422/G4 攔」測試；黃軍觀測者同時偵測藍與紅 |
 | O6.9 | 聚合裁決泛化：`resolve_aggregate_tick(force_a, force_b)` 中性化 + 多方 HOSTILE 配對逐一裁決（確定性排序）+ 事件欄 `initiator_loss/target_loss` + **golden replay 重錄** | 三方混戰聚合測試（A-B 敵對、B-C 敵對、A-C 中立 → 只裁 2 組配對）；同 seed 決定性；golden 綠 |
 | O6.10 | 前端多陣營：SIDC affiliation 由關係推導（own/ALLIED=F、NEUTRAL=N、HOSTILE=H）+ faction 顏色（scenario 定義）+ lobby/建局 faction 選擇 N 方 + 三方 E2E | Playwright：三方想定下黃軍視角同時見紅藍 contact 且視覺可區分；smoke 全鏈路仍綠 |
 

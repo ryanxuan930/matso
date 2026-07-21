@@ -33,8 +33,9 @@
 ### D2 — 關係矩陣（FactionRelation）
 - 三值：`ALLIED`（同盟）/ `NEUTRAL`（中立）/ `HOSTILE`（敵對）。
 - **對稱**（A→B == B→A；非對稱關係不支援，複雜度不值——需要時以 ROE 差異表達）。
-- 想定資產：`scenario.yaml` `relations:` 上三角清單（`[A, B, HOSTILE]`）；**未宣告的配對預設
-  `NEUTRAL`**（保守：不得交戰；與現行「非我皆敵」不同，想定必須明示敵對——防止誤設全面開戰）。
+- 想定資產：`scenario.yaml` `relations:` 上三角清單（`[A, B, ALLIED|NEUTRAL]`）；**未宣告的
+  配對預設 `HOSTILE`**（兵推的常態是對抗——與現行「非我皆敵」語義一致，既有 BLUE/RED
+  測試/想定零遷移；同盟與中立屬例外，須明示宣告）。
 - **White Cell 可局中調整**（宣戰/停火）→ `FACTION_RELATION_CHANGED` Ledger 事件（證據性）；
   關係矩陣屬 session 熱狀態 + Ledger 可重播。
 - 語義（單一權威 `core/app/factions/` 關係服務，所有子系統經它查詢）：

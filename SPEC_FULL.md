@@ -469,7 +469,7 @@ overrides/             # (可選) mobility matrix、weaponeering 覆寫
 ```
 
 - **factions/relations 為 scenario 權威**（§12.1）：`factions:` 定義本局合法陣營 id
-  （`WHITE_CELL` 保留字不可用）；`relations:` 上三角宣告配對關係，未宣告預設 `NEUTRAL`；
+  （`WHITE_CELL` 保留字不可用）；`relations:` 上三角宣告配對關係，未宣告預設 `HOSTILE`；
   victory_conditions 的 `faction` 可為任一已宣告陣營。
 
 - Schema 定義於 `contracts/scenario.schema.json`；載入時 MUST 全量驗證，錯誤需給出精確路徑（如 `orbat/blue.yaml: units[3].equipment[0]: unknown template 'T-999'`）。
@@ -516,8 +516,9 @@ overrides/             # (可選) mobility matrix、weaponeering 覆寫
 
 **關係矩陣（FactionRelation）**：
 - 三值 `ALLIED` / `NEUTRAL` / `HOSTILE`，**對稱**（A↔B 同值）。
-- 想定宣告上三角配對（`relations: [[A, B, HOSTILE], …]`）；**未宣告配對預設 `NEUTRAL`**
-  ——想定必須明示敵對，防止「忘了設定＝全面開戰」。
+- 想定宣告上三角配對（`relations: [[A, B, ALLIED|NEUTRAL], …]`）；**未宣告配對預設
+  `HOSTILE`**——兵推常態是對抗，與既有「非我皆敵」語義一致（BLUE/RED 想定零遷移）；
+  同盟與中立屬例外，須明示宣告。
 - White Cell 可於局中調整（宣戰/停火）→ `FACTION_RELATION_CHANGED` Ledger 事件（證據性、可重播）。
 - **單一權威**：`core/app/factions/` 關係服務。任何子系統 MUST 經其查詢敵我
   （`is_hostile/is_allied/is_neutral`），**禁止自行以 `faction != mine` 判敵**（紅線）。
