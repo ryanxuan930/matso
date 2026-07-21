@@ -23,12 +23,12 @@ test('M4 全鏈路：登入 → lobby → COP → 下令 → 看到裁決事件'
   })
   // WS 連上
   await expect.poll(async () => page.getByTestId('ws-status').textContent()).toContain('live')
-  await expect(page.getByTestId('unit-item')).toHaveCount(3)
+  await expect(page.getByTestId('unit-item')).toHaveCount(4)
 
   // 3) 下令：ENGAGE（stub gateway → precheck 可行）
   await page.getByTestId('unit-item').first().click()
   await page.getByTestId('order-type').selectOption('ENGAGE')
-  await page.getByTestId('engage-target').selectOption({ index: 1 })
+  await page.getByTestId('engage-target').selectOption({ label: 'R1' })
   await page.getByTestId('submit-order').click()
   await expect(page.getByTestId('precheck')).toContainText('可行')
 

@@ -18,7 +18,7 @@ async function loginToOrdersCop(page: Page): Promise<void> {
 
 test('單位列表載入真單位', async ({ page }) => {
   await loginToOrdersCop(page)
-  await expect(page.getByTestId('unit-item')).toHaveCount(3) // 3 藍軍
+  await expect(page.getByTestId('unit-item')).toHaveCount(4) // 3 藍軍
 })
 
 test('下 MOVE 令全流程：選單位 → 點地圖 → precheck 可行 → pending → 取消', async ({ page }) => {
@@ -48,7 +48,7 @@ test('下 ENGAGE 令：選單位 → 選目標 → precheck 可行', async ({ pa
   await loginToOrdersCop(page)
   await page.getByTestId('unit-item').first().click()
   await page.getByTestId('order-type').selectOption('ENGAGE')
-  await page.getByTestId('engage-target').selectOption({ index: 1 }) // 第一個可選目標
+  await page.getByTestId('engage-target').selectOption({ label: 'R1' }) // 第一個可選目標
   await page.getByTestId('submit-order').click()
   await expect(page.getByTestId('precheck')).toContainText('可行')
   await expect(page.getByTestId('order-list')).toContainText('ENGAGE')

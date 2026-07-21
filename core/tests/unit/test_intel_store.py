@@ -7,12 +7,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.intel import store
 from app.intel.sweep import Contact
-from app.models.enums import Faction, IntelFidelity
+from app.models.enums import IntelFidelity
 
 
 def _contact(target: str, fidelity: IntelFidelity, tick: int, lat: float = 23.7) -> Contact:
     return Contact(
-        observer_faction=Faction.RED,
+        observer_faction="RED",
         target_unit_id=target,
         fidelity=fidelity,
         tick=tick,
@@ -27,10 +27,10 @@ def test_record_then_query_faction_scoped(session_factory: sessionmaker[Session]
     with session_factory() as db:
         store.record(db, world.session_id, _contact(world.blue_unit_id, IntelFidelity.DETECTED, 1))
         db.commit()
-        red = store.query(db, world.session_id, Faction.RED)
+        red = store.query(db, world.session_id, "RED")
         assert len(red) == 1 and red[0].target_unit_id == world.blue_unit_id
         # BLUE 看不到 RED 的 contact（faction 過濾）
-        assert store.query(db, world.session_id, Faction.BLUE) == []
+        assert store.query(db, world.session_id, "BLUE") == []
 
 
 def test_upsert_keeps_best_fidelity(session_factory: sessionmaker[Session]) -> None:
@@ -45,7 +45,7 @@ def test_upsert_keeps_best_fidelity(session_factory: sessionmaker[Session]) -> N
             db, world.session_id, _contact(world.blue_unit_id, IntelFidelity.DETECTED, 5, lat=23.9)
         )
         db.commit()
-        rows = store.query(db, world.session_id, Faction.RED)
+        rows = store.query(db, world.session_id, "RED")
         assert len(rows) == 1  # 同目標只一筆
         assert rows[0].fidelity is IntelFidelity.IDENTIFIED  # 不降級
         assert rows[0].last_seen_tick == 5  # 位置/tick 最新
@@ -58,7 +58,7 @@ def test_records_are_per_target(session_factory: sessionmaker[Session]) -> None:
         store.record(db, world.session_id, _contact(world.blue_unit_id, IntelFidelity.DETECTED, 1))
         store.record(db, world.session_id, _contact("other-unit", IntelFidelity.DETECTED, 1))
         db.commit()
-        assert len(store.query(db, world.session_id, Faction.RED)) == 2
+        assert len(store.query(db, world.session_id, "RED")) == 2
 
 
 def test_record_all_batch(session_factory: sessionmaker[Session]) -> None:
@@ -73,4 +73,4 @@ def test_record_all_batch(session_factory: sessionmaker[Session]) -> None:
             ],
         )
         db.commit()
-        assert len(store.query(db, world.session_id, Faction.RED)) == 2
+        assert len(store.query(db, world.session_id, "RED")) == 2

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.errors import TerrainUnavailableError
-from app.models.enums import Faction, UnitLevel, UserRole
+from app.models.enums import UnitLevel, UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, User, WargameSession
 
 
@@ -34,7 +34,7 @@ def seed_world(factory: sessionmaker[Session]) -> OrderWorld:
             session_id=session.id,
             designation="B1",
             unit_level=UnitLevel.PLATOON,
-            faction=Faction.BLUE,
+            faction="BLUE",
             current_lat=23.75,
             current_lng=121.25,
         )
@@ -42,7 +42,7 @@ def seed_world(factory: sessionmaker[Session]) -> OrderWorld:
             session_id=session.id,
             designation="R1",
             unit_level=UnitLevel.PLATOON,
-            faction=Faction.RED,
+            faction="RED",
             current_lat=23.76,
             current_lng=121.26,
         )
@@ -53,14 +53,14 @@ def seed_world(factory: sessionmaker[Session]) -> OrderWorld:
         blue_issuer = SessionParticipant(
             user_id=cmdr.id,
             session_id=session.id,
-            faction=Faction.BLUE,
+            faction="BLUE",
             role=UserRole.COMMANDER,
             unit_scope={},
         )
         white_issuer = SessionParticipant(
             user_id=white.id,
             session_id=session.id,
-            faction=Faction.WHITE_CELL,
+            faction="WHITE_CELL",
             role=UserRole.WHITE_CELL_STAFF,
             unit_scope={},
         )

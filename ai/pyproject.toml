@@ -3,7 +3,10 @@ name = "matso-ai"
 version = "0.1.0"
 description = "MATSO AI subsystem — RoleManager / RAG / evals (SPEC_FULL §9; implemented in M6)"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "qdrant-client>=1.12", # RAG 向量庫（含本機 :memory: 模式供測試，O6.3）
+  "pyyaml>=6.0", # 語料 front-matter 解析
+]
 
 [build-system]
 requires = ["hatchling"]

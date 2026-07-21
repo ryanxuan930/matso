@@ -111,3 +111,25 @@ def test_non_physical_order_feasible_no_checks(session_factory: sessionmaker[Ses
         result = run_precheck(db, validated, FakeGateway())
     assert result.feasible
     assert result.checks == []
+
+
+def test_engage_own_faction_rejected_by_roe(session_factory: sessionmaker[Session]) -> None:
+    """O6.8：ENGAGE 只能打敵對陣營——BLUE 打 BLUE（己方＝ALLIED）→ ROE 攔（§12.1）。"""
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        # blue_unit 打自己（同陣營），LOS gateway 恆通——應被 ROE 先擋下
+        result = run_precheck(
+            db, _validated_engage(db, world.blue_unit_id, world.blue_unit_id), FakeGateway()
+        )
+        assert not result.feasible
+        assert precheck_error_code(result) == "ORDER_ROE_VIOLATION"
+
+
+def test_engage_hostile_default_passes_roe(session_factory: sessionmaker[Session]) -> None:
+    """預設全 HOSTILE：BLUE 打 RED 通過 ROE（沿用既有行為）。"""
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        result = run_precheck(
+            db, _validated_engage(db, world.blue_unit_id, world.red_unit_id), FakeGateway()
+        )
+        assert result.feasible  # ROE + LOS 皆過

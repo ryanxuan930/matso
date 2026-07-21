@@ -129,3 +129,27 @@ class IllegalOrderTransitionError(MatsoError):
 
     error_code = "ORDER_INVALID_TRANSITION"
     http_status = 409
+
+
+# ---------------- AI 子系統（O6.2，SPEC_FULL §9–10） ----------------
+
+
+class AiDisabledError(MatsoError):
+    """AI 於此 session 為 AI_OFF（傳統兵推模式）——AI 端點/功能不可用。"""
+
+    error_code = "AI_DISABLED"
+    http_status = 409
+
+
+class GuardrailRejectedError(MatsoError):
+    """AI 輸出被護欄硬性阻擋（G1 schema 重試耗盡 / G4 IHL-ROE）——回 fallback 或升 White Cell。"""
+
+    error_code = "AI_OUTPUT_REJECTED"
+    http_status = 422
+
+
+class FactionInvalidError(MatsoError):
+    """faction id 非法（格式不符 / 保留字誤用 / 非本想定宣告陣營）。（§12.1，ADR 006）"""
+
+    error_code = "FACTION_INVALID"
+    http_status = 422

@@ -94,7 +94,7 @@ def test_aggregate_losses_differ_by_weather() -> None:
     def _loss(effects: CellEffects) -> float:
         blue, red = AggregateForce("b", "BLUE", 500, 1.0), AggregateForce("r", "RED", 500, 1.0)
         env = AggregateEnv(variance=0.0, weather_modifier=aggregate_weather_modifier(effects))
-        return resolve_aggregate_tick(blue, red, env, _rng(), 0).red_loss
+        return resolve_aggregate_tick(blue, red, env, _rng(), 0).b_loss
 
     assert _loss(_STORM) < _loss(_CLEAR)  # 暴雨降低戰鬥效率 → 戰損較低
 

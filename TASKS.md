@@ -8,7 +8,7 @@
 > **編號規則**：`O<里程碑>.<序號>` ≡ HOW_TO.md §5 的 `M<里程碑>-<序號>`（同一張卡的兩種編號）。
 > 任務內容以本檔為準；HOW_TO §5 為摘要。**M0（O0.x）已全部完成**，見 PROGRESS.md。
 >
-> **依賴**：O1 → O2 → O3 → {O4, O5 可平行} → O6 → O7 → O8。跨里程碑不可跳做，里程碑內依各任務標注的 `[deps]`。
+> **依賴**：O1 → O2 → O3 → {O4, O5 可平行} → O6 → O7 → O8。**O9（文檔轉換，SPEC_INGEST.md）獨立可平行**，只餵資料不被依賴。跨里程碑不可跳做，里程碑內依各任務標注的 `[deps]`。
 
 ---
 
@@ -153,17 +153,31 @@
 | 任務 | 內容 | 驗收重點 |
 |------|------|----------|
 | O6.1 | vLLM client + RoleManager（OpenAI-compatible、LoRA 熱切換、角色批次佇列、OPFOR 優先、`AIInvocationLog` 全記錄） | 無 vLLM 時以錄放 mock 測試；佇列優先權測試 |
-| O6.2 | Guardrail Gateway G1–G6（`guardrail_profiles.yaml`；攔截=Ledger 事件） | 覆蓋率 ≥95%；每個 G 有至少一個「必攔」案例測試 |
-| O6.3 | RAG 管線（入庫 CLI、Qdrant collections、bge-m3、引用查核 API 供 G5） | 入庫→檢索→引用查核 roundtrip 測試 |
-| O6.4 | 五角色 prompts + output schemas + eval cases（SPEC_FULL §9.1 表） | `matso_ai.evals.run` 全綠；schema 通過率 ≥98% |
-| O6.5 | OPFOR 自主迴路（事件驅動→產令→護欄→物理預檢→pending） | O3.6 想定中紅軍無人操作仍合理應對（錄放 mock 下可重現） |
-| O6.6 | eval gate 進 CI（SPEC_FULL §19.4 四門檻） | CI eval job 綠（用錄放 mock；真模型 eval 為手動觸發 workflow） |
+| O6.2 | **AI 運作模式（§9.0）**＋Guardrail Gateway G1–G6（`guardrail_profiles.yaml`；攔截=Ledger 事件；G5 模式感知：`AI_BARE`/空庫時非空引用=捏造） | 覆蓋率 ≥95%；每個 G 有至少一個「必攔」案例；`AI_OFF` 下 AI 端點回 `AI_DISABLED`；模式切換測試 |
+| O6.3 | RAG 管線（入庫 CLI、Qdrant collections **含 doctrine_general**、bge-m3、引用查核 API 供 G5）；**空語料是常態**：空庫回空結果+`index_empty`，上游降級 `AI_BARE` 不失敗；只吃 markdown（PDF 走 SPEC_INGEST/O9） | 入庫→檢索→引用查核 roundtrip；**空庫降級測試**（0 語料下 AI 呼叫仍成功且引用為空） |
+| O6.4 | 五角色 prompts（**依模式適配**：`AI_BARE` 版不含引用要求）+ output schemas + eval runner；eval cases 盡力而為（語料/軍方資料未到位前可少量或缺） | `matso_ai.evals.run` 全綠；schema 通過率 ≥98%；**案例庫空時 schema-only + `EVAL_CORPUS_EMPTY` 警告**（§19.4 條件式 gate） |
+| O6.5 | OPFOR 自主迴路（事件驅動→產令→護欄→物理預檢→pending）；**尊重 ai_mode**（`AI_OFF` 不啟動；`AI_BARE` 無引用） | O3.6 想定中紅軍無人操作仍合理應對（錄放 mock 下可重現）；`AI_OFF` 時紅軍完全由人操作（傳統兵推回歸測試） |
+| O6.6 | eval gate 進 CI（SPEC_FULL §19.4 四門檻，**條件式**） | CI eval job 綠（錄放 mock；案例空→schema-only+警告；真模型 eval 為手動觸發 workflow） |
+
+## O6+ 多陣營（N-faction + 關係矩陣；SPEC_FULL §12.1、ADR 006；**O7.1 依賴 O6.7**）
+
+> 設計定案 2026-07-21：faction 由封閉 enum 改為想定定義字串 id（`WHITE_CELL` 保留字）；
+> 關係矩陣 `ALLIED/NEUTRAL/HOSTILE`（對稱、未宣告預設 HOSTILE、White Cell 可局中調整→
+> `FACTION_RELATION_CHANGED` 事件）。紅線：敵我判斷一律經 `core/app/factions/` 關係服務，
+> 禁止子系統自行 `faction != mine` 判敵。
+
+| 任務 | 內容 | 驗收重點 |
+|------|------|----------|
+| O6.7 | 資料模型與契約遷移：prisma `enum Faction`→`String`（migration，ADR 004 流程）+ core `Faction` 降為保留字/驗證 + 契約修漂移（core_api BLUE/RED/WHITE/GREEN → string pattern）+ scenario.schema.json `factions:`/`relations:`/victory_conditions 任意陣營 + 前端型別 | schema-sync 綠；既有 BLUE/RED 測試以「字串實例」照過；未知 faction 於 API 被拒；`WHITE_CELL` 不可入 orbat/矩陣（驗證測試） |
+| O6.8 | 關係矩陣服務 `core/app/factions/`（載入/查詢/局中調整→Ledger 事件）+ 整合：intel sweep 配對依關係（ALLIED 不成 contact）、ENGAGE 預檢拒 ALLIED/NEUTRAL、G4 攔 friendly-fire/攻中立、WS audience | 三方矩陣單元測試（含預設 HOSTILE、對稱性、宣戰/停火事件重播）；「藍打盟軍/中立 → 422/G4 攔」測試；黃軍觀測者同時偵測藍與紅 |
+| O6.9 | 聚合裁決泛化：`resolve_aggregate_tick(force_a, force_b)` 中性化 + 多方 HOSTILE 配對逐一裁決（確定性排序）+ 事件欄 `initiator_loss/target_loss` + **golden replay 重錄** | 三方混戰聚合測試（A-B 敵對、B-C 敵對、A-C 中立 → 只裁 2 組配對）；同 seed 決定性；golden 綠 |
+| O6.10 | 前端多陣營：SIDC affiliation 由關係推導（own/ALLIED=F、NEUTRAL=N、HOSTILE=H）+ faction 顏色（scenario 定義）+ lobby/建局 faction 選擇 N 方 + 三方 E2E | Playwright：三方想定下黃軍視角同時見紅藍 contact 且視覺可區分；smoke 全鏈路仍綠 |
 
 ## O7 想定與白軍
 
 | 任務 | 內容 | 驗收重點 |
 |------|------|----------|
-| O7.1 | Scenario schema 補完 + loader（精確錯誤路徑）+ 官方想定 #1 tutorial-platoon | 壞檔案的錯誤訊息含精確路徑；想定可載入開局 |
+| O7.1 | Scenario schema 補完 + loader（精確錯誤路徑）+ 官方想定 #1 tutorial-platoon（**[deps: O6.7]**——factions/relations 為 scenario 權威，§12.1） | 壞檔案的錯誤訊息含精確路徑；想定可載入開局；factions/relations 驗證（未知陣營/保留字/非法關係→精確錯誤） |
 | O7.2 | MSEL 觸發引擎（時間/條件觸發 DSL、ad-hoc inject API） | 條件觸發整合測試；inject 權限限 White Cell |
 | O7.3 | 想定編輯器（ORBAT 樹、地圖佈署、控制措施、MSEL 時間軸、匯入匯出） | 編輯→匯出→重新載入 roundtrip |
 | O7.4 | 白軍控制台（時間控制、視角切換、注入、AI 監控、護欄事件流、rollback UI） | 全知/單方視角切換正確 |
@@ -177,6 +191,14 @@
 | O8.2 | 統計儀表板（SPEC_FULL §14.2 指標預計算 job + 圖表） | 指標數字與 Ledger 手算抽查一致 |
 | O8.3 | AI 敘事報告（AAR_ANALYST；段落引用 event id 可點擊跳轉） | 引用的 event id 100% 存在（自動查核） |
 | O8.4 | 匯出（PDF + JSON/CSV + 匿名化選項） | 匿名化後無使用者名/單位真名 |
+
+## O9 文檔轉換子系統（規格：**SPEC_INGEST.md**；獨立於 M6，可平行；語料到位前不阻塞 O6）
+
+| 任務 | 內容 | 驗收重點 |
+|------|------|----------|
+| O9.1 | Ingest P1：文字 PDF → staging markdown（PyMuPDF 抽取、章節偵測、~512 token 分節、錨點自動編、front-matter 骨架）+ `promote` CLI（格式校驗 + 強制 reviewer → corpus/） | 合成 PDF fixture roundtrip；promote 拒收壞 front-matter/重覆錨點；未 promote 內容入庫 CLI 不可見 |
+| O9.2 | Ingest P2：OCR fallback（本機 tesseract/PaddleOCR，模型檔 env 注入 + 缺失降級「僅文字層」）+ 節級信心分級 | 掃描頁 fixture → 產出含 confidence；低信心節進報告；斷網可跑（air-gapped） |
+| O9.3 | Ingest P3：表格轉換 + 告警註記、`report` 彙總、與 O6.3 入庫串接端到端 | inbox→staging→promote→ingest→檢索命中 全鏈路測試 |
 
 ---
 

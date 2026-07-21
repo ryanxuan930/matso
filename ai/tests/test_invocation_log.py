@@ -83,4 +83,5 @@ def test_role_manager_logs_each_invocation(session_factory: sessionmaker[Session
         assert row.role == "OPFOR_COMMANDER"
         assert row.tokens_in == 11
         assert row.request["model"] == "local-gemma"
+        assert row.request["mode"] == "AI_OFF"  # §9.0：log 記當時模式
         assert row.guardrail_result == {"status": "not_evaluated"}

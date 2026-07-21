@@ -16,12 +16,11 @@ from app.engine.rng import DeterministicRNG
 from app.intel import store
 from app.intel.sensor import DetectionEnv, SensorProfile
 from app.intel.sweep import Contact, SensorUnit, TargetUnit, sweep
-from app.models.enums import Faction
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
 SensorLookup = Callable[[str], SensorProfile | None]
-FactionLookup = Callable[[str], Faction]
+FactionLookup = Callable[[str], str]
 DetectEnvLookup = Callable[[SensorUnit, TargetUnit], DetectionEnv]
 
 
@@ -72,7 +71,7 @@ class SensorSweepSystem:
             tick=contact.tick,
             target_id=contact.target_unit_id,
             ai_decision={
-                "observer_faction": contact.observer_faction.value,
+                "observer_faction": contact.observer_faction,
                 "fidelity": contact.fidelity.value,
             },
         )

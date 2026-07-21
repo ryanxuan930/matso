@@ -68,13 +68,6 @@ enum CommsState {
   OFFLINE
 }
 
-enum Faction {
-  BLUE
-  RED
-  WHITE_CELL
-  ALLIED
-}
-
 model TacticalUnit {
   id        String         @id @default(uuid())
   sessionId String
@@ -82,7 +75,7 @@ model TacticalUnit {
 
   designation String
   unitLevel   UnitLevel
-  faction     Faction
+  faction     String   // 想定定義字串 id（§12.1/ADR 006）
 
   // Fractal Hierarchy (Self-Referential)
   parentId String?
@@ -191,7 +184,7 @@ model SessionParticipant {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   sessionId String
-  faction   Faction
+  faction   String   // 想定定義字串 id（SPEC §12.1/ADR 006）；WHITE_CELL 保留字
   role      UserRole
   unitScope Json // 可指揮的單位 id 白名單（null = 全軍）
 
@@ -245,7 +238,7 @@ enum IntelFidelity {
 model IntelContact {
   id           String        @id @default(uuid())
   sessionId    String
-  faction      Faction // 「誰看到的」
+  faction      String // 「誰看到的」——想定定義字串 id（§12.1/ADR 006）
   targetUnitId String // ground truth 連結（永不直接下發前端）
   fidelity     IntelFidelity
   lastSeenTick Int

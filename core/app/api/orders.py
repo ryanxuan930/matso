@@ -58,7 +58,7 @@ def list_orders(
     service: OrderService = Depends(get_order_service),
 ) -> list[OrderResponse]:
     p = require_participant(db, user, session_id)
-    return service.list_orders(session_id, p.faction.value, is_omniscient(p.role))
+    return service.list_orders(session_id, p.faction, is_omniscient(p.role))
 
 
 @router.post("/{session_id}/orders", status_code=201, response_model=OrderResponse)
@@ -72,7 +72,7 @@ def issue_order(
 ) -> OrderResponse:
     p = require_participant(db, user, session_id)
     resp = service.submit(session_id, req, p.id)
-    _emit_adjudication_event(settings, session_id, p.faction.value, resp)
+    _emit_adjudication_event(settings, session_id, p.faction, resp)
     return resp
 
 
@@ -85,4 +85,4 @@ def cancel_order(
     service: OrderService = Depends(get_order_service),
 ) -> OrderResponse:
     p = require_participant(db, user, session_id)  # 須為參與者
-    return service.cancel(session_id, order_id, p.faction.value, is_omniscient(p.role))
+    return service.cancel(session_id, order_id, p.faction, is_omniscient(p.role))

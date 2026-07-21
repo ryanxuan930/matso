@@ -1,0 +1,12 @@
+# Guardrail Gateway 設定（SPEC_FULL §10）。White Cell 可調；正式部署由運維鎖定。
+# 護欄不可被 bypass（紅線 3）——本檔只調「嚴格度參數」，不能關掉任何一個 G。
+
+# G2：CoT 最少推理步驟（WARBENCH 顯示 CoT 為結構性防護網）。
+cot_min_steps: 3
+
+# G5：引用相似度閾值（AI_FULL 時；由 RAG 查核器實作，此為預設閾值供其讀取）。
+citation_similarity_threshold: 0.75
+
+# G6：當前 adapter 是否為 ≤8-bit 量化部署。true → G4 對所有 ENGAGE 令改「白軍逐條確認」。
+# 亦可由 Settings.ai_adapter_quantized（env）覆寫；此為設定檔預設。
+adapter_quantized: false

@@ -67,7 +67,11 @@ components:
                 - ORDER_OUT_OF_RANGE
                 - ORDER_NO_AMMO
                 - ORDER_PRECHECK_FAILED
+                - ORDER_ROE_VIOLATION
                 - TERRAIN_UNAVAILABLE
+                - FACTION_INVALID
+                - AI_DISABLED
+                - AI_OUTPUT_REJECTED
             message: { type: string }
             details: { type: object }
     UserRole:
@@ -75,7 +79,8 @@ components:
       enum: [EXERCISE_DIRECTOR, WHITE_CELL_STAFF, COMMANDER, STAFF, OBSERVER, ANALYST, ADMIN]
     Faction:
       type: string
-      enum: [BLUE, RED, WHITE, GREEN]
+      description: 想定定義的陣營 id（SPEC §12.1/ADR 006）；WHITE_CELL 為統裁保留字。
+      pattern: "^[A-Z][A-Z0-9_]{1,31}$"
     LoginRequest:
       type: object
       required: [username, password]

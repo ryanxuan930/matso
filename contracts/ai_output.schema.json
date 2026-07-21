@@ -74,6 +74,47 @@
           }
         }
       ]
+    },
+    "intel_assessment": {
+      "description": "INTEL_OFFICER：融合零散 detection 為敵情判斷（附信心度）。",
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "required": ["enemy_assessment"],
+          "properties": {
+            "enemy_assessment": { "type": "string", "minLength": 1 },
+            "assessed_entities": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
+    },
+    "aar_narrative": {
+      "description": "AAR_ANALYST：從 Ledger 產生敘事與教訓。",
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "required": ["narrative", "lessons"],
+          "properties": {
+            "narrative": { "type": "string", "minLength": 1 },
+            "lessons": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
+    },
+    "whitecell_advice": {
+      "description": "WHITE_CELL_ASSISTANT：建議注入事件、偵測推演失衡。",
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "required": ["recommendations"],
+          "properties": {
+            "recommendations": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+          }
+        }
+      ]
     }
   }
 }

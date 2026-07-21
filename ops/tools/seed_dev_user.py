@@ -58,7 +58,7 @@ def main() -> None:
 
 def _seed_session(db: Session, user: User) -> None:
     """E2E 下令流程：固定 id 的 session + 藍軍單位 + 該使用者為藍方 COMMANDER 參與者。"""
-    from app.models import Faction, SessionParticipant, TacticalUnit, UnitLevel, WargameSession
+    from app.models import SessionParticipant, TacticalUnit, UnitLevel, WargameSession
 
     sid = os.environ.get("SEED_SESSION_ID", "e2e-orders")
     if db.get(WargameSession, sid) is not None:
@@ -72,16 +72,27 @@ def _seed_session(db: Session, user: User) -> None:
                 session_id=sid,
                 designation=f"B{i + 1}",
                 unit_level=UnitLevel.PLATOON,
-                faction=Faction.BLUE,
+                faction="BLUE",
                 current_lat=23.75 + i * 0.02,
                 current_lng=121.25 + i * 0.02,
             )
         )
+    # 敵對陣營目標（RED）——供 ENGAGE E2E 選為 hostile 目標（ROE 允許，§12.1/O6.8）。
+    db.add(
+        TacticalUnit(
+            session_id=sid,
+            designation="R1",
+            unit_level=UnitLevel.PLATOON,
+            faction="RED",
+            current_lat=23.80,
+            current_lng=121.30,
+        )
+    )
     db.add(
         SessionParticipant(
             user_id=user.id,
             session_id=sid,
-            faction=Faction.BLUE,
+            faction="BLUE",
             role=UserRole.COMMANDER,
             unit_scope=[],
         )

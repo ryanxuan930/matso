@@ -1,8 +1,35 @@
 // 單位/contact 型別 + fog of war 樣式邏輯（O4.4，SPEC §13.3）——純函數，可測。
 
-export type Faction = 'BLUE' | 'RED' | 'WHITE_CELL' | 'ALLIED'
+// faction＝想定定義字串 id（SPEC §12.1/ADR 006），非封閉集合；WHITE_CELL 為統裁保留字。
+export type Faction = string
 export type CommsState = 'ONLINE' | 'DEGRADED' | 'OFFLINE'
 export type Fidelity = 'DETECTED' | 'CLASSIFIED' | 'IDENTIFIED'
+// 觀測者對某陣營的關係（SPEC §12.1）——決定 contact 的 2525 affiliation。
+export type Relation = 'ALLIED' | 'NEUTRAL' | 'HOSTILE'
+
+/** 陣營顯示色調色盤（想定 factions[].color 可覆寫；此為預設，讓多陣營視覺可區分）。 */
+export const DEFAULT_FACTION_COLORS: Record<string, string> = {
+  BLUE: '#3b7dd8',
+  RED: '#d83b3b',
+  YELLOW: '#d8c53b',
+  GREEN: '#3bd86b',
+  PURPLE: '#9b3bd8',
+}
+const _FALLBACK_COLORS = ['#e07b39', '#39b0e0', '#b0e039', '#e039b0', '#39e0c5']
+
+/** 由 faction id 取顯示色：想定 palette 優先 → 預設表 → 確定性 fallback（依 id 雜湊）。 */
+export function factionColor(faction: string, palette: Record<string, string> = {}): string {
+  const declared = palette[faction] ?? DEFAULT_FACTION_COLORS[faction]
+  if (declared) return declared
+  let h = 0
+  for (const ch of faction) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return _FALLBACK_COLORS[h % _FALLBACK_COLORS.length]!
+}
+
+/** 關係 → 2525 affiliation 字母：ALLIED=F(友)、NEUTRAL=N(中)、HOSTILE=H(敵)。 */
+export function affiliationForRelation(rel: Relation): string {
+  return rel === 'ALLIED' ? 'F' : rel === 'NEUTRAL' ? 'N' : 'H'
+}
 
 /** 己方單位（STATE_DIFF 餵入）。 */
 export interface OwnUnit {
@@ -25,6 +52,8 @@ export interface Contact {
   unitType?: string
   designation?: string
   lastSeenTick: number
+  faction?: string // IDENTIFIED 才揭露（後端去識別化）——用於顏色與 affiliation
+  relation?: Relation // 觀測者對該 contact 陣營的關係（IDENTIFIED 時已知）
 }
 
 // 少數 2525C function ID（SPEC 未細列，取常見兵種；DETECTED 未知 → 通用）。
@@ -52,13 +81,16 @@ export function sidcForOwnUnit(u: OwnUnit): string {
 }
 
 /**
- * 敵方 contact 依情報等級（SPEC §13.3）：
- * DETECTED → 未知（U，黃色菱形，無兵種）；CLASSIFIED → 疑敵（S）+ 兵種；IDENTIFIED → 敵軍（H）+ 兵種。
+ * 敵方 contact 依情報等級（SPEC §13.3）+ N 方關係（§12.1）：
+ * DETECTED → 未知（U）；CLASSIFIED → 疑敵（S）+ 兵種；
+ * IDENTIFIED → 依觀測者對該陣營關係定 affiliation（HOSTILE=H、NEUTRAL=N、ALLIED=F）+ 兵種。
+ * relation 未知（如未 IDENTIFIED 或後端未給）時，IDENTIFIED 退回 H（保守視為敵）。
  */
 export function sidcForContact(c: Contact): string {
   if (c.fidelity === 'DETECTED') return buildSidc('U')
   if (c.fidelity === 'CLASSIFIED') return buildSidc('S', c.unitType)
-  return buildSidc('H', c.unitType)
+  const affiliation = c.relation ? affiliationForRelation(c.relation) : 'H'
+  return buildSidc(affiliation, c.unitType)
 }
 
 /** 情報時效透明度：愈舊愈淡（下限 0.25）。 */
@@ -113,6 +145,7 @@ export function buildUnitFeatures(
   own: OwnUnit[],
   contacts: Contact[],
   currentTick: number,
+  palette: Record<string, string> = {},
 ): UnitRender {
   const features: UnitFeature[] = []
   const iconMap = new Map<string, IconSpec>()
@@ -138,11 +171,14 @@ export function buildUnitFeatures(
     const options: SymbolOpts = isGhost(u)
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
+    options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
     push(sidcForOwnUnit(u), options, u.lng, u.lat, ownUnitOpacity(u.comms), 'own')
   }
   for (const c of contacts) {
     const options: SymbolOpts =
       c.fidelity === 'IDENTIFIED' && c.designation ? { uniqueDesignation: c.designation } : {}
+    // IDENTIFIED 且已知陣營 → 以該陣營顏色渲染（三方混戰時區分不同敵對陣營）。
+    if (c.faction) options.fillColor = factionColor(c.faction, palette)
     const opacity = stalenessOpacity(Math.max(0, currentTick - c.lastSeenTick))
     push(sidcForContact(c), options, c.lng, c.lat, opacity, 'contact')
   }

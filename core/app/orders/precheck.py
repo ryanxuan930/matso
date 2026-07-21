@@ -14,6 +14,7 @@ from typing import Protocol
 import h3
 from sqlalchemy.orm import Session
 
+from app.factions import FactionRelations
 from app.models.tables import TacticalUnit
 from app.orders.schemas import (
     EngagePayload,
@@ -32,6 +33,7 @@ _CHECK_ERROR_CODES = {
     "reachability": "ORDER_UNREACHABLE",
     "target_exists": "ORDER_TARGET_NOT_FOUND",
     "line_of_sight": "ORDER_NO_LOS",
+    "roe": "ORDER_ROE_VIOLATION",
 }
 
 
@@ -47,13 +49,22 @@ class PhysicsGateway(Protocol):
     ) -> tuple[bool, float]: ...
 
 
-def run_precheck(db: Session, validated: ValidatedOrder, gateway: PhysicsGateway) -> PrecheckResult:
-    """依 order 類型跑對應物理檢查，回 PrecheckResult（feasible + 各項）。"""
+def run_precheck(
+    db: Session,
+    validated: ValidatedOrder,
+    gateway: PhysicsGateway,
+    relations: FactionRelations | None = None,
+) -> PrecheckResult:
+    """依 order 類型跑對應物理檢查，回 PrecheckResult（feasible + 各項）。
+
+    relations=None 時退回全 HOSTILE 預設（N 方前語義相容；ENGAGE 對非敵陣營→ROE 攔）。
+    """
     payload = validated.payload
+    rel = relations or FactionRelations()
     if isinstance(payload, MovePayload):
         checks = _precheck_move(validated.unit, payload, gateway)
     elif isinstance(payload, EngagePayload):
-        checks = _precheck_engage(db, validated.unit, payload, gateway)
+        checks = _precheck_engage(db, validated.unit, payload, gateway, rel)
     else:
         checks = []  # 其餘類型（RECON/RESUPPLY/POSTURE）之物理檢查於 O3.x
     feasible = all(c.passed for c in checks)
@@ -80,13 +91,22 @@ def _precheck_move(
 
 
 def _precheck_engage(
-    db: Session, unit: TacticalUnit, payload: EngagePayload, gateway: PhysicsGateway
+    db: Session,
+    unit: TacticalUnit,
+    payload: EngagePayload,
+    gateway: PhysicsGateway,
+    relations: FactionRelations,
 ) -> list[PrecheckCheck]:
     target = db.get(TacticalUnit, payload.target_unit_id)
     if target is None or target.session_id != unit.session_id:
         return [
             PrecheckCheck(name="target_exists", passed=False, detail="目標單位不存在於此 session")
         ]
+    # ROE：只能打敵對陣營（§12.1）——打盟軍/中立一律拒（friendly fire / 攻中立）。
+    if not relations.is_hostile(unit.faction, target.faction):
+        rel = relations.relation(unit.faction, target.faction).value
+        detail = f"目標陣營關係為 {rel}，非敵對，禁止交戰"
+        return [PrecheckCheck(name="roe", passed=False, detail=detail)]
     if (
         unit.current_lat is None
         or unit.current_lng is None

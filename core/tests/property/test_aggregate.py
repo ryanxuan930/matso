@@ -15,9 +15,11 @@ from app.adjudication.aggregate import (
     AggregateEnv,
     AggregateForce,
     resolve_aggregate_tick,
+    resolve_multiway_tick,
     should_aggregate,
 )
 from app.engine.rng import DeterministicRNG
+from app.factions import FactionRelations, Relation
 from app.models.enums import UnitLevel
 
 
@@ -54,10 +56,10 @@ def test_energy_conservation(
     for t in range(ticks):
         res = resolve_aggregate_tick(blue, red, env, rng, t)
         # 每 tick：戰力不負、單調不增（戰損 ≤ 當前戰力）
-        assert 0.0 <= res.blue_strength_after <= blue.strength + 1e-9
-        assert 0.0 <= res.red_strength_after <= red.strength + 1e-9
-        blue = replace(blue, strength=res.blue_strength_after)
-        red = replace(red, strength=res.red_strength_after)
+        assert 0.0 <= res.a_strength_after <= blue.strength + 1e-9
+        assert 0.0 <= res.b_strength_after <= red.strength + 1e-9
+        blue = replace(blue, strength=res.a_strength_after)
+        red = replace(red, strength=res.b_strength_after)
     # 累計總戰損 ≤ 初始總戰力
     assert (bs - blue.strength) + (rs - red.strength) <= bs + rs + 1e-6
 
@@ -69,8 +71,8 @@ def test_deterministic_same_seed() -> None:
     env = AggregateEnv(variance=0.5)
     a = resolve_aggregate_tick(_blue(500), _red(400), env, _rng(), 0)
     b = resolve_aggregate_tick(_blue(500), _red(400), env, _rng(), 0)
-    assert a.blue_loss == b.blue_loss
-    assert a.red_loss == b.red_loss
+    assert a.a_loss == b.a_loss
+    assert a.b_loss == b.b_loss
 
 
 def test_variance_zero_is_deterministic_without_seed_dependence() -> None:
@@ -78,8 +80,8 @@ def test_variance_zero_is_deterministic_without_seed_dependence() -> None:
     env = AggregateEnv(variance=0.0)
     a = resolve_aggregate_tick(_blue(500), _red(400), env, DeterministicRNG(1, "adjudication"), 0)
     b = resolve_aggregate_tick(_blue(500), _red(400), env, DeterministicRNG(999, "adjudication"), 0)
-    assert a.blue_loss == b.blue_loss
-    assert a.red_loss == b.red_loss
+    assert a.a_loss == b.a_loss
+    assert a.b_loss == b.b_loss
 
 
 # ---------------- Lanchester 行為 ----------------
@@ -90,15 +92,15 @@ def test_loss_increases_with_enemy_strength() -> None:
     env = AggregateEnv(aimed_fraction=1.0, variance=0.0)
     weak = resolve_aggregate_tick(_blue(10_000), _red(100), env, _rng(), 0)
     strong = resolve_aggregate_tick(_blue(10_000), _red(300), env, _rng(), 0)
-    assert strong.blue_loss > weak.blue_loss  # 敵方越強 → 我方戰損越大
+    assert strong.a_loss > weak.a_loss  # 敵方越強 → 我方戰損越大
 
 
 def test_stronger_side_wins() -> None:
     env = AggregateEnv(aimed_fraction=1.0, variance=0.0)
     res = resolve_aggregate_tick(_blue(1000), _red(100), env, _rng(), 0)
     # 藍遠強於紅 → 紅一 tick 內覆滅、藍尚存
-    assert res.red_strength_after == 0.0
-    assert res.blue_strength_after > 0.0
+    assert res.b_strength_after == 0.0
+    assert res.a_strength_after > 0.0
 
 
 def test_annihilation_clamps_at_zero() -> None:
@@ -106,12 +108,12 @@ def test_annihilation_clamps_at_zero() -> None:
     blue, red = _blue(1000, lethality=100), _red(1, lethality=0)
     rng = _rng()
     res = resolve_aggregate_tick(blue, red, env, rng, 0)
-    assert res.red_strength_after == 0.0  # 覆滅
+    assert res.b_strength_after == 0.0  # 覆滅
     # 再打一 tick 仍為 0（不轉負）
-    red2 = replace(red, strength=res.red_strength_after)
+    red2 = replace(red, strength=res.b_strength_after)
     res2 = resolve_aggregate_tick(blue, red2, env, rng, 1)
-    assert res2.red_strength_after == 0.0
-    assert res2.red_loss == 0.0
+    assert res2.b_strength_after == 0.0
+    assert res2.b_loss == 0.0
 
 
 # ---------------- 閾值 ----------------
@@ -143,5 +145,45 @@ def test_event_records_losses() -> None:
     assert ev.event_type == "AGGREGATE_ENGAGEMENT_RESOLVED"
     assert ev.tick == 7
     assert ev.initiator_id == "b" and ev.target_id == "r"
-    assert ev.damage_calc == res.blue_loss + res.red_loss
-    assert ev.ai_decision["blue_loss"] == res.blue_loss
+    assert ev.damage_calc == res.a_loss + res.b_loss
+    assert ev.ai_decision["initiator_loss"] == res.a_loss
+
+
+# ---- N 方混戰（O6.9，§12.1）----
+
+
+def _force(uid: str, faction: str, strength: float, lethality: float = 1.0) -> AggregateForce:
+    return AggregateForce(uid, faction, strength, lethality)
+
+
+def test_multiway_only_hostile_pairs_fight() -> None:
+    """三方：A-B 敵對、B-C 敵對、A-C 中立 → 只裁 2 組配對；中立方不互損。"""
+    # lethality 低（0.1）→ 單 tick 戰損 < 戰力，避免全數覆滅遮蔽「合圍者掉血最多」效應。
+    forces = [
+        _force("A1", "ALPHA", 500, 0.1),
+        _force("B1", "BRAVO", 500, 0.1),
+        _force("C1", "CHARLIE", 500, 0.1),
+    ]
+    rel = FactionRelations([("ALPHA", "CHARLIE", Relation.NEUTRAL)])  # A-C 中立；其餘預設 HOSTILE
+    res = resolve_multiway_tick(forces, rel, AggregateEnv(variance=0.0), _rng(), 0)
+    assert len(res.events) == 2  # A-B, B-C（A-C 中立不裁）
+    # B 同時對 A、C 作戰 → 承受兩方戰損，掉血最多
+    a_lost = 500 - res.strength_after["A1"]
+    b_lost = 500 - res.strength_after["B1"]
+    c_lost = 500 - res.strength_after["C1"]
+    assert b_lost > a_lost and b_lost > c_lost
+    assert all(s >= 0.0 for s in res.strength_after.values())  # 能量守恆
+
+
+def test_multiway_all_allied_no_combat() -> None:
+    forces = [_force("A1", "ALPHA", 500), _force("B1", "BRAVO", 500)]
+    rel = FactionRelations([("ALPHA", "BRAVO", Relation.ALLIED)])
+    res = resolve_multiway_tick(forces, rel, AggregateEnv(), _rng(), 0)
+    assert res.events == [] and res.strength_after == {"A1": 500.0, "B1": 500.0}
+
+
+def test_multiway_deterministic() -> None:
+    forces = [_force("A1", "ALPHA", 500), _force("B1", "BRAVO", 400), _force("C1", "CHARLIE", 300)]
+    a = resolve_multiway_tick(forces, FactionRelations(), AggregateEnv(variance=0.3), _rng(), 0)
+    b = resolve_multiway_tick(forces, FactionRelations(), AggregateEnv(variance=0.3), _rng(), 0)
+    assert a.strength_after == b.strength_after

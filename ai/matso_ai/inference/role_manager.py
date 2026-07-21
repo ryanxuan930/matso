@@ -58,6 +58,7 @@ class RoleManager:
         log_writer: InvocationLogWriter | None = None,
         clock: Callable[[], float] = time.perf_counter,
         model: str = "",
+        mode: str = "AI_OFF",
         max_queue: int = DEFAULT_MAX_QUEUE,
     ) -> None:
         self._client = client
@@ -65,6 +66,7 @@ class RoleManager:
         self._log = log_writer
         self._clock = clock
         self._model = model
+        self._mode = mode  # §9.0：記入 AIInvocationLog，AAR 可追溯當時模式
         self._max_queue = max_queue
         self._queue: list[AIRequest] = []
         self._adapter_swaps = 0
@@ -137,6 +139,7 @@ class RoleManager:
                     request={
                         "model": self._model,
                         "adapter": cfg.adapter,
+                        "mode": self._mode,
                         "messages": [{"role": m.role, "content": m.content} for m in messages],
                     },
                     response={"text": response.text},
