@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_ttl_s: int = 900  # 15 分鐘（短效，SPEC §12）
     refresh_token_ttl_s: int = 1209600  # 14 天
+    # 前端 COP 的跨來源存取（O4.1）。逗號分隔；env CORS_ORIGINS 覆寫（compose/正式部署設實際來源）。
+    cors_origins: str = "http://localhost:3000"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def jwt_secret_is_default(self) -> bool:
