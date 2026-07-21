@@ -42,9 +42,9 @@ inbox/*.pdf|png|jpg
 ## 4. CLI
 
 ```
-uv run python -m matso_ingest convert <inbox 檔案|目錄> [--out staging/]
-uv run python -m matso_ingest report  # 列出 staging 待審核項與低信心節
-uv run python -m matso_ingest promote <staging 項> --collection doctrine_general \
+uv run python -m matso_ai.ingest.cli convert <inbox 檔案|目錄> [--out staging/]
+uv run python -m matso_ai.ingest.cli report  # 列出 staging 待審核項與低信心節
+uv run python -m matso_ai.ingest.cli promote <staging 項> --collection doctrine_general \
     --reviewer <name>   # 校驗格式（front-matter/錨點唯一性）後移入 corpus/
 ```
 

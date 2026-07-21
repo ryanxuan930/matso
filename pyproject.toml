@@ -89,8 +89,11 @@ module = ["pymysql.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["rasterio.*", "h3.*", "pyarrow.*", "networkx.*", "yaml", "jsonschema", "jsonschema.*"]
-ignore_missing_imports = true # 地理/圖論/yaml/jsonschema 套件無完整型別 stubs
+module = [
+  "rasterio.*", "h3.*", "pyarrow.*", "networkx.*", "yaml",
+  "jsonschema", "jsonschema.*", "fitz", "qdrant_client.*",
+]
+ignore_missing_imports = true # 地理/圖論/yaml/jsonschema/pymupdf/qdrant 套件無完整型別 stubs
 
 [[tool.mypy.overrides]]
 module = ["grpc", "grpc.*", "matso_sdk._generated.*"]
@@ -145,6 +148,8 @@ filterwarnings = [
   # rasterio 1.5.0 × numpy 2.5 的內部 reshape 棄用警告（上游相容問題，非本專案程式碼；
   # rasterio 修復後移除此行——見 PROGRESS backlog）
   "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
+  # PyMuPDF(SWIG) 綁定的內建型別 __module__ 缺失警告（上游 swig 產物，非本專案）
+  "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
 ]
 
 # ---------------- Coverage（SPEC_FULL §19.3：core ≥80%；CI python job 強制） ----------------
