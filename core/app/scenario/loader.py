@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.factions import WHITE_CELL, FactionRelations, Relation, validate_faction_id
 from app.models.enums import UnitLevel
+from app.scenario.triggers import MselEntry
 
 _CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
 
@@ -51,6 +52,8 @@ class LoadedScenario:
     faction_colors: dict[str, str]
     relations: FactionRelations
     units: list[ScenarioUnit] = field(default_factory=list)
+    msel: list[MselEntry] = field(default_factory=list)
+    victory_conditions: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -86,6 +89,7 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
     _validate_victory(sc["victory_conditions"], faction_ids)
 
     units = _load_orbats(root, sc.get("files", {}).get("orbat", {}), faction_ids)
+    msel = _load_msel(root, sc.get("files", {}).get("msel"))
 
     colors = {f["id"]: f["color"] for f in sc["factions"] if "color" in f}
     return LoadedScenario(
@@ -100,8 +104,26 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
         faction_colors=colors,
         relations=relations,
         units=units,
+        msel=msel,
+        victory_conditions=list(sc["victory_conditions"]),
         raw=sc,
     )
+
+
+def _load_msel(root: Path, rel_path: str | None) -> list[MselEntry]:
+    if not rel_path or not (root / rel_path).exists():
+        return []
+    data = _load_yaml(root / rel_path, rel_path)
+    _validate_schema(data, "msel.schema.json", rel_path)
+    return [
+        MselEntry(
+            id=e["id"],
+            trigger=e["trigger"],
+            inject=e["inject"],
+            once=e.get("once", True),
+        )
+        for e in data["events"]
+    ]
 
 
 def create_session_from_scenario(db: Session, loaded: LoadedScenario, *, master_seed: int) -> str:

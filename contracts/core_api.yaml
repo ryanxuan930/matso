@@ -145,6 +145,18 @@ components:
         name: { type: string, minLength: 1 }
         scenario_id: { type: [string, "null"] }
         mode: { type: string, enum: [REALTIME, WEGO, IGO_UGO], default: REALTIME }
+    InjectRequest:
+      type: object
+      required: [event_type]
+      properties:
+        event_type: { type: string, minLength: 1 }
+        payload: { type: object }
+        faction: { type: [string, "null"], description: 受眾陣營（null＝廣播） }
+    InjectResponse:
+      type: object
+      required: [seq]
+      properties:
+        seq: { type: integer }
     OrderType:
       type: string
       enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE]
@@ -284,6 +296,24 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/UnitView" } }
         "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/inject:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: injectEvent
+      security: [{ bearerAuth: [] }]
+      description: White Cell ad-hoc 事件注入（SPEC §11.3）。限 EXERCISE_DIRECTOR / WHITE_CELL_STAFF。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InjectRequest" }
+      responses:
+        "201":
+          description: Injected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InjectResponse" }
+        "403": { description: Not White Cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/orders:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

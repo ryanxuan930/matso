@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "matso:msel:0.1.0",
+  "title": "MselFile",
+  "description": "MSEL 事件注入清單（msel.yaml，SPEC_FULL §11.3）。trigger 為 condition DSL（與 victory 共用）。",
+  "type": "object",
+  "required": ["events"],
+  "additionalProperties": false,
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "trigger", "inject"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "once": { "type": "boolean", "default": true },
+          "trigger": {
+            "type": "object",
+            "required": ["type"],
+            "description": "condition DSL：time / faction_eliminated / strength_below / unit_in_region / all / any"
+          },
+          "inject": {
+            "type": "object",
+            "required": ["event_type"],
+            "properties": {
+              "event_type": { "type": "string", "minLength": 1 },
+              "payload": { "type": "object" },
+              "faction": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

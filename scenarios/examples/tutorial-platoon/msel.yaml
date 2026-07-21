@@ -1,0 +1,15 @@
+# MSEL 事件注入清單（SPEC_FULL §11.3）——教學想定用。
+events:
+  - id: reinforce-blue-t30
+    once: true
+    trigger: { type: time, at_tick: 30 }
+    inject:
+      event_type: REINFORCEMENT
+      faction: BLUE
+      payload: { note: "藍軍增援排抵達" }
+  - id: red-collapse
+    once: true
+    trigger: { type: strength_below, faction: RED, value: 50 }
+    inject:
+      event_type: FORCE_COLLAPSE
+      payload: { note: "紅軍戰力崩潰，士氣事件" }

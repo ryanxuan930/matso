@@ -2,6 +2,7 @@
 
 from app.api.auth import router as auth_router
 from app.api.errors import install_error_handlers
+from app.api.inject import router as inject_router
 from app.api.intel import router as intel_router
 from app.api.lobby import router as lobby_router
 from app.api.orders import router as orders_router
@@ -10,6 +11,7 @@ from app.api.ws import router as ws_router
 
 __all__ = [
     "auth_router",
+    "inject_router",
     "install_error_handlers",
     "intel_router",
     "lobby_router",

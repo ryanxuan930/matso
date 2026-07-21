@@ -30,6 +30,9 @@ def test_load_official_tutorial_platoon() -> None:
     # orbat：3 藍 + 2 紅，parent 參照有效
     assert len(sc.units) == 5
     assert {u.designation for u in sc.units if u.faction == "BLUE"} == {"B-CO", "B-1PLT", "B-2PLT"}
+    # MSEL（O7.2）：2 條注入條目載入
+    assert {e.id for e in sc.msel} == {"reinforce-blue-t30", "red-collapse"}
+    assert len(sc.victory_conditions) == 2
 
 
 def _write_pkg(tmp: Path, scenario: dict, orbats: dict[str, dict]) -> Path:
