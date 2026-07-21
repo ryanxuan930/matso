@@ -79,3 +79,15 @@ def test_prompt_mode_adaptive() -> None:
 
 def test_report_defaults() -> None:
     assert EvalReport().schema_pass_rate == 1.0  # 空 total 不除以零
+
+
+def test_cli_main_exit_code_zero_on_examples() -> None:
+    from matso_ai.evals.run import main
+
+    assert main([]) == 0  # 3 範例案例 → PASS → exit 0（CI gate 綠）
+
+
+def test_cli_main_zero_on_empty_corpus(tmp_path) -> None:
+    from matso_ai.evals.run import main
+
+    assert main(["--cases-dir", str(tmp_path)]) == 0  # 空庫 → schema-only → exit 0

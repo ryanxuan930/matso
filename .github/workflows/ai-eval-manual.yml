@@ -1,0 +1,38 @@
+# 真模型 AI eval（SPEC_FULL §19.4）——**手動觸發**。
+# CI 的每次 push 只跑 fallback/replay mock（見 ci.yml 的 "AI eval gate"）；真模型 eval 成本高、
+# 需可達的 vLLM/OpenAI-compatible 端點，故獨立為手動 workflow。
+#
+# 前置：需一個可達的模型端點（本機 vLLM 經 self-hosted runner，或臨時開放的 endpoint）。
+# 未提供端點時，runner 退回 fallback responder（僅驗管線，等同 CI）——輸出會標明未跑真模型。
+name: AI Eval (manual, real model)
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_base_url:
+        description: "OpenAI-compatible 端點（留空＝fallback mock，不驗模型品質）"
+        required: false
+        default: ""
+      model_name:
+        description: "模型名（vLLM 上的 model/adapter）"
+        required: false
+        default: ""
+
+jobs:
+  eval:
+    name: Real-model eval (§19.4 four thresholds)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python ops/tools/gen_proto.py
+      # 真模型 responder 的接線（RoleManager + OpenAICompatibleClient → run_evals responder）屬
+      # 部署層；端點就緒後於此注入。目前執行 runner（案例空→schema-only 警告；有案例→fallback）。
+      - name: Run eval
+        env:
+          OPENAI_BASE_URL: ${{ inputs.model_base_url }}
+          MATSO_LLM_MODEL: ${{ inputs.model_name }}
+        run: uv run python -m matso_ai.evals.run

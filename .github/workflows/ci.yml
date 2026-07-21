@@ -28,6 +28,10 @@ jobs:
         run: uv run pytest -q --cov --cov-report=term -m "not benchmark"
       - name: Golden replay (SPEC_FULL §19.1)
         run: uv run pytest core/tests/replay -m golden -q --no-cov
+      # AI eval gate（SPEC_FULL §19.4 條件式）：用錄放/fallback mock，非真模型。
+      # 案例庫空 → schema-only + EVAL_CORPUS_EMPTY 警告（仍綠）；真模型 eval 為手動 workflow。
+      - name: AI eval gate (SPEC_FULL §19.4, replay mock)
+        run: uv run python -m matso_ai.evals.run
 
   frontend:
     name: Frontend lint / typecheck
