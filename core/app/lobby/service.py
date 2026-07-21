@@ -15,8 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.schemas import CurrentUser
+from app.factions import WHITE_CELL
 from app.lobby.schemas import CreateSessionRequest, SessionSummary
-from app.models import Faction, SessionParticipant, UserRole, WargameSession
+from app.models import SessionParticipant, UserRole, WargameSession
 
 # 看得到全部 session 的統裁/管理角色（其餘只看自己參與的）
 _OMNISCIENT_ROLES = frozenset(
@@ -60,7 +61,7 @@ class LobbyService:
         participant = SessionParticipant(
             user_id=user.id,
             session_id=session.id,
-            faction=Faction.WHITE_CELL,
+            faction=WHITE_CELL,
             role=UserRole.EXERCISE_DIRECTOR,
             unit_scope=[],
         )
@@ -68,7 +69,7 @@ class LobbyService:
         self._db.commit()
         return self._summary(session, participant.faction)
 
-    def _participant_factions(self, user_id: str) -> dict[str, Faction]:
+    def _participant_factions(self, user_id: str) -> dict[str, str]:
         rows = (
             self._db.execute(
                 select(SessionParticipant).where(SessionParticipant.user_id == user_id)
@@ -79,14 +80,14 @@ class LobbyService:
         return {p.session_id: p.faction for p in rows}
 
     @staticmethod
-    def _summary(session: WargameSession, my_faction: Faction | None) -> SessionSummary:
+    def _summary(session: WargameSession, my_faction: str | None) -> SessionSummary:
         return SessionSummary(
             id=session.id,
             name=session.name,
             scenario_id=session.scenario_id,
             mode=session.mode.value,
             status="ENDED" if session.end_time is not None else "ACTIVE",
-            my_faction=my_faction.value if my_faction is not None else None,
+            my_faction=my_faction,
         )
 
 

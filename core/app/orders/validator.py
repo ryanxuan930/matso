@@ -74,8 +74,8 @@ def _check_permission(db: Session, session_id: str, issuer_id: str, unit: Tactic
         raise OrderPermissionError(
             "無權對他方單位下令",
             details={
-                "issuer_faction": participant.faction.value,
-                "unit_faction": unit.faction.value,
+                "issuer_faction": participant.faction,
+                "unit_faction": unit.faction,
             },
         )
 

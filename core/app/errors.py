@@ -146,3 +146,10 @@ class GuardrailRejectedError(MatsoError):
 
     error_code = "AI_OUTPUT_REJECTED"
     http_status = 422
+
+
+class FactionInvalidError(MatsoError):
+    """faction id 非法（格式不符 / 保留字誤用 / 非本想定宣告陣營）。（§12.1，ADR 006）"""
+
+    error_code = "FACTION_INVALID"
+    http_status = 422

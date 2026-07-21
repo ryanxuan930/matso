@@ -12,7 +12,6 @@ from app.intel.sweep import (
     _haversine_m,
     sweep,
 )
-from app.models.enums import Faction
 
 _RADAR = SensorProfile.from_base_stats(SEED_SENSORS["GROUND_RADAR"])  # 8km
 
@@ -58,15 +57,15 @@ def _grid_targets() -> list[TargetUnit]:
     for i in range(12):
         # 每個約 +0.01° lat（~1.1km），前 8 個在射程內、後面漸出
         targets.append(
-            TargetUnit(unit_id=f"r{i:02d}", faction=Faction.RED, lat=23.75 + i * 0.01, lng=121.25)
+            TargetUnit(unit_id=f"r{i:02d}", faction="RED", lat=23.75 + i * 0.01, lng=121.25)
         )
     # 遠在 55km 外（絕對出 k-ring 與射程）
-    targets.append(TargetUnit(unit_id="far", faction=Faction.RED, lat=24.25, lng=121.25))
+    targets.append(TargetUnit(unit_id="far", faction="RED", lat=24.25, lng=121.25))
     return targets
 
 
 def _observer() -> SensorUnit:
-    return SensorUnit(unit_id="s0", faction=Faction.BLUE, lat=23.75, lng=121.25, sensor=_RADAR)
+    return SensorUnit(unit_id="s0", faction="BLUE", lat=23.75, lng=121.25, sensor=_RADAR)
 
 
 def test_kring_matches_bruteforce() -> None:
@@ -91,7 +90,7 @@ def test_deterministic_same_seed() -> None:
 
 def test_only_enemies_detected() -> None:
     # 加入一個己方（BLUE）近距單位 → 不得成為 contact
-    friend = TargetUnit(unit_id="b_friend", faction=Faction.BLUE, lat=23.751, lng=121.25)
+    friend = TargetUnit(unit_id="b_friend", faction="BLUE", lat=23.751, lng=121.25)
     got = sweep([_observer()], [friend, *_grid_targets()], _env_clear, _rng(), tick=0)
     assert all(c.target_unit_id != "b_friend" for c in got)
 

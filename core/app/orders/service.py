@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import IllegalOrderTransitionError, OrderNotFoundError, PrecheckFailedError
-from app.models.enums import Faction, OrderStatus
+from app.models.enums import OrderStatus
 from app.models.tables import Order, TacticalUnit
 from app.orders.precheck import PhysicsGateway, precheck_error_code, run_precheck
 from app.orders.schemas import OrderRequest, OrderResponse, PrecheckResult
@@ -74,7 +74,7 @@ class OrderService:
             .order_by(Order.issued_at_tick.desc(), Order.id)
         )
         if not omniscient:
-            stmt = stmt.where(TacticalUnit.faction == Faction(faction))
+            stmt = stmt.where(TacticalUnit.faction == faction)
         orders = self._db.execute(stmt).scalars().all()
         return [_to_response(order, _precheck_of(order)) for order in orders]
 
@@ -88,7 +88,7 @@ class OrderService:
         # 回應，避免洩漏敵方指令存在（fog of war 與 GET /orders 過濾一致）。
         if not omniscient:
             unit = self._db.get(TacticalUnit, order.unit_id)
-            if unit is None or unit.faction.value != faction:
+            if unit is None or unit.faction != faction:
                 raise OrderNotFoundError(f"指令不存在：{order_id}")
         if not is_user_cancellable(order.status):
             raise IllegalOrderTransitionError(

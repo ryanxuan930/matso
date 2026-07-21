@@ -35,7 +35,7 @@ def _view(u: TacticalUnit) -> UnitView:
         id=u.id,
         designation=u.designation,
         unit_level=u.unit_level.value,
-        faction=u.faction.value,
+        faction=u.faction,
         lat=u.current_lat,
         lng=u.current_lng,
         health=u.health_status,

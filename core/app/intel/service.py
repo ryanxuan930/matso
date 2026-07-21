@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.factions import WHITE_CELL
 from app.intel import store
 from app.intel.schemas import ContactView
-from app.models.enums import Faction, IntelFidelity
+from app.models.enums import IntelFidelity
 from app.models.tables import IntelContact, TacticalUnit
 
 
@@ -19,13 +20,13 @@ class IntelService:
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def visible_contacts(self, session_id: str, faction: Faction) -> list[ContactView]:
+    def visible_contacts(self, session_id: str, faction: str) -> list[ContactView]:
         contacts = store.query(self._db, session_id, faction)
         return [self._project(c) for c in contacts]
 
-    def god_view(self, session_id: str, faction: Faction) -> list[ContactView]:
+    def god_view(self, session_id: str, faction: str) -> list[ContactView]:
         """White Cell 全知：所有 faction 的 contacts（統裁/教學）。非 WHITE_CELL 一律拒絕。"""
-        if faction is not Faction.WHITE_CELL:
+        if faction != WHITE_CELL:
             raise PermissionError("god_view 僅 WHITE_CELL 可用")
         all_contacts = self._db.query(IntelContact).filter_by(session_id=session_id).all()
         return [self._project(c, reveal_all=True) for c in all_contacts]
@@ -47,7 +48,7 @@ class IntelService:
                 view.unit_type = target.unit_level.value
                 if reveal_all or rank >= _RANK[IntelFidelity.IDENTIFIED]:
                     view.designation = target.designation
-                    view.faction = target.faction.value
+                    view.faction = target.faction
         return view
 
 

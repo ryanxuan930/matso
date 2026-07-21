@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.intel.sweep import Contact
-from app.models.enums import Faction, IntelFidelity
+from app.models.enums import IntelFidelity
 from app.models.tables import IntelContact
 
 _FIDELITY_RANK = {
@@ -61,7 +61,7 @@ def record_all(db: Session, session_id: str, contacts: Iterable[Contact]) -> Non
         record(db, session_id, contact)
 
 
-def query(db: Session, session_id: str, faction: Faction) -> list[IntelContact]:
+def query(db: Session, session_id: str, faction: str) -> list[IntelContact]:
     """**faction-scoped**：只回該 faction 的 contacts（後端強制 fog of war）。"""
     return list(
         db.scalars(

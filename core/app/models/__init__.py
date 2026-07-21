@@ -9,7 +9,6 @@
 from app.models.base import Base
 from app.models.enums import (
     CommsState,
-    Faction,
     IntelFidelity,
     OrderStatus,
     SessionMode,
@@ -41,7 +40,6 @@ __all__ = [
     "CommsState",
     "EquipmentInstance",
     "EquipmentTemplate",
-    "Faction",
     "IntelContact",
     "IntelFidelity",
     "Order",

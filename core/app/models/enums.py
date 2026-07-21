@@ -28,11 +28,8 @@ class CommsState(enum.StrEnum):
     OFFLINE = "OFFLINE"
 
 
-class Faction(enum.StrEnum):
-    BLUE = "BLUE"
-    RED = "RED"
-    WHITE_CELL = "WHITE_CELL"
-    ALLIED = "ALLIED"
+# Faction 已非封閉 enum（SPEC §12.1 / ADR 006）：faction 為想定定義字串 id，
+# 驗證與保留字（WHITE_CELL）見 app.factions；DB 欄位為 String。
 
 
 class UserRole(enum.StrEnum):

@@ -1,6 +1,7 @@
 // 單位/contact 型別 + fog of war 樣式邏輯（O4.4，SPEC §13.3）——純函數，可測。
 
-export type Faction = 'BLUE' | 'RED' | 'WHITE_CELL' | 'ALLIED'
+// faction＝想定定義字串 id（SPEC §12.1/ADR 006），非封閉集合；WHITE_CELL 為統裁保留字。
+export type Faction = string
 export type CommsState = 'ONLINE' | 'DEGRADED' | 'OFFLINE'
 export type Fidelity = 'DETECTED' | 'CLASSIFIED' | 'IDENTIFIED'
 

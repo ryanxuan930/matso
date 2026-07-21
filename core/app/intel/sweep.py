@@ -23,7 +23,7 @@ from app.intel.sensor import (
     detect_probability,
     fidelity_for,
 )
-from app.models.enums import Faction, IntelFidelity
+from app.models.enums import IntelFidelity
 
 _EARTH_R_M = 6_371_000.0
 
@@ -31,7 +31,7 @@ _EARTH_R_M = 6_371_000.0
 @dataclass(frozen=True, slots=True)
 class SensorUnit:
     unit_id: str
-    faction: Faction
+    faction: str
     lat: float
     lng: float
     sensor: SensorProfile
@@ -40,7 +40,7 @@ class SensorUnit:
 @dataclass(frozen=True, slots=True)
 class TargetUnit:
     unit_id: str
-    faction: Faction
+    faction: str
     lat: float
     lng: float
 
@@ -49,7 +49,7 @@ class TargetUnit:
 class Contact:
     """一次偵測結果（尚未落庫）。observer_faction 看到 target_unit_id。"""
 
-    observer_faction: Faction
+    observer_faction: str
     target_unit_id: str
     fidelity: IntelFidelity
     tick: int

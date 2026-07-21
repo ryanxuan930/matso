@@ -12,9 +12,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.factions import validate_faction_id
 from app.intel.schemas import ContactView
 from app.intel.service import IntelService
-from app.models.enums import Faction
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["intel"])
 
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/v1/sessions", tags=["intel"])
 @router.get("/{session_id}/intel", response_model=list[ContactView])
 def get_intel(
     session_id: str,
-    faction: Faction,
+    faction: str,
     db: Session = Depends(get_db),
 ) -> list[ContactView]:
-    return IntelService(db).visible_contacts(session_id, faction)
+    return IntelService(db).visible_contacts(session_id, validate_faction_id(faction))

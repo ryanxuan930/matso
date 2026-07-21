@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Faction, SessionParticipant, UserRole
+from app.factions import WHITE_CELL
+from app.models import SessionParticipant, UserRole
 from app.stream.faction_filter import is_omniscient
 
 
@@ -34,10 +35,10 @@ def resolve_ws_identity(
     ).scalar_one_or_none()
     if participant is not None:
         return WsIdentity(
-            faction=participant.faction.value,
+            faction=participant.faction,
             role=participant.role,
             omniscient=is_omniscient(participant.role),
         )
     if is_omniscient(user_role):
-        return WsIdentity(faction=Faction.WHITE_CELL.value, role=user_role, omniscient=True)
+        return WsIdentity(faction=WHITE_CELL, role=user_role, omniscient=True)
     return None

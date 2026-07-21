@@ -17,7 +17,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.api.deps import get_db, get_settings
 from app.auth.tokens import JwtCodec, TokenType
 from app.main import app
-from app.models import Faction, SessionParticipant, UserRole
+from app.models import SessionParticipant, UserRole
 
 _SID = "sess-1"
 
@@ -63,7 +63,7 @@ def _client(factory: sessionmaker[Session]):  # type: ignore[no-untyped-def]
 def _seed_participant(
     factory: sessionmaker[Session],
     user_id: str,
-    faction: Faction = Faction.BLUE,
+    faction: str = "BLUE",
     role: UserRole = UserRole.COMMANDER,
 ) -> None:
     db = factory()
@@ -170,7 +170,7 @@ def test_faction_filter_drops_other_faction_backfill(
     session_factory: sessionmaker[Session], fake_ring: FakeStrictRedis
 ) -> None:
     uid = seed_user(session_factory)
-    _seed_participant(session_factory, uid, faction=Faction.BLUE)
+    _seed_participant(session_factory, uid, faction="BLUE")
     # seq1 無受眾（全體）、seq2 RED（應被 BLUE client 濾掉）、seq3 BLUE
     ring_key = f"session:{_SID}:ring"
     fake_ring.rpush(ring_key, json.dumps(_env(1)))

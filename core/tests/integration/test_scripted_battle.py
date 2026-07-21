@@ -38,7 +38,7 @@ from app.intel.sensor import DetectionEnv, SensorProfile
 from app.intel.sensor_system import SensorSweepSystem
 from app.intel.service import IntelService
 from app.models import Base
-from app.models.enums import Faction, IntelFidelity, UnitLevel, UserRole
+from app.models.enums import IntelFidelity, UnitLevel, UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, User, WargameSession
 from app.movement.db_store import DbOrderStore
 from app.movement.system import MovementSystem
@@ -104,7 +104,7 @@ def _seed(db: Session) -> tuple[str, str, str, str]:
         session_id=session.id,
         designation="B-CO",
         unit_level=UnitLevel.PLATOON,
-        faction=Faction.BLUE,
+        faction="BLUE",
         current_lat=_BLUE_LL[0],
         current_lng=_BLUE_LL[1],
     )
@@ -112,7 +112,7 @@ def _seed(db: Session) -> tuple[str, str, str, str]:
         session_id=session.id,
         designation="R-CO",
         unit_level=UnitLevel.PLATOON,
-        faction=Faction.RED,
+        faction="RED",
         current_lat=_RED_LL[0],
         current_lng=_RED_LL[1],
     )
@@ -122,7 +122,7 @@ def _seed(db: Session) -> tuple[str, str, str, str]:
     issuer = SessionParticipant(
         user_id=user.id,
         session_id=session.id,
-        faction=Faction.BLUE,
+        faction="BLUE",
         role=UserRole.COMMANDER,
         unit_scope={},
     )
@@ -168,7 +168,7 @@ async def test_scripted_battle_full_flow() -> None:
         },
     )
 
-    faction = {blue_id: Faction.BLUE, red_id: Faction.RED}
+    faction = {blue_id: "BLUE", red_id: "RED"}
 
     def engage_env(shooter_id: str, target_id: str) -> EnvSnapshot:
         s, t = hot.get_unit(shooter_id), hot.get_unit(target_id)
@@ -225,8 +225,8 @@ async def test_scripted_battle_full_flow() -> None:
     assert hot.get_unit(blue_id)["h3"] != _BLUE_H3
 
     # 紅軍偵測到藍軍；藍軍偵測到紅軍（雙方 intel 視圖各自成立）
-    red_view = IntelService(db).visible_contacts(session_id, Faction.RED)
-    blue_view = IntelService(db).visible_contacts(session_id, Faction.BLUE)
+    red_view = IntelService(db).visible_contacts(session_id, "RED")
+    blue_view = IntelService(db).visible_contacts(session_id, "BLUE")
     assert len(red_view) >= 1  # 紅方看到（藍）敵情
     assert len(blue_view) >= 1  # 藍方看到（紅）敵情
 

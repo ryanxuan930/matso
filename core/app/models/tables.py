@@ -28,7 +28,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 from app.models.enums import (
     CommsState,
-    Faction,
     IntelFidelity,
     OrderStatus,
     SessionMode,
@@ -78,7 +77,8 @@ class TacticalUnit(Base):
     )
     designation: Mapped[str] = mapped_column("designation", String(191))
     unit_level: Mapped[UnitLevel] = mapped_column("unitLevel", SAEnum(UnitLevel))
-    faction: Mapped[Faction] = mapped_column("faction", SAEnum(Faction))
+    # faction＝想定定義字串 id（SPEC §12.1/ADR 006）；驗證於 app.factions
+    faction: Mapped[str] = mapped_column("faction", String(191))
     parent_id: Mapped[str | None] = mapped_column(
         "parentId", String(191), ForeignKey("TacticalUnit.id", ondelete="CASCADE")
     )
@@ -165,7 +165,8 @@ class SessionParticipant(Base):
     id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column("userId", String(191), ForeignKey("User.id"))
     session_id: Mapped[str] = mapped_column("sessionId", String(191))
-    faction: Mapped[Faction] = mapped_column("faction", SAEnum(Faction))
+    # faction＝想定定義字串 id（SPEC §12.1/ADR 006）；驗證於 app.factions
+    faction: Mapped[str] = mapped_column("faction", String(191))
     role: Mapped[UserRole] = mapped_column("role", SAEnum(UserRole))
     unit_scope: Mapped[dict] = mapped_column("unitScope", JSON)  # type: ignore[type-arg]
 
@@ -206,7 +207,8 @@ class IntelContact(Base):
 
     id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
     session_id: Mapped[str] = mapped_column("sessionId", String(191))
-    faction: Mapped[Faction] = mapped_column("faction", SAEnum(Faction))
+    # faction＝想定定義字串 id（SPEC §12.1/ADR 006）；驗證於 app.factions
+    faction: Mapped[str] = mapped_column("faction", String(191))
     target_unit_id: Mapped[str] = mapped_column("targetUnitId", String(191))
     fidelity: Mapped[IntelFidelity] = mapped_column("fidelity", SAEnum(IntelFidelity))
     last_seen_tick: Mapped[int] = mapped_column("lastSeenTick", Integer)
