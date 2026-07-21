@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-21：**O4.1 完成（M4 前端起點）**。branch `feat/o4.1-auth-lobby`（**從 main 開，與 M5 平行**）。全端認證 + lobby：後端 Argon2id 密碼 + JWT（access 短效/refresh，注入時鐘→決定性測試、type 檢查、帳號列舉防護）+ /auth/login|refresh|logout|me + GET/POST /sessions（角色/參與過濾）+ CORS + get_current_user bearer 依賴；契約先行 core_api.yaml。前端 Nuxt 4 + Pinia：login/lobby 頁 + auth store + 路由守衛 + useApi（bearer + 401 自動 refresh）+ 由契約生成型別。**Playwright E2E 5 綠**（登入→lobby、錯誤密碼被拒、access 過期自動 refresh）。除 3 個真 bug：埠衝突（改 8100/3100）、cookie-ref 競態（refs 記憶於 nuxtApp）、水合競態（data-hydrated 標記）。後端 393 passed；auth/lobby 近 100%。worklog: docs/worklog/O4.1.md。
 - 2026-07-21：**O3.6 完成 → M3 里程碑達成**。branch `feat/o3.6-scripted-battle`。腳本對戰 DoD：真 Kernel 組裝 + 純 API 驅動，把 O3.1–O3.5 全接起來——藍軍移動 → 紅軍偵測到 → 交戰 → 紅血 100→60 + ENGAGEMENT_RESOLVED 入 Ledger → 雙方 intel 視圖各自成立（fog of war 隔離）。新增 kernel 接線 EngageOrderSource/EngagementAdjudicator/SensorSweepSystem。DoD 測試常駐 CI（本地 SQLite + 注入假件）。360 passed。worklog: docs/worklog/O3.6.md。
 - 2026-07-20：**O3.5 完成**。branch `feat/o3.5-lanchester`。聚合裁決 `resolve_aggregate_tick`（SPEC §7.1 末段，純同步純函數）：營級以上用隨機化 Lanchester（square/linear 混合 × 隨機化）逐 tick 遞減雙方戰力，**戰損夾 [0,當前戰力] → 能量守恆**。should_aggregate（閾值 = scenario aggregate_adjudication_level）。9 property 測試（能量守恆 Hypothesis、同 seed 同結果、強者勝、湮滅夾 0）；aggregate.py 100%。355 passed。worklog: docs/worklog/O3.5.md。
 - 2026-07-20：**O3.4 完成**。branch `feat/o3.4-movement`。移動執行 MovementSystem（step=admit+advance）：MOVE order（VALIDATED）→ terrain path → 逐 tick 推進單位位置（hot_state, single-writer）+ 油料 stub；抵達→COMPLETED、地形中斷→停斷點+MOVE_INTERRUPTED、油盡→HALTED_FUEL。DbOrderStore（狀態機轉移，from_h3 由 DB 座標推導）+ TerrainClientPlanner。**驗收整合測試通過**（下 MOVE 令→N ticks→位置=終點+order COMPLETED）。13 測試、movement ~100%。346 passed。worklog: docs/worklog/O3.4.md。
@@ -43,7 +44,8 @@
 | O3.4 (M3-4) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.4-movement (stacked) | 移動執行 MovementSystem（admit+advance）：MOVE→path→逐 tick 推進 + 油料 stub；抵達/地形中斷/油盡；DbOrderStore 狀態機轉移 + TerrainClientPlanner；驗收整合測試通過；13 測試 |
 | O3.5 (M3-5) | DONE | Opus 4.8 (2026-07-20) | branch feat/o3.5-lanchester (stacked) | 聚合裁決 resolve_aggregate_tick（隨機化 Lanchester，純同步純函數）+ should_aggregate（閾值）；能量守恆 property（Hypothesis）+ 同 seed 同結果；aggregate.py 100% |
 | O3.6 (M3-6) | DONE | Opus 4.8 (2026-07-21) | branch feat/o3.6-scripted-battle (stacked) | **M3 達成**。腳本對戰 DoD：真 Kernel + 純 API 驅動全流程（移動→偵測→交戰→戰損入帳→intel 各自成立）；kernel 接線 EngageOrderSource/EngagementAdjudicator/SensorSweepSystem；DoD 常駐 CI |
-| M4-1 ~ M4-6 | TODO | — | — | platform/ 仍是 Nuxt 初始模板（僅加了 eslint/typecheck/Dockerfile）；O4.1 認證+lobby 起（與 O5 可平行） |
+| O4.1 (M4-1) | DONE | Opus 4.8 (2026-07-21) | branch feat/o4.1-auth-lobby (從 main) | 認證 + lobby：後端 Argon2id + JWT（access/refresh，注入時鐘）+ /auth/* + /sessions（角色過濾）+ CORS；前端 Nuxt+Pinia login/lobby + 路由守衛 + useApi（自動 refresh）+ 契約生成型別；**Playwright 5 綠**（登入→lobby/錯誤密碼/refresh）；56 後端測試 |
+| M4-2 ~ M4-6 | TODO | — | — | platform/ 已有 auth/lobby（O4.1）；O4.2 地圖基座（MapLibre + 離線 tile）起 |
 | M5-1 ~ M5-4 | TODO | — | — | |
 | M6-1 ~ M6-6 | TODO | — | — | 需 vLLM 節點；eval runner 路徑 = matso_ai.evals.run |
 | M7-1 ~ M7-5 | TODO | — | — | |
