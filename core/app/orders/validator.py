@@ -37,7 +37,9 @@ class ValidatedOrder:
     payload: MovePayload | EngagePayload | dict[str, object]
 
 
-def validate_order(db: Session, session_id: str, req: OrderRequest) -> ValidatedOrder:
+def validate_order(
+    db: Session, session_id: str, req: OrderRequest, issuer_id: str
+) -> ValidatedOrder:
     if db.get(WargameSession, session_id) is None:
         raise SessionNotFoundError(f"session 不存在：{session_id}")
 
@@ -49,7 +51,7 @@ def validate_order(db: Session, session_id: str, req: OrderRequest) -> Validated
             details={"unit_id": req.unit_id},
         )
 
-    _check_permission(db, session_id, req.issuer_id, unit)
+    _check_permission(db, session_id, issuer_id, unit)
     payload = _parse_payload(req)
     return ValidatedOrder(unit=unit, order_type=req.order_type, payload=payload)
 

@@ -65,8 +65,25 @@ def _default_channel() -> grpc.Channel:
     return grpc.insecure_channel(Settings().terrain_grpc_target)
 
 
+class _StubGateway:
+    """E2E/開發用許可式 gateway（env STUB_GATEWAY=1）：precheck 恆可行 + 假 ETA。
+
+    僅供無 terrain 的前端下令全流程 E2E；絕非真物理引擎（同 SQLite E2E DB 的測試 affordance）。
+    """
+
+    def path_reachable(self, from_h3: str, to_h3: str, mobility_profile: str) -> tuple[bool, str]:
+        return True, "stub: cost=5.0, eta=5"
+
+    def has_los(
+        self, observer: tuple[float, float, float], target: tuple[float, float, float]
+    ) -> tuple[bool, float]:
+        return True, 15.0
+
+
 def get_gateway() -> PhysicsGateway:
-    """真物理 gateway（轉接 terrain gRPC）。terrain 未起時呼叫會拋 → API 503。"""
+    """物理 gateway。STUB_GATEWAY=1 → 許可式 stub（E2E）；否則真 terrain gRPC（未起 → 503）。"""
+    if get_settings().stub_gateway:
+        return _StubGateway()
     return TerrainGatewayAdapter(TerrainClient(_default_channel()))
 
 

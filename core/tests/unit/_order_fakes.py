@@ -20,6 +20,8 @@ class OrderWorld:
     red_unit_id: str
     blue_issuer_id: str
     white_issuer_id: str  # WHITE_CELL_STAFF：可跨陣營下令
+    cmdr_user_id: str  # 藍方 COMMANDER 的 User id（供 O4.5 bearer token）
+    white_user_id: str
 
 
 def seed_world(factory: sessionmaker[Session]) -> OrderWorld:
@@ -70,7 +72,20 @@ def seed_world(factory: sessionmaker[Session]) -> OrderWorld:
             red_unit_id=red.id,
             blue_issuer_id=blue_issuer.id,
             white_issuer_id=white_issuer.id,
+            cmdr_user_id=cmdr.id,
+            white_user_id=white.id,
         )
+
+
+def order_token(user_id: str, role: UserRole = UserRole.COMMANDER) -> str:
+    """為 O4.5 orders API 測試簽 bearer token（用 _auth_fakes 的測試 secret）。"""
+    from _auth_fakes import TEST_SETTINGS
+
+    from app.auth.tokens import JwtCodec, TokenType
+
+    return JwtCodec(secret=TEST_SETTINGS.jwt_secret).issue(
+        user_id, role.value, TokenType.ACCESS, 900
+    )
 
 
 class FakeGateway:

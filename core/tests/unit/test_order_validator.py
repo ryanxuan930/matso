@@ -1,4 +1,4 @@
-"""Order 驗證測試（O3.1，步驟 [1]）：單位存在性 / 權限 / 載荷語法。"""
+"""Order 驗證測試（O3.1/O4.5，步驟 [1]）：單位存在性 / 權限 / 載荷語法。issuer 為獨立參數。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ def _req(world: OrderWorld, **kw: object) -> OrderRequest:
         "unit_id": world.blue_unit_id,
         "order_type": OrderType.MOVE,
         "payload": {"to_h3": "8a2a1072b59ffff", "mobility_profile": "FOOT"},
-        "issuer_id": world.blue_issuer_id,
     }
     base.update(kw)
     return OrderRequest(**base)  # type: ignore[arg-type]
@@ -25,7 +24,7 @@ def _req(world: OrderWorld, **kw: object) -> OrderRequest:
 def test_valid_move_returns_unit_and_payload(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db:
-        result = validate_order(db, world.session_id, _req(world))
+        result = validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
         assert result.unit.id == world.blue_unit_id
         assert isinstance(result.payload, MovePayload)
 
@@ -33,26 +32,28 @@ def test_valid_move_returns_unit_and_payload(session_factory: sessionmaker[Sessi
 def test_unknown_session(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db, pytest.raises(SessionNotFoundError):
-        validate_order(db, "no-such-session", _req(world))
+        validate_order(db, "no-such-session", _req(world), world.blue_issuer_id)
 
 
 def test_unit_not_in_session(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db, pytest.raises(OrderValidationError) as ei:
-        validate_order(db, world.session_id, _req(world, unit_id="ghost"))
+        validate_order(db, world.session_id, _req(world, unit_id="ghost"), world.blue_issuer_id)
     assert ei.value.error_code == "ORDER_UNIT_NOT_FOUND"
 
 
 def test_issuer_cannot_command_other_faction(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db, pytest.raises(OrderPermissionError):
-        validate_order(db, world.session_id, _req(world, unit_id=world.red_unit_id))
+        validate_order(
+            db, world.session_id, _req(world, unit_id=world.red_unit_id), world.blue_issuer_id
+        )
 
 
 def test_unknown_issuer(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db, pytest.raises(OrderPermissionError):
-        validate_order(db, world.session_id, _req(world, issuer_id="nobody"))
+        validate_order(db, world.session_id, _req(world), "nobody")
 
 
 def test_white_cell_can_command_any_faction(session_factory: sessionmaker[Session]) -> None:
@@ -60,9 +61,7 @@ def test_white_cell_can_command_any_faction(session_factory: sessionmaker[Sessio
     world = seed_world(session_factory)
     with session_factory() as db:
         result = validate_order(
-            db,
-            world.session_id,
-            _req(world, unit_id=world.red_unit_id, issuer_id=world.white_issuer_id),
+            db, world.session_id, _req(world, unit_id=world.red_unit_id), world.white_issuer_id
         )
         assert result.unit.id == world.red_unit_id
 
@@ -75,6 +74,7 @@ def test_recon_payload_accepted_generic(session_factory: sessionmaker[Session]) 
             db,
             world.session_id,
             _req(world, order_type=OrderType.RECON, payload={"area": "north"}),
+            world.blue_issuer_id,
         )
         assert result.payload == {"area": "north"}
 
@@ -82,5 +82,7 @@ def test_recon_payload_accepted_generic(session_factory: sessionmaker[Session]) 
 def test_bad_move_payload(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db, pytest.raises(OrderValidationError) as ei:
-        validate_order(db, world.session_id, _req(world, payload={"wrong": "shape"}))
+        validate_order(
+            db, world.session_id, _req(world, payload={"wrong": "shape"}), world.blue_issuer_id
+        )
     assert ei.value.error_code == "ORDER_INVALID_PAYLOAD"

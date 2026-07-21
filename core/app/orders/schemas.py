@@ -22,12 +22,11 @@ class OrderType(enum.StrEnum):
 
 
 class OrderRequest(BaseModel):
-    """下令請求。issuer_id 於 auth（O4.1）落地前由 body 帶入（暫時）。"""
+    """下令請求。issuer 由認證 token 推導（O4.5，SPEC §12：前端不可信），不由 body 帶入。"""
 
     unit_id: str = Field(min_length=1)
     order_type: OrderType
     payload: dict[str, Any] = Field(default_factory=dict)
-    issuer_id: str = Field(min_length=1)
 
 
 class MovePayload(BaseModel):

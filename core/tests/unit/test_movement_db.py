@@ -43,8 +43,8 @@ async def test_move_order_to_completion_integration(
                 unit_id=world.blue_unit_id,
                 order_type=OrderType.MOVE,
                 payload={"to_h3": _END, "mobility_profile": "FOOT"},
-                issuer_id=world.blue_issuer_id,
             ),
+            world.blue_issuer_id,
         )
         assert resp.status is OrderStatus.VALIDATED
 
@@ -75,8 +75,8 @@ def test_db_store_pending_and_transitions(session_factory: sessionmaker[Session]
                 unit_id=world.blue_unit_id,
                 order_type=OrderType.MOVE,
                 payload={"to_h3": _END, "mobility_profile": "FOOT"},
-                issuer_id=world.blue_issuer_id,
             ),
+            world.blue_issuer_id,
         )
         store = DbOrderStore(db)
         pending = store.pending_moves(world.session_id)
@@ -102,8 +102,8 @@ def test_db_store_skips_unit_without_position(session_factory: sessionmaker[Sess
                 unit_id=world.blue_unit_id,
                 order_type=OrderType.MOVE,
                 payload={"to_h3": _END, "mobility_profile": "FOOT"},
-                issuer_id=world.blue_issuer_id,
             ),
+            world.blue_issuer_id,
         )
         unit = db.get(TacticalUnit, world.blue_unit_id)
         unit.current_lat = None  # type: ignore[union-attr]

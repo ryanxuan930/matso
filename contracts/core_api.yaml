@@ -136,14 +136,13 @@ components:
       enum: [PENDING, VALIDATED, EXECUTING, COMPLETED, REJECTED, CANCELLED]
     OrderRequest:
       type: object
-      required: [unit_id, order_type, issuer_id]
+      required: [unit_id, order_type]
       properties:
         unit_id: { type: string, minLength: 1 }
         order_type: { $ref: "#/components/schemas/OrderType" }
         payload:
           type: object
           description: "依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?}"
-        issuer_id: { type: string, minLength: 1, description: SessionParticipant id（auth 落地前由 body 帶入） }
     PrecheckCheck:
       type: object
       required: [name, passed]
@@ -260,8 +259,20 @@ paths:
     get: { operationId: listUnits, responses: { "200": { description: faction-scoped units } } }
   /sessions/{id}/orders:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listOrders
+      security: [{ bearerAuth: [] }]
+      description: 列出 session 指令（pending + 歷史，faction-scoped）
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/OrderResponse" } }
+        "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     post:
       operationId: issueOrder
+      security: [{ bearerAuth: [] }]
       description: 驗證 + 物理預檢；通過 → 201 VALIDATED，不可行 → 422（order 落庫為 REJECTED）
       requestBody:
         required: true
@@ -284,6 +295,7 @@ paths:
       - { $ref: "#/components/parameters/OrderId" }
     delete:
       operationId: cancelOrder
+      security: [{ bearerAuth: [] }]
       responses:
         "200":
           description: Cancelled

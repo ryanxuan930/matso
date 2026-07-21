@@ -213,8 +213,8 @@ async def test_scripted_battle_full_flow() -> None:
             unit_id=blue_id,
             order_type=OrderType.MOVE,
             payload={"to_h3": _BLUE_PATH[-1], "mobility_profile": "FOOT"},
-            issuer_id=issuer_id,
         ),
+        issuer_id,
     )
     assert move.status.value == "VALIDATED"
 
@@ -237,8 +237,8 @@ async def test_scripted_battle_full_flow() -> None:
             unit_id=blue_id,
             order_type=OrderType.ENGAGE,
             payload={"target_unit_id": red_id},
-            issuer_id=issuer_id,
         ),
+        issuer_id,
     )
     assert engage.status.value == "VALIDATED"
 
