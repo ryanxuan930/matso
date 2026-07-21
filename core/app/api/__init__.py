@@ -1,5 +1,6 @@
 """Core REST API 層（FastAPI routers；契約見 contracts/core_api.yaml）。"""
 
+from app.api.aar import router as aar_router
 from app.api.auth import router as auth_router
 from app.api.control import router as control_router
 from app.api.errors import install_error_handlers
@@ -11,6 +12,7 @@ from app.api.units import router as units_router
 from app.api.ws import router as ws_router
 
 __all__ = [
+    "aar_router",
     "auth_router",
     "control_router",
     "inject_router",
