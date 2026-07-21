@@ -1,0 +1,23 @@
+# 殘缺情報：抽掉敵兵力規模與確切位置，只剩零散接觸報告。
+# 期望：引用仍正確（命中 golden）、對缺口明示不確定、不硬編敵情。
+id: intel-degraded-001
+role: INTEL_OFFICER
+category: DEGRADED_INTEL
+description: 僅有三筆零散 detection，敵兵力與確切位置未知；要求融合為敵情判斷（附信心度）。
+context:
+  intel: >-
+    過去 20 分鐘三筆接觸：(1) 熱源移動於東側林線；(2) 一次無線電突發；
+    (3) 車轍痕跡朝北。兵力規模、番號、確切座標未知。
+  omitted_elements:
+    - enemy_strength
+    - enemy_exact_position
+    - enemy_unit_designation
+  roe: 情報整編僅輸出判斷與信心度，不下達打擊令。
+golden_citations:
+  - "doctrine_red/red_delay_ops.md#RED-DELAY-03"
+expect:
+  schema_ref: base
+  reasoning_min_steps: 3
+  require_uncertainty: true
+  citations_must_exist: true
+  max_fabricated_citations: 0
