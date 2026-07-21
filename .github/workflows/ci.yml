@@ -157,3 +157,41 @@ jobs:
         if: always()
         working-directory: ops/compose
         run: docker compose down -v
+
+  e2e:
+    name: E2E smoke (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      # 前端 E2E 的 core（playwright webServer 起 uvicorn）import matso_sdk._generated → 先產生 stubs
+      - name: Generate gRPC stubs (O2.5)
+        run: uv run python ops/tools/gen_proto.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: platform/package-lock.json
+      - name: Install frontend deps
+        working-directory: platform
+        run: npm ci
+      - name: Install Playwright chromium
+        working-directory: platform
+        run: npx playwright install --with-deps chromium
+      # playwright.config 的 webServer 會起 seeded core（sqlite + STUB_GATEWAY）+ nuxt dev；
+      # E2E_REDIS_URL 指向本 job 的 redis service（WS stream 事件）。
+      - name: Run E2E (登入→建局→下令→裁決事件)
+        working-directory: platform
+        env:
+          CI: "true"
+          E2E_REDIS_URL: redis://localhost:6379/0
+        run: npx playwright test

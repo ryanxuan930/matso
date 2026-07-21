@@ -36,12 +36,12 @@ test('下 MOVE 令全流程：選單位 → 點地圖 → precheck 可行 → pe
   await page.getByTestId('submit-order').click()
   await expect(page.getByTestId('precheck')).toContainText('可行')
 
-  // pending 列表出現此指令
-  await expect(page.getByTestId('order-row')).toContainText('MOVE')
+  // pending 列表出現此指令（列表容器；e2e-orders session 跨測試共用，可能有多筆）
+  await expect(page.getByTestId('order-list')).toContainText('MOVE')
 
-  // 取消
+  // 取消 → 出現 CANCELLED
   await page.getByTestId('cancel-order').first().click()
-  await expect(page.getByTestId('order-row')).toContainText('CANCELLED')
+  await expect(page.getByTestId('order-list')).toContainText('CANCELLED')
 })
 
 test('下 ENGAGE 令：選單位 → 選目標 → precheck 可行', async ({ page }) => {

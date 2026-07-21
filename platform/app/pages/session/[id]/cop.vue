@@ -121,11 +121,22 @@ async function cancel(id: string) {
   await refresh()
 }
 
+// WS stream（O4.3/O4.6）：連 session，顯示收到的裁決事件
+const stream = useSessionStreamStore()
+const streamEvents = computed(() =>
+  stream.events.filter((e) => e.type === 'EVENT').slice(-20).reverse(),
+)
+
 async function back() {
+  stream.disconnect()
   await navigateTo('/lobby')
 }
 
-onMounted(refresh)
+onMounted(() => {
+  refresh()
+  stream.connect(sessionId.value)
+})
+onBeforeUnmount(() => stream.disconnect())
 </script>
 
 <template>
@@ -188,6 +199,16 @@ onMounted(refresh)
             </ul>
           </div>
         </div>
+
+        <h3>戰況事件 <span class="ws" :data-testid="'ws-status'">· {{ stream.status }}</span></h3>
+        <ul class="events" data-testid="event-list">
+          <li v-for="(e, i) in streamEvents" :key="i" data-testid="event-row">
+            {{ (e.payload as Record<string, unknown>)?.event_type }}
+            <span v-if="(e.payload as Record<string, unknown>)?.order_type">
+              · {{ (e.payload as Record<string, unknown>).order_type }}</span>
+          </li>
+          <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
+        </ul>
 
         <h3>指令（pending / 歷史）</h3>
         <ul class="orders" data-testid="order-list">
@@ -273,13 +294,24 @@ onMounted(refresh)
   color: #94a3b8;
 }
 .units,
-.orders {
+.orders,
+.events {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+.events li {
+  padding: 0.25rem 0.5rem;
+  border-left: 2px solid #f59e0b;
+  background: #1c1917;
+  font-size: 0.75rem;
+}
+.ws {
+  color: #64748b;
+  font-weight: normal;
 }
 .units li,
 .orders li {

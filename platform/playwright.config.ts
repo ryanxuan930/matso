@@ -26,6 +26,7 @@ export default defineConfig({
         `DATABASE_URL=${E2E_DB} SEED_USERNAME=commander SEED_PASSWORD=exercise SEED_SESSION=1 ` +
         `uv run python ops/tools/seed_dev_user.py && ` +
         `DATABASE_URL=${E2E_DB} JWT_SECRET=${JWT} ACCESS_TOKEN_TTL_S=3 STUB_GATEWAY=1 ` +
+        `REDIS_URL=${process.env.E2E_REDIS_URL || 'redis://localhost:6379/15'} ` +
         `CORS_ORIGINS=http://localhost:${NUXT_PORT} ` +
         `uv run uvicorn app.main:app --port ${CORE_PORT}"`,
       cwd: '..',

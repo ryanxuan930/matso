@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { apiFetch, useAuthTokens } from '~/composables/useApi'
+import { apiFetch, refreshAccessToken, useAuthTokens } from '~/composables/useApi'
 
 // WS envelope（contracts/ws_protocol.md）
 interface Envelope {
@@ -39,10 +39,12 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
     open()
   }
 
-  function open(): void {
+  async function open(): Promise<void> {
     const { access } = useAuthTokens()
     if (!access.value) return
     status.value = 'connecting'
+    await refreshAccessToken() // WS token 連線前刷新（短 TTL 下避免 4401 競態）
+    if (!access.value) return
     ws = new WebSocket(wsUrl(useRuntimeConfig().public.apiBase as string, sessionId, access.value))
 
     ws.onopen = () => {

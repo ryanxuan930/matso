@@ -84,6 +84,22 @@ export async function apiFetch<T>(path: string, opts: Parameters<typeof $fetch>[
   }
 }
 
+/** 主動以 refresh token 換一枚新 access token（WS 連線前確保 token 新鮮，避免短 TTL 競態）。 */
+export async function refreshAccessToken(): Promise<boolean> {
+  const { access, refresh } = useAuthTokens()
+  if (!refresh.value) return false
+  try {
+    const r = await $fetch<AccessToken>(apiUrl('/auth/refresh'), {
+      method: 'POST',
+      body: { refresh_token: refresh.value },
+    })
+    access.value = r.access_token
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function apiLogin(username: string, password: string): Promise<TokenPair> {
   return $fetch<TokenPair>(apiUrl('/auth/login'), {
     method: 'POST',
