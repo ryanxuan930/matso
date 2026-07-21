@@ -16,7 +16,7 @@ from app.api.deps import get_current_user, get_settings
 from app.auth.schemas import CurrentUser
 from app.config import Settings
 from app.errors import AuthForbiddenError
-from app.models.enums import UserRole
+from app.stream.faction_filter import is_white_cell
 from app.stream.publish import publish_event
 
 _LOG = logging.getLogger("app.inject")
@@ -24,7 +24,6 @@ _LOG = logging.getLogger("app.inject")
 router = APIRouter(prefix="/api/v1/sessions", tags=["inject"])
 
 # 可注入的角色（統裁）——ADMIN 不含（管理≠統裁；SPEC §12 inject 限 White Cell）。
-_WHITE_CELL_ROLES = frozenset({UserRole.EXERCISE_DIRECTOR, UserRole.WHITE_CELL_STAFF})
 
 
 class InjectRequest(BaseModel):
@@ -44,7 +43,7 @@ def inject_event(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> InjectResponse:
-    if user.role not in _WHITE_CELL_ROLES:
+    if not is_white_cell(user.role):
         raise AuthForbiddenError("僅 White Cell（統裁）可注入事件")
     seq = -1
     try:

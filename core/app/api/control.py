@@ -16,14 +16,13 @@ from app.api.deps import get_current_user, get_settings
 from app.auth.schemas import CurrentUser
 from app.config import Settings
 from app.errors import AuthForbiddenError
-from app.models.enums import UserRole
+from app.stream.faction_filter import is_white_cell
 from app.stream.publish import publish_event
 
 _LOG = logging.getLogger("app.control")
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["control"])
 
-_WHITE_CELL_ROLES = frozenset({UserRole.EXERCISE_DIRECTOR, UserRole.WHITE_CELL_STAFF})
 _ACTIONS = frozenset({"PAUSE", "RESUME", "ROLLBACK"})
 
 
@@ -43,7 +42,7 @@ def session_control(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> ControlResponse:
-    if user.role not in _WHITE_CELL_ROLES:
+    if not is_white_cell(user.role):
         raise AuthForbiddenError("僅 White Cell（統裁）可控制時間")
     if req.action not in _ACTIONS:
         raise AuthForbiddenError(f"未知的控制動作：{req.action}")
