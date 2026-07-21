@@ -100,6 +100,26 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## Backlog / 發現的問題
 
+### O6 → O7 交接項（2026-07-21，M6 + 多陣營完成後）
+
+**部署層接線（介面皆已備注入點，接線即可）**：
+- **AI 迴路 ↔ kernel**：kernel 事件 → 建 context → `run_opfor_turn`（注入 RoleManager-decider +
+  TerrainGatewayAdapter feasibility + QdrantCitationVerifier + scenario no_strike + relations）→ orders 落 pending → `intervention_events` 寫 Ledger。
+- **真 AI 後端**：vLLM（`OPENAI_BASE_URL`）、bge-m3 模型檔（env 注入路徑）、Qdrant 服務；`RecordingClient` 錄 fixtures 供 CI `ReplayClient`。
+- **聚合裁決分流**：kernel `should_aggregate` → `resolve_multiway_tick`（session forces + FactionRelations）。
+- **AIInvocationLog / AI_DISABLED 端點**：目前無 AI REST 端點；O6.5 迴路接 kernel 時於入口 `require_ai_enabled`。
+
+**多陣營待接（O7 依賴）**：
+- **O7.1 依賴 O6.7**：scenario `factions:`（id/顯示名/顏色）+ `relations:`（上三角，未宣告預設 HOSTILE）+ victory_conditions 任意陣營；loader 建 `FactionRelations` 注入 session、驗證（未知/保留字/非法關係→精確錯誤）。
+- **session 熱狀態載入 relations**：OrderService / sweep / 聚合的 `relations` 目前為注入參數（預設全 HOSTILE）；O7.1 由 scenario 載入、White Cell（O7.4）局中 `set_relation` 寫 Ledger + 熱狀態。
+- **WargameSession.aiMode 欄位**（§9.0 per-session 模式持久化）→ O7.4 白軍控制台（局中切模式）；目前為 `resolve_ai_mode` 的設定預設。
+- **下令目標改用真 intel contacts**：O6.10 為 E2E 便利在 `STUB_GATEWAY` 下讓 `GET /units` 全放行；O7 UX 應改由偵測到的敵方 contact 選 ENGAGE 目標，移除該 affordance。
+- **前端 faction palette**：`buildUnitFeatures` 已收 palette 參數；O7.1 由 scenario `factions[].color` 注入取代 `DEFAULT_FACTION_COLORS`。
+
+**其他 O6 部署掛帳**：
+- **SPEC_INGEST / O9**（文檔轉換）與 doctrine 語料仍待人備；RAG/eval 空為合法常態，AI 自動降級 AI_BARE。
+- **真模型 eval** 為手動 workflow（`ai-eval-manual.yml`），需可達 vLLM 端點。
+
 ### 2026-07-19 M0–M1 code review 發現（10 主要 + 8 次要；修復卡 = O1.7，worklog: docs/worklog/O1.7.md）
 
 > **修復狀態（同日，O1.7）**：R1–R4、R6–R9、r11–r18 ✅ **全部修復**（含回歸測試）；
