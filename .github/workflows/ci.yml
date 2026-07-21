@@ -140,6 +140,10 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
+      # gRPC stubs 不入 git（ADR 005）——pytest 收集 core/tests/integration 會 import
+      # matso_sdk（weather/comms 整合測試），故收集前須先產生 stubs（同 python job）。
+      - name: Generate gRPC stubs (O2.5)
+        run: uv run python ops/tools/gen_proto.py
       # O1.7/R4：整合測試必須真的跑在活服務上；出現 skip 視同失敗（防假綠燈）
       - name: Integration tests against live stack
         run: |
