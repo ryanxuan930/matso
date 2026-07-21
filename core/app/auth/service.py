@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.hashing import verify_password
+from app.auth.hashing import dummy_verify, verify_password
 from app.auth.schemas import AccessToken, CurrentUser, TokenPair
 from app.auth.tokens import JwtCodec, TokenType
 from app.config import Settings
@@ -26,7 +26,10 @@ class AuthService:
     def authenticate(self, username: str, password: str) -> TokenPair:
         """驗證帳密 → 簽發 access + refresh。失敗一律 AUTH_INVALID_CREDENTIALS（防帳號列舉）。"""
         user = self._db.execute(select(User).where(User.username == username)).scalar_one_or_none()
-        if user is None or not verify_password(user.password_hash, password):
+        if user is None:
+            dummy_verify()  # 消除計時側信道：帳號不存在時仍跑等價 Argon2（CODE_REVIEW C4）
+            raise AuthInvalidCredentialsError("帳號或密碼錯誤")
+        if not verify_password(user.password_hash, password):
             raise AuthInvalidCredentialsError("帳號或密碼錯誤")
         return self._issue_pair(user)
 

@@ -50,10 +50,9 @@ def list_units(
     db: Session = Depends(get_db),
 ) -> list[UnitView]:
     participant = require_participant(db, user, session_id)
-    units = (
-        db.execute(select(TacticalUnit).where(TacticalUnit.session_id == session_id))
-        .scalars()
-        .all()
-    )
-    omniscient = is_omniscient(participant.role)
-    return [_view(u) for u in units if omniscient or u.faction.value == participant.faction.value]
+    # faction 過濾下推到 SQL（CODE_REVIEW C12）：非全知者不把敵方單位載入行程記憶體。
+    stmt = select(TacticalUnit).where(TacticalUnit.session_id == session_id)
+    if not is_omniscient(participant.role):
+        stmt = stmt.where(TacticalUnit.faction == participant.faction)
+    units = db.execute(stmt).scalars().all()
+    return [_view(u) for u in units]

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import IllegalOrderTransitionError, OrderNotFoundError, PrecheckFailedError
-from app.models.enums import OrderStatus
+from app.models.enums import Faction, OrderStatus
 from app.models.tables import Order, TacticalUnit
 from app.orders.precheck import PhysicsGateway, precheck_error_code, run_precheck
 from app.orders.schemas import OrderRequest, OrderResponse, PrecheckResult
@@ -63,27 +63,33 @@ class OrderService:
         return _to_response(order, precheck)
 
     def list_orders(self, session_id: str, faction: str, omniscient: bool) -> list[OrderResponse]:
-        """列出 session 的指令（pending + 歷史），依 faction 過濾（omniscient 見全部）。"""
-        rows = (
-            self._db.execute(
-                select(Order, TacticalUnit.faction)
-                .join(TacticalUnit, Order.unit_id == TacticalUnit.id)
-                .where(Order.session_id == session_id)
-                .order_by(Order.issued_at_tick.desc(), Order.id)
-            )
-            .tuples()
-            .all()
-        )
-        return [
-            _to_response(order, _precheck_of(order))
-            for order, unit_faction in rows
-            if omniscient or unit_faction.value == faction
-        ]
+        """列出 session 的指令（pending + 歷史），依 faction 過濾（omniscient 見全部）。
 
-    def cancel(self, session_id: str, order_id: str) -> OrderResponse:
+        faction 過濾下推到 SQL WHERE（CODE_REVIEW C12）——非全知者不把敵方指令載入行程記憶體。
+        """
+        stmt = (
+            select(Order)
+            .join(TacticalUnit, Order.unit_id == TacticalUnit.id)
+            .where(Order.session_id == session_id)
+            .order_by(Order.issued_at_tick.desc(), Order.id)
+        )
+        if not omniscient:
+            stmt = stmt.where(TacticalUnit.faction == Faction(faction))
+        orders = self._db.execute(stmt).scalars().all()
+        return [_to_response(order, _precheck_of(order)) for order in orders]
+
+    def cancel(
+        self, session_id: str, order_id: str, faction: str, omniscient: bool
+    ) -> OrderResponse:
         order = self._db.get(Order, order_id)
         if order is None or order.session_id != session_id:
             raise OrderNotFoundError(f"指令不存在：{order_id}")
+        # 授權：非全知者只能取消己方陣營單位的指令（CODE_REVIEW C1）。他陣營指令一律以「不存在」
+        # 回應，避免洩漏敵方指令存在（fog of war 與 GET /orders 過濾一致）。
+        if not omniscient:
+            unit = self._db.get(TacticalUnit, order.unit_id)
+            if unit is None or unit.faction.value != faction:
+                raise OrderNotFoundError(f"指令不存在：{order_id}")
         if not is_user_cancellable(order.status):
             raise IllegalOrderTransitionError(
                 f"指令狀態 {order.status} 不可取消（僅未執行者可取消）",

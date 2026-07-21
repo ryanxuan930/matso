@@ -183,3 +183,14 @@ def test_faction_filter_drops_other_faction_backfill(
         assert ws.receive_json()["type"] == "WELCOME"
         # BLUE client 只收 seq1（全體）+ seq3（BLUE）；seq2（RED）被濾
         assert [ws.receive_json()["seq"] for _ in range(2)] == [1, 3]
+
+
+def test_parse_last_seq_rejects_non_int() -> None:
+    """C6：HELLO.last_seq 非 int（bool/字串/缺失/非 dict）一律當 None，不炸 handler。"""
+    from app.api.ws import _parse_last_seq
+
+    assert _parse_last_seq({"last_seq": 5}) == 5
+    assert _parse_last_seq({"last_seq": "5"}) is None  # 字串
+    assert _parse_last_seq({"last_seq": True}) is None  # bool 非 seq
+    assert _parse_last_seq({}) is None  # 缺失
+    assert _parse_last_seq("nope") is None  # 非 dict

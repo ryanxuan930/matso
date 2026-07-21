@@ -13,6 +13,7 @@ interface Envelope {
 type StreamStatus = 'idle' | 'connecting' | 'live' | 'resyncing' | 'closed'
 
 const MAX_BACKOFF_MS = 10_000
+const MAX_EVENTS = 1000 // 前端事件緩衝上限，避免長 session 記憶體無限成長（CODE_REVIEW C7）
 
 /** WS 位址：把 apiBase 的 http(s) 換成 ws(s)。 */
 function wsUrl(apiBase: string, sessionId: string, token: string): string {
@@ -42,6 +43,16 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
   async function open(): Promise<void> {
     const { access } = useAuthTokens()
     if (!access.value) return
+    // 先清掉既有 socket 與重連計時器，避免抖動下長出多條併行 WS（CODE_REVIEW C7）。
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (ws) {
+      ws.onclose = null // 這是主動汰換，不要觸發重連
+      ws.close()
+      ws = null
+    }
     status.value = 'connecting'
     await refreshAccessToken() // WS token 連線前刷新（短 TTL 下避免 4401 競態）
     if (!access.value) return
@@ -74,13 +85,18 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
         lastSeq.value = null
         break
       default:
-        if (typeof env.seq === 'number') lastSeq.value = env.seq
+        // lastSeq 取單調最大（C3：雙寫入者下 ring 可能短暫亂序，避免 lastSeq 回退致重連重收）。
+        if (typeof env.seq === 'number') {
+          lastSeq.value = lastSeq.value === null ? env.seq : Math.max(lastSeq.value, env.seq)
+        }
         events.value.push(env)
+        if (events.value.length > MAX_EVENTS) events.value.splice(0, events.value.length - MAX_EVENTS)
     }
   }
 
   function scheduleReconnect(): void {
     status.value = 'connecting'
+    if (reconnectTimer) clearTimeout(reconnectTimer) // 不堆疊多個待重連計時器（C7）
     reconnectTimer = setTimeout(open, backoff)
     backoff = Math.min(backoff * 2, MAX_BACKOFF_MS) // 指數退避
   }

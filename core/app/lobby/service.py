@@ -49,12 +49,14 @@ class LobbyService:
         session = WargameSession(
             name=req.name,
             scenario_id=req.scenario_id,
-            master_seed=_derive_seed(req.name, user.id),
+            master_seed=0,  # 佔位；flush 取得 session.id 後以其導出（見下）
             mode=req.mode,
             current_weather={},
         )
         self._db.add(session)
         self._db.flush()  # 取得 session.id
+        # master_seed 摻入 session.id（uuid）避免「同名同人」建局的 RNG 流碰撞（CODE_REVIEW C15）。
+        session.master_seed = _derive_seed(req.name, user.id, session.id)
         participant = SessionParticipant(
             user_id=user.id,
             session_id=session.id,
@@ -88,10 +90,11 @@ class LobbyService:
         )
 
 
-def _derive_seed(name: str, user_id: str) -> int:
-    """由建局名 + 建立者確定性導出 master_seed（避免裸 random；P4 種子為模擬 RNG 根）。
+def _derive_seed(name: str, user_id: str, session_id: str) -> int:
+    """由建局名 + 建立者 + session.id 確定性導出 master_seed（避免裸 random；P4 模擬 RNG 根）。
 
+    摻入 session.id（uuid）確保即使同名同人建多局，master_seed 也互異（CODE_REVIEW C15）。
     以 BLAKE2b 取 63-bit 正整數，落在 DB BigInt 範圍內。
     """
-    digest = hashlib.blake2b(f"{name}:{user_id}".encode(), digest_size=8).digest()
+    digest = hashlib.blake2b(f"{name}:{user_id}:{session_id}".encode(), digest_size=8).digest()
     return int.from_bytes(digest, "big") & 0x7FFF_FFFF_FFFF_FFFF

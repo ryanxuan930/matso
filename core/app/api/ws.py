@@ -87,35 +87,57 @@ async def _run_stream(
 ) -> None:
     # 2) HELLO{last_seq}
     hello = await websocket.receive_json()
-    last_seq = hello.get("last_seq") if isinstance(hello, dict) else None
+    last_seq = _parse_last_seq(hello)
 
-    # 3) 讀 ring → 範圍檢查 → WELCOME / RESYNC_REQUIRED + 補送
-    envelopes = await _read_ring(redis, session_id)
-    ring_min, ring_max = seq_range(envelopes)
-    plan = plan_resume(ring_min, ring_max, last_seq)
+    # 3) 先訂閱 pub-sub（開始緩衝 live 訊息）→ 再讀 ring 快照補送（CODE_REVIEW C2）。
+    #    反過來（先讀 ring 再訂閱）會漏掉「快照後、訂閱前」發佈的事件——client 無感遺失。
+    sender = BoundedSender()
+    pubsub = redis.pubsub()
+    await pubsub.subscribe(_channel(session_id))
+    try:
+        # 4) 讀 ring → 範圍檢查 → WELCOME / RESYNC_REQUIRED + 補送
+        envelopes = await _read_ring(redis, session_id)
+        ring_min, ring_max = seq_range(envelopes)
+        plan = plan_resume(ring_min, ring_max, last_seq)
 
-    if plan.resync:
+        if plan.resync:
+            await websocket.send_json(
+                {"v": 1, "type": "RESYNC_REQUIRED", "payload": {"reason": "last_seq out of range"}}
+            )
         await websocket.send_json(
-            {"v": 1, "type": "RESYNC_REQUIRED", "payload": {"reason": "last_seq out of range"}}
+            {
+                "v": 1,
+                "type": "WELCOME",
+                "payload": {
+                    "session": session_id,
+                    "faction": identity.faction,
+                    "resumed_from_seq": plan.resumed_from_seq,
+                },
+            }
         )
-    await websocket.send_json(
-        {
-            "v": 1,
-            "type": "WELCOME",
-            "payload": {
-                "session": session_id,
-                "faction": identity.faction,
-                "resumed_from_seq": plan.resumed_from_seq,
-            },
-        }
-    )
-    if plan.backfill_after_seq is not None:
-        for env in select_backfill(envelopes, plan.backfill_after_seq):
-            if is_visible(env, identity.faction, identity.omniscient):
-                await websocket.send_json(env)
+        # 已補送的最大 seq——live 迴圈用它去重「訂閱緩衝與 backfill 重疊」的訊息。
+        sent_through = plan.resumed_from_seq
+        if plan.backfill_after_seq is not None:
+            for env in select_backfill(envelopes, plan.backfill_after_seq):
+                if is_visible(env, identity.faction, identity.omniscient):
+                    await websocket.send_json(env)
+                    sent_through = max(sent_through, int(env.get("seq", sent_through)))
 
-    # 4) live pub-sub 轉發（faction 過濾 + 背壓）
-    await _pump_live(websocket, redis, session_id, identity)
+        # 5) live pub-sub 轉發（faction 過濾 + 背壓 + seq 去重）
+        await _pump_live(websocket, pubsub, sender, session_id, identity, sent_through)
+    finally:
+        await pubsub.unsubscribe(_channel(session_id))
+        await pubsub.aclose()
+
+
+def _parse_last_seq(hello: Any) -> int | None:
+    """HELLO.last_seq 的健壯解析（CODE_REVIEW C6）：非 int（含 bool/字串/缺失）一律當 None。"""
+    if not isinstance(hello, dict):
+        return None
+    value = hello.get("last_seq")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 async def _read_ring(redis: aioredis.Redis, session_id: str) -> list[dict[str, Any]]:
@@ -128,11 +150,15 @@ async def _read_ring(redis: aioredis.Redis, session_id: str) -> list[dict[str, A
 
 
 async def _pump_live(
-    websocket: WebSocket, redis: aioredis.Redis, session_id: str, identity: WsIdentity
+    websocket: WebSocket,
+    pubsub: Any,
+    sender: BoundedSender,
+    session_id: str,
+    identity: WsIdentity,
+    sent_through: int,
 ) -> None:
-    sender = BoundedSender()
-    pubsub = redis.pubsub()
-    await pubsub.subscribe(_channel(session_id))
+    """轉發已訂閱頻道的 live 訊息。pubsub 由呼叫端先訂閱好（C2）；跳過 seq ≤ sent_through 者
+    （與 backfill 重疊的去重）。"""
 
     async def produce() -> None:
         async for message in pubsub.listen():
@@ -142,6 +168,9 @@ async def _pump_live(
                 env = json.loads(message["data"])
             except (json.JSONDecodeError, TypeError):
                 continue
+            seq = env.get("seq")
+            if isinstance(seq, int) and seq <= sent_through:
+                continue  # 已於 backfill 送過（訂閱緩衝與快照重疊）
             if is_visible(env, identity.faction, identity.omniscient):
                 sender.offer(env)  # 慢 client → BackpressureError
 
@@ -166,5 +195,3 @@ async def _pump_live(
     finally:
         producer.cancel()
         consumer.cancel()
-        await pubsub.unsubscribe(_channel(session_id))
-        await pubsub.aclose()

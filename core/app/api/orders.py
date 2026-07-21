@@ -9,7 +9,6 @@ issuer 由認證 token 推導（SPEC §12：前端不可信）——非該 sessi
 
 from __future__ import annotations
 
-import contextlib
 import logging
 
 import redis
@@ -29,8 +28,6 @@ _LOG = logging.getLogger("app.orders")
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["orders"])
 
-_participant = require_participant
-
 
 def _emit_adjudication_event(
     settings: Settings, session_id: str, faction: str, resp: OrderResponse
@@ -39,7 +36,7 @@ def _emit_adjudication_event(
     if not settings.stub_gateway:
         return
     event_type = "ENGAGEMENT_RESOLVED" if resp.order_type == "ENGAGE" else "ORDER_VALIDATED"
-    with contextlib.suppress(redis.RedisError):
+    try:
         client = redis.from_url(settings.redis_url, decode_responses=True)
         publish_event(
             client,
@@ -49,6 +46,8 @@ def _emit_adjudication_event(
             faction=faction,
         )
         client.close()
+    except redis.RedisError as exc:  # 失敗不阻斷下令，但要留痕（CODE_REVIEW C11）
+        _LOG.warning("session %s: 裁決事件發佈失敗：%s", session_id, exc)
 
 
 @router.get("/{session_id}/orders", response_model=list[OrderResponse])
@@ -58,7 +57,7 @@ def list_orders(
     db: Session = Depends(get_db),
     service: OrderService = Depends(get_order_service),
 ) -> list[OrderResponse]:
-    p = _participant(db, user, session_id)
+    p = require_participant(db, user, session_id)
     return service.list_orders(session_id, p.faction.value, is_omniscient(p.role))
 
 
@@ -71,7 +70,7 @@ def issue_order(
     service: OrderService = Depends(get_order_service),
     settings: Settings = Depends(get_settings),
 ) -> OrderResponse:
-    p = _participant(db, user, session_id)
+    p = require_participant(db, user, session_id)
     resp = service.submit(session_id, req, p.id)
     _emit_adjudication_event(settings, session_id, p.faction.value, resp)
     return resp
@@ -85,5 +84,5 @@ def cancel_order(
     db: Session = Depends(get_db),
     service: OrderService = Depends(get_order_service),
 ) -> OrderResponse:
-    _participant(db, user, session_id)  # 須為參與者
-    return service.cancel(session_id, order_id)
+    p = require_participant(db, user, session_id)  # 須為參與者
+    return service.cancel(session_id, order_id, p.faction.value, is_omniscient(p.role))

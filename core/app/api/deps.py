@@ -62,7 +62,7 @@ def get_current_user(
 
 @lru_cache(maxsize=1)
 def _default_channel() -> grpc.Channel:
-    return grpc.insecure_channel(Settings().terrain_grpc_target)
+    return grpc.insecure_channel(get_settings().terrain_grpc_target)
 
 
 class _StubGateway:

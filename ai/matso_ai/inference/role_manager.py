@@ -9,6 +9,7 @@ latency 只進 side log，不進 Ledger hash（R8 教訓：非決定性診斷不
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -16,6 +17,14 @@ from dataclasses import dataclass
 from matso_ai.inference.client import ChatMessage, LLMClient, LLMResponse, prompt_hash
 from matso_ai.inference.invocation_log import InvocationLogWriter, InvocationRecord
 from matso_ai.roles import ROLE_REGISTRY, Role, RoleConfig, UnknownRoleError
+
+_LOG = logging.getLogger("matso_ai.role_manager")
+
+DEFAULT_MAX_QUEUE = 1000  # 與 WS BoundedSender 同量級（背壓一致性，CODE_REVIEW C9）
+
+
+class QueueFullError(RuntimeError):
+    """佇列已達上限——呼叫端應退避（背壓）。"""
 
 
 @dataclass(frozen=True)
@@ -49,12 +58,14 @@ class RoleManager:
         log_writer: InvocationLogWriter | None = None,
         clock: Callable[[], float] = time.perf_counter,
         model: str = "",
+        max_queue: int = DEFAULT_MAX_QUEUE,
     ) -> None:
         self._client = client
         self._registry = dict(registry)
         self._log = log_writer
         self._clock = clock
         self._model = model
+        self._max_queue = max_queue
         self._queue: list[AIRequest] = []
         self._adapter_swaps = 0
         self._current_adapter: str | None = None
@@ -69,22 +80,32 @@ class RoleManager:
         return len(self._queue)
 
     def enqueue(self, request: AIRequest) -> None:
-        """入列（延後處理）。未知角色即拋 UnknownRoleError。"""
+        """入列（延後處理）。未知角色 → UnknownRoleError；佇列滿 → QueueFullError（背壓，C9）。"""
         if request.role not in self._registry:
             raise UnknownRoleError(request.role)
+        if len(self._queue) >= self._max_queue:
+            raise QueueFullError(f"AI 佇列已滿（上限 {self._max_queue}）")
         self._queue.append(request)
 
     def process_pending(self) -> list[AIResult]:
         """處理佇列全部請求：依角色 priority 由高到低分組（OPFOR 最高），組內維持 enqueue FIFO。
 
-        同角色請求排序後相鄰 → 共用一次 adapter，攤銷熱切換。回傳依實際處理順序的結果。
+        同角色請求排序後相鄰 → 共用一次 adapter，攤銷熱切換。單筆失敗不中斷整批（記 log 後跳過，
+        CODE_REVIEW C10）；**佇列一律清空**（回傳依實際處理順序的成功結果）。
         """
         ordered = sorted(
             enumerate(self._queue),
             key=lambda iq: (-self._registry[iq[1].role].priority, iq[0]),
         )
-        results = [self._invoke(req) for _, req in ordered]
-        self._queue.clear()
+        results: list[AIResult] = []
+        try:
+            for _, req in ordered:
+                try:
+                    results.append(self._invoke(req))
+                except Exception:  # 單筆失敗隔離，不拖垮整批
+                    _LOG.warning("AI 請求失敗（role=%s）已跳過", req.role.value, exc_info=True)
+        finally:
+            self._queue.clear()
         return results
 
     def invoke(self, request: AIRequest) -> AIResult:

@@ -55,14 +55,28 @@ def test_cancel_validated_order(session_factory: sessionmaker[Session]) -> None:
     with session_factory() as db:
         service = OrderService(db, FakeGateway(reachable=True))
         created = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
-        cancelled = service.cancel(world.session_id, created.id)
+        cancelled = service.cancel(world.session_id, created.id, "BLUE", False)
         assert cancelled.status is OrderStatus.CANCELLED
+
+
+def test_cancel_cross_faction_denied_as_not_found(session_factory: sessionmaker[Session]) -> None:
+    """C1：RED 不可取消 BLUE 的指令；為 fog of war 一致，以「不存在」回應（非 403）。"""
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        service = OrderService(db, FakeGateway(reachable=True))
+        created = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
+        with pytest.raises(OrderNotFoundError):
+            service.cancel(world.session_id, created.id, "RED", False)  # 敵陣營
+        # 全知者（統裁）仍可取消
+        assert service.cancel(world.session_id, created.id, "RED", True).status is (
+            OrderStatus.CANCELLED
+        )
 
 
 def test_cancel_unknown_order(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db, pytest.raises(OrderNotFoundError):
-        OrderService(db, FakeGateway()).cancel(world.session_id, "nope")
+        OrderService(db, FakeGateway()).cancel(world.session_id, "nope", "BLUE", False)
 
 
 def test_cannot_cancel_executing(session_factory: sessionmaker[Session]) -> None:
@@ -73,4 +87,4 @@ def test_cannot_cancel_executing(session_factory: sessionmaker[Session]) -> None
         db.get(Order, created.id).status = OrderStatus.EXECUTING  # type: ignore[union-attr]
         db.commit()
         with pytest.raises(IllegalOrderTransitionError):
-            service.cancel(world.session_id, created.id)
+            service.cancel(world.session_id, created.id, "BLUE", False)
