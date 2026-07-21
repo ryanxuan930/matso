@@ -7,6 +7,12 @@ info:
 servers:
   - url: /api/v1
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "access token（短效）；由 /auth/login 或 /auth/refresh 取得，置於 Authorization: Bearer 標頭"
   parameters:
     SessionId:
       name: id
@@ -43,7 +49,12 @@ components:
               description: error code 枚舉（O3.1 Order pipeline 部分）
               enum:
                 - INTERNAL_ERROR
+                - AUTH_INVALID_CREDENTIALS
+                - AUTH_INVALID_TOKEN
+                - AUTH_TOKEN_EXPIRED
+                - AUTH_FORBIDDEN
                 - SESSION_NOT_FOUND
+                - SCENARIO_NOT_FOUND
                 - ORDER_NOT_FOUND
                 - ORDER_INVALID_PAYLOAD
                 - ORDER_UNIT_NOT_FOUND
@@ -59,6 +70,64 @@ components:
                 - TERRAIN_UNAVAILABLE
             message: { type: string }
             details: { type: object }
+    UserRole:
+      type: string
+      enum: [EXERCISE_DIRECTOR, WHITE_CELL_STAFF, COMMANDER, STAFF, OBSERVER, ANALYST, ADMIN]
+    Faction:
+      type: string
+      enum: [BLUE, RED, WHITE, GREEN]
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1 }
+        password: { type: string, minLength: 1 }
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, minLength: 1 }
+    TokenPair:
+      type: object
+      description: access（短效）+ refresh（長效）JWT 對
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, const: bearer }
+        expires_in: { type: integer, description: access token 剩餘秒數 }
+    AccessToken:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: bearer }
+        expires_in: { type: integer }
+    CurrentUser:
+      type: object
+      required: [id, username, role]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        role: { $ref: "#/components/schemas/UserRole" }
+    SessionSummary:
+      type: object
+      description: lobby 列表項（faction/角色過濾後）
+      required: [id, name, mode, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        scenario_id: { type: [string, "null"] }
+        mode: { type: string }
+        status: { type: string }
+        my_faction: { type: [string, "null"], description: 呼叫者在此 session 的陣營（非參與者為 null） }
+    CreateSessionRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        scenario_id: { type: [string, "null"] }
+        mode: { type: string, enum: [REALTIME, WEGO, IGO_UGO], default: REALTIME }
     OrderType:
       type: string
       enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE]
@@ -104,12 +173,79 @@ components:
         issued_at_tick: { type: integer }
 paths:
   /auth/login:
-    post: { operationId: login, responses: { "200": { description: JWT pair } } }
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: JWT pair
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { description: Invalid credentials, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /auth/refresh:
-    post: { operationId: refresh, responses: { "200": { description: New access token } } }
+    post:
+      operationId: refresh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: New access token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessToken" }
+        "401": { description: Invalid or expired refresh token, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /auth/logout:
+    post:
+      operationId: logout
+      security: [{ bearerAuth: [] }]
+      description: 用戶端丟棄 token 即登出（無狀態 JWT）；此端點供審計/對稱性
+      responses: { "204": { description: Logged out } }
+  /auth/me:
+    get:
+      operationId: currentUser
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current authenticated user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CurrentUser" }
+        "401": { description: Unauthenticated, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions:
-    get: { operationId: listSessions, responses: { "200": { description: Role-filtered sessions } } }
-    post: { operationId: createSession, responses: { "201": { description: Created } } }
+    get:
+      operationId: listSessions
+      security: [{ bearerAuth: [] }]
+      description: 依角色/參與過濾（director/white/admin 見全部；其餘見自己參與的）
+      responses:
+        "200":
+          description: Role-filtered sessions
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SessionSummary" } }
+        "401": { description: Unauthenticated, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      operationId: createSession
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSessionRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionSummary" }
+        "401": { description: Unauthenticated, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/lifecycle:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

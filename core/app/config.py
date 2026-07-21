@@ -18,6 +18,19 @@ class Settings(BaseSettings):
     # Terrain 插件 gRPC 位址（O2.5）；compose 內為 terrain:50051，本機開發為 localhost:50051
     terrain_grpc_target: str = "localhost:50051"
 
+    # 認證（O4.1，SPEC §12）。jwt_secret 絕不寫死於程式——env 注入（JWT_SECRET，無前綴同
+    # DATABASE_URL）；未設時用開發預設並於啟動警告（同 CWA/DTED 慣例）。正式部署 MUST 覆寫。
+    # 開發預設 ≥32 bytes（HS256 建議長度）；仍不安全，正式部署 MUST 覆寫。
+    jwt_secret: str = "dev-insecure-change-me-in-production-0000"
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_s: int = 900  # 15 分鐘（短效，SPEC §12）
+    refresh_token_ttl_s: int = 1209600  # 14 天
+
+    @property
+    def jwt_secret_is_default(self) -> bool:
+        """是否仍用不安全的開發預設 secret（供啟動警告）。"""
+        return self.jwt_secret == "dev-insecure-change-me-in-production-0000"
+
     @property
     def sqlalchemy_url(self) -> str:
         """把 Prisma 風格的 mysql:// 轉為 SQLAlchemy + pymysql 的 driver URL。"""

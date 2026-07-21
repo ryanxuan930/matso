@@ -1,4 +1,4 @@
-"""API 依賴注入（O3.1）。測試以 app.dependency_overrides 覆寫 get_db / get_gateway。"""
+"""API 依賴注入（O3.1/O4.1）。測試以 app.dependency_overrides 覆寫 get_db / get_gateway。"""
 
 from __future__ import annotations
 
@@ -7,10 +7,16 @@ from functools import lru_cache
 
 import grpc
 from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.auth.schemas import CurrentUser
+from app.auth.service import AuthService
+from app.auth.tokens import JwtCodec
 from app.config import Settings
 from app.db import default_session_factory
+from app.errors import AuthInvalidTokenError
+from app.lobby.service import LobbyService
 from app.orders.precheck import PhysicsGateway, TerrainGatewayAdapter
 from app.orders.service import OrderService
 from app.plugins import TerrainClient
@@ -22,6 +28,36 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+
+def get_auth_service(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> AuthService:
+    codec = JwtCodec(secret=settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return AuthService(db, codec, settings)
+
+
+def get_lobby_service(db: Session = Depends(get_db)) -> LobbyService:
+    return LobbyService(db)
+
+
+# auto_error=False：缺 token 時不由 FastAPI 直接 403，改由我們拋領域例外 → 統一 Error 格式
+_bearer = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    auth: AuthService = Depends(get_auth_service),
+) -> CurrentUser:
+    if credentials is None:
+        raise AuthInvalidTokenError("缺少 Authorization bearer token")
+    return auth.current_user(credentials.credentials)
 
 
 @lru_cache(maxsize=1)
