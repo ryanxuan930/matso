@@ -43,10 +43,17 @@ modules/terrain/data/hexcache/
 *.safetensors
 
 # Generated code (from contracts) — regenerate via ops/tools/gen_proto.py / buf
-platform/app/types/api.d.ts
+# platform/app/types/api.ts 由 core_api.yaml 生成（npm run gen:api），但**入 git**：讓
+# checkout/CI 免依賴網路 codegen；契約變更時須重跑 gen:api（O4.1）。
 modules/_sdk/matso_sdk/_generated/
 
 # Coverage artifacts
 .coverage
 coverage.xml
 htmlcov/
+
+# Playwright E2E 產物（O4.1）
+platform/test-results/
+platform/playwright-report/
+platform/blob-report/
+platform/.playwright/

@@ -43,6 +43,42 @@ class TerrainUnavailableError(MatsoError):
     http_status = 503  # 服務暫時不可用（terrain DOWN）
 
 
+# ---------------- 認證（O4.1，SPEC §12） ----------------
+
+
+class AuthInvalidCredentialsError(MatsoError):
+    """登入帳號或密碼錯誤。訊息刻意不區分「帳號不存在」與「密碼錯」以防列舉。"""
+
+    error_code = "AUTH_INVALID_CREDENTIALS"
+    http_status = 401
+
+
+class AuthInvalidTokenError(MatsoError):
+    """token 簽章無效 / 格式錯誤 / 類型不符（如把 refresh 當 access 用）。"""
+
+    error_code = "AUTH_INVALID_TOKEN"
+    http_status = 401
+
+
+class AuthTokenExpiredError(MatsoError):
+    """token 已過期。"""
+
+    error_code = "AUTH_TOKEN_EXPIRED"
+    http_status = 401
+
+
+class AuthForbiddenError(MatsoError):
+    """已認證但角色/scope 無權執行此操作（SPEC §12 角色權限）。"""
+
+    error_code = "AUTH_FORBIDDEN"
+    http_status = 403
+
+
+class ScenarioNotFoundError(MatsoError):
+    error_code = "SCENARIO_NOT_FOUND"
+    http_status = 404
+
+
 # ---------------- Order pipeline（O3.1） ----------------
 
 
