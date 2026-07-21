@@ -44,6 +44,7 @@ dev = [
   "openapi-spec-validator>=0.7",
   "pytest-cov>=7.1.0",
   "schemathesis>=4", # Order 端點契約 fuzz（O3.1 驗收；v4 支援 OpenAPI 3.1）
+  "fakeredis>=2.26", # WS stream 測試（async + pub-sub）免 compose 常駐 CI python job（O4.3）
 ]
 
 # ---------------- Lint / Format ----------------
@@ -115,6 +116,7 @@ module = [
   "weather.plugin",
   "comms.service",
   "comms.plugin",
+  "app.api.ws", # redis.asyncio pub-sub/aclose 邊界（無完整型別）
 ]
 disallow_untyped_calls = false
 warn_return_any = false

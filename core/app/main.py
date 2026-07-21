@@ -12,6 +12,7 @@ from app.api import (
     intel_router,
     lobby_router,
     orders_router,
+    ws_router,
 )
 from app.config import Settings
 
@@ -37,6 +38,7 @@ app.include_router(auth_router)
 app.include_router(lobby_router)
 app.include_router(orders_router)
 app.include_router(intel_router)
+app.include_router(ws_router)
 
 
 @app.get("/healthz")
