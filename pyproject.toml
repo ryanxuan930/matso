@@ -77,6 +77,7 @@ files = [
   "modules/_sdk/matso_sdk",
   "modules/weather/weather",
   "modules/comms/comms",
+  "ai/matso_ai",
 ]
 # 各套件以自身 module root（獨立服務，不與 core 共 namespace）
 mypy_path = "modules/terrain:modules/_sdk:modules/weather:modules/comms"
@@ -130,6 +131,7 @@ testpaths = [
   "modules/_sdk/tests",
   "modules/weather/tests",
   "modules/comms/tests",
+  "ai/tests",
 ]
 asyncio_mode = "auto"
 markers = [
@@ -148,7 +150,7 @@ filterwarnings = [
 # ---------------- Coverage（SPEC_FULL §19.3：core ≥80%；CI python job 強制） ----------------
 
 [tool.coverage.run]
-source = ["core/app", "modules/terrain/terrain", "modules/weather/weather", "modules/comms/comms"]
+source = ["core/app", "modules/terrain/terrain", "modules/weather/weather", "modules/comms/comms", "ai/matso_ai"]
 
 [tool.coverage.report]
 fail_under = 80
