@@ -24,6 +24,7 @@
     "@unhead/vue": "^3.1.6",
     "h3-js": "^4.2.1",
     "maplibre-gl": "^5.0.0",
+    "milsymbol": "^3.0.4",
     "nuxt": "^4.4.8",
     "pinia": "^3.0.0",
     "primevue": "^5.0.0-rc.1",

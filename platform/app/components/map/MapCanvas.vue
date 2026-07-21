@@ -7,12 +7,20 @@ import {
   buildOfflineStyle,
 } from '~/composables/useMapStyle'
 import { hexCellsForBounds } from '~/composables/useHexGrid'
+import { type Contact, type OwnUnit, buildUnitFeatures } from '~/composables/useUnits'
+import { symbolImage } from '~/composables/useMilsymbol'
 
 // 由 <ClientOnly> 包裹確保只在 client 掛載；maplibre-gl 於 onMounted 動態 import（絕不進 SSR，
 // 因其 module 於 import 時觸及 window/document）。
 const props = withDefaults(
-  defineProps<{ hexVisible?: boolean; hillshadeVisible?: boolean }>(),
-  { hexVisible: false, hillshadeVisible: false },
+  defineProps<{
+    hexVisible?: boolean
+    hillshadeVisible?: boolean
+    ownUnits?: OwnUnit[]
+    contacts?: Contact[]
+    currentTick?: number
+  }>(),
+  { hexVisible: false, hillshadeVisible: false, ownUnits: () => [], contacts: () => [], currentTick: 0 },
 )
 
 const container = ref<HTMLDivElement | null>(null)
@@ -22,6 +30,7 @@ let map: MapLibreMap | null = null
 const HEX_SRC = 'hexgrid'
 const GRAT_SRC = 'graticule'
 const HILLSHADE_SRC = 'hillshade'
+const UNITS_SRC = 'units'
 
 function refreshHex() {
   if (!map) return
@@ -36,6 +45,24 @@ function refreshHex() {
 
 function setLayerVisibility(id: string, visible: boolean) {
   if (map?.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
+}
+
+/** 依 props 的單位/contact 重建 symbol 特徵：生成/快取 milsymbol icon（去重 addImage）→ setData。 */
+function syncUnits() {
+  if (!map) return
+  const { collection, icons } = buildUnitFeatures(props.ownUnits, props.contacts, props.currentTick)
+  for (const spec of icons) {
+    if (map.hasImage(spec.key)) continue
+    const img = symbolImage(spec.key, spec.sidc, spec.options)
+    if (!img) continue
+    try {
+      map.addImage(spec.key, img) // 單一壞 icon 不應中斷整批（symbol 層會略過缺圖特徵）
+    } catch {
+      /* skip */
+    }
+  }
+  const src = map.getSource(UNITS_SRC) as GeoJSONSource | undefined
+  src?.setData(collection)
 }
 
 onMounted(async () => {
@@ -91,7 +118,21 @@ onMounted(async () => {
       layout: { visibility: props.hexVisible ? 'visible' : 'none' },
       paint: { 'line-color': '#38bdf8', 'line-width': 0.5, 'line-opacity': 0.5 },
     })
+    // 單位 symbol 層（milsymbol icon；資料驅動 icon-image + icon-opacity）
+    map.addSource(UNITS_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer({
+      id: 'units',
+      type: 'symbol',
+      source: UNITS_SRC,
+      layout: {
+        'icon-image': ['get', 'icon'],
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: { 'icon-opacity': ['get', 'opacity'] },
+    })
     refreshHex()
+    syncUnits()
     loaded.value = true
     ;(window as unknown as { __matsoMap?: MapLibreMap }).__matsoMap = map
   })
@@ -112,6 +153,9 @@ watch(
   },
 )
 watch(() => props.hillshadeVisible, (v) => setLayerVisibility('hillshade', v))
+watch([() => props.ownUnits, () => props.contacts, () => props.currentTick], syncUnits, {
+  deep: true,
+})
 </script>
 
 <template>
