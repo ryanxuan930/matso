@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api import (
+    aar_router,
     auth_router,
     control_router,
     inject_router,
@@ -51,6 +52,7 @@ app.include_router(units_router)
 app.include_router(intel_router)
 app.include_router(inject_router)
 app.include_router(control_router)
+app.include_router(aar_router)
 app.include_router(ws_router)
 
 
