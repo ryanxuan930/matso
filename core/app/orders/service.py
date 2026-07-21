@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import IllegalOrderTransitionError, OrderNotFoundError, PrecheckFailedError
 from app.models.enums import OrderStatus
-from app.models.tables import Order
+from app.models.tables import Order, TacticalUnit
 from app.orders.precheck import PhysicsGateway, precheck_error_code, run_precheck
 from app.orders.schemas import OrderRequest, OrderResponse, PrecheckResult
 from app.orders.state_machine import is_user_cancellable, next_status
@@ -33,14 +34,14 @@ class OrderService:
         self._gateway = gateway
         self._tick_source = tick_source
 
-    def submit(self, session_id: str, req: OrderRequest) -> OrderResponse:
+    def submit(self, session_id: str, req: OrderRequest, issuer_id: str) -> OrderResponse:
         """驗證 + 預檢 + 落庫。不可行 → 持久化 REJECTED 後拋 PrecheckFailedError（API 轉 422）。"""
-        validated = validate_order(self._db, session_id, req)
+        validated = validate_order(self._db, session_id, req, issuer_id)
         precheck = run_precheck(self._db, validated, self._gateway)
 
         order = Order(
             session_id=session_id,
-            issuer_id=req.issuer_id,
+            issuer_id=issuer_id,
             unit_id=req.unit_id,
             order_type=req.order_type.value,
             payload=req.payload,
@@ -60,6 +61,24 @@ class OrderService:
                 details={"order_id": order.id, "precheck": precheck.model_dump()},
             )
         return _to_response(order, precheck)
+
+    def list_orders(self, session_id: str, faction: str, omniscient: bool) -> list[OrderResponse]:
+        """列出 session 的指令（pending + 歷史），依 faction 過濾（omniscient 見全部）。"""
+        rows = (
+            self._db.execute(
+                select(Order, TacticalUnit.faction)
+                .join(TacticalUnit, Order.unit_id == TacticalUnit.id)
+                .where(Order.session_id == session_id)
+                .order_by(Order.issued_at_tick.desc(), Order.id)
+            )
+            .tuples()
+            .all()
+        )
+        return [
+            _to_response(order, _precheck_of(order))
+            for order, unit_faction in rows
+            if omniscient or unit_faction.value == faction
+        ]
 
     def cancel(self, session_id: str, order_id: str) -> OrderResponse:
         order = self._db.get(Order, order_id)

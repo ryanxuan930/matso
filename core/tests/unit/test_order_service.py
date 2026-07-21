@@ -18,7 +18,6 @@ def _move_req(world: OrderWorld) -> OrderRequest:
         unit_id=world.blue_unit_id,
         order_type=OrderType.MOVE,
         payload={"to_h3": "8a2a1072b59ffff", "mobility_profile": "FOOT"},
-        issuer_id=world.blue_issuer_id,
     )
 
 
@@ -26,7 +25,7 @@ def test_submit_feasible_persists_validated(session_factory: sessionmaker[Sessio
     world = seed_world(session_factory)
     with session_factory() as db:
         resp = OrderService(db, FakeGateway(reachable=True), tick_source=lambda: 7).submit(
-            world.session_id, _move_req(world)
+            world.session_id, _move_req(world), world.blue_issuer_id
         )
         assert resp.status is OrderStatus.VALIDATED
         assert resp.precheck is not None and resp.precheck.feasible
@@ -43,7 +42,7 @@ def test_submit_infeasible_persists_rejected_and_raises(
     with session_factory() as db:
         service = OrderService(db, FakeGateway(reachable=False))
         with pytest.raises(PrecheckFailedError) as ei:
-            service.submit(world.session_id, _move_req(world))
+            service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
         assert ei.value.error_code == "ORDER_UNREACHABLE"
         assert ei.value.http_status == 422
         order_id = ei.value.details["order_id"]
@@ -55,7 +54,7 @@ def test_cancel_validated_order(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db:
         service = OrderService(db, FakeGateway(reachable=True))
-        created = service.submit(world.session_id, _move_req(world))
+        created = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
         cancelled = service.cancel(world.session_id, created.id)
         assert cancelled.status is OrderStatus.CANCELLED
 
@@ -70,7 +69,7 @@ def test_cannot_cancel_executing(session_factory: sessionmaker[Session]) -> None
     world = seed_world(session_factory)
     with session_factory() as db:
         service = OrderService(db, FakeGateway(reachable=True))
-        created = service.submit(world.session_id, _move_req(world))
+        created = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
         db.get(Order, created.id).status = OrderStatus.EXECUTING  # type: ignore[union-attr]
         db.commit()
         with pytest.raises(IllegalOrderTransitionError):

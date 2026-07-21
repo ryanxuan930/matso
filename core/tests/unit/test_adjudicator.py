@@ -38,8 +38,8 @@ def _submit_engage(db: Session, world) -> str:  # type: ignore[no-untyped-def]
                 unit_id=world.blue_unit_id,
                 order_type=OrderType.ENGAGE,
                 payload={"target_unit_id": world.red_unit_id},
-                issuer_id=world.blue_issuer_id,
             ),
+            world.blue_issuer_id,
         )
         .id
     )

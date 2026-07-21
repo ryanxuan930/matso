@@ -7,8 +7,11 @@ import {
   buildOfflineStyle,
 } from '~/composables/useMapStyle'
 import { hexCellsForBounds } from '~/composables/useHexGrid'
+import { latLngToCell } from 'h3-js'
 import { type Contact, type OwnUnit, buildUnitFeatures } from '~/composables/useUnits'
 import { symbolImage } from '~/composables/useMilsymbol'
+
+const emit = defineEmits<{ mapClick: [{ lng: number; lat: number; h3: string }] }>()
 
 // 由 <ClientOnly> 包裹確保只在 client 掛載；maplibre-gl 於 onMounted 動態 import（絕不進 SSR，
 // 因其 module 於 import 時觸及 window/document）。
@@ -138,6 +141,10 @@ onMounted(async () => {
   })
 
   map.on('moveend', refreshHex)
+  map.on('click', (e) => {
+    // 下令 MOVE 選點：座標 → H3 res 8（SPEC 預設）
+    emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
+  })
 })
 
 onBeforeUnmount(() => {

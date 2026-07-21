@@ -23,9 +23,9 @@ export default defineConfig({
     {
       command:
         `bash -c "rm -f /tmp/matso_e2e_pw.db && ` +
-        `DATABASE_URL=${E2E_DB} SEED_USERNAME=commander SEED_PASSWORD=exercise ` +
+        `DATABASE_URL=${E2E_DB} SEED_USERNAME=commander SEED_PASSWORD=exercise SEED_SESSION=1 ` +
         `uv run python ops/tools/seed_dev_user.py && ` +
-        `DATABASE_URL=${E2E_DB} JWT_SECRET=${JWT} ACCESS_TOKEN_TTL_S=3 ` +
+        `DATABASE_URL=${E2E_DB} JWT_SECRET=${JWT} ACCESS_TOKEN_TTL_S=3 STUB_GATEWAY=1 ` +
         `CORS_ORIGINS=http://localhost:${NUXT_PORT} ` +
         `uv run uvicorn app.main:app --port ${CORE_PORT}"`,
       cwd: '..',

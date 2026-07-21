@@ -133,6 +133,7 @@ export interface paths {
             };
             cookie?: never;
         };
+        /** @description faction-scoped 單位（一般角色見己方；全知見全部） */
         get: operations["listUnits"];
         put?: never;
         post?: never;
@@ -151,7 +152,8 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /** @description 列出 session 指令（pending + 歷史，faction-scoped） */
+        get: operations["listOrders"];
         put?: never;
         /** @description 驗證 + 物理預檢；通過 → 201 VALIDATED，不可行 → 422（order 落庫為 REJECTED） */
         post: operations["issueOrder"];
@@ -381,6 +383,16 @@ export interface components {
             /** @description 呼叫者在此 session 的陣營（非參與者為 null） */
             my_faction?: string | null;
         };
+        UnitView: {
+            id: string;
+            designation: string;
+            unit_level: string;
+            faction: string;
+            lat?: number | null;
+            lng?: number | null;
+            health: number;
+            comms: string;
+        };
         CreateSessionRequest: {
             name: string;
             scenario_id?: string | null;
@@ -399,8 +411,6 @@ export interface components {
             order_type: components["schemas"]["OrderType"];
             /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?} */
             payload?: Record<string, never>;
-            /** @description SessionParticipant id（auth 落地前由 body 帶入） */
-            issuer_id: string;
         };
         PrecheckCheck: {
             name: string;
@@ -660,12 +670,54 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description faction-scoped units */
+            /** @description Units */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["UnitView"][];
+                };
+            };
+            /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listOrders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Orders */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderResponse"][];
+                };
+            };
+            /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };

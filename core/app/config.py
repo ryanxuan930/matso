@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     refresh_token_ttl_s: int = 1209600  # 14 天
     # 前端 COP 的跨來源存取（O4.1）。逗號分隔；env CORS_ORIGINS 覆寫（compose/正式部署設實際來源）。
     cors_origins: str = "http://localhost:3000"
+    # E2E/開發用：以許可式 stub 取代真 terrain 物理預檢（env STUB_GATEWAY=1）。正式部署絕不設。
+    stub_gateway: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:
