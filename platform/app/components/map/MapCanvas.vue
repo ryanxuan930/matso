@@ -54,6 +54,8 @@ const props = withDefaults(
     contourMajorWidth?: number // 主等高線線寬 px（#5）
     contourMinorWidth?: number // 次等高線線寬 px（#5）
     featureFc?: Fc // 地圖標註/工事（stage ③b）
+    featSymbolFc?: Fc // 帶北約符號的點特徵（#11）
+    featSymbolIcons?: { key: string; sidc: string }[] // 需生成的 milsymbol icon 規格（#11）
     influenceFc?: Fc // 影響範圍圓
     draftFc?: Fc // 繪製中草稿
     selectedFeatureId?: string | null // 選取的標註（高亮）
@@ -88,6 +90,8 @@ const props = withDefaults(
     contourMajorWidth: 1.2,
     contourMinorWidth: 0.5,
     featureFc: () => ({ type: 'FeatureCollection', features: [] }),
+    featSymbolFc: () => ({ type: 'FeatureCollection', features: [] }),
+    featSymbolIcons: () => [],
     influenceFc: () => ({ type: 'FeatureCollection', features: [] }),
     draftFc: () => ({ type: 'FeatureCollection', features: [] }),
     selectedFeatureId: null,
@@ -183,6 +187,7 @@ const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
 const DEST_SRC = 'move-dest'
 const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
+const FEAT_SYM_SRC = 'mapfeatsym' // 帶北約符號的點特徵（#11）
 const INFL_SRC = 'mapinfluence' // 影響範圍圓
 const DRAFT_SRC = 'mapdraft' // 繪製中草稿
 const FEAT_NONE = '__matso_feat_none__'
@@ -217,6 +222,23 @@ function syncFeatures() {
   ;(map?.getSource(FEAT_SRC) as GeoJSONSource | undefined)?.setData((props.featureFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(INFL_SRC) as GeoJSONSource | undefined)?.setData((props.influenceFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(DRAFT_SRC) as GeoJSONSource | undefined)?.setData((props.draftFc ?? _EMPTY_FEAT_FC) as never)
+  // 北約符號點特徵（#11）：生成/快取 milsymbol icon（去重）→ setData。
+  if (map) {
+    for (const spec of props.featSymbolIcons ?? []) {
+      if (map.hasImage(spec.key)) continue
+      const img = symbolImage(spec.key, spec.sidc, {})
+      if (img) {
+        try {
+          map.addImage(spec.key, img)
+        } catch {
+          /* skip 壞 icon */
+        }
+      }
+    }
+    ;(map.getSource(FEAT_SYM_SRC) as GeoJSONSource | undefined)?.setData(
+      (props.featSymbolFc ?? _EMPTY_FEAT_FC) as never,
+    )
+  }
 }
 
 const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] }
@@ -540,12 +562,25 @@ onMounted(async () => {
       id: 'mapfeat-point',
       type: 'circle',
       source: FEAT_SRC,
-      filter: ['==', ['geometry-type'], 'Point'],
+      // 帶北約符號的點改由符號層渲染，此處只畫無符號的圓點（#11）。
+      filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'hasSym'], true]],
       paint: {
         'circle-radius': 6,
         'circle-color': ['get', 'color'],
         'circle-stroke-color': '#0a1626',
         'circle-stroke-width': 1.5,
+      },
+    })
+    // 北約符號點特徵（#11）：milsymbol icon（資料驅動 icon-image）。
+    map.addSource(FEAT_SYM_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'mapfeat-symbol',
+      type: 'symbol',
+      source: FEAT_SYM_SRC,
+      layout: {
+        'icon-image': ['get', 'icon'],
+        'icon-size': 0.5,
+        'icon-allow-overlap': true,
       },
     })
     // 選取高亮（線/面白外框 + 點白環）。
@@ -786,7 +821,17 @@ watch(() => props.contourVisible, (v) => {
 })
 watch(() => props.basemapId, (v) => applyBasemap(v))
 watch([() => props.destH3, () => props.destPoint], syncDest)
-watch([() => props.featureFc, () => props.influenceFc, () => props.draftFc], syncFeatures, { deep: true })
+watch(
+  [
+    () => props.featureFc,
+    () => props.featSymbolFc,
+    () => props.featSymbolIcons,
+    () => props.influenceFc,
+    () => props.draftFc,
+  ],
+  syncFeatures,
+  { deep: true },
+)
 watch([() => props.latlngGrid, () => props.mgrsGrid, () => props.gridStepDeg], refreshGrid)
 watch([() => props.hexMaxRes, () => props.hexLimitKm], refreshHex)
 watch([() => props.dayNight, () => props.timeOfDay], applyDayNight)

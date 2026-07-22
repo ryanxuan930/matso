@@ -76,8 +76,51 @@ export function rectRing(a: number[], b: number[]): number[][] {
   ]
 }
 
+// 常用北約 2525C 符號（點特徵可掛，#11）——標籤 → 15 碼 SIDC。空＝不掛符號（走一般圓點）。
+export const NATO_SYMBOLS: { sidc: string; label: string }[] = [
+  { sidc: '', label: '（無符號 · 圓點）' },
+  { sidc: 'SFGPUCI--------', label: '友軍 步兵' },
+  { sidc: 'SFGPUCA--------', label: '友軍 裝甲' },
+  { sidc: 'SFGPUCF--------', label: '友軍 砲兵' },
+  { sidc: 'SFGPUH---------', label: '友軍 指揮所' },
+  { sidc: 'SFGPUCR--------', label: '友軍 偵蒐' },
+  { sidc: 'SHGPUCI--------', label: '敵軍 步兵' },
+  { sidc: 'SHGPUCA--------', label: '敵軍 裝甲' },
+  { sidc: 'SHGPUCF--------', label: '敵軍 砲兵' },
+  { sidc: 'SNGPU----------', label: '中立' },
+  { sidc: 'SUGPU----------', label: '未知' },
+]
+
 type FC = { type: 'FeatureCollection'; features: unknown[] }
 const EMPTY: FC = { type: 'FeatureCollection', features: [] }
+
+/** 點特徵的 SIDC（attributes.sidc），無則空字串。 */
+export function featureSidc(f: MapFeature): string {
+  const s = (f.attributes as Record<string, unknown> | undefined)?.sidc
+  return typeof s === 'string' ? s : ''
+}
+
+export interface FeatureSymbol {
+  fc: FC
+  icons: { key: string; sidc: string }[]
+}
+/** 帶 SIDC 的點特徵 → 符號 GeoJSON（icon=SIDC）+ 去重的 icon 規格（供 MapCanvas 生成 milsymbol）。 */
+export function featureSymbolFc(features: MapFeature[]): FeatureSymbol {
+  const out: unknown[] = []
+  const iconMap = new Map<string, { key: string; sidc: string }>()
+  for (const f of features) {
+    if (f.geometry_type !== 'POINT') continue
+    const sidc = featureSidc(f)
+    if (!sidc) continue
+    iconMap.set(sidc, { key: sidc, sidc })
+    out.push({
+      type: 'Feature',
+      properties: { id: f.id, icon: sidc, label: f.label ?? '' },
+      geometry: { type: 'Point', coordinates: f.geometry },
+    })
+  }
+  return { fc: { type: 'FeatureCollection', features: out }, icons: [...iconMap.values()] }
+}
 
 /** MapFeature 的存放幾何（POINT=[lng,lat]、LINE=[[lng,lat]…]、POLYGON=單環 [[lng,lat]…]）→ GeoJSON geometry。 */
 function toGeometry(f: MapFeature): { type: string; coordinates: unknown } | null {
@@ -107,6 +150,7 @@ export function featuresToFc(features: MapFeature[]): FC {
         color: featureDisplayColor(f),
         gtype: f.geometry_type,
         label: f.label ?? '',
+        hasSym: f.geometry_type === 'POINT' && featureSidc(f) !== '',
       },
       geometry,
     })

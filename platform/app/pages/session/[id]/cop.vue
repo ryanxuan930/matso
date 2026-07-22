@@ -21,9 +21,11 @@ import {
   FEATURE_KINDS,
   createMapFeature,
   deleteMapFeature,
+  NATO_SYMBOLS,
   draftToFc,
   editMapFeature,
   featureDisplayColor,
+  featureSymbolFc,
   featuresToFc,
   fetchMapFeatures,
   influenceToFc,
@@ -127,12 +129,14 @@ const drawLabel = ref('')
 const drawColor = ref('')
 const drawNotes = ref('')
 const drawHeight = ref<number | null>(null)
+const drawSidc = ref('') // 北約符號（點特徵，#11）
 const selectedFeatureId = ref<string | null>(null)
 // 選取特徵的編輯欄位（#11）
 const editFeatLabel = ref('')
 const editFeatColor = ref('')
 const editFeatNotes = ref('')
 const editFeatHeight = ref<number | null>(null)
+const editFeatSidc = ref('')
 const weaponTemplates = ref<EquipmentTemplate[]>([])
 const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
@@ -432,6 +436,7 @@ const selectedEditable = computed(
 const canDraw = computed(() => canControl.value || !!myFaction.value)
 const drawActive = computed(() => drawKind.value !== null)
 const featureFc = computed(() => featuresToFc(mapFeatures.value))
+const featSymbol = computed(() => featureSymbolFc(mapFeatures.value)) // 北約符號點特徵（#11）
 const influenceFc = computed(() => influenceToFc(mapFeatures.value))
 const draftFc = computed(() => draftToFc(drawKind.value, draftCoords.value))
 const drawableKinds = computed(() => FEATURE_KINDS.filter((k) => k.value !== 'WEAPON_EMPLACEMENT'))
@@ -452,6 +457,7 @@ function startDraw(kind: DraftKind, featureKind: string) {
   drawLabel.value = ''
   drawColor.value = ''
   drawNotes.value = ''
+  drawSidc.value = ''
   // 障礙/建築預設高度 2m（#11）。
   drawHeight.value = featureKind === 'OBSTACLE' || featureKind === 'BUILDING' ? 2 : null
 }
@@ -478,6 +484,7 @@ async function finishDraw() {
   if (drawColor.value) attrs.color = drawColor.value
   if (drawNotes.value.trim()) attrs.notes = drawNotes.value.trim()
   if (drawHeight.value != null) attrs.height_m = drawHeight.value
+  if (drawSidc.value && drawKind.value === 'POINT') attrs.sidc = drawSidc.value
   const body: FeatureCreate = {
     kind: drawFeatureKind.value,
     geometry_type: isShape ? 'POLYGON' : drawKind.value,
@@ -509,6 +516,7 @@ function onFeatureClick(e: { id: string }) {
   editFeatColor.value = typeof a.color === 'string' ? a.color : ''
   editFeatNotes.value = typeof a.notes === 'string' ? a.notes : ''
   editFeatHeight.value = typeof a.height_m === 'number' ? a.height_m : null
+  editFeatSidc.value = typeof a.sidc === 'string' ? a.sidc : ''
 }
 const selectedFeature = computed(
   () => mapFeatures.value.find((f) => f.id === selectedFeatureId.value) ?? null,
@@ -524,6 +532,8 @@ async function saveFeatureEdit() {
   else delete attrs.notes
   if (editFeatHeight.value != null) attrs.height_m = editFeatHeight.value
   else delete attrs.height_m
+  if (editFeatSidc.value) attrs.sidc = editFeatSidc.value
+  else delete attrs.sidc
   try {
     await editMapFeature(sessionId.value, fid, {
       label: editFeatLabel.value.trim() || null,
@@ -937,6 +947,8 @@ watch(
             :contour-major-width="contourMajorWidth"
             :contour-minor-width="contourMinorWidth"
             :feature-fc="featureFc"
+            :feat-symbol-fc="featSymbol.fc"
+            :feat-symbol-icons="featSymbol.icons"
             :influence-fc="influenceFc"
             :draft-fc="draftFc"
             :selected-feature-id="selectedFeatureId"
@@ -1078,6 +1090,9 @@ watch(
                   高度<input v-model.number="drawHeight" type="number" min="0" step="0.5"> m
                 </label>
               </div>
+              <select v-model="drawSidc" class="me-in" data-testid="draw-sidc" title="北約符號（僅點）">
+                <option v-for="s in NATO_SYMBOLS" :key="s.sidc" :value="s.sidc">🎖 {{ s.label }}</option>
+              </select>
               <input v-model="drawNotes" class="me-in" data-testid="draw-notes" placeholder="備註（選填）">
             </div>
             <div class="me-weapon">
@@ -1130,6 +1145,14 @@ watch(
                 高度<input v-model.number="editFeatHeight" type="number" min="0" step="0.5"> m
               </label>
             </div>
+            <select
+              v-if="selectedFeature.geometry_type === 'POINT'"
+              v-model="editFeatSidc"
+              class="me-in"
+              data-testid="edit-feat-sidc"
+            >
+              <option v-for="s in NATO_SYMBOLS" :key="s.sidc" :value="s.sidc">🎖 {{ s.label }}</option>
+            </select>
             <input v-model="editFeatNotes" class="me-in" data-testid="edit-feat-notes" placeholder="備註">
             <button class="me-save" data-testid="save-feat-edit" @click="saveFeatureEdit">儲存屬性</button>
           </div>
