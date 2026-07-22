@@ -818,6 +818,11 @@ export interface components {
             status: components["schemas"]["OrderStatus"];
             precheck?: components["schemas"]["PrecheckResult"] | null;
             issued_at_tick: number;
+            resolved_at_tick?: number | null;
+            /** @description ENGAGE 目標單位 */
+            target_unit_id?: string | null;
+            /** @description MOVE 目的地 hex */
+            target_h3?: string | null;
         };
     };
     responses: never;

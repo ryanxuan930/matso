@@ -71,3 +71,6 @@ class OrderResponse(BaseModel):
     status: OrderStatus
     precheck: PrecheckResult | None = None
     issued_at_tick: int
+    resolved_at_tick: int | None = None
+    target_unit_id: str | None = None  # ENGAGE 目標單位（供指令列顯示對象）
+    target_h3: str | None = None  # MOVE 目的地 hex（供指令列顯示對象）

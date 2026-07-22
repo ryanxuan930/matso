@@ -805,6 +805,15 @@ function unitName(id?: unknown): string {
   const s = typeof id === 'string' ? id : ''
   return (s && realUnits.value.find((u) => u.id === s)?.designation) || s
 }
+// #27 指令對象：ENGAGE→目標單位；MOVE→目的地 hex（供指令列顯示被下令對象）。
+function orderTargetLabel(o: OrderResponse): string {
+  if (o.order_type === 'ENGAGE' && o.target_unit_id) {
+    const name = realUnits.value.find((u) => u.id === o.target_unit_id)?.designation
+    return `→ ${name ?? '敵目標'}`
+  }
+  if (o.order_type === 'MOVE' && o.target_h3) return `→ ${o.target_h3.slice(0, 9)}`
+  return ''
+}
 function formatEvent(payload: Record<string, unknown>): string {
   const type = String(payload?.event_type ?? '')
   const ini = unitName(payload?.initiator_id)
@@ -1134,15 +1143,24 @@ watch(
         <div class="wsec-hd">指令（{{ orders.length }}）</div>
         <ul class="orders" data-testid="order-list">
           <li v-for="o in orders" :key="o.id" data-testid="order-row">
-            {{ orderTypeLabel(o.order_type) }} · {{ orderStatusLabel(o.status) }}
-            <button
-              v-if="o.status === 'VALIDATED' || o.status === 'PENDING' || o.status === 'EXECUTING'"
-              data-testid="cancel-order"
-              :title="o.status === 'EXECUTING' ? '停止移動並就地凍結（不彈回原位）' : '取消未執行指令'"
-              @click="cancel(o.id)"
-            >
-              {{ o.status === 'EXECUTING' ? '停止' : '取消' }}
-            </button>
+            <div class="ord-main">
+              <span class="ord-unit">{{ unitName(o.unit_id) || '單位' }}</span>
+              <span class="ord-type">{{ orderTypeLabel(o.order_type) }}</span>
+              <span v-if="orderTargetLabel(o)" class="ord-tgt">{{ orderTargetLabel(o) }}</span>
+            </div>
+            <div class="ord-meta">
+              <span class="ord-time" title="下令 sim tick">T{{ o.issued_at_tick
+                }}<span v-if="o.resolved_at_tick != null"> → T{{ o.resolved_at_tick }}</span></span>
+              <span class="ord-status" :class="`st-${o.status}`">{{ orderStatusLabel(o.status) }}</span>
+              <button
+                v-if="o.status === 'VALIDATED' || o.status === 'PENDING' || o.status === 'EXECUTING'"
+                data-testid="cancel-order"
+                :title="o.status === 'EXECUTING' ? '停止移動並就地凍結（不彈回原位）' : '取消未執行指令'"
+                @click="cancel(o.id)"
+              >
+                {{ o.status === 'EXECUTING' ? '停止' : '取消' }}
+              </button>
+            </div>
           </li>
           <li v-if="!orders.length" class="empty">（無指令）</li>
         </ul>
@@ -1848,6 +1866,66 @@ watch(
   padding: 0.375rem 0.5rem;
   border: 1px solid #1e293b;
   border-radius: 0.25rem;
+  cursor: pointer;
+}
+/* #27 指令列：對象 + 時間 + 狀態。 */
+.orders li {
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.ord-main {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.ord-unit {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.ord-type {
+  color: #93c5fd;
+  font-size: 0.72rem;
+}
+.ord-tgt {
+  color: #fca5a5;
+  font-size: 0.72rem;
+}
+.ord-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+.ord-time {
+  font-variant-numeric: tabular-nums;
+}
+.ord-status {
+  padding: 0 0.3rem;
+  border-radius: 0.2rem;
+  background: #1e293b;
+}
+.ord-status.st-COMPLETED {
+  color: #86efac;
+}
+.ord-status.st-REJECTED,
+.ord-status.st-CANCELLED {
+  color: #fca5a5;
+}
+.ord-status.st-EXECUTING {
+  color: #fcd34d;
+}
+.ord-meta button {
+  margin-left: auto;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.68rem;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: #cbd5e1;
   cursor: pointer;
 }
 .units li.sel {

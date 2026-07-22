@@ -601,7 +601,7 @@ onMounted(async () => {
       source: FEAT_SYM_SRC,
       layout: {
         'icon-image': ['get', 'icon'],
-        'icon-size': 0.5,
+        'icon-size': 1, // #24 與單位符號同尺寸（原 0.5 太小）
         'icon-allow-overlap': true,
       },
     })

@@ -350,6 +350,9 @@ components:
             - $ref: "#/components/schemas/PrecheckResult"
             - type: "null"
         issued_at_tick: { type: integer }
+        resolved_at_tick: { type: [integer, "null"] }
+        target_unit_id: { type: [string, "null"], description: ENGAGE 目標單位 }
+        target_h3: { type: [string, "null"], description: MOVE 目的地 hex }
 paths:
   /auth/login:
     post:

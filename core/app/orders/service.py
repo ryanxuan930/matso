@@ -133,6 +133,9 @@ def _precheck_of(order: Order) -> PrecheckResult | None:
 
 
 def _to_response(order: Order, precheck: PrecheckResult | None) -> OrderResponse:
+    payload = order.payload or {}
+    tgt = payload.get("target_unit_id")
+    to_h3 = payload.get("to_h3")
     return OrderResponse(
         id=order.id,
         unit_id=order.unit_id,
@@ -140,4 +143,7 @@ def _to_response(order: Order, precheck: PrecheckResult | None) -> OrderResponse
         status=order.status,
         precheck=precheck,
         issued_at_tick=order.issued_at_tick,
+        resolved_at_tick=order.resolved_at_tick,
+        target_unit_id=tgt if isinstance(tgt, str) else None,
+        target_h3=to_h3 if isinstance(to_h3, str) else None,
     )
