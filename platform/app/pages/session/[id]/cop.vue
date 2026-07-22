@@ -78,6 +78,8 @@ const syntheticUnits = computed<OwnUnit[]>(() => {
 const realUnits = ref<UnitView[]>([])
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
+const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
+const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
 const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
@@ -185,12 +187,13 @@ async function refresh() {
   realUnits.value = await fetchUnits(sessionId.value).catch(() => [])
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
   // 我方陣營（決定友/敵渲染與目標可選集）+ 開局時間（#4 執行時間）——由 session 摘要取得。
-  const sessions = await apiFetch<{ id: string; my_faction?: string; start_time?: string | null }[]>(
-    '/sessions',
-  ).catch(() => [])
+  const sessions = await apiFetch<
+    { id: string; my_faction?: string; start_time?: string | null; orbat_edit?: boolean }[]
+  >('/sessions').catch(() => [])
   const me = sessions.find((s) => s.id === sessionId.value)
   myFaction.value = me?.my_faction ?? ''
   sessionStart.value = me?.start_time ?? null
+  orbatEdit.value = !!me?.orbat_edit
 }
 
 // 清空選取與下令子狀態（#6 點空白取消選取 / 選新單位前重置）。
@@ -204,6 +207,7 @@ function clearSelection() {
   weaponId.value = null
   ammoType.value = null
   weapons.value = []
+  showOrbat.value = false
 }
 
 async function selectUnit(id: string) {
@@ -242,6 +246,13 @@ function onUnitClick(e: { id: string; faction: string; kind: string }) {
 
 const selectedUnit = computed(() => realUnits.value.find((u) => u.id === selectedId.value) ?? null)
 const targetUnit = computed(() => realUnits.value.find((u) => u.id === targetUnitId.value) ?? null)
+// 選取單位是否可編裝：需該局開放編裝，且（我為白軍/全知 或 該單位為本軍）。
+const selectedEditable = computed(
+  () =>
+    orbatEdit.value &&
+    !!selectedUnit.value &&
+    (canControl.value || (!!myFaction.value && selectedUnit.value.faction === myFaction.value)),
+)
 
 // 資訊圖卡血量（#5）——活血量優先；缺值時退回 API 初值。
 const hpPct = computed(() => {
@@ -547,7 +558,7 @@ watch(
               <dd>{{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}</dd>
             </div>
           </dl>
-          <div v-if="weapons.length" class="card-weapons">
+          <div v-if="weapons.length && !showOrbat" class="card-weapons">
             <div class="card-sub">武器裝載</div>
             <ul>
               <li v-for="w in weapons" :key="w.id">
@@ -556,6 +567,17 @@ watch(
                 <span v-if="w.ammo_remaining != null" class="dim">· 彈 {{ w.ammo_remaining }}</span>
               </li>
             </ul>
+          </div>
+          <div v-if="selectedEditable" class="card-orbat">
+            <button class="orbat-toggle" data-testid="toggle-orbat" @click="showOrbat = !showOrbat">
+              {{ showOrbat ? '▾ 編裝編輯' : '▸ 編裝編輯（武器/彈藥）' }}
+            </button>
+            <UnitOrbatEditor
+              v-if="showOrbat"
+              :session-id="sessionId"
+              :unit-id="selectedId ?? ''"
+              :can-edit="true"
+            />
           </div>
         </div>
       </div>
@@ -859,6 +881,22 @@ watch(
 .unit-card .card-weapons .dim {
   color: #94a3b8;
   font-size: 0.7rem;
+}
+.unit-card .card-orbat {
+  margin-top: 0.5rem;
+  border-top: 1px solid #1e293b;
+  padding-top: 0.4rem;
+}
+.unit-card .orbat-toggle {
+  border: none;
+  background: transparent;
+  color: #7dd3fc;
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0 0 0.3rem;
+}
+.unit-card .orbat-toggle:hover {
+  color: #bae6fd;
 }
 .map-loading {
   position: absolute;

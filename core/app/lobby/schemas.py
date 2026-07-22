@@ -21,3 +21,4 @@ class SessionSummary(BaseModel):
     status: str  # ACTIVE / ENDED（由 end_time 推導）
     my_faction: str | None  # 呼叫者在此 session 的陣營（非參與者為 null）
     start_time: str | None = None  # 開局時間 ISO8601（供 COP 顯示執行時間，#4）
+    orbat_edit: bool = False  # 呼叫者是否可編輯本 session 編裝（白軍，或本軍且該局開放自編）

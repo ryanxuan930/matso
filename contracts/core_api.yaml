@@ -29,6 +29,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    EquipmentId:
+      name: eid
+      in: path
+      required: true
+      schema: { type: string }
     TaskId:
       name: tid
       in: path
@@ -132,6 +137,7 @@ components:
         status: { type: string }
         my_faction: { type: [string, "null"], description: 呼叫者在此 session 的陣營（非參與者為 null） }
         start_time: { type: [string, "null"], description: 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 }
+        orbat_edit: { type: boolean, default: false, description: 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編） }
     UnitView:
       type: object
       required: [id, designation, unit_level, faction, health, comms]
@@ -157,6 +163,36 @@ components:
         min_range_m: { type: number }
         ammo_types: { type: array, items: { type: string } }
         ammo_remaining: { type: [integer, "null"] }
+    EquipmentTemplateView:
+      type: object
+      description: 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄
+      required: [id, name, category, base_stats]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: string, description: KINETIC / SENSOR / COMMS / LOGISTICS / DRONE }
+        base_stats: { type: object, description: 依 weaponeering.schema.json 驗證的屬性 }
+    EquipmentInstanceView:
+      type: object
+      description: 單位持有的裝備實例（含即時狀態與範本屬性，供編裝編輯器）
+      required: [id, template_id, name, category, current_state, base_stats]
+      properties:
+        id: { type: string }
+        template_id: { type: string }
+        name: { type: string }
+        category: { type: string }
+        current_state: { type: object, description: "即時狀態（如 {ammo:100}）" }
+        base_stats: { type: object }
+    AddEquipmentRequest:
+      type: object
+      required: [template_id]
+      properties:
+        template_id: { type: string }
+    EquipmentStateEdit:
+      type: object
+      required: [current_state]
+      properties:
+        current_state: { type: object, description: "覆寫此實例的即時狀態（如 {ammo:60}）" }
     CreateSessionRequest:
       type: object
       required: [name]
@@ -342,6 +378,76 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/WeaponView" } }
         "403": { description: Not own faction, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /equipment-templates:
+    get:
+      operationId: listEquipmentTemplates
+      security: [{ bearerAuth: [] }]
+      description: 裝備範本目錄（編裝編輯器配發用）
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EquipmentTemplateView" } }
+  /sessions/{id}/units/{uid}/equipment:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { $ref: "#/components/parameters/UnitId" }
+    get:
+      operationId: listUnitEquipment
+      security: [{ bearerAuth: [] }]
+      description: 單位編裝清單（fog of war：全知見任一，否則僅己方單位→403）
+      responses:
+        "200":
+          description: Equipment
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EquipmentInstanceView" } }
+        "403": { description: Not own faction, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      operationId: addUnitEquipment
+      security: [{ bearerAuth: [] }]
+      description: 為單位配發一件裝備（編裝編輯權限：白軍，或本軍且該局開放自編）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddEquipmentRequest" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EquipmentInstanceView" }
+        "403": { description: No orbat-edit permission, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/units/{uid}/equipment/{eid}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { $ref: "#/components/parameters/UnitId" }
+      - { $ref: "#/components/parameters/EquipmentId" }
+    patch:
+      operationId: editUnitEquipment
+      security: [{ bearerAuth: [] }]
+      description: 覆寫裝備實例即時狀態（如彈藥量）——編裝編輯權限
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EquipmentStateEdit" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EquipmentInstanceView" }
+        "403": { description: No orbat-edit permission, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: removeUnitEquipment
+      security: [{ bearerAuth: [] }]
+      description: 移除單位的一件裝備——編裝編輯權限
+      responses:
+        "204": { description: Removed }
+        "403": { description: No orbat-edit permission, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/inject:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

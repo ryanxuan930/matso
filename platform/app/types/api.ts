@@ -163,6 +163,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/equipment-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 裝備範本目錄（編裝編輯器配發用） */
+        get: operations["listEquipmentTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/units/{uid}/equipment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        /** @description 單位編裝清單（fog of war：全知見任一，否則僅己方單位→403） */
+        get: operations["listUnitEquipment"];
+        put?: never;
+        /** @description 為單位配發一件裝備（編裝編輯權限：白軍，或本軍且該局開放自編） */
+        post: operations["addUnitEquipment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/units/{uid}/equipment/{eid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+                eid: components["parameters"]["EquipmentId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 移除單位的一件裝備——編裝編輯權限 */
+        delete: operations["removeUnitEquipment"];
+        options?: never;
+        head?: never;
+        /** @description 覆寫裝備實例即時狀態（如彈藥量）——編裝編輯權限 */
+        patch: operations["editUnitEquipment"];
+        trace?: never;
+    };
     "/sessions/{id}/inject": {
         parameters: {
             query?: never;
@@ -442,6 +502,11 @@ export interface components {
             my_faction?: string | null;
             /** @description 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 */
             start_time?: string | null;
+            /**
+             * @description 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編）
+             * @default false
+             */
+            orbat_edit: boolean;
         };
         UnitView: {
             id: string;
@@ -463,6 +528,32 @@ export interface components {
             min_range_m: number;
             ammo_types: string[];
             ammo_remaining?: number | null;
+        };
+        /** @description 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄 */
+        EquipmentTemplateView: {
+            id: string;
+            name: string;
+            /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
+            category: string;
+            /** @description 依 weaponeering.schema.json 驗證的屬性 */
+            base_stats: Record<string, never>;
+        };
+        /** @description 單位持有的裝備實例（含即時狀態與範本屬性，供編裝編輯器） */
+        EquipmentInstanceView: {
+            id: string;
+            template_id: string;
+            name: string;
+            category: string;
+            /** @description 即時狀態（如 {ammo:100}） */
+            current_state: Record<string, never>;
+            base_stats: Record<string, never>;
+        };
+        AddEquipmentRequest: {
+            template_id: string;
+        };
+        EquipmentStateEdit: {
+            /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
+            current_state: Record<string, never>;
         };
         CreateSessionRequest: {
             name: string;
@@ -522,6 +613,7 @@ export interface components {
         SessionId: string;
         OrderId: string;
         UnitId: string;
+        EquipmentId: string;
         TaskId: string;
         PluginName: string;
     };
@@ -802,6 +894,162 @@ export interface operations {
                 };
             };
             /** @description Not own faction */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listEquipmentTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Templates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentTemplateView"][];
+                };
+            };
+        };
+    };
+    listUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Equipment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentInstanceView"][];
+                };
+            };
+            /** @description Not own faction */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    addUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddEquipmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentInstanceView"];
+                };
+            };
+            /** @description No orbat-edit permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removeUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+                eid: components["parameters"]["EquipmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No orbat-edit permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+                eid: components["parameters"]["EquipmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EquipmentStateEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentInstanceView"];
+                };
+            };
+            /** @description No orbat-edit permission */
             403: {
                 headers: {
                     [name: string]: unknown;

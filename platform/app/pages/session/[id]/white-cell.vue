@@ -183,7 +183,11 @@ watch(viewpoint, loadUnits)
         <label>番號 <input v-model="editDesignation" data-testid="edit-designation"></label>
         <label>戰力% <input v-model.number="editHealth" type="number" min="0" max="100" data-testid="edit-health"></label>
         <label>屬性(JSON) <input v-model="editAttrs" data-testid="edit-attrs"></label>
-        <button data-testid="save-unit" @click="saveUnit">儲存編裝</button>
+        <button data-testid="save-unit" @click="saveUnit">儲存單位參數</button>
+      </div>
+      <div v-if="editUnitId" class="orbat-box" data-testid="wc-orbat">
+        <h3>編裝（武器/彈藥）</h3>
+        <UnitOrbatEditor :session-id="sessionId" :unit-id="editUnitId" :can-edit="true" />
       </div>
     </section>
 

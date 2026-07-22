@@ -43,7 +43,15 @@ class LobbyService:
                 .scalars()
                 .all()
             )
-        return [self._summary(s, my_factions.get(s.id)) for s in sessions]
+        omni = user.role in _OMNISCIENT_ROLES
+        return [
+            self._summary(
+                s,
+                my_factions.get(s.id),
+                orbat_edit=omni or (my_factions.get(s.id) in set(s.orbat_edit_factions or [])),
+            )
+            for s in sessions
+        ]
 
     def create_session(self, user: CurrentUser, req: CreateSessionRequest) -> SessionSummary:
         """建立 session 列，建立者成為 EXERCISE_DIRECTOR 參與者（WHITE_CELL faction）。
@@ -72,7 +80,7 @@ class LobbyService:
         )
         self._db.add(participant)
         self._db.commit()
-        return self._summary(session, participant.faction)
+        return self._summary(session, participant.faction, orbat_edit=True)  # 建立者為統裁（全知）
 
     def _create_from_scenario(self, user: CurrentUser, req: CreateSessionRequest) -> SessionSummary:
         """由已存想定開局（#7）：載回 bundle → 建 session + 單位 → 建立者為統裁參與者。"""
@@ -109,7 +117,7 @@ class LobbyService:
         self._db.commit()
         session = self._db.get(WargameSession, sid)
         assert session is not None
-        return self._summary(session, WHITE_CELL)
+        return self._summary(session, WHITE_CELL, orbat_edit=True)  # 建立者為統裁（全知）
 
     def _participant_factions(self, user_id: str) -> dict[str, str]:
         rows = (
@@ -122,7 +130,9 @@ class LobbyService:
         return {p.session_id: p.faction for p in rows}
 
     @staticmethod
-    def _summary(session: WargameSession, my_faction: str | None) -> SessionSummary:
+    def _summary(
+        session: WargameSession, my_faction: str | None, orbat_edit: bool = False
+    ) -> SessionSummary:
         return SessionSummary(
             id=session.id,
             name=session.name,
@@ -130,6 +140,7 @@ class LobbyService:
             mode=session.mode.value,
             status="ENDED" if session.end_time is not None else "ACTIVE",
             my_faction=my_faction,
+            orbat_edit=orbat_edit,
             start_time=(
                 session.start_time.isoformat()
                 if hasattr(session.start_time, "isoformat")
