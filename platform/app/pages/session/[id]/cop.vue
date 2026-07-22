@@ -3,6 +3,7 @@ import type { Contact, OwnUnit } from '~/composables/useUnits'
 import type { UnitView, OrderResponse } from '~/composables/useOrders'
 import type { ApiError } from '~/composables/useApi'
 import { apiFetch } from '~/composables/useApi'
+import { buildBasemapSources } from '~/composables/useMapStyle'
 import { cancelOrder, fetchOrders, fetchUnits, submitOrder } from '~/composables/useOrders'
 
 // COP（SPEC §13.1/§13.4）：地圖基座（O4.2）+ 單位/fog of war（O4.4）+ 下令 UX（O4.5）。
@@ -19,8 +20,17 @@ const hex = ref(false)
 const hillshade = ref(false)
 const currentTick = ref(100)
 
+// 底圖來源（可抽換，#2）：離線 / 街道 / 衛星 / 軍用…由 runtimeConfig 注入。
+const basemap = ref('offline')
+const _pub = useRuntimeConfig().public
+const basemapSources = buildBasemapSources({
+  tileUrl: _pub.tileUrl as string,
+  satelliteUrl: _pub.satelliteUrl as string | undefined,
+  basemaps: _pub.basemaps as never,
+})
+
 // 是否已設定離線 tile server（有 .mbtiles）。未設 → 顯示離線底圖提示（SPEC §13.2）。
-const hasTiles = computed(() => !!useRuntimeConfig().public.tileUrl)
+const hasTiles = computed(() => !!_pub.tileUrl)
 
 const TYPES = ['INFANTRY', 'ARMOR', 'ARTILLERY', 'RECON', 'HQ']
 
@@ -315,6 +325,7 @@ onBeforeUnmount(() => stream.disconnect())
             :current-tick="currentTick"
             :selected-id="selectedId"
             :target-id="targetUnitId"
+            :basemap-id="basemap"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
           />
@@ -322,7 +333,13 @@ onBeforeUnmount(() => stream.disconnect())
             <div class="map-loading" data-testid="map-loading">地圖載入中…</div>
           </template>
         </ClientOnly>
-        <LayerToggles v-model:hex="hex" v-model:hillshade="hillshade" :hillshade-enabled="hasTiles" />
+        <LayerToggles
+          v-model:hex="hex"
+          v-model:hillshade="hillshade"
+          v-model:basemap="basemap"
+          :hillshade-enabled="hasTiles"
+          :basemaps="basemapSources"
+        />
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
           <strong>離線底圖模式</strong>
           <span>目前顯示經緯格線 + 單位符號（無向量瓦片）。要載入台灣街道/地形底圖，需由

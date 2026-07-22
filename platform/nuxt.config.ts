@@ -16,6 +16,10 @@ export default defineNuxtConfig({
       // 離線 tile server（O4.2）。空字串＝無底圖（地圖仍以背景+經緯網格+hex 離線渲染）。
       // compose 由 NUXT_PUBLIC_TILE_URL 注入（tileserver-gl，掛載 M200 的 .mbtiles 時）。
       tileUrl: '',
+      // 衛星影像 raster XYZ 模板（#2；NUXT_PUBLIC_SATELLITE_URL）——未來接軍用/商用影像的抽換點。
+      satelliteUrl: '',
+      // 額外自訂底圖來源（#2；NUXT_PUBLIC_BASEMAPS，JSON 陣列 of BasemapSource）——軍方資料接入點。
+      basemaps: [] as unknown[],
     },
   },
   vite: {

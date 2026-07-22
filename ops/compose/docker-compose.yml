@@ -90,6 +90,9 @@ services:
       # 離線 tile server URL（瀏覽器可達）。預設空 → 地圖以背景+經緯網格+hex 離線渲染（O4.2）。
       # 啟用底圖：掛載 .mbtiles + `docker compose --profile tiles up` + 設 TILE_URL=http://localhost:8081
       NUXT_PUBLIC_TILE_URL: ${TILE_URL:-}
+      # 衛星 / 自訂底圖來源（#2，可抽換）——填入即出現對應底圖選項（軍方資料接入點）。
+      NUXT_PUBLIC_SATELLITE_URL: ${NUXT_PUBLIC_SATELLITE_URL:-}
+      NUXT_PUBLIC_BASEMAPS: ${NUXT_PUBLIC_BASEMAPS:-}
     ports: ["3000:3000"]
     depends_on:
       core: { condition: service_healthy }

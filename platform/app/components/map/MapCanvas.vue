@@ -3,8 +3,10 @@ import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
 import {
   DEFAULT_ZOOM,
   TAIWAN_CENTER,
+  buildBasemapSources,
   buildGraticule,
   buildOfflineStyle,
+  openMapTilesDarkLayers,
 } from '~/composables/useMapStyle'
 import { hexCellsForBounds } from '~/composables/useHexGrid'
 import { latLngToCell } from 'h3-js'
@@ -27,6 +29,7 @@ const props = withDefaults(
     currentTick?: number
     selectedId?: string | null // 選取的我方單位（藍色高亮環）
     targetId?: string | null // ENGAGE 鎖定的目標（紅色高亮環）
+    basemapId?: string // 當前底圖來源 id（offline / street / satellite / 軍用…）
   }>(),
   {
     hexVisible: false,
@@ -36,8 +39,55 @@ const props = withDefaults(
     currentTick: 0,
     selectedId: null,
     targetId: null,
+    basemapId: 'offline',
   },
 )
+
+// 可抽換底圖來源（由 runtimeConfig 注入；#2）。
+const _cfg = useRuntimeConfig().public
+const basemapSources = buildBasemapSources({
+  tileUrl: _cfg.tileUrl as string,
+  satelliteUrl: _cfg.satelliteUrl as string | undefined,
+  basemaps: _cfg.basemaps as ReturnType<typeof buildBasemapSources> | undefined,
+})
+
+/** 移除現有底圖（raster 'basemap' 或 vector 'basemap-*' 圖層）+ 來源。 */
+function removeBasemap() {
+  if (!map) return
+  const ids = (map.getStyle().layers ?? [])
+    .map((l) => l.id)
+    .filter((id) => id === 'basemap' || id.startsWith('basemap-'))
+  for (const id of ids) map.removeLayer(id)
+  if (map.getSource('basemap')) map.removeSource('basemap')
+}
+
+/** 套用底圖來源：raster → 單一 raster 層；vector → OpenMapTiles 深色圖層組（皆置於 graticule 之下）。 */
+function applyBasemap(id: string) {
+  if (!map) return
+  removeBasemap()
+  const src = basemapSources.find((s) => s.id === id)
+  if (!src || !src.tiles) return // offline 或未知 → 僅背景
+  if (src.type === 'raster') {
+    map.addSource('basemap', {
+      type: 'raster',
+      tiles: src.tiles,
+      tileSize: src.tileSize ?? 256,
+      minzoom: src.minzoom ?? 0,
+      maxzoom: src.maxzoom ?? 22,
+      attribution: src.attribution ?? '',
+    })
+    map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' }, GRAT_SRC)
+  } else if (src.type === 'vector') {
+    map.addSource('basemap', {
+      type: 'vector',
+      tiles: src.tiles,
+      minzoom: src.minzoom ?? 0,
+      maxzoom: src.maxzoom ?? 14,
+      attribution: src.attribution ?? '',
+    })
+    for (const layer of openMapTilesDarkLayers('basemap')) map.addLayer(layer, GRAT_SRC)
+  }
+}
 
 const NONE = '__matso_none__' // 過濾器 sentinel：無選取時不匹配任何 feature
 
@@ -90,7 +140,7 @@ onMounted(async () => {
 
   map = new MapCtor({
     container: container.value,
-    style: buildOfflineStyle(tileUrl),
+    style: buildOfflineStyle(),
     center: TAIWAN_CENTER,
     zoom: DEFAULT_ZOOM,
     attributionControl: false,
@@ -107,6 +157,7 @@ onMounted(async () => {
       source: GRAT_SRC,
       paint: { 'line-color': '#33608f', 'line-width': 0.8, 'line-opacity': 0.8 },
     })
+    applyBasemap(props.basemapId) // 底圖置於 graticule 之下（可抽換，#2）
     if (tileUrl) {
       map.addSource(HILLSHADE_SRC, {
         type: 'raster',
@@ -209,6 +260,7 @@ watch(
   },
 )
 watch(() => props.hillshadeVisible, (v) => setLayerVisibility('hillshade', v))
+watch(() => props.basemapId, (v) => applyBasemap(v))
 watch(
   () => props.selectedId,
   (v) => {

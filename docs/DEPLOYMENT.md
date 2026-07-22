@@ -16,7 +16,12 @@
 - ⬜ 📦 外接資產（一律 env 注入、缺失優雅降級，勿硬編）：
   - `MATSO_DTED_PATH` → `TW_ALL.tif`（terrain）；`taiwan.osm.pbf`/`taiwan_drive.graphml`
   - CWA `api_key`（weather LIVE）
-  - tileserver `.mbtiles`（compose profile `tiles`）
+  - tileserver `.mbtiles`（compose profile `tiles`；#2 底圖已建：見下）
+  - terrain hex 快取（#4）：`uv run python -m terrain.precompute --res 8 --bbox <MIN_LNG MIN_LAT MAX_LNG MAX_LAT>`
+    （MATSO_DTED_PATH + MATSO_HEX_CACHE_DIR）→ 產 `res8.parquet`；未建則 pathfinding 回 TERRAIN_UNAVAILABLE
+  - 街道底圖（#2）：`docker run --rm -v <MAPS>:/data ghcr.io/onthegomap/planetiler --osm-path=/data/taiwan.osm.pbf
+    --output=/data/tiles/taiwan.mbtiles --download` → 向量 mbtiles；設 `MBTILES_DIR`+`TILE_URL`，`--profile tiles` 起 tileserver
+  - 衛星 / 軍用底圖（#2 抽換點）：設 `NUXT_PUBLIC_SATELLITE_URL`（raster XYZ）或 `NUXT_PUBLIC_BASEMAPS`（JSON）即現選項
   - bge-m3 模型檔（RAG 嵌入）、OCR 模型檔（tesseract/PaddleOCR，O9.2）
 - ⬜ `docker compose up -d --wait`（MariaDB 3307 / redis / qdrant / terrain / weather / comms / tileserver）。
 - ⬜ `prisma migrate deploy`（含 faction String、後續 O10 的 aiMode/refresh 撤銷 migration）。
