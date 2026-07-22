@@ -34,6 +34,8 @@ model WargameSession {
   startTime      DateTime  @default(now())
   endTime        DateTime?
   currentWeather Json // Processed output strictly from the Weather Module
+  // #6：允許「自行編輯本軍編裝（ORBAT）」的陣營清單（White Cell 設定）。null/[] = 僅白軍可編。
+  orbatEditFactions Json?
 
   units     TacticalUnit[]
   eventLogs TacticalEventLog[]

@@ -66,6 +66,10 @@ class WargameSession(Base):
     )
     end_time: Mapped[str | None] = mapped_column("endTime", DateTime(timezone=False))
     current_weather: Mapped[dict] = mapped_column("currentWeather", JSON)  # type: ignore[type-arg]
+    # #6：允許自行編輯本軍編裝的陣營清單（White Cell 設定）。None = 僅白軍可編。
+    orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
+        "orbatEditFactions", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):
