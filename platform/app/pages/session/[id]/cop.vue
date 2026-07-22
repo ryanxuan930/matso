@@ -2094,13 +2094,13 @@ watch(
 }
 /* 右鍵選單（#3）——ATAK 式移動/攻擊。 */
 .ctx-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 1090; /* 壓過停靠側欄(40)/Unit 卡(45)/浮動視窗，避免右鍵選單被遮住（#3） */
 }
 .ctx-menu {
   position: absolute;
-  z-index: 21;
+  z-index: 1091;
   min-width: 8rem;
   transform: translate(2px, 2px);
   display: flex;
