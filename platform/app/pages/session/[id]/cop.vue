@@ -70,6 +70,22 @@ const hexLineWidth = ref(0.5)
 const contourMajorWidth = ref(1.2)
 const contourMinorWidth = ref(0.5)
 const lineWidthModal = ref(false)
+// #12 GIS 工具列：左側工具面板各段收合 + 左右換邊（持久化）+ 地圖元素顯隱。
+const panelSide = ref<'left' | 'right'>('left')
+const panelCollapse = ref<{ units: boolean; events: boolean; orders: boolean }>({
+  units: false,
+  events: false,
+  orders: false,
+})
+const hiddenFeatureIds = ref<string[]>([]) // session-local：隱藏的地圖元素
+function togglePanelSide() {
+  panelSide.value = panelSide.value === 'left' ? 'right' : 'left'
+}
+function toggleFeatureHidden(id: string) {
+  const i = hiddenFeatureIds.value.indexOf(id)
+  if (i >= 0) hiddenFeatureIds.value.splice(i, 1)
+  else hiddenFeatureIds.value.push(id)
+}
 const LAYER_PREFS_KEY = 'matso.cop.layers'
 
 // 底圖來源（可抽換，#2）：離線 / 街道 / 衛星 / 軍用…由 runtimeConfig 注入。
@@ -439,9 +455,13 @@ const selectedEditable = computed(
 // ---- 地圖編輯器（stage ③b）----
 const canDraw = computed(() => canControl.value || !!myFaction.value)
 const drawActive = computed(() => drawKind.value !== null)
-const featureFc = computed(() => featuresToFc(mapFeatures.value))
-const featSymbol = computed(() => featureSymbolFc(mapFeatures.value)) // 北約符號點特徵（#11）
-const influenceFc = computed(() => influenceToFc(mapFeatures.value))
+// #12 元素顯隱：地圖只渲染未隱藏的特徵（清單仍列全部，供切換）。
+const shownFeatures = computed(() =>
+  mapFeatures.value.filter((f) => !hiddenFeatureIds.value.includes(f.id)),
+)
+const featureFc = computed(() => featuresToFc(shownFeatures.value))
+const featSymbol = computed(() => featureSymbolFc(shownFeatures.value)) // 北約符號點特徵（#11）
+const influenceFc = computed(() => influenceToFc(shownFeatures.value))
 const draftFc = computed(() => draftToFc(drawKind.value, draftCoords.value))
 const drawableKinds = computed(() => FEATURE_KINDS.filter((k) => k.value !== 'WEAPON_EMPLACEMENT'))
 
@@ -752,6 +772,10 @@ onMounted(() => {
     if (typeof p.dayNight === 'boolean') dayNight.value = p.dayNight
     if (typeof p.timeOfDay === 'number') timeOfDay.value = p.timeOfDay
     if (typeof p.preciseMove === 'boolean') preciseMove.value = p.preciseMove
+    if (p.panelSide === 'left' || p.panelSide === 'right') panelSide.value = p.panelSide
+    if (p.panelCollapse && typeof p.panelCollapse === 'object') {
+      panelCollapse.value = { ...panelCollapse.value, ...p.panelCollapse }
+    }
     if (typeof p.hexLineWidth === 'number') hexLineWidth.value = p.hexLineWidth
     if (typeof p.contourMajorWidth === 'number') contourMajorWidth.value = p.contourMajorWidth
     if (typeof p.contourMinorWidth === 'number') contourMinorWidth.value = p.contourMinorWidth
@@ -780,6 +804,8 @@ watch(
     hexLineWidth,
     contourMajorWidth,
     contourMinorWidth,
+    panelSide,
+    panelCollapse,
   ],
   () => {
     if (!import.meta.client) return
@@ -803,6 +829,8 @@ watch(
           dayNight: dayNight.value,
           timeOfDay: timeOfDay.value,
           preciseMove: preciseMove.value,
+          panelSide: panelSide.value,
+          panelCollapse: panelCollapse.value,
           hexLineWidth: hexLineWidth.value,
           contourMajorWidth: contourMajorWidth.value,
           contourMinorWidth: contourMinorWidth.value,
@@ -849,10 +877,17 @@ watch(
         <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)">📊 AAR</button>
       </nav>
     </header>
-    <div class="body">
+    <div class="body" :class="{ 'panel-right': panelSide === 'right' }">
       <aside class="panel">
-        <h3>單位</h3>
-        <ul class="units" data-testid="unit-list">
+        <div class="panel-tools">
+          <button data-testid="panel-swap" title="工具面板左右換邊" @click="togglePanelSide">
+            ⇄ {{ panelSide === 'left' ? '移至右側' : '移至左側' }}
+          </button>
+        </div>
+        <button class="sec-hd" data-testid="sec-units" @click="panelCollapse.units = !panelCollapse.units">
+          <span class="chev">{{ panelCollapse.units ? '▸' : '▾' }}</span> 單位（{{ realUnits.length }}）
+        </button>
+        <ul v-show="!panelCollapse.units" class="units" data-testid="unit-list">
           <li
             v-for="u in realUnits"
             :key="u.id"
@@ -932,16 +967,22 @@ watch(
           </div>
         </div>
 
-        <h3>戰況事件 <span class="ws" :data-testid="'ws-status'">· {{ stream.status }}</span></h3>
-        <ul class="events" data-testid="event-list">
+        <button class="sec-hd" data-testid="sec-events" @click="panelCollapse.events = !panelCollapse.events">
+          <span class="chev">{{ panelCollapse.events ? '▸' : '▾' }}</span>
+          戰況事件 <span class="ws">· {{ stream.status }}</span>
+        </button>
+        <ul v-show="!panelCollapse.events" class="events" data-testid="event-list">
           <li v-for="(e, i) in streamEvents" :key="i" data-testid="event-row">
             {{ formatEvent(e.payload as Record<string, unknown>) }}
           </li>
           <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
         </ul>
 
-        <h3>指令（等待中 / 歷史）</h3>
-        <ul class="orders" data-testid="order-list">
+        <button class="sec-hd" data-testid="sec-orders" @click="panelCollapse.orders = !panelCollapse.orders">
+          <span class="chev">{{ panelCollapse.orders ? '▸' : '▾' }}</span>
+          指令（{{ orders.length }}）
+        </button>
+        <ul v-show="!panelCollapse.orders" class="orders" data-testid="order-list">
           <li v-for="o in orders" :key="o.id" data-testid="order-row">
             {{ orderTypeLabel(o.order_type) }} · {{ orderStatusLabel(o.status) }}
             <button
@@ -1021,6 +1062,7 @@ watch(
           v-model:hex-limit-km="hexLimitKm"
           v-model:day-night="dayNight"
           v-model:time-of-day="timeOfDay"
+          :class="{ 'dock-left': panelSide === 'right' }"
           :hillshade-enabled="hasTiles"
           :contour-enabled="hasTiles"
           :basemaps="basemapSources"
@@ -1157,12 +1199,18 @@ watch(
               <li
                 v-for="f in mapFeatures"
                 :key="f.id"
-                :class="{ sel: f.id === selectedFeatureId }"
+                :class="{ sel: f.id === selectedFeatureId, hidden: hiddenFeatureIds.includes(f.id) }"
                 data-testid="feature-row"
                 @click="onFeatureClick({ id: f.id })"
               >
                 <span class="fdot" :style="{ background: featureDisplayColor(f) }" />
                 <span class="fname">{{ f.label || f.kind }}</span>
+                <button
+                  class="feye"
+                  data-testid="feature-toggle-vis"
+                  :title="hiddenFeatureIds.includes(f.id) ? '顯示' : '隱藏'"
+                  @click.stop="toggleFeatureHidden(f.id)"
+                >{{ hiddenFeatureIds.includes(f.id) ? '🚫' : '👁' }}</button>
                 <button class="frm" data-testid="feature-delete" @click.stop="removeFeature(f.id)">✕</button>
               </li>
               <li v-if="!mapFeatures.length" class="empty">（尚無標註）</li>
@@ -1495,6 +1543,71 @@ watch(
   margin: 0.75rem 0 0.375rem;
   font-size: 0.8125rem;
   color: #94a3b8;
+}
+/* #12 GIS 工具列：左右換邊 + 可收合段落 + 元素顯隱。 */
+.body.panel-right {
+  flex-direction: row-reverse;
+}
+.body.panel-right .panel {
+  border-right: none;
+  border-left: 1px solid #1e293b;
+}
+:deep(.toggles.dock-left) {
+  right: auto !important;
+  left: 1rem;
+}
+.panel-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.4rem;
+}
+.panel-tools button {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #7dd3fc;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.panel-tools button:hover {
+  border-color: #2563eb;
+}
+.sec-hd {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0.375rem;
+  padding: 0.15rem 0;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.sec-hd:hover {
+  color: #e2e8f0;
+}
+.sec-hd .chev {
+  color: #64748b;
+  font-size: 0.7rem;
+}
+.feye {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+.feye:hover {
+  opacity: 1;
+}
+.map-editor .me-list li.hidden .fname {
+  opacity: 0.4;
+  text-decoration: line-through;
 }
 .units,
 .orders,
