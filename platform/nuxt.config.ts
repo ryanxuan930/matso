@@ -20,6 +20,8 @@ export default defineNuxtConfig({
       satelliteUrl: '',
       // 額外自訂底圖來源（#2；NUXT_PUBLIC_BASEMAPS，JSON 陣列 of BasemapSource）——軍方資料接入點。
       basemaps: [] as unknown[],
+      // 啟用 Google/Esri 線上底圖（NUXT_PUBLIC_ONLINE_BASEMAPS）。需外網，非 air-gapped，預設關。
+      onlineBasemaps: false,
     },
   },
   vite: {

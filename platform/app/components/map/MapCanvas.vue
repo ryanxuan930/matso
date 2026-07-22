@@ -16,6 +16,7 @@ import { symbolImage } from '~/composables/useMilsymbol'
 const emit = defineEmits<{
   mapClick: [{ lng: number; lat: number; h3: string }]
   unitClick: [{ id: string; faction: string; kind: string }]
+  basemapError: [{ id: string }] // 底圖瓦片載入失敗（供上層回退離線）
 }>()
 
 // 由 <ClientOnly> 包裹確保只在 client 掛載；maplibre-gl 於 onMounted 動態 import（絕不進 SSR，
@@ -49,7 +50,9 @@ const basemapSources = buildBasemapSources({
   tileUrl: _cfg.tileUrl as string,
   satelliteUrl: _cfg.satelliteUrl as string | undefined,
   basemaps: _cfg.basemaps as ReturnType<typeof buildBasemapSources> | undefined,
+  onlineBasemaps: _cfg.onlineBasemaps as boolean,
 })
+let basemapErrorHandled = false // 每次切底圖重置，避免 404 洪水重複 emit
 
 /** 移除現有底圖（raster 'basemap' 或 vector 'basemap-*' 圖層）+ 來源。 */
 function removeBasemap() {
@@ -64,6 +67,7 @@ function removeBasemap() {
 /** 套用底圖來源：raster → 單一 raster 層；vector → OpenMapTiles 深色圖層組（皆置於 graticule 之下）。 */
 function applyBasemap(id: string) {
   if (!map) return
+  basemapErrorHandled = false // 重新武裝回退偵測
   removeBasemap()
   const src = basemapSources.find((s) => s.id === id)
   if (!src || !src.tiles) return // offline 或未知 → 僅背景
@@ -135,7 +139,7 @@ function syncUnits() {
 
 onMounted(async () => {
   if (!container.value) return
-  const { Map: MapCtor } = await import('maplibre-gl')
+  const { Map: MapCtor, NavigationControl, ScaleControl } = await import('maplibre-gl')
   const tileUrl = useRuntimeConfig().public.tileUrl as string
 
   map = new MapCtor({
@@ -146,7 +150,18 @@ onMounted(async () => {
     attributionControl: false,
   })
   ;(window as unknown as { __matsoMap?: MapLibreMap }).__matsoMap = map
-  map.on('error', (e) => console.error('MAPERR', (e as { error?: Error }).error?.message))
+  // 縮放 + 指北針（top-left，避開右上 LayerToggles）+ 比例尺（bottom-right）。
+  map.addControl(new NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), 'top-left')
+  map.addControl(new ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-right')
+  // 底圖瓦片載入失敗（如街道 tileserver 不可達）→ emit 一次，供上層回退離線格線。
+  map.on('error', (e) => {
+    const err = e as { error?: Error; sourceId?: string }
+    console.error('MAPERR', err.error?.message)
+    if (err.sourceId === 'basemap' && !basemapErrorHandled) {
+      basemapErrorHandled = true
+      emit('basemapError', { id: props.basemapId })
+    }
+  })
 
   map.on('load', () => {
     if (!map) return

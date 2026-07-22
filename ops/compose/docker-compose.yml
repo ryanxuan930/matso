@@ -93,6 +93,7 @@ services:
       # 衛星 / 自訂底圖來源（#2，可抽換）——填入即出現對應底圖選項（軍方資料接入點）。
       NUXT_PUBLIC_SATELLITE_URL: ${NUXT_PUBLIC_SATELLITE_URL:-}
       NUXT_PUBLIC_BASEMAPS: ${NUXT_PUBLIC_BASEMAPS:-}
+      NUXT_PUBLIC_ONLINE_BASEMAPS: ${NUXT_PUBLIC_ONLINE_BASEMAPS:-}
     ports: ["3000:3000"]
     depends_on:
       core: { condition: service_healthy }

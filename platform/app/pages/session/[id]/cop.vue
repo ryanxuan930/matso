@@ -21,13 +21,18 @@ const hillshade = ref(false)
 const currentTick = ref(100)
 
 // 底圖來源（可抽換，#2）：離線 / 街道 / 衛星 / 軍用…由 runtimeConfig 注入。
-const basemap = ref('offline')
 const _pub = useRuntimeConfig().public
 const basemapSources = buildBasemapSources({
   tileUrl: _pub.tileUrl as string,
   satelliteUrl: _pub.satelliteUrl as string | undefined,
   basemaps: _pub.basemaps as never,
+  onlineBasemaps: _pub.onlineBasemaps as boolean,
 })
+// 預設用「街道」（有本地 tileserver 時）；載不到才回退離線格線。
+const basemap = ref(basemapSources.some((s) => s.id === 'street') ? 'street' : 'offline')
+function onBasemapError() {
+  if (basemap.value !== 'offline') basemap.value = 'offline'
+}
 
 // 是否已設定離線 tile server（有 .mbtiles）。未設 → 顯示離線底圖提示（SPEC §13.2）。
 const hasTiles = computed(() => !!_pub.tileUrl)
@@ -346,6 +351,7 @@ onBeforeUnmount(() => stream.disconnect())
             :basemap-id="basemap"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
+            @basemap-error="onBasemapError"
           />
           <template #fallback>
             <div class="map-loading" data-testid="map-loading">地圖載入中…</div>

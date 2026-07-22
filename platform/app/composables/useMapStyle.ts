@@ -57,10 +57,28 @@ export interface BasemapConfig {
   tileUrl?: string // 本地 tileserver（街道，OpenMapTiles）
   satelliteUrl?: string // 衛星 raster XYZ 模板（商用 / 軍用影像）
   basemaps?: BasemapSource[] // 額外自訂來源（NUXT_PUBLIC_BASEMAPS，JSON）——軍方接入的抽換點
+  onlineBasemaps?: boolean // 啟用 Google/Esri 線上光柵底圖（需外網，非 air-gapped）
 }
 
 /** 恆有的離線來源（無瓦片時的可靠回退）。 */
 export const OFFLINE_SOURCE: BasemapSource = { id: 'offline', label: '離線格線', type: 'offline' }
+
+/**
+ * 線上 XYZ 光柵底圖（**需外網，非 air-gapped**；由 onlineBasemaps 開關，預設關）。
+ * 注意 Esri 走 {z}/{y}/{x} 順序（與 Google/OSM 的 {z}/{x}/{y} 不同）。
+ */
+export const ONLINE_RASTER_SOURCES: BasemapSource[] = [
+  { id: 'google-satellite', label: 'Google 衛星', type: 'raster', tileSize: 256, maxzoom: 20,
+    tiles: ['https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'], attribution: '© Google' },
+  { id: 'google-hybrid', label: 'Google 混合', type: 'raster', tileSize: 256, maxzoom: 20,
+    tiles: ['https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'], attribution: '© Google' },
+  { id: 'esri-satellite', label: 'Esri 衛星', type: 'raster', tileSize: 256, maxzoom: 19,
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    attribution: '© Esri, Maxar, Earthstar Geographics' },
+  { id: 'esri-topo', label: 'Esri 地形街道', type: 'raster', tileSize: 256, maxzoom: 19,
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}'],
+    attribution: '© Esri' },
+]
 
 /**
  * 由設定組出底圖來源清單：離線 + 街道（tileUrl）+ 衛星（satelliteUrl）+ 自訂（basemaps）。
@@ -91,6 +109,7 @@ export function buildBasemapSources(cfg: BasemapConfig): BasemapSource[] {
       attribution: '衛星影像',
     })
   }
+  if (cfg.onlineBasemaps) out.push(...ONLINE_RASTER_SOURCES) // Google/Esri（需外網）
   for (const b of cfg.basemaps ?? []) out.push(b) // 軍方 / 自訂來源
   return out
 }
