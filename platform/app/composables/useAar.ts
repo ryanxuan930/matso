@@ -26,7 +26,27 @@ export interface AarReport {
 export const aarReplay = (id: string) => apiFetch<AarReplay>(`/sessions/${id}/aar/replay`)
 export const aarStats = (id: string) => apiFetch<AarStats>(`/sessions/${id}/aar/stats`)
 export const aarReport = (id: string) => apiFetch<AarReport>(`/sessions/${id}/aar/report`)
-export function aarExportUrl(id: string, fmt: 'json' | 'csv', anonymize: boolean): string {
-  const base = useRuntimeConfig().public.apiBase as string
-  return `${base}/api/v1/sessions/${id}/aar/export?fmt=${fmt}&anonymize=${anonymize}`
+/**
+ * AAR 匯出下載（#10）——以帶 Bearer 的 apiFetch 取回內容（自動續 token），再以 Blob 觸發下載。
+ * 舊做法用 <a href> 直連 API 端點，瀏覽器導覽不帶 Authorization 標頭 → 401「缺少 Token」。
+ */
+export async function aarExportDownload(
+  id: string,
+  fmt: 'json' | 'csv',
+  anonymize: boolean,
+): Promise<void> {
+  const data = await apiFetch<unknown>(
+    `/sessions/${id}/aar/export?fmt=${fmt}&anonymize=${anonymize}`,
+  )
+  const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+  const mime = fmt === 'json' ? 'application/json' : 'text/csv;charset=utf-8'
+  const blob = new Blob([text], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `aar-${id}${anonymize ? '-anon' : ''}.${fmt}`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }

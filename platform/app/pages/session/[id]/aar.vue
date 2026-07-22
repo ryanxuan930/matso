@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // AAR 儀表板（O8，SPEC §14）——時間軸 + 統計 + 敘事 + 匯出。
 import {
-  aarExportUrl,
+  aarExportDownload,
   aarReplay,
   aarReport,
   aarStats,
@@ -82,9 +82,9 @@ onMounted(load)
 
     <section>
       <h2>匯出</h2>
-      <a :href="aarExportUrl(sessionId, 'json', false)" data-testid="export-json">JSON</a>
-      <a :href="aarExportUrl(sessionId, 'csv', false)">CSV</a>
-      <a :href="aarExportUrl(sessionId, 'csv', true)" data-testid="export-anon">CSV（匿名化）</a>
+      <button class="exp" data-testid="export-json" @click="aarExportDownload(sessionId, 'json', false)">JSON</button>
+      <button class="exp" @click="aarExportDownload(sessionId, 'csv', false)">CSV</button>
+      <button class="exp" data-testid="export-anon" @click="aarExportDownload(sessionId, 'csv', true)">CSV（匿名化）</button>
     </section>
   </div>
 </template>
@@ -102,4 +102,14 @@ h2 { font-size: 0.9375rem; color: #94a3b8; }
 .ok { color: #4ade80; font-size: 0.8rem; }
 .err { color: #f87171; }
 a { margin-right: 1rem; color: #60a5fa; }
+.exp {
+  margin-right: 0.75rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #60a5fa;
+  cursor: pointer;
+}
+.exp:hover { border-color: #2563eb; }
 </style>
