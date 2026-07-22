@@ -85,6 +85,12 @@ onMounted(async () => {
         <a
           v-if="canEditScenario"
           class="help"
+          href="/scenarios"
+          data-testid="nav-scenarios"
+        >劇本管理</a>
+        <a
+          v-if="canEditScenario"
+          class="help"
           href="/armory"
           data-testid="nav-armory"
         >武器庫</a>

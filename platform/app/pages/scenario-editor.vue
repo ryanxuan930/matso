@@ -40,6 +40,24 @@ const importText = ref('')
 const importError = ref('')
 const exportText = computed(() => JSON.stringify(exportScenario(model.value), null, 2))
 
+// 從既有想定載入（#5）——URL ?load=<id> → GET /scenarios/{id} → importScenario。
+const loadError = ref('')
+async function loadExisting(id: string) {
+  loadError.value = ''
+  try {
+    const bundle = await apiFetch<Parameters<typeof importScenario>[0]>(`/scenarios/${encodeURIComponent(id)}`)
+    model.value = importScenario(bundle)
+  } catch (e) {
+    const err = e as ApiError
+    loadError.value = `載入想定失敗：${err.code === 'SCENARIO_NOT_FOUND' ? '找不到該想定' : (err.code ?? 'UNKNOWN')}`
+  }
+}
+onMounted(() => {
+  const q = useRoute().query.load
+  const id = Array.isArray(q) ? q[0] : q
+  if (id) loadExisting(String(id))
+})
+
 function addFaction() {
   model.value.factions.push({ id: `F${model.value.factions.length + 1}`, color: '#888888' })
 }
@@ -111,6 +129,21 @@ function setNum(u: EditorUnit, key: 'lat' | 'lng', v: string | undefined) {
   u[key] = Number.isFinite(n) ? n : undefined
 }
 
+// 地圖點選初始位置（#8）——以單位物件參照記錄哪些列展開了地圖（重排/刪除安全）。
+const openPickers = ref(new Set<EditorUnit>())
+function togglePicker(u: EditorUnit) {
+  if (openPickers.value.has(u)) openPickers.value.delete(u)
+  else openPickers.value.add(u)
+}
+// 單位經緯 ↔ MapPointPicker 的 {lng,lat}|null 轉接（保持 lat/lng 數值形狀不變）。
+function unitPoint(u: EditorUnit): { lng: number; lat: number } | null {
+  return u.lat !== undefined && u.lng !== undefined ? { lng: u.lng, lat: u.lat } : null
+}
+function setUnitPoint(u: EditorUnit, p: { lng: number; lat: number }) {
+  u.lat = p.lat
+  u.lng = p.lng
+}
+
 const saveStatus = ref('')
 const saving = ref(false)
 const saveSeverity = computed(() => (saveStatus.value.startsWith('已存') ? 'success' : 'error'))
@@ -144,6 +177,9 @@ async function saveToServer() {
     </header>
     <Message v-if="saveStatus" :severity="saveSeverity" size="small" class="sc-status" data-testid="sc-save-status">
       {{ saveStatus }}
+    </Message>
+    <Message v-if="loadError" severity="error" size="small" class="sc-status" data-testid="sc-load-error">
+      {{ loadError }}
     </Message>
 
     <section class="meta">
@@ -201,39 +237,57 @@ async function saveToServer() {
 
     <section>
       <h2>單位（ORBAT） <Button data-testid="add-unit" size="small" text @click="addUnit">＋</Button></h2>
-      <div v-for="(u, i) in model.units" :key="i" class="row" data-testid="unit-row">
-        <Select v-model="u.faction" :options="model.factions" option-label="id" option-value="id" size="small" />
-        <InputText v-model="u.designation" size="small" placeholder="番號" />
-        <Select
-          v-model="u.unitLevel"
-          :options="LEVEL_OPTIONS"
-          option-label="label"
-          option-value="value"
-          size="small"
-        />
-        <Select
-          v-model="u.parent"
-          :options="parentOptions(u)"
-          option-label="label"
-          option-value="value"
-          size="small"
-          placeholder="上級"
-        />
-        <InputText
-          :model-value="numStr(u.lat)"
-          size="small"
-          placeholder="緯度"
-          class="coord"
-          @update:model-value="(v: string | undefined) => setNum(u, 'lat', v)"
-        />
-        <InputText
-          :model-value="numStr(u.lng)"
-          size="small"
-          placeholder="經度"
-          class="coord"
-          @update:model-value="(v: string | undefined) => setNum(u, 'lng', v)"
-        />
-        <Button size="small" text severity="danger" @click="remove(model.units, i)">✕</Button>
+      <div v-for="(u, i) in model.units" :key="i" class="unit-block" data-testid="unit-block">
+        <div class="row" data-testid="unit-row">
+          <Select v-model="u.faction" :options="model.factions" option-label="id" option-value="id" size="small" />
+          <InputText v-model="u.designation" size="small" placeholder="番號" />
+          <Select
+            v-model="u.unitLevel"
+            :options="LEVEL_OPTIONS"
+            option-label="label"
+            option-value="value"
+            size="small"
+          />
+          <Select
+            v-model="u.parent"
+            :options="parentOptions(u)"
+            option-label="label"
+            option-value="value"
+            size="small"
+            placeholder="上級"
+          />
+          <InputText
+            :model-value="numStr(u.lat)"
+            size="small"
+            placeholder="緯度"
+            class="coord"
+            @update:model-value="(v: string | undefined) => setNum(u, 'lat', v)"
+          />
+          <InputText
+            :model-value="numStr(u.lng)"
+            size="small"
+            placeholder="經度"
+            class="coord"
+            @update:model-value="(v: string | undefined) => setNum(u, 'lng', v)"
+          />
+          <Button
+            size="small"
+            text
+            :severity="openPickers.has(u) ? 'primary' : 'secondary'"
+            data-testid="unit-pick-toggle"
+            @click="togglePicker(u)"
+          >
+            📍 地圖選取
+          </Button>
+          <Button size="small" text severity="danger" @click="remove(model.units, i)">✕</Button>
+        </div>
+        <ClientOnly v-if="openPickers.has(u)">
+          <MapPointPicker
+            class="unit-picker"
+            :model-value="unitPoint(u)"
+            @update:model-value="(p: { lng: number; lat: number }) => setUnitPoint(u, p)"
+          />
+        </ClientOnly>
       </div>
     </section>
 
@@ -283,6 +337,8 @@ async function saveToServer() {
 section { margin: 1rem 0; border-top: 1px solid #1e293b; padding-top: 0.75rem; }
 h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; gap: 0.5rem; }
 .row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; flex-wrap: wrap; }
+.unit-block { margin: 0.25rem 0; }
+.unit-picker { margin: 0.25rem 0 0.5rem; max-width: 32rem; }
 .meta { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
 .meta label { display: inline-flex; align-items: center; gap: 0.4rem; }
 .io { display: flex; gap: 1rem; }
