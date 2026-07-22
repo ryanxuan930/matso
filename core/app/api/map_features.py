@@ -18,17 +18,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_gateway
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.errors import AuthForbiddenError, OrderValidationError, SessionNotFoundError
 from app.factions import WHITE_CELL, validate_faction_id
+from app.footprint import compute_footprint, haversine_m
 from app.models import MapFeature, WargameSession
+from app.orders.precheck import PhysicsGateway
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["map-features"])
 
 _GEOMETRY_TYPES = {"POINT", "LINE", "POLYGON"}
+# 地形裁切取樣上限：防止單一請求觸發過量 terrain RPC（每方位一次 has_los）。
+_MAX_FOOTPRINT_STEPS = 72
+_MAX_FOOTPRINT_RANGE_M = 60_000.0
 
 
 class MapFeatureView(BaseModel):
@@ -62,6 +67,26 @@ class MapFeatureEdit(BaseModel):
     influence_radius_m: float | None = None
     weapon_template_id: str | None = None
     attributes: dict[str, Any] | None = None
+
+
+class TerrainFootprintRequest(BaseModel):
+    """武器射向/雷達扇區的地形裁切請求（#11）——射源、扇形、射程 + 觀測/目標離地高。"""
+
+    origin: list[float]  # [lng, lat]（同 MapFeature POINT 存放格式）
+    max_range_m: float = Field(gt=0)
+    direction_deg: float | None = None  # 扇形中心方位（北為 0、順時針）；全圓可省
+    arc_deg: float | None = None  # 張角；None 或 ≥360 → 全圓（雷達）
+    steps: int = 24  # 方位取樣數（伺服端夾至上限）
+    observer_height_m: float = 10.0  # 射源/雷達離地高（桅杆/光學）
+    target_height_m: float = 2.0  # 目標/障礙離地高（#11 default 2m）
+
+
+class TerrainFootprintView(BaseModel):
+    """地形裁切後的射界多邊形（GeoJSON 環）+ 是否有方位被地形限制。"""
+
+    ring: list[list[float]]  # [[lng, lat], …] 閉合環
+    clipped: bool
+    max_range_m: float
 
 
 def _view(f: MapFeature) -> MapFeatureView:
@@ -197,3 +222,49 @@ def delete_map_feature(
     db.delete(feat)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{session_id}/terrain/footprint", response_model=TerrainFootprintView)
+def terrain_footprint(
+    session_id: str,
+    body: TerrainFootprintRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    gateway: PhysicsGateway = Depends(get_gateway),
+) -> TerrainFootprintView:
+    """武器/雷達射界的地形裁切（viewshed fan，#11）。
+
+    逐方位對 terrain gateway 查 LOS，取地形遮蔽前的最大通視距離 → 裁切後射界多邊形。
+    紅線：物理事實（可見/餘隙）由 terrain 裁決，AI 不介入。terrain 不可達 → 503（前端退回幾何）。
+    """
+    _session_or_404(db, session_id)
+    if not is_omniscient(user.role):
+        require_participant(db, user, session_id)  # 須為此 session 參與者
+    if len(body.origin) < 2:
+        raise OrderValidationError("origin 需為 [lng, lat]", error_code="MAP_FEATURE_BAD_GEOMETRY")
+    lng, lat = float(body.origin[0]), float(body.origin[1])
+    max_range = min(body.max_range_m, _MAX_FOOTPRINT_RANGE_M)
+    steps = max(3, min(body.steps, _MAX_FOOTPRINT_STEPS))
+
+    def los_range(
+        obs: tuple[float, float, float], tgt: tuple[float, float, float]
+    ) -> tuple[bool, float]:
+        out = gateway.has_los(obs, tgt)
+        if out.visible:
+            return True, max_range
+        if out.obstruction_lat is not None and out.obstruction_lng is not None:
+            return False, haversine_m(obs[0], obs[1], out.obstruction_lat, out.obstruction_lng)
+        return False, 0.0
+
+    fp = compute_footprint(
+        lng=lng,
+        lat=lat,
+        max_range_m=max_range,
+        direction_deg=body.direction_deg,
+        arc_deg=body.arc_deg,
+        steps=steps,
+        observer_height_m=body.observer_height_m,
+        target_height_m=body.target_height_m,
+        los_range=los_range,
+    )
+    return TerrainFootprintView(ring=fp.ring, clipped=fp.clipped, max_range_m=max_range)

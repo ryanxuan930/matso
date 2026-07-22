@@ -34,6 +34,27 @@ export async function deleteMapFeature(sessionId: string, fid: string): Promise<
   await apiFetch<unknown>(`/sessions/${sessionId}/map-features/${fid}`, { method: 'DELETE' })
 }
 
+// 地形裁切（#11）：武器射向/雷達扇區逐方位查 LOS，取地形遮蔽前的最大通視距離 → 裁切後多邊形。
+export type TerrainFootprint = components['schemas']['TerrainFootprintView']
+export interface TerrainFootprintBody {
+  origin: number[] // [lng, lat]
+  max_range_m: number
+  direction_deg?: number | null
+  arc_deg?: number | null
+  steps?: number
+  observer_height_m?: number
+  target_height_m?: number
+}
+export function fetchTerrainFootprint(
+  sessionId: string,
+  body: TerrainFootprintBody,
+): Promise<TerrainFootprint> {
+  return apiFetch<TerrainFootprint>(`/sessions/${sessionId}/terrain/footprint`, {
+    method: 'POST',
+    body,
+  })
+}
+
 // ---- 顯示 ----
 export const FEATURE_KINDS = [
   { value: 'OBSTACLE', label: '障礙', color: '#ef4444' },
@@ -200,8 +221,12 @@ function sectorParams(f: MapFeature): { dir: number; arc: number } | null {
   return { dir, arc }
 }
 
-/** 影響/射程範圍（武器扇區/射程圓、雷達探測圓/扇區）——點/線第一點為中心 → GeoJSON 多邊形集。 */
-export function influenceToFc(features: MapFeature[]): FC {
+/** 影響/射程範圍（武器扇區/射程圓、雷達探測圓/扇區）——點/線第一點為中心 → GeoJSON 多邊形集。
+ * clips：feature id → 地形裁切後的環（存在時取代理想幾何扇形/圓，#11）。 */
+export function influenceToFc(
+  features: MapFeature[],
+  clips: Record<string, number[][]> = {},
+): FC {
   const out: unknown[] = []
   for (const f of features) {
     if (!f.influence_radius_m || f.influence_radius_m <= 0) continue
@@ -209,13 +234,19 @@ export function influenceToFc(features: MapFeature[]): FC {
     const center =
       f.geometry_type === 'POINT' ? (g as number[]) : ((g as number[][])?.[0] ?? null)
     if (!center) continue
-    const sec = sectorParams(f)
-    const ring = sec
-      ? genSector(center[0]!, center[1]!, f.influence_radius_m, sec.dir, sec.arc)
-      : genCircle(center[0]!, center[1]!, f.influence_radius_m)
+    const clip = clips[f.id]
+    let ring: number[][]
+    if (clip && clip.length >= 3) {
+      ring = clip // 地形裁切環（後端 viewshed）
+    } else {
+      const sec = sectorParams(f)
+      ring = sec
+        ? genSector(center[0]!, center[1]!, f.influence_radius_m, sec.dir, sec.arc)
+        : genCircle(center[0]!, center[1]!, f.influence_radius_m)
+    }
     out.push({
       type: 'Feature',
-      properties: { id: f.id, color: featureDisplayColor(f) },
+      properties: { id: f.id, color: featureDisplayColor(f), clipped: !!clip },
       geometry: { type: 'Polygon', coordinates: [ring] },
     })
   }

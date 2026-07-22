@@ -28,6 +28,7 @@ import {
   featureSymbolFc,
   featuresToFc,
   fetchMapFeatures,
+  fetchTerrainFootprint,
   influenceToFc,
   shapeToPolygon,
   type DraftKind,
@@ -157,6 +158,9 @@ const editFeatSidc = ref('')
 const editFeatRange = ref<number | null>(null)
 const editFeatDir = ref(0)
 const editFeatArc = ref(360)
+// 地形裁切（#11）：feature id → viewshed 環（後端逐方位 LOS）；套用中旗標。
+const terrainClips = ref<Record<string, number[][]>>({})
+const clipBusy = ref(false)
 const weaponTemplates = ref<EquipmentTemplate[]>([])
 const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
@@ -461,7 +465,7 @@ const shownFeatures = computed(() =>
 )
 const featureFc = computed(() => featuresToFc(shownFeatures.value))
 const featSymbol = computed(() => featureSymbolFc(shownFeatures.value)) // 北約符號點特徵（#11）
-const influenceFc = computed(() => influenceToFc(shownFeatures.value))
+const influenceFc = computed(() => influenceToFc(shownFeatures.value, terrainClips.value))
 const draftFc = computed(() => draftToFc(drawKind.value, draftCoords.value))
 const drawableKinds = computed(() => FEATURE_KINDS.filter((k) => k.value !== 'WEAPON_EMPLACEMENT'))
 
@@ -548,12 +552,60 @@ function onFeatureClick(e: { id: string }) {
 const selectedFeature = computed(
   () => mapFeatures.value.find((f) => f.id === selectedFeatureId.value) ?? null,
 )
+// 地形裁切射界（#11）：對選取的武器/雷達特徵逐方位查 LOS → 存 viewshed 環（取代理想扇形）。
+async function applyTerrainClip() {
+  const f = selectedFeature.value
+  const range = editFeatRange.value
+  if (!f || !range || range <= 0) return
+  const g = f.geometry as unknown
+  const center = f.geometry_type === 'POINT' ? (g as number[]) : ((g as number[][])?.[0] ?? null)
+  if (!center) return
+  const arc = editFeatArc.value
+  clipBusy.value = true
+  try {
+    const fp = await fetchTerrainFootprint(sessionId.value, {
+      origin: [center[0]!, center[1]!],
+      max_range_m: range,
+      direction_deg: arc < 360 ? editFeatDir.value : null,
+      arc_deg: arc < 360 ? arc : 360,
+      steps: arc < 360 ? 24 : 36,
+      observer_height_m: 10,
+      target_height_m: 2, // 目標/障礙離地高 default 2m（#11）
+    })
+    if (fp.ring.length >= 3) {
+      terrainClips.value = { ...terrainClips.value, [f.id]: fp.ring as number[][] }
+      toasts.push({
+        severity: fp.clipped ? 'success' : 'info',
+        title: fp.clipped ? '已套用地形裁切（射界受稜線遮蔽）' : '地形裁切：此扇區全通視',
+        timeoutMs: 2500,
+      })
+    }
+  } catch (err) {
+    toasts.push({
+      severity: 'warn',
+      title: '地形裁切不可用',
+      detail: '地形服務未就緒，改用理想射界。' + ((err as { message?: string }).message ?? ''),
+      timeoutMs: 4000,
+    })
+  } finally {
+    clipBusy.value = false
+  }
+}
+function clearTerrainClip(fid: string) {
+  if (!(fid in terrainClips.value)) return
+  const next: Record<string, number[][]> = {}
+  for (const [k, v] of Object.entries(terrainClips.value)) {
+    if (k !== fid) next[k] = v
+  }
+  terrainClips.value = next
+}
 // 拖放移動點特徵（#11 B2）：MapCanvas emit 新座標 → PATCH 幾何 → 重載。
 async function onFeatureMove(e: { id: string; lng: number; lat: number }) {
   const f = mapFeatures.value.find((x) => x.id === e.id)
   if (!f || f.geometry_type !== 'POINT') return
   try {
     await editMapFeature(sessionId.value, e.id, { geometry: [e.lng, e.lat] })
+    clearTerrainClip(e.id) // 幾何變動 → 舊裁切環失效
     await loadFeatures()
   } catch (err) {
     toasts.push({
@@ -591,6 +643,7 @@ async function saveFeatureEdit() {
       influence_radius_m: editFeatRange.value,
       attributes: attrs,
     })
+    clearTerrainClip(fid) // 射程/方向/張角變動 → 舊裁切環失效，需重新套用
     await loadFeatures()
     toasts.push({ severity: 'success', title: '已更新標註', timeoutMs: 2000 })
   } catch (e) {
@@ -1245,6 +1298,25 @@ watch(
                 張角 {{ editFeatArc }}°（360＝全向）
                 <input v-model.number="editFeatArc" type="range" min="10" max="360" step="5" style="width: 100%">
               </label>
+              <!-- 地形裁切（#11）：逐方位 LOS 把稜線/反斜面啃出缺口。 -->
+              <div class="me-row2">
+                <button
+                  class="me-clip"
+                  :disabled="clipBusy || !editFeatRange"
+                  data-testid="apply-terrain-clip"
+                  @click="applyTerrainClip"
+                >
+                  {{ clipBusy ? '裁切計算中…' : '🏔 地形裁切射界' }}
+                </button>
+                <button
+                  v-if="terrainClips[selectedFeature.id]"
+                  class="me-clip me-clip-off"
+                  data-testid="clear-terrain-clip"
+                  @click="clearTerrainClip(selectedFeature.id)"
+                >
+                  還原理想射界
+                </button>
+              </div>
             </template>
             <input v-model="editFeatNotes" class="me-in" data-testid="edit-feat-notes" placeholder="備註">
             <button class="me-save" data-testid="save-feat-edit" @click="saveFeatureEdit">儲存屬性</button>
@@ -1908,6 +1980,26 @@ watch(
   border-top: 1px solid #1e293b;
   padding-top: 0.35rem;
   margin-bottom: 0.25rem;
+}
+.map-editor .me-clip {
+  flex: 1;
+  padding: 0.3rem;
+  border: 1px solid #0e7490;
+  border-radius: 0.25rem;
+  background: #0e7490;
+  color: #e0f2fe;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.map-editor .me-clip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.map-editor .me-clip-off {
+  flex: 0 0 auto;
+  background: transparent;
+  border-color: #475569;
+  color: #94a3b8;
 }
 .map-editor .me-list ul {
   list-style: none;

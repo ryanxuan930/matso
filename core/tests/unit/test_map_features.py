@@ -10,9 +10,10 @@ from _order_fakes import OrderWorld, order_token, seed_world
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.deps import get_db, get_settings
+from app.api.deps import get_db, get_gateway, get_settings
 from app.main import app
 from app.models import UserRole
+from app.orders.precheck import LosOutcome
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +49,7 @@ def _base(world: OrderWorld) -> str:
 
 
 _POINT = {"kind": "WEAPON_EMPLACEMENT", "geometry_type": "POINT", "geometry": [121.3, 23.8]}
+_Llh = tuple[float, float, float]  # (lat, lng, 離地高 m)
 
 
 def test_white_creates_common_visible_to_commander(session_factory: sessionmaker[Session]) -> None:
@@ -112,3 +114,61 @@ def test_bad_geometry_type_422(session_factory: sessionmaker[Session]) -> None:
         headers=_white(world),
     )
     assert r.status_code == 422
+
+
+class _EastBlockedGateway:
+    """測試用 gateway：朝東（目標經度 > 射源）方位視線被地形遮於 500m；其餘全通。"""
+
+    def path_reachable(self, from_h3: str, to_h3: str, mobility_profile: str) -> tuple[bool, str]:
+        return True, "stub"
+
+    def has_los(
+        self, observer: tuple[float, float, float], target: tuple[float, float, float]
+    ) -> LosOutcome:
+        if target[1] - observer[1] > 0.003:  # 目標在射源以東
+            return LosOutcome(False, -5.0, target[0], observer[1] + 0.003)
+        return LosOutcome(True, 30.0)
+
+
+def test_terrain_footprint_clips_blocked_bearings(
+    session_factory: sessionmaker[Session],
+) -> None:
+    world = seed_world(session_factory)
+    app.dependency_overrides[get_gateway] = lambda: _EastBlockedGateway()
+    client = _client(session_factory)
+    body = {
+        "origin": [121.3, 23.8],
+        "max_range_m": 3000.0,
+        "arc_deg": 360.0,
+        "steps": 24,
+    }
+    r = client.post(
+        f"/api/v1/sessions/{world.session_id}/terrain/footprint", json=body, headers=_white(world)
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["clipped"] is True  # 有朝東方位被裁切
+    assert len(data["ring"]) >= 3
+    assert data["max_range_m"] == 3000.0
+
+
+def test_terrain_footprint_full_range_when_clear(
+    session_factory: sessionmaker[Session],
+) -> None:
+    world = seed_world(session_factory)
+
+    class _AllClear:
+        def path_reachable(self, f: str, t: str, m: str) -> tuple[bool, str]:
+            return True, "stub"
+
+        def has_los(self, o: _Llh, t: _Llh) -> LosOutcome:
+            return LosOutcome(True, 50.0)
+
+    app.dependency_overrides[get_gateway] = lambda: _AllClear()
+    client = _client(session_factory)
+    body = {"origin": [121.3, 23.8], "max_range_m": 2000.0, "direction_deg": 90.0, "arc_deg": 60.0}
+    r = client.post(
+        f"/api/v1/sessions/{world.session_id}/terrain/footprint", json=body, headers=_white(world)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["clipped"] is False

@@ -258,6 +258,26 @@ components:
         influence_radius_m: { type: [number, "null"] }
         weapon_template_id: { type: [string, "null"] }
         attributes: { type: [object, "null"] }
+    TerrainFootprintRequest:
+      type: object
+      description: 武器射向/雷達扇區的地形裁切請求（#11）
+      required: [origin, max_range_m]
+      properties:
+        origin: { type: array, items: { type: number }, description: "[lng, lat]（射源）" }
+        max_range_m: { type: number, exclusiveMinimum: 0 }
+        direction_deg: { type: [number, "null"], description: 扇形中心方位（北為 0、順時針）；全圓可省 }
+        arc_deg: { type: [number, "null"], description: 張角；null 或 ≥360 → 全圓（雷達） }
+        steps: { type: integer, default: 24, description: 方位取樣數（伺服端夾至上限 72） }
+        observer_height_m: { type: number, default: 10, description: 射源/雷達離地高 }
+        target_height_m: { type: number, default: 2, description: 目標/障礙離地高（default 2m） }
+    TerrainFootprintView:
+      type: object
+      description: 地形裁切後的射界多邊形（GeoJSON 環）
+      required: [ring, clipped, max_range_m]
+      properties:
+        ring: { type: array, items: { type: array, items: { type: number } }, description: "[[lng,lat],…] 閉合環" }
+        clipped: { type: boolean, description: 是否有方位受地形限制 }
+        max_range_m: { type: number }
     EquipmentStateEdit:
       type: object
       required: [current_state]
@@ -627,6 +647,24 @@ paths:
       responses:
         "204": { description: Removed }
         "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/terrain/footprint:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: terrainFootprint
+      security: [{ bearerAuth: [] }]
+      description: 武器射向/雷達扇區的地形裁切（viewshed fan，#11）——逐方位查 LOS 取通視距離
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TerrainFootprintRequest" }
+      responses:
+        "200":
+          description: Clipped footprint polygon
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerrainFootprintView" }
+        "503": { description: Terrain unavailable, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/inject:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

@@ -303,6 +303,25 @@ export interface paths {
         patch: operations["editMapFeature"];
         trace?: never;
     };
+    "/sessions/{id}/terrain/footprint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 武器射向/雷達扇區的地形裁切（viewshed fan，#11）——逐方位查 LOS 取通視距離 */
+        post: operations["terrainFootprint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/inject": {
         parameters: {
             query?: never;
@@ -710,6 +729,39 @@ export interface components {
             influence_radius_m?: number | null;
             weapon_template_id?: string | null;
             attributes?: Record<string, never> | null;
+        };
+        /** @description 武器射向/雷達扇區的地形裁切請求（#11） */
+        TerrainFootprintRequest: {
+            /** @description [lng, lat]（射源） */
+            origin: number[];
+            max_range_m: number;
+            /** @description 扇形中心方位（北為 0、順時針）；全圓可省 */
+            direction_deg?: number | null;
+            /** @description 張角；null 或 ≥360 → 全圓（雷達） */
+            arc_deg?: number | null;
+            /**
+             * @description 方位取樣數（伺服端夾至上限 72）
+             * @default 24
+             */
+            steps: number;
+            /**
+             * @description 射源/雷達離地高
+             * @default 10
+             */
+            observer_height_m: number;
+            /**
+             * @description 目標/障礙離地高（default 2m）
+             * @default 2
+             */
+            target_height_m: number;
+        };
+        /** @description 地形裁切後的射界多邊形（GeoJSON 環） */
+        TerrainFootprintView: {
+            /** @description [[lng,lat],…] 閉合環 */
+            ring: number[][];
+            /** @description 是否有方位受地形限制 */
+            clipped: boolean;
+            max_range_m: number;
         };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
@@ -1458,6 +1510,41 @@ export interface operations {
             };
             /** @description Not permitted */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    terrainFootprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerrainFootprintRequest"];
+            };
+        };
+        responses: {
+            /** @description Clipped footprint polygon */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerrainFootprintView"];
+                };
+            };
+            /** @description Terrain unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
