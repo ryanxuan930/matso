@@ -124,7 +124,6 @@ watch(viewpoint, loadUnits)
     <header class="wc-bar">
       <button data-testid="wc-back-cop" @click="navigateTo(`/session/${sessionId}/cop`)">← 圖台</button>
       <h1>白軍控制台 · {{ sessionId }}</h1>
-      <a class="help" href="/help" target="_blank">操作教學</a>
     </header>
     <p v-if="status" class="status" data-testid="wc-status">{{ status }}</p>
 

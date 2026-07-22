@@ -138,33 +138,45 @@ async function saveAmmo(inst: EquipmentInstance, ev: Event) {
 .eq-list li {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.3rem;
   font-size: 0.74rem;
+  min-width: 0;
 }
 .eq-name {
   color: #e2e8f0;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .eq-cat {
   color: #64748b;
-  font-size: 0.64rem;
+  font-size: 0.6rem;
+  flex: none;
 }
 .eq-dim {
   color: #94a3b8;
+  flex: none;
+  white-space: nowrap;
 }
 .eq-ammo {
-  margin-left: auto;
+  flex: none;
   color: #94a3b8;
   display: inline-flex;
-  gap: 0.2rem;
+  gap: 0.15rem;
   align-items: center;
 }
 .eq-ammo input {
-  width: 3.2rem;
+  width: 2.6rem;
   background: #0f172a;
   color: #e2e8f0;
   border: 1px solid #334155;
   border-radius: 0.2rem;
-  padding: 0.05rem 0.25rem;
+  padding: 0.05rem 0.2rem;
+}
+.eq-rm {
+  flex: none;
 }
 .eq-rm {
   border: none;

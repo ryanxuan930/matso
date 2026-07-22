@@ -38,7 +38,6 @@ onMounted(load)
     <header class="aar-bar">
       <button data-testid="aar-back-cop" @click="navigateTo(`/session/${sessionId}/cop`)">← 圖台</button>
       <h1>行動後檢討（AAR） · {{ sessionId }}</h1>
-      <a class="help" href="/help" target="_blank">操作教學</a>
     </header>
     <p v-if="error" class="err">{{ error }}</p>
 

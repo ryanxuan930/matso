@@ -437,7 +437,7 @@ async function submit() {
       title: `下令被拒：${orderTypeLabel(orderType.value)}${err.code ? `（${err.code}）` : ''}`,
       detail: lines.length ? undefined : err.message ?? '系統拒絕此指令',
       lines,
-      timeoutMs: 0, // 錯誤需使用者自行關閉
+      timeoutMs: 10000, // #7：10 秒後自動關閉
     })
   }
 }
@@ -572,7 +572,6 @@ watch(
           🎯 座標查詢
         </button>
         <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)">📊 AAR</button>
-        <a class="help" href="/help" target="_blank">操作教學</a>
       </nav>
     </header>
     <div class="body">
@@ -736,7 +735,7 @@ watch(
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
           <strong>離線底圖模式</strong>
           <span>目前顯示經緯格線 + 單位符號（無向量瓦片）。要載入台灣街道/地形底圖，需由
-            <code>taiwan.osm.pbf</code> 產生 mbtiles 並啟用 tileserver — 見「操作教學」。</span>
+            <code>taiwan.osm.pbf</code> 產生 mbtiles 並啟用 tileserver。</span>
         </div>
 
         <!-- 地圖編輯器（stage ③b）：繪製標註/工事/武器據點。 -->
@@ -1216,7 +1215,7 @@ watch(
   left: 1rem;
   bottom: 1rem;
   z-index: 11;
-  width: 15rem;
+  width: 16.5rem;
   padding: 0.75rem 0.875rem;
   border-radius: 0.5rem;
   border: 1px solid #1e3a5f;
