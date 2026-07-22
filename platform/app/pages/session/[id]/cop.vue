@@ -21,7 +21,6 @@ import {
   FEATURE_KINDS,
   createMapFeature,
   deleteMapFeature,
-  NATO_SYMBOLS,
   draftToFc,
   editMapFeature,
   featureDisplayColor,
@@ -1458,9 +1457,7 @@ watch(
                   高度<input v-model.number="drawHeight" type="number" min="0" step="0.5"> m
                 </label>
               </div>
-              <select v-model="drawSidc" class="me-in" data-testid="draw-sidc" title="北約符號（僅點）">
-                <option v-for="s in NATO_SYMBOLS" :key="s.sidc" :value="s.sidc">🎖 {{ s.label }}</option>
-              </select>
+              <NatoSymbolSelect v-model="drawSidc" data-testid="draw-sidc" title="北約符號（僅點）" />
               <input v-model="drawNotes" class="me-in" data-testid="draw-notes" placeholder="備註（選填）">
             </div>
             <div class="me-weapon">
@@ -1519,14 +1516,11 @@ watch(
                 高度<input v-model.number="editFeatHeight" type="number" min="0" step="0.5"> m
               </label>
             </div>
-            <select
+            <NatoSymbolSelect
               v-if="selectedFeature.geometry_type === 'POINT'"
               v-model="editFeatSidc"
-              class="me-in"
               data-testid="edit-feat-sidc"
-            >
-              <option v-for="s in NATO_SYMBOLS" :key="s.sidc" :value="s.sidc">🎖 {{ s.label }}</option>
-            </select>
+            />
             <!-- 武器射向/雷達扇區（#11 C）：射程 + 方向 + 張角（360=全向圓）。 -->
             <template v-if="selectedFeature.kind === 'WEAPON_EMPLACEMENT' || editFeatRange != null">
               <div class="me-sub">射程 / 射向扇區</div>

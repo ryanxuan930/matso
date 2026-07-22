@@ -97,20 +97,55 @@ export function rectRing(a: number[], b: number[]): number[][] {
   ]
 }
 
-// 常用北約 2525C 符號（點特徵可掛，#11）——標籤 → 15 碼 SIDC。空＝不掛符號（走一般圓點）。
-export const NATO_SYMBOLS: { sidc: string; label: string }[] = [
-  { sidc: '', label: '（無符號 · 圓點）' },
-  { sidc: 'SFGPUCI--------', label: '友軍 步兵' },
-  { sidc: 'SFGPUCA--------', label: '友軍 裝甲' },
-  { sidc: 'SFGPUCF--------', label: '友軍 砲兵' },
-  { sidc: 'SFGPUH---------', label: '友軍 指揮所' },
-  { sidc: 'SFGPUCR--------', label: '友軍 偵蒐' },
-  { sidc: 'SHGPUCI--------', label: '敵軍 步兵' },
-  { sidc: 'SHGPUCA--------', label: '敵軍 裝甲' },
-  { sidc: 'SHGPUCF--------', label: '敵軍 砲兵' },
-  { sidc: 'SNGPU----------', label: '中立' },
-  { sidc: 'SUGPU----------', label: '未知' },
+// 北約 2525C 符號目錄（點特徵可掛，#11/#25）——由陣營 × 兵種產生完整常用集。
+// SIDC 15 碼 = S + 陣營 + G(陸) + P(現況) + 6 碼兵種功能碼 + 5 碼修飾（此處填 -）。
+export interface NatoSymbol {
+  sidc: string
+  label: string
+  affil: string // 陣營中文（供分組/篩選）
+}
+const _AFFIL: { c: string; zh: string }[] = [
+  { c: 'F', zh: '友軍' },
+  { c: 'H', zh: '敵軍' },
+  { c: 'N', zh: '中立' },
+  { c: 'U', zh: '未知' },
 ]
+// 陸軍常用兵種（6 碼功能碼，chars 5–10）。
+const _GROUND: { fn: string; zh: string }[] = [
+  { fn: 'U-----', zh: '一般單位' },
+  { fn: 'UCI---', zh: '步兵' },
+  { fn: 'UCIZ--', zh: '摩托化步兵' },
+  { fn: 'UCIM--', zh: '機械化步兵' },
+  { fn: 'UCIS--', zh: '特種步兵' },
+  { fn: 'UCA---', zh: '裝甲' },
+  { fn: 'UCR---', zh: '偵蒐/騎兵' },
+  { fn: 'UCRA--', zh: '裝甲偵蒐' },
+  { fn: 'UCF---', zh: '野戰砲兵' },
+  { fn: 'UCFR--', zh: '火箭/多管砲' },
+  { fn: 'UCFM--', zh: '迫砲' },
+  { fn: 'UCD---', zh: '防空' },
+  { fn: 'UCAT--', zh: '反裝甲' },
+  { fn: 'UCE---', zh: '工兵' },
+  { fn: 'UCV---', zh: '陸航/直升機' },
+  { fn: 'UCM---', zh: '通信' },
+  { fn: 'UH----', zh: '指揮所' },
+  { fn: 'UU----', zh: '戰鬥支援' },
+  { fn: 'US----', zh: '勤務支援' },
+  { fn: 'USM---', zh: '衛生' },
+  { fn: 'USS---', zh: '補給' },
+  { fn: 'UST---', zh: '運輸' },
+  { fn: 'USX---', zh: '保修' },
+]
+function _buildNatoSymbols(): NatoSymbol[] {
+  const out: NatoSymbol[] = [{ sidc: '', label: '（無符號 · 圓點）', affil: '' }]
+  for (const a of _AFFIL) {
+    for (const g of _GROUND) {
+      out.push({ sidc: `S${a.c}GP${g.fn}-----`, label: `${a.zh} ${g.zh}`, affil: a.zh })
+    }
+  }
+  return out
+}
+export const NATO_SYMBOLS: NatoSymbol[] = _buildNatoSymbols()
 
 type FC = { type: 'FeatureCollection'; features: unknown[] }
 const EMPTY: FC = { type: 'FeatureCollection', features: [] }
