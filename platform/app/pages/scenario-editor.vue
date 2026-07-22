@@ -12,6 +12,7 @@ import {
   type ScenarioModel,
   type UnitLevel,
 } from '~/composables/useScenarioEditor'
+import { emptyCondition } from '~/composables/useConditionDsl'
 
 const LEVELS: UnitLevel[] = [
   'THEATER', 'CORPS', 'DIVISION', 'BRIGADE', 'BATTALION',
@@ -45,6 +46,17 @@ function addFaction() {
 function addUnit() {
   const f = model.value.factions[0]?.id ?? 'BLUE'
   model.value.units.push({ faction: f, designation: 'U', unitLevel: 'PLATOON' })
+}
+// MSEL 事件（GOAL#7）——陣營清單供 trigger/inject 的下拉；空預設 BLUE。
+const factionIds = computed(() => model.value.factions.map((f) => f.id))
+function addMsel() {
+  const f = factionIds.value[0] ?? 'BLUE'
+  model.value.msel.push({
+    id: `E${model.value.msel.length + 1}`,
+    once: true,
+    trigger: emptyCondition('time', f),
+    inject: { event_type: 'INTEL_REPORT', payload: {}, faction: undefined },
+  })
 }
 function remove<T>(arr: T[], i: number) {
   arr.splice(i, 1)
@@ -225,6 +237,28 @@ async function saveToServer() {
       </div>
     </section>
 
+    <section data-testid="msel-section">
+      <h2>MSEL 事件 <Button data-testid="add-msel" size="small" text @click="addMsel">＋</Button></h2>
+      <p class="hint">觸發條件成立時注入事件；「一次」勾選為邊緣觸發（僅觸一次），取消則每個成立的 tick 都觸。</p>
+      <div v-for="(m, i) in model.msel" :key="i" class="msel-row" data-testid="msel-row">
+        <div class="msel-head">
+          <InputText v-model="m.id" size="small" placeholder="ID" class="msel-id" />
+          <label class="msel-once">
+            <Checkbox v-model="m.once" binary />一次
+          </label>
+          <Button size="small" text severity="danger" @click="remove(model.msel, i)">✕</Button>
+        </div>
+        <div class="msel-block">
+          <span class="msel-label">觸發</span>
+          <ConditionBuilder v-model="m.trigger" :factions="factionIds" />
+        </div>
+        <div class="msel-block">
+          <span class="msel-label">注入</span>
+          <InjectActionForm v-model="m.inject" :factions="factionIds" />
+        </div>
+      </div>
+    </section>
+
     <section class="io">
       <div>
         <h2>匯出</h2>
@@ -264,4 +298,10 @@ h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; g
 .rel-matrix th, .rel-matrix td { border: 1px solid #1e293b; padding: 0.1rem 0.25rem; text-align: center; min-width: 4.75rem; }
 .rel-matrix th { color: #94a3b8; font-weight: 600; font-size: 0.8rem; }
 .rel-diag { color: #475569; }
+.msel-row { border: 1px solid #1e293b; border-radius: 0.35rem; padding: 0.5rem; margin: 0.4rem 0; }
+.msel-head { display: flex; gap: 0.5rem; align-items: center; }
+.msel-id { width: 6rem; }
+.msel-once { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; color: #94a3b8; }
+.msel-block { display: flex; gap: 0.4rem; align-items: baseline; margin-top: 0.4rem; flex-wrap: wrap; }
+.msel-label { font-size: 0.8125rem; color: #64748b; min-width: 2.5rem; }
 </style>

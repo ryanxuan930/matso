@@ -9,6 +9,7 @@ import {
   unitsAsFaction,
   type ControlAction,
 } from '~/composables/useWhiteCell'
+import type { InjectAction } from '~/composables/useConditionDsl'
 
 const route = useRoute()
 const sessionId = route.params.id as string
@@ -37,11 +38,17 @@ async function control(action: ControlAction) {
   }
 }
 
-const injectType = ref('BRIDGE_DESTROYED')
+// 即時注入（trigger-free）：event_type + payload + 目標陣營（空＝廣播全體）。
+const injectAction = ref<InjectAction>({ event_type: 'BRIDGE_DESTROYED', payload: {}, faction: undefined })
 async function doInject() {
   try {
-    await injectEvent(sessionId, injectType.value, { note: 'White Cell inject' })
-    status.value = `已注入 ${injectType.value}`
+    await injectEvent(
+      sessionId,
+      injectAction.value.event_type,
+      injectAction.value.payload ?? {},
+      injectAction.value.faction ?? null,
+    )
+    status.value = `已注入 ${injectAction.value.event_type}`
   } catch (e) {
     status.value = `注入失敗：${(e as { message?: string }).message ?? e}`
   }
@@ -136,9 +143,9 @@ watch(viewpoint, loadUnits)
         <button data-testid="resume" @click="control('RESUME')">▶ 續行</button>
         <button data-testid="rollback" @click="control('ROLLBACK')">⏪ 回滾</button>
       </div>
-      <div>
+      <div class="inject-box">
         <h2>注入事件</h2>
-        <input v-model="injectType" data-testid="inject-type">
+        <InjectActionForm v-model="injectAction" :factions="factions" event-testid="inject-type" />
         <button data-testid="do-inject" @click="doInject">注入</button>
       </div>
     </section>
