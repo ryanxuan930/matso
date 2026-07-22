@@ -151,22 +151,37 @@ def seed_combat_state(
     return len(units)
 
 
-def make_engage_env(hot: HotStateStore):  # type: ignore[no-untyped-def]
-    """回傳 env_for(shooter_id, target_id) → EnvSnapshot：由熱狀態座標算射程。
+# 交戰觀測/目標離地高度（與 precheck._ENGAGE_OBS_M 一致），供地形 LOS 查詢。
+_ENGAGE_OBS_M = 10.0
 
-    活執行期最小版：los_clear=True、地形/天氣係數預設 1.0（真實 LOS/天氣由 terrain/O5 於後續接上）。
-    座標缺失 → range 極大 → OUT_OF_RANGE 拒絕（安全退化）。
+
+def make_engage_env(hot: HotStateStore, gateway: object | None = None):  # type: ignore[no-untyped-def]
+    """回傳 env_for(shooter_id, target_id) → EnvSnapshot：由座標算射程 + 真實地形 LOS（Phase 3）。
+
+    - range_m：由射手/目標熱狀態座標 haversine。座標缺失 → 極大 → OUT_OF_RANGE 拒絕（安全退化）。
+    - los_clear：有 `gateway`（terrain gRPC）時查真實視線（射手↔目標，離地各 10m）——目標退入稜線後
+      即遮蔽（直瞄拒絕、間瞄仍可）。無 gateway 或 RPC 失敗 → 退回 True（地形服務中斷不凍結戰鬥）。
+    - 地形 LOS 給定座標具決定性 → replay 安全。天氣/cover 係數（STEP2/3）仍預設 1.0。
     """
 
     def env_for(shooter_id: str, target_id: str) -> EnvSnapshot:
         s = hot.get_unit(shooter_id) or {}
         t = hot.get_unit(target_id) or {}
         try:
-            range_m = _haversine_m(
-                float(s["lat"]), float(s["lng"]), float(t["lat"]), float(t["lng"])
-            )
+            s_lat, s_lng = float(s["lat"]), float(s["lng"])
+            t_lat, t_lng = float(t["lat"]), float(t["lng"])
+            range_m = _haversine_m(s_lat, s_lng, t_lat, t_lng)
         except (KeyError, TypeError, ValueError):
-            range_m = float("inf")
-        return EnvSnapshot(range_m=range_m, los_clear=True)
+            return EnvSnapshot(range_m=float("inf"), los_clear=True)
+        los_clear = True
+        if gateway is not None:
+            try:
+                outcome = gateway.has_los(  # type: ignore[attr-defined]
+                    (s_lat, s_lng, _ENGAGE_OBS_M), (t_lat, t_lng, _ENGAGE_OBS_M)
+                )
+                los_clear = bool(outcome.visible)
+            except Exception:
+                los_clear = True
+        return EnvSnapshot(range_m=range_m, los_clear=los_clear)
 
     return env_for

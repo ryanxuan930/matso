@@ -45,6 +45,20 @@ _PACE_COMPRESSION = 120.0  # 真實節奏：60000/1000/120 = 0.5s / tick
 _UNIT_SPEED_KMH = 40.0
 
 
+def _engage_gateway() -> object | None:
+    """交戰地形 LOS 用的物理 gateway（Phase 3）——與 submit 端同源（STUB_GATEWAY 時許可式）。
+
+    失敗（無 grpc/服務未起）→ None，make_engage_env 退回 los_clear=True（不阻斷活模擬啟動）。
+    """
+    try:
+        from app.api.deps import get_gateway
+
+        return get_gateway()
+    except Exception:
+        _LOG.warning("交戰 gateway 建立失敗，LOS 退回可見")
+        return None
+
+
 class SimManager:
     """每 session 一條 Kernel 迴圈；scan 迴圈自動接管新 session。"""
 
@@ -97,7 +111,7 @@ class SimManager:
                     hot,
                     DeterministicRNG(seed, "adjudication"),
                     resolver.weapon_for,
-                    make_engage_env(hot),
+                    make_engage_env(hot, _engage_gateway()),
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,

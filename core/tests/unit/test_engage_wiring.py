@@ -159,3 +159,44 @@ def test_make_engage_env_missing_coords_is_out_of_range() -> None:
     hot.put_unit("s", {"lat": 23.75, "lng": 121.25})
     env = make_engage_env(hot)("s", "ghost")
     assert env.range_m == float("inf")
+
+
+class _LosOutcome:
+    def __init__(self, visible: bool) -> None:
+        self.visible = visible
+        self.fresnel_clearance = 10.0
+
+
+class _FakeGateway:
+    def __init__(self, visible: bool) -> None:
+        self._visible = visible
+
+    def has_los(self, observer: object, target: object) -> _LosOutcome:
+        return _LosOutcome(self._visible)
+
+
+def _two_unit_hot() -> InMemoryHotState:
+    hot = InMemoryHotState()
+    hot.put_unit("s", {"lat": 23.75, "lng": 121.25})
+    hot.put_unit("t", {"lat": 23.77, "lng": 121.27})
+    return hot
+
+
+def test_make_engage_env_uses_gateway_los_visible() -> None:
+    env = make_engage_env(_two_unit_hot(), _FakeGateway(True))("s", "t")
+    assert env.los_clear is True
+
+
+def test_make_engage_env_gateway_blocks_los_when_obstructed() -> None:
+    # 目標退入稜線後（terrain 回不可見）→ los_clear False（直瞄交戰將被 NO_LOS 拒絕）。
+    env = make_engage_env(_two_unit_hot(), _FakeGateway(False))("s", "t")
+    assert env.los_clear is False
+
+
+def test_make_engage_env_gateway_failure_falls_back_visible() -> None:
+    class _Boom:
+        def has_los(self, observer: object, target: object) -> object:
+            raise RuntimeError("terrain down")
+
+    env = make_engage_env(_two_unit_hot(), _Boom())("s", "t")
+    assert env.los_clear is True  # 服務中斷不凍結戰鬥
