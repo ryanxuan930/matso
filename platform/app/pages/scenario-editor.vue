@@ -144,6 +144,78 @@ function setUnitPoint(u: EditorUnit, p: { lng: number; lat: number }) {
   u.lng = p.lng
 }
 
+// #29 ORBAT 樹狀（分陣營）：依 parent（上級番號）建指揮層級樹，每個陣營一棵 TreeTable。
+interface OrbatNode {
+  key: string
+  data: EditorUnit
+  children: OrbatNode[]
+}
+function buildFactionTree(units: EditorUnit[], keyOf: (u: EditorUnit) => string): OrbatNode[] {
+  const nodeOf = new Map<EditorUnit, OrbatNode>()
+  units.forEach((u) => nodeOf.set(u, { key: keyOf(u), data: u, children: [] }))
+  const roots: OrbatNode[] = []
+  for (const u of units) {
+    const node = nodeOf.get(u)!
+    const parent = u.parent ? units.find((x) => x !== u && x.designation === u.parent) : undefined
+    if (parent && nodeOf.has(parent)) nodeOf.get(parent)!.children.push(node)
+    else roots.push(node)
+  }
+  // 環路/孤兒安全：確保每個節點皆可從 roots 觸及，否則升為 root（避免遺失單位）。
+  const seen = new Set<OrbatNode>()
+  const walk = (ns: OrbatNode[]) =>
+    ns.forEach((n) => {
+      if (!seen.has(n)) {
+        seen.add(n)
+        walk(n.children)
+      }
+    })
+  walk(roots)
+  for (const node of nodeOf.values()) {
+    if (!seen.has(node)) {
+      roots.push(node)
+      walk([node])
+    }
+  }
+  return roots
+}
+// 依單位在 model.units 的索引作為穩定 key（供 remove + expandedKeys）。
+const orbatTrees = computed(() => {
+  const keyOf = (u: EditorUnit) => String(model.value.units.indexOf(u))
+  const present = [...new Set(model.value.units.map((u) => u.faction))]
+  return present.map((fid) => {
+    const color = model.value.factions.find((f) => f.id === fid)?.color
+    const units = model.value.units.filter((u) => u.faction === fid)
+    return { id: fid, color, count: units.length, nodes: buildFactionTree(units, keyOf) }
+  })
+})
+// 新增節點預設展開，保留使用者手動摺疊。
+const expandedKeys = ref<Record<string, boolean>>({})
+watch(
+  orbatTrees,
+  (trees) => {
+    const keys = { ...expandedKeys.value }
+    const add = (ns: OrbatNode[]) =>
+      ns.forEach((n) => {
+        if (!(n.key in keys)) keys[n.key] = true
+        add(n.children)
+      })
+    trees.forEach((t) => add(t.nodes))
+    expandedKeys.value = keys
+  },
+  { immediate: true, deep: true },
+)
+function addUnitTo(fid: string) {
+  model.value.units.push({ faction: fid, designation: 'U', unitLevel: 'PLATOON' })
+}
+function removeUnit(u: EditorUnit) {
+  const i = model.value.units.indexOf(u)
+  if (i >= 0) model.value.units.splice(i, 1)
+  openPickers.value.delete(u)
+}
+function openPickersOf(fid: string): EditorUnit[] {
+  return [...openPickers.value].filter((u) => u.faction === fid)
+}
+
 const saveStatus = ref('')
 const saving = ref(false)
 const saveSeverity = computed(() => (saveStatus.value.startsWith('已存') ? 'success' : 'error'))
@@ -237,56 +309,110 @@ async function saveToServer() {
 
     <section>
       <h2>單位（ORBAT） <Button data-testid="add-unit" size="small" text @click="addUnit">＋</Button></h2>
-      <div v-for="(u, i) in model.units" :key="i" class="unit-block" data-testid="unit-block">
-        <div class="row" data-testid="unit-row">
-          <Select v-model="u.faction" :options="model.factions" option-label="id" option-value="id" size="small" />
-          <InputText v-model="u.designation" size="small" placeholder="番號" />
-          <Select
-            v-model="u.unitLevel"
-            :options="LEVEL_OPTIONS"
-            option-label="label"
-            option-value="value"
-            size="small"
-          />
-          <Select
-            v-model="u.parent"
-            :options="parentOptions(u)"
-            option-label="label"
-            option-value="value"
-            size="small"
-            placeholder="上級"
-          />
-          <InputText
-            :model-value="numStr(u.lat)"
-            size="small"
-            placeholder="緯度"
-            class="coord"
-            @update:model-value="(v: string | undefined) => setNum(u, 'lat', v)"
-          />
-          <InputText
-            :model-value="numStr(u.lng)"
-            size="small"
-            placeholder="經度"
-            class="coord"
-            @update:model-value="(v: string | undefined) => setNum(u, 'lng', v)"
-          />
+      <p v-if="!model.units.length" class="empty-hint" data-testid="orbat-empty">
+        尚無單位，按 ＋ 新增（依「上級」欄構成指揮層級樹）。
+      </p>
+      <!-- #29 分陣營 TreeTable：每個陣營一棵樹，依上級番號構成指揮層級 -->
+      <div
+        v-for="tree in orbatTrees"
+        :key="tree.id"
+        class="orbat-faction"
+        data-testid="orbat-faction"
+      >
+        <div class="orbat-faction-head">
+          <span class="fac-dot" :style="{ background: tree.color || '#888' }" />
+          <b>{{ tree.id }}</b>
+          <span class="fac-count">· {{ tree.count }} 單位</span>
           <Button
             size="small"
             text
-            :severity="openPickers.has(u) ? 'primary' : 'secondary'"
-            data-testid="unit-pick-toggle"
-            @click="togglePicker(u)"
-          >
-            📍 地圖選取
-          </Button>
-          <Button size="small" text severity="danger" @click="remove(model.units, i)">✕</Button>
+            data-testid="add-unit-faction"
+            @click="addUnitTo(tree.id)"
+          >＋ 加單位</Button>
         </div>
-        <ClientOnly v-if="openPickers.has(u)">
-          <MapPointPicker
-            class="unit-picker"
-            :model-value="unitPoint(u)"
-            @update:model-value="(p: { lng: number; lat: number }) => setUnitPoint(u, p)"
-          />
+        <TreeTable
+          v-model:expanded-keys="expandedKeys"
+          :value="tree.nodes"
+          size="small"
+          data-testid="orbat-treetable"
+        >
+          <Column field="designation" header="番號" expander>
+            <template #body="{ node }">
+              <InputText v-model="node.data.designation" size="small" placeholder="番號" />
+            </template>
+          </Column>
+          <Column header="編制">
+            <template #body="{ node }">
+              <Select
+                v-model="node.data.unitLevel"
+                :options="LEVEL_OPTIONS"
+                option-label="label"
+                option-value="value"
+                size="small"
+              />
+            </template>
+          </Column>
+          <Column header="上級">
+            <template #body="{ node }">
+              <Select
+                v-model="node.data.parent"
+                :options="parentOptions(node.data)"
+                option-label="label"
+                option-value="value"
+                size="small"
+                placeholder="上級"
+              />
+            </template>
+          </Column>
+          <Column header="座標">
+            <template #body="{ node }">
+              <span class="coord-cell">
+                <InputText
+                  :model-value="numStr(node.data.lat)"
+                  size="small"
+                  placeholder="緯"
+                  class="coord"
+                  @update:model-value="(v: string | undefined) => setNum(node.data, 'lat', v)"
+                />
+                <InputText
+                  :model-value="numStr(node.data.lng)"
+                  size="small"
+                  placeholder="經"
+                  class="coord"
+                  @update:model-value="(v: string | undefined) => setNum(node.data, 'lng', v)"
+                />
+                <Button
+                  size="small"
+                  text
+                  :severity="openPickers.has(node.data) ? 'primary' : 'secondary'"
+                  data-testid="unit-pick-toggle"
+                  @click="togglePicker(node.data)"
+                >📍</Button>
+              </span>
+            </template>
+          </Column>
+          <Column header="">
+            <template #body="{ node }">
+              <Button
+                size="small"
+                text
+                severity="danger"
+                data-testid="remove-unit"
+                @click="removeUnit(node.data)"
+              >✕</Button>
+            </template>
+          </Column>
+        </TreeTable>
+        <!-- 地圖選取（展開者顯示於表格下方） -->
+        <ClientOnly v-for="u in openPickersOf(tree.id)" :key="`pick-${tree.id}-${u.designation}`">
+          <div class="picker-wrap" data-testid="unit-picker-wrap">
+            <span class="picker-label">📍 {{ u.designation }} 初始位置</span>
+            <MapPointPicker
+              class="unit-picker"
+              :model-value="unitPoint(u)"
+              @update:model-value="(p: { lng: number; lat: number }) => setUnitPoint(u, p)"
+            />
+          </div>
         </ClientOnly>
       </div>
     </section>
@@ -339,6 +465,22 @@ h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; g
 .row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; flex-wrap: wrap; }
 .unit-block { margin: 0.25rem 0; }
 .unit-picker { margin: 0.25rem 0 0.5rem; max-width: 32rem; }
+/* #29 ORBAT 分陣營 TreeTable */
+.orbat-faction { margin: 0.5rem 0 1rem; }
+.orbat-faction-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-bottom: 0.25rem; font-size: 0.9rem;
+}
+.orbat-faction-head .fac-dot {
+  width: 0.75rem; height: 0.75rem; border-radius: 50%; display: inline-block; flex: none;
+}
+.orbat-faction-head .fac-count { color: #94a3b8; font-size: 0.8rem; }
+.coord-cell { display: inline-flex; gap: 0.25rem; align-items: center; }
+.picker-wrap { margin: 0.25rem 0 0.5rem; }
+.picker-label { display: block; color: #94a3b8; font-size: 0.75rem; margin-bottom: 0.2rem; }
+.empty-hint { color: #94a3b8; font-size: 0.82rem; }
+:deep(.p-treetable) { font-size: 0.85rem; }
+:deep(.p-treetable td) { padding: 0.2rem 0.4rem; }
 .meta { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
 .meta label { display: inline-flex; align-items: center; gap: 0.4rem; }
 .io { display: flex; gap: 1rem; }
