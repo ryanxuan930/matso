@@ -8,15 +8,20 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from app.adjudication.seed_weapons import SEED_WEAPONS
+from app.adjudication.seed_weapons import SEED_ARTILLERY, SEED_VEHICLES, SEED_WEAPONS
 from app.adjudication.weapon import WeaponProfile
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[3] / "contracts" / "weaponeering.schema.json"
 
 
-def _kinetic_validator() -> Draft202012Validator:
+def _validator(defname: str) -> Draft202012Validator:
+    """對某 $def 建驗證器；以 {$defs, $ref} 包裝使 allOf/$ref（如 artillery→kinetic）可解析。"""
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
-    return Draft202012Validator(schema["$defs"]["kinetic"])
+    return Draft202012Validator({"$defs": schema["$defs"], "$ref": f"#/$defs/{defname}"})
+
+
+def _kinetic_validator() -> Draft202012Validator:
+    return _validator("kinetic")
 
 
 def test_seed_weapons_conform_to_schema() -> None:
@@ -24,6 +29,29 @@ def test_seed_weapons_conform_to_schema() -> None:
     for name, stats in SEED_WEAPONS.items():
         errors = sorted(validator.iter_errors(stats), key=str)
         assert not errors, f"{name} 不符 weaponeering.schema.json：{errors}"
+
+
+def test_seed_artillery_conform_to_schema() -> None:
+    validator = _validator("artillery")
+    for name, stats in SEED_ARTILLERY.items():
+        errors = sorted(validator.iter_errors(stats), key=str)
+        assert not errors, f"{name} 不符 artillery $def：{errors}"
+
+
+def test_seed_vehicles_conform_to_schema() -> None:
+    validator = _validator("vehicle")
+    for name, stats in SEED_VEHICLES.items():
+        errors = sorted(validator.iter_errors(stats), key=str)
+        assert not errors, f"{name} 不符 vehicle $def：{errors}"
+
+
+def test_kinetic_kind_parsed() -> None:
+    assert WeaponProfile.from_base_stats(SEED_WEAPONS["TANK_MAIN_GUN_120"]).kinetic_kind == (
+        "TANK_MAIN_GUN"
+    )
+    assert WeaponProfile.from_base_stats(SEED_WEAPONS["RIFLE_556"]).kinetic_kind == "SMALL_ARMS"
+    # artillery 種子亦可由 WeaponProfile 解析（火力欄位共用 kinetic）。
+    assert WeaponProfile.from_base_stats(SEED_ARTILLERY["MORTAR_120"]).indirect_fire is True
 
 
 def test_all_seed_weapons_parse() -> None:

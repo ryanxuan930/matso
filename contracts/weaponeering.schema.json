@@ -26,6 +26,25 @@
         "max_range_m": { "type": "number", "exclusiveMinimum": 0 },
         "min_range_m": { "type": "number", "minimum": 0, "default": 0 },
         "indirect_fire": { "type": "boolean", "default": false },
+        "kinetic_kind": {
+          "description": "動能武器細分（現代軍事分類），驅動 UI 預設與子型行為。MORTAR/MLRS 屬 artillery 類別。",
+          "enum": ["SMALL_ARMS", "AUTOCANNON", "ATGM", "TANK_MAIN_GUN", "GRENADE", "GENERIC"],
+          "default": "GENERIC"
+        },
+        "rate_of_fire_rpm": {
+          "description": "實際每分鐘發數；per-tick 由想定 tick 秒數換算（取代把 tick 長度寫死進 rate_per_tick）。",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "guided": {
+          "description": "導引武器（如 ATGM）——命中率近乎與距離無關。",
+          "type": "boolean",
+          "default": false
+        },
+        "penetration_type": {
+          "description": "穿甲機制（KE 隨距衰減、HEAT 平坦）。v0 選填。",
+          "enum": ["KE", "HEAT", "HE_FRAG", "NONE"]
+        },
         "ph_by_range_band": {
           "type": "array",
           "description": "由近到遠的 [range_max_m, base_ph] 對；區間內依 ph_interp 插值",
@@ -83,7 +102,67 @@
           "type": "object",
           "description": "supply_class → 攜行量（AMMO/FUEL/WATER_FOOD/BATTERY）",
           "additionalProperties": { "type": "number", "minimum": 0 }
-        }
+        },
+        "transport": {
+          "type": "object",
+          "description": "運輸能力：載員/載具槽位/可否拖曳。",
+          "properties": {
+            "troop_capacity": { "type": "integer", "minimum": 0 },
+            "vehicle_slots": { "type": "integer", "minimum": 0 },
+            "can_tow": { "type": "boolean", "default": false },
+            "towable_classes": { "type": "array", "items": { "type": "string" } },
+            "load_unload_ticks": { "type": "integer", "minimum": 0, "default": 0 }
+          }
+        },
+        "mobility": { "$ref": "#/$defs/mobility" }
+      }
+    },
+    "mobility": {
+      "type": "object",
+      "description": "共用機動性區塊（載具/自走砲/後勤車輛嵌入）：能否自走、機動類型、道路/越野速度。",
+      "properties": {
+        "can_self_move": { "type": "boolean", "default": true },
+        "mobility_class": {
+          "enum": ["WHEELED", "TRACKED", "TOWED", "MAN_PORTABLE", "STATIC", "AIR"]
+        },
+        "max_road_speed_kmh": { "type": "number", "minimum": 0 },
+        "max_cross_country_speed_kmh": { "type": "number", "minimum": 0 },
+        "fuel_burn_per_tick": { "type": "number", "minimum": 0, "default": 0 }
+      }
+    },
+    "artillery": {
+      "type": "object",
+      "description": "火砲類（間瞄）：迫砲/牽引砲/自走砲/火箭。allOf 併入 kinetic 火力欄位再加火砲諸元。",
+      "allOf": [{ "$ref": "#/$defs/kinetic" }],
+      "properties": {
+        "artillery_kind": { "enum": ["MORTAR", "TOWED_GUN", "SP_GUN", "MLRS"] },
+        "dispersion_cep_m": { "type": "number", "minimum": 0, "description": "圓形公算誤差（散布）m。" },
+        "lethal_radius_m": { "type": "number", "minimum": 0, "description": "彈著致命半徑 m（面殺傷）。" },
+        "rounds_per_mission": { "type": "integer", "exclusiveMinimum": 0 },
+        "reload_ticks": { "type": "integer", "minimum": 0, "default": 0 },
+        "emplace_ticks": { "type": "integer", "minimum": 0, "default": 0 },
+        "mobility": { "$ref": "#/$defs/mobility" }
+      }
+    },
+    "vehicle": {
+      "type": "object",
+      "description": "載具（戰車/IFV/APC）：組員/載員、各面裝甲、機動性、防禦裝甲級別。",
+      "required": ["mobility"],
+      "properties": {
+        "crew": { "type": "integer", "minimum": 0 },
+        "passenger_capacity": { "type": "integer", "minimum": 0, "default": 0 },
+        "armor_class": { "$ref": "#/$defs/armor_class" },
+        "armor_by_aspect_mm": {
+          "type": "object",
+          "description": "各面裝甲厚度（RHA 等效 mm）。",
+          "properties": {
+            "front": { "type": "number", "minimum": 0 },
+            "side": { "type": "number", "minimum": 0 },
+            "rear": { "type": "number", "minimum": 0 },
+            "top": { "type": "number", "minimum": 0 }
+          }
+        },
+        "mobility": { "$ref": "#/$defs/mobility" }
       }
     },
     "drone": {

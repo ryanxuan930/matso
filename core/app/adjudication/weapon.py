@@ -45,6 +45,9 @@ class WeaponProfile:
     rate_per_tick: float
     # 命中率插值法："linear"（預設）或 "polynomial"（拉格朗日多項式，#4）
     ph_interp: str = "linear"
+    # 動能武器細分（現代軍事分類，N10）：SMALL_ARMS/AUTOCANNON/ATGM/TANK_MAIN_GUN/…（供 UI 與
+    # 未來子型行為；引擎現以 pk/ph 資料驅動，kinetic_kind 為分類元資料）。
+    kinetic_kind: str = "GENERIC"
     # 每發對各裝甲級別的擊殺機率 P(kill|hit) ∈ [0,1]（真實化交戰 Phase 1）。有值＝命中造成
     # 期望傷亡＝pk×每平台戰力；無值則退回 damage_by_armor_class[ac]/100 以相容既有種子。
     pk_by_armor_class: dict[str, float] = field(default_factory=dict)
@@ -78,6 +81,7 @@ class WeaponProfile:
             pk_by_armor_class={
                 str(k): float(v) for k, v in (stats.get("pk_by_armor_class") or {}).items()
             },
+            kinetic_kind=str(stats.get("kinetic_kind", "GENERIC")),
         )
 
     def base_ph(self, range_m: float) -> float:

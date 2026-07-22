@@ -4,11 +4,52 @@
 
 /** 裝備類別 → 繁中。對齊 EquipmentTemplate.category。 */
 export const CATEGORY_LABELS: Record<string, string> = {
-  KINETIC: '火力（動能武器）',
+  KINETIC: '火力（直射動能）',
+  ARTILLERY: '火砲（間瞄）',
+  VEHICLE: '載具',
   SENSOR: '感測器',
   COMMS: '通信',
   LOGISTICS: '後勤',
   DRONE: '無人機',
+}
+
+/** 動能武器細分（現代軍事分類）→ 繁中（對齊 kinetic_kind）。 */
+export const KINETIC_KIND_LABELS: Record<string, string> = {
+  SMALL_ARMS: '輕兵器（步/機槍）',
+  AUTOCANNON: '機砲',
+  ATGM: '反戰車飛彈',
+  TANK_MAIN_GUN: '戰車主砲',
+  GRENADE: '榴彈／擲彈',
+  GENERIC: '通用',
+}
+export const KINETIC_KINDS = Object.keys(KINETIC_KIND_LABELS)
+
+/** 火砲細分 → 繁中（對齊 artillery_kind）。 */
+export const ARTILLERY_KIND_LABELS: Record<string, string> = {
+  MORTAR: '迫擊砲',
+  TOWED_GUN: '牽引火砲',
+  SP_GUN: '自走砲',
+  MLRS: '多管火箭',
+}
+export const ARTILLERY_KINDS = Object.keys(ARTILLERY_KIND_LABELS)
+
+/** 機動類型 → 繁中（對齊 mobility_class）。 */
+export const MOBILITY_CLASS_LABELS: Record<string, string> = {
+  WHEELED: '輪型',
+  TRACKED: '履帶',
+  TOWED: '牽引（須載運）',
+  MAN_PORTABLE: '人力攜行',
+  STATIC: '固定（不可自走）',
+  AIR: '空中',
+}
+export const MOBILITY_CLASSES = Object.keys(MOBILITY_CLASS_LABELS)
+
+/** 穿甲機制 → 繁中（對齊 penetration_type）。 */
+export const PENETRATION_TYPE_LABELS: Record<string, string> = {
+  KE: '動能穿甲（隨距衰減）',
+  HEAT: '成形裝藥（平坦）',
+  HE_FRAG: '高爆破片',
+  NONE: '無',
 }
 export const CATEGORIES = Object.keys(CATEGORY_LABELS)
 export function categoryLabel(c?: string): string {
