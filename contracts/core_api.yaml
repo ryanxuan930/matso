@@ -278,6 +278,38 @@ components:
         ring: { type: array, items: { type: array, items: { type: number } }, description: "[[lng,lat],…] 閉合環" }
         clipped: { type: boolean, description: 是否有方位受地形限制 }
         max_range_m: { type: number }
+    MovementPreviewRequest:
+      type: object
+      description: 移動路徑預覽請求（#28）——waypoints 優先，否則單一目的地（起點取單位當前座標）
+      required: [unit_id]
+      properties:
+        unit_id: { type: string }
+        waypoints: { type: [array, "null"], items: { type: array, items: { type: number } }, description: "[[lng,lat],…] 自訂路徑" }
+        to_h3: { type: [string, "null"] }
+        to_lat: { type: [number, "null"] }
+        to_lng: { type: [number, "null"] }
+    MovementCrossing:
+      type: object
+      description: 路徑穿越一個不可通行標註的紀錄（#28）
+      required: [feature_id, kind, entry_frac]
+      properties:
+        feature_id: { type: string }
+        kind: { type: string, description: OBSTACLE/BUILDING/TERRAIN }
+        label: { type: [string, "null"] }
+        entry_frac: { type: number, description: "0..1 沿全程進入該阻礙的比例" }
+    MovementPreviewView:
+      type: object
+      description: 移動路徑試算結果（#28）
+      required: [path, distance_m, duration_ticks, fuel_cost, est_attrition, feasible, forced, crossings]
+      properties:
+        path: { type: array, items: { type: array, items: { type: number } }, description: "[[lng,lat],…] 含起點" }
+        distance_m: { type: number }
+        duration_ticks: { type: integer }
+        fuel_cost: { type: number }
+        est_attrition: { type: number, description: 基礎（確定性）耗損；強穿隨機加成不含在內 }
+        feasible: { type: boolean, description: 無強穿＝可行 }
+        forced: { type: boolean, description: 是否需強穿至少一個阻礙 }
+        crossings: { type: array, items: { $ref: "#/components/schemas/MovementCrossing" } }
     EquipmentStateEdit:
       type: object
       required: [current_state]
@@ -668,6 +700,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TerrainFootprintView" }
         "503": { description: Terrain unavailable, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/movement/preview:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: previewMovement
+      security: [{ bearerAuth: [] }]
+      description: 移動路徑預覽（#28）——試算距離/tick/油耗/可行性/強穿阻礙（下令前）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MovementPreviewRequest" }
+      responses:
+        "200":
+          description: Route estimate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MovementPreviewView" }
+        "400": { description: Bad request, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/inject:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

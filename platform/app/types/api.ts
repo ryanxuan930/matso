@@ -322,6 +322,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/movement/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 移動路徑預覽（#28）——試算距離/tick/油耗/可行性/強穿阻礙（下令前） */
+        post: operations["previewMovement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/inject": {
         parameters: {
             query?: never;
@@ -762,6 +781,39 @@ export interface components {
             /** @description 是否有方位受地形限制 */
             clipped: boolean;
             max_range_m: number;
+        };
+        /** @description 移動路徑預覽請求（#28）——waypoints 優先，否則單一目的地（起點取單位當前座標） */
+        MovementPreviewRequest: {
+            unit_id: string;
+            /** @description [[lng,lat],…] 自訂路徑 */
+            waypoints?: number[][] | null;
+            to_h3?: string | null;
+            to_lat?: number | null;
+            to_lng?: number | null;
+        };
+        /** @description 路徑穿越一個不可通行標註的紀錄（#28） */
+        MovementCrossing: {
+            feature_id: string;
+            /** @description OBSTACLE/BUILDING/TERRAIN */
+            kind: string;
+            label?: string | null;
+            /** @description 0..1 沿全程進入該阻礙的比例 */
+            entry_frac: number;
+        };
+        /** @description 移動路徑試算結果（#28） */
+        MovementPreviewView: {
+            /** @description [[lng,lat],…] 含起點 */
+            path: number[][];
+            distance_m: number;
+            duration_ticks: number;
+            fuel_cost: number;
+            /** @description 基礎（確定性）耗損；強穿隨機加成不含在內 */
+            est_attrition: number;
+            /** @description 無強穿＝可行 */
+            feasible: boolean;
+            /** @description 是否需強穿至少一個阻礙 */
+            forced: boolean;
+            crossings: components["schemas"]["MovementCrossing"][];
         };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
@@ -1550,6 +1602,41 @@ export interface operations {
             };
             /** @description Terrain unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewMovement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MovementPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Route estimate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MovementPreviewView"];
+                };
+            };
+            /** @description Bad request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

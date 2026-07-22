@@ -32,6 +32,7 @@ from app.engine.subsystems import (
     NoOpTriggerChecker,
 )
 from app.models import WargameSession
+from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.runtime import PerfCounterClock, TickPacer, run_paced
 from app.sim_control import session_pause_key
 from app.state.broadcaster import RedisBroadcaster
@@ -41,9 +42,10 @@ from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
 
-_TICK_RATE_MS = 60_000  # sim time：1 分 / tick
+# 與移動預覽端（api/movement）共用單一真相，確保估計與實跑一致。
+_TICK_RATE_MS = MOVE_TICK_RATE_MS  # sim time：1 分 / tick
 _PACE_COMPRESSION = 120.0  # 真實節奏：60000/1000/120 = 0.5s / tick
-_UNIT_SPEED_KMH = 40.0
+_UNIT_SPEED_KMH = MOVE_SPEED_KMH
 
 
 def _engage_gateway() -> object | None:
@@ -139,6 +141,7 @@ class SimManager:
                     hot_state=hot,
                     tick_rate_ms=_TICK_RATE_MS,
                     speed_kmh=_UNIT_SPEED_KMH,
+                    rng=DeterministicRNG(seed, "movement"),  # #28 強穿隨機耗損
                 ),
                 sensors=NoOpSensorSystem(),
                 comms=NoOpCommsSystem(),

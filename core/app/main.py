@@ -20,6 +20,7 @@ from app.api import (
     intel_router,
     lobby_router,
     map_features_router,
+    movement_router,
     orbat_router,
     orders_router,
     scenarios_router,
@@ -85,6 +86,7 @@ app.include_router(lobby_router)
 app.include_router(orbat_router)
 app.include_router(equipment_router)
 app.include_router(map_features_router)
+app.include_router(movement_router)
 app.include_router(orders_router)
 app.include_router(scenarios_router)
 app.include_router(units_router)
