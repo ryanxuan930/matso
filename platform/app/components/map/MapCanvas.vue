@@ -24,7 +24,16 @@ const emit = defineEmits<{
   basemapError: [{ id: string }] // 底圖瓦片載入失敗（供上層回退離線）
   // 右鍵選單（#3，ATAK 式移動/攻擊）：螢幕座標 + 經緯 + 游標下的單位（若有）。
   contextMenu: [
-    { x: number; y: number; lng: number; lat: number; unitId?: string; faction?: string; kind?: string },
+    {
+      x: number
+      y: number
+      lng: number
+      lat: number
+      unitId?: string
+      faction?: string
+      kind?: string
+      featureId?: string // #26 游標下的地圖標註/工事
+    },
   ]
   featureMove: [{ id: string; lng: number; lat: number }] // 拖放移動點特徵（#11 B2）
   // 選取單位的螢幕座標（供 Unit 資訊卡懸浮於圖標旁；地圖平移/縮放即時更新；無選取→null）。
@@ -873,6 +882,10 @@ onMounted(async () => {
   map.on('contextmenu', (e) => {
     const hit = map?.queryRenderedFeatures(e.point, { layers: ['units'] })?.[0]
     const p = hit?.properties
+    const flayers = ['mapfeat-point', 'mapfeat-symbol', 'mapfeat-fill', 'mapfeat-line'].filter(
+      (l) => map?.getLayer(l),
+    )
+    const fhit = flayers.length ? map?.queryRenderedFeatures(e.point, { layers: flayers })?.[0] : null
     emit('contextMenu', {
       x: e.point.x,
       y: e.point.y,
@@ -881,6 +894,7 @@ onMounted(async () => {
       ...(p && p.id != null
         ? { unitId: String(p.id), faction: String(p.faction ?? ''), kind: String(p.kind ?? '') }
         : {}),
+      ...(fhit?.properties?.id != null ? { featureId: String(fhit.properties.id) } : {}),
     })
   })
 })

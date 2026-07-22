@@ -85,6 +85,30 @@ export function haversineM(a: number[], b: number[]): number {
     Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2
   return 2 * R_EARTH * Math.asin(Math.min(1, Math.sqrt(h)))
 }
+/** 把點集（[lng,lat]…）繞其質心旋轉 deg 度（#26；順時針為正）。用於旋轉面/線標註。 */
+export function rotatePoints(points: number[][], deg: number): number[][] {
+  if (points.length < 2) return points
+  let cx = 0
+  let cy = 0
+  for (const p of points) {
+    cx += p[0]!
+    cy += p[1]!
+  }
+  cx /= points.length
+  cy /= points.length
+  const rad = (deg * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const latScale = Math.cos((cy * Math.PI) / 180) || 1 // 經度方向依緯度壓縮 → 近似等距旋轉
+  return points.map((p) => {
+    const dx = (p[0]! - cx) * latScale
+    const dy = p[1]! - cy
+    const rx = dx * cos - dy * sin
+    const ry = dx * sin + dy * cos
+    return [cx + rx / latScale, cy + ry]
+  })
+}
+
 /** 兩對角點 → 軸對齊矩形環（POLYGON 單環，未閉合；#11）。 */
 export function rectRing(a: number[], b: number[]): number[][] {
   const [x0, x1] = [Math.min(a[0]!, b[0]!), Math.max(a[0]!, b[0]!)]

@@ -29,6 +29,7 @@ import {
   fetchMapFeatures,
   fetchTerrainFootprint,
   influenceToFc,
+  rotatePoints,
   shapeToPolygon,
   type DraftKind,
   type FeatureCreate,
@@ -481,7 +482,27 @@ const ctxMenu = ref<{
   unitId?: string
   faction?: string
   kind?: string
+  featureId?: string
 } | null>(null)
+// #26 右鍵地圖物件選單動作：編輯（開編輯工具列並選取）/ 旋轉 / 刪除。
+function ctxEditFeature() {
+  const id = ctxMenu.value?.featureId
+  closeCtx()
+  if (id) onFeatureClick({ id })
+}
+async function ctxRotateFeature(deg: number) {
+  const id = ctxMenu.value?.featureId
+  closeCtx()
+  if (!id) return
+  if (selectedFeatureId.value !== id) onFeatureClick({ id })
+  await nextTick()
+  await rotateFeature(deg)
+}
+async function ctxDeleteFeature() {
+  const id = ctxMenu.value?.featureId
+  closeCtx()
+  if (id) await removeFeature(id)
+}
 const ctxIsMine = computed(
   () =>
     !!ctxMenu.value?.unitId &&
@@ -644,6 +665,11 @@ async function finishDraw() {
 }
 function onFeatureClick(e: { id: string }) {
   selectedFeatureId.value = e.id
+  // #26 點地圖物件即跳出「地圖編輯」小工具的編輯工具列（若有繪製權）。
+  if (canDraw.value && !widgets.value.mapedit.open) {
+    widgets.value.mapedit.open = true
+    focusWidget('mapedit')
+  }
   const f = mapFeatures.value.find((x) => x.id === e.id)
   const a = (f?.attributes ?? {}) as Record<string, unknown>
   editFeatLabel.value = f?.label ?? ''
@@ -723,6 +749,26 @@ async function onFeatureMove(e: { id: string; lng: number; lat: number }) {
       detail: (err as { message?: string }).message,
       timeoutMs: 0,
     })
+  }
+}
+// #26 旋轉選取的物件：武器扇區點→調方向角；面/線→頂點繞質心旋轉。
+async function rotateFeature(deg: number) {
+  const f = selectedFeature.value
+  if (!f) return
+  if (f.geometry_type === 'POINT') {
+    editFeatDir.value = ((((editFeatDir.value + deg) % 360) + 360) % 360)
+    if (editFeatArc.value >= 360) editFeatArc.value = 90 // 全向圓→轉成可見扇形才看得到方向
+    await saveFeatureEdit()
+    return
+  }
+  const g = f.geometry as number[][]
+  if (!Array.isArray(g) || g.length < 2) return
+  try {
+    clearTerrainClip(f.id)
+    await editMapFeature(sessionId.value, f.id, { geometry: rotatePoints(g, deg) })
+    await loadFeatures()
+  } catch (err) {
+    toasts.push({ severity: 'error', title: '旋轉失敗', detail: (err as { message?: string }).message, timeoutMs: 0 })
   }
 }
 async function saveFeatureEdit() {
@@ -1391,7 +1437,14 @@ watch(
             data-testid="ctx-menu"
             :style="{ left: `${ctxMenu.x}px`, top: `${ctxMenu.y}px` }"
           >
-            <template v-if="ctxIsMine">
+            <template v-if="ctxMenu?.featureId && canDraw">
+              <div class="ctx-title">地圖物件</div>
+              <button data-testid="ctx-feat-edit" @click="ctxEditFeature">✎ 編輯</button>
+              <button data-testid="ctx-feat-rot-ccw" @click="ctxRotateFeature(-15)">↺ 旋轉 15°</button>
+              <button data-testid="ctx-feat-rot-cw" @click="ctxRotateFeature(15)">↻ 旋轉 15°</button>
+              <button class="ctx-danger" data-testid="ctx-feat-del" @click="ctxDeleteFeature">✕ 刪除</button>
+            </template>
+            <template v-else-if="ctxIsMine">
               <div class="ctx-title">{{ ctxUnitName }}</div>
               <button data-testid="ctx-move" @click="ctxArmMove">🡒 移動</button>
               <button data-testid="ctx-attack" @click="ctxArmAttack">🎯 攻擊</button>
@@ -1521,6 +1574,12 @@ watch(
               v-model="editFeatSidc"
               data-testid="edit-feat-sidc"
             />
+            <!-- #26 旋轉：面/線繞質心旋轉；武器點旋轉射向。 -->
+            <div class="me-row2 me-rot-row">
+              <span class="me-rot-lbl">旋轉</span>
+              <button class="me-rot" data-testid="feat-rotate-ccw" @click="rotateFeature(-15)">↺ 15°</button>
+              <button class="me-rot" data-testid="feat-rotate-cw" @click="rotateFeature(15)">↻ 15°</button>
+            </div>
             <!-- 武器射向/雷達扇區（#11 C）：射程 + 方向 + 張角（360=全向圓）。 -->
             <template v-if="selectedFeature.kind === 'WEAPON_EMPLACEMENT' || editFeatRange != null">
               <div class="me-sub">射程 / 射向扇區</div>
@@ -1890,6 +1949,9 @@ watch(
   color: #e2e8f0;
   font-size: 0.8rem;
   cursor: pointer;
+}
+.ctx-menu button.ctx-danger {
+  color: #fca5a5;
 }
 .ctx-menu button:hover {
   background: #1d4ed8;
@@ -2341,6 +2403,25 @@ watch(
   border-radius: 0.2rem;
   background: #0a1626;
   color: #e2e8f0;
+}
+.map-editor .me-rot-row {
+  align-items: center;
+}
+.map-editor .me-rot-lbl {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+.map-editor .me-rot {
+  padding: 0.2rem 0.4rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.map-editor .me-rot:hover {
+  border-color: #2563eb;
 }
 .map-editor .me-save {
   padding: 0.3rem;
