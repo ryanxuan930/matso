@@ -1,12 +1,13 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import tailwindcss from "@tailwindcss/vite";
-import Aura from '@primeuix/themes/aura';
+import Aura from '@primevue/themes/aura';
 
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
   modules: ['@nuxt/fonts', '@nuxt/scripts', '@nuxt/eslint', '@pinia/nuxt', '@primevue/nuxt-module'],
-  // PrimeVue（v5 + @primeuix/themes Aura 預設）；darkModeSelector 對齊 app.vue 的全域深色基底。
+  // PrimeVue（v4 + @primevue/themes Aura 預設；v4 為 Apache-2.0 無授權水印，air-gapped 友善）。
+  // darkModeSelector 對齊 app.vue 的全域深色基底。
   // cssLayer 關閉（未用 @layer；避免與 Tailwind v4 的層級順序衝突）。
   primevue: {
     options: {
