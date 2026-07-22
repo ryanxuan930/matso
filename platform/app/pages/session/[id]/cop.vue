@@ -73,8 +73,10 @@ const lineWidthModal = ref(false)
 // #12 浮動工具視窗：六個小工具皆可拖拉/縮放/關閉，並以工具選單勾選開關；幾何+開關持久化。
 // 取代舊的左右固定面板/換邊。coordQuery/mapEditorOpen 改為對應 widget 的開關別名。
 type WidgetId = 'layers' | 'units' | 'events' | 'orders' | 'mapedit' | 'coords'
+type DockSide = 'left' | 'right' | 'float'
 interface WStat {
   open: boolean
+  dock: DockSide
   x: number
   y: number
   w: number
@@ -89,16 +91,17 @@ const WIDGET_DEFS: { id: WidgetId; title: string; label: string }[] = [
   { id: 'mapedit', title: '地圖編輯', label: '地圖編輯' },
   { id: 'coords', title: '座標查詢', label: '座標' },
 ]
+const DOCK_EDGE = 72 // 拖到最左/右 DOCK_EDGE px 內即停靠成側欄
 function defaultWidgets(): Record<WidgetId, WStat> {
   const vw = import.meta.client ? window.innerWidth : 1280
-  const rx = Math.max(324, vw - 320) // 右欄 x（貼右緣）
+  const rx = Math.max(324, vw - 320)
   return {
-    layers: { open: true, x: 12, y: 60, w: 296, h: 470, z: 11 },
-    units: { open: true, x: rx, y: 60, w: 300, h: 300, z: 12 },
-    events: { open: true, x: rx, y: 372, w: 300, h: 148, z: 13 },
-    orders: { open: true, x: rx, y: 532, w: 300, h: 180, z: 14 },
-    mapedit: { open: false, x: 12, y: 60, w: 326, h: 540, z: 15 },
-    coords: { open: false, x: 12, y: 540, w: 260, h: 170, z: 16 },
+    layers: { open: true, dock: 'left', x: 12, y: 60, w: 296, h: 470, z: 11 },
+    units: { open: true, dock: 'right', x: rx, y: 60, w: 300, h: 300, z: 12 },
+    events: { open: true, dock: 'right', x: rx, y: 372, w: 300, h: 148, z: 13 },
+    orders: { open: true, dock: 'right', x: rx, y: 532, w: 300, h: 180, z: 14 },
+    mapedit: { open: false, dock: 'float', x: 12, y: 60, w: 326, h: 540, z: 15 },
+    coords: { open: false, dock: 'float', x: 12, y: 540, w: 260, h: 170, z: 16 },
   }
 }
 const widgets = ref<Record<WidgetId, WStat>>(defaultWidgets())
@@ -115,6 +118,27 @@ function toggleWidget(id: WidgetId) {
 }
 function setWidgetGeom(id: WidgetId, g: { x: number; y: number; w: number; h: number }) {
   Object.assign(widgets.value[id], g)
+}
+// 拖曳起手：先脫離停靠變浮動，落在目前螢幕位置跟著游標走。
+function onWidgetGrab(id: WidgetId, g: { x: number; y: number; w: number; h: number }) {
+  const w = widgets.value[id]
+  w.dock = 'float'
+  w.x = g.x
+  w.y = g.y
+  w.h = g.h
+  focusWidget(id)
+}
+// 拖曳落下：靠最左/右緣 → 停靠成側欄；否則維持浮動於落點。
+function onWidgetDrop(id: WidgetId, g: { x: number; y: number; w: number; h: number }) {
+  const w = widgets.value[id]
+  const vw = window.innerWidth
+  if (g.x <= DOCK_EDGE) w.dock = 'left'
+  else if (g.x + g.w >= vw - DOCK_EDGE) w.dock = 'right'
+  else {
+    w.dock = 'float'
+    w.x = g.x
+    w.y = g.y
+  }
 }
 const coordQuery = computed({
   get: () => widgets.value.coords.open,
@@ -885,8 +909,10 @@ onMounted(() => {
         const s = p.widgets[id]
         if (!s || typeof s !== 'object') continue
         const cur = widgets.value[id]
+        const dock = s.dock === 'left' || s.dock === 'right' || s.dock === 'float' ? s.dock : cur.dock
         widgets.value[id] = {
           open: typeof s.open === 'boolean' ? s.open : cur.open,
+          dock,
           x: typeof s.x === 'number' ? s.x : cur.x,
           y: typeof s.y === 'number' ? s.y : cur.y,
           w: typeof s.w === 'number' ? s.w : cur.w,
@@ -1002,32 +1028,27 @@ watch(
             </div>
           </template>
         </div>
-        <button
-          v-if="canDraw"
-          data-testid="nav-map-editor"
-          :class="{ on: mapEditorOpen }"
-          @click="toggleWidget('mapedit')"
-        >
-          🗺 地圖編輯
-        </button>
-        <button
-          data-testid="nav-coord-query"
-          :class="{ on: coordQuery }"
-          @click="toggleWidget('coords')"
-        >
-          🎯 座標查詢
-        </button>
         <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)">📊 AAR</button>
       </nav>
     </header>
     <div class="body">
+      <!-- #12 停靠側欄容器（拖到最左/右緣的視窗落於此；空則以 :empty 隱藏）。 -->
+      <div id="dock-left-col" class="dock-col left" />
+      <div id="dock-right-col" class="dock-col right" />
       <ClientOnly>
+      <Teleport
+        to="#dock-right-col"
+        :disabled="widgets.units.dock === 'float'"
+      >
       <FloatingWidget
         v-if="widgets.units.open"
         title="單位 / 下令"
         :geom="widgets.units"
         :z="widgets.units.z"
+        :docked="widgets.units.dock !== 'float'"
         @update:geom="(g) => setWidgetGeom('units', g)"
+        @grab="(g) => onWidgetGrab('units', g)"
+        @drop="(g) => onWidgetDrop('units', g)"
         @close="widgets.units.open = false"
         @focus="focusWidget('units')"
       >
@@ -1112,13 +1133,18 @@ watch(
           </div>
         </div>
       </FloatingWidget>
+      </Teleport>
 
+      <Teleport to="#dock-right-col" :disabled="widgets.events.dock === 'float'">
       <FloatingWidget
         v-if="widgets.events.open"
         title="戰況事件"
         :geom="widgets.events"
         :z="widgets.events.z"
+        :docked="widgets.events.dock !== 'float'"
         @update:geom="(g) => setWidgetGeom('events', g)"
+        @grab="(g) => onWidgetGrab('events', g)"
+        @drop="(g) => onWidgetDrop('events', g)"
         @close="widgets.events.open = false"
         @focus="focusWidget('events')"
       >
@@ -1130,13 +1156,18 @@ watch(
           <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
         </ul>
       </FloatingWidget>
+      </Teleport>
 
+      <Teleport to="#dock-right-col" :disabled="widgets.orders.dock === 'float'">
       <FloatingWidget
         v-if="widgets.orders.open"
         title="指令"
         :geom="widgets.orders"
         :z="widgets.orders.z"
+        :docked="widgets.orders.dock !== 'float'"
         @update:geom="(g) => setWidgetGeom('orders', g)"
+        @grab="(g) => onWidgetGrab('orders', g)"
+        @drop="(g) => onWidgetDrop('orders', g)"
         @close="widgets.orders.open = false"
         @focus="focusWidget('orders')"
       >
@@ -1165,6 +1196,7 @@ watch(
           <li v-if="!orders.length" class="empty">（無指令）</li>
         </ul>
       </FloatingWidget>
+      </Teleport>
       </ClientOnly>
 
       <div class="map-wrap">
@@ -1216,12 +1248,19 @@ watch(
           </template>
         </ClientOnly>
         <ClientOnly>
+        <Teleport
+          :to="widgets.layers.dock === 'right' ? '#dock-right-col' : '#dock-left-col'"
+          :disabled="widgets.layers.dock === 'float'"
+        >
         <FloatingWidget
           v-if="widgets.layers.open"
           title="圖層 / 底圖"
           :geom="widgets.layers"
           :z="widgets.layers.z"
+          :docked="widgets.layers.dock !== 'float'"
           @update:geom="(g) => setWidgetGeom('layers', g)"
+          @grab="(g) => onWidgetGrab('layers', g)"
+          @drop="(g) => onWidgetDrop('layers', g)"
           @close="widgets.layers.open = false"
           @focus="focusWidget('layers')"
         >
@@ -1246,6 +1285,7 @@ watch(
             :basemaps="basemapSources"
           />
         </FloatingWidget>
+        </Teleport>
         </ClientOnly>
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
           <strong>離線底圖模式</strong>
@@ -1316,12 +1356,19 @@ watch(
 
         <!-- 地圖編輯器（stage ③b）：繪製標註/工事/武器據點。 -->
         <ClientOnly>
+        <Teleport
+          :to="widgets.mapedit.dock === 'right' ? '#dock-right-col' : '#dock-left-col'"
+          :disabled="widgets.mapedit.dock === 'float'"
+        >
         <FloatingWidget
           v-if="mapEditorOpen && canDraw"
           title="地圖編輯"
           :geom="widgets.mapedit"
           :z="widgets.mapedit.z"
+          :docked="widgets.mapedit.dock !== 'float'"
           @update:geom="(g) => setWidgetGeom('mapedit', g)"
+          @grab="(g) => onWidgetGrab('mapedit', g)"
+          @drop="(g) => onWidgetDrop('mapedit', g)"
           @close="widgets.mapedit.open = false"
           @focus="focusWidget('mapedit')"
         >
@@ -1456,16 +1503,24 @@ watch(
           </div>
           </div>
         </FloatingWidget>
+        </Teleport>
         </ClientOnly>
 
         <!-- 座標查詢讀值（#10）：點地圖任一點顯示經緯度 + MGRS。 -->
         <ClientOnly>
+        <Teleport
+          :to="widgets.coords.dock === 'right' ? '#dock-right-col' : '#dock-left-col'"
+          :disabled="widgets.coords.dock === 'float'"
+        >
         <FloatingWidget
           v-if="coordQuery"
           title="座標查詢"
           :geom="widgets.coords"
           :z="widgets.coords.z"
+          :docked="widgets.coords.dock !== 'float'"
           @update:geom="(g) => setWidgetGeom('coords', g)"
+          @grab="(g) => onWidgetGrab('coords', g)"
+          @drop="(g) => onWidgetDrop('coords', g)"
           @close="widgets.coords.open = false"
           @focus="focusWidget('coords')"
         >
@@ -1479,6 +1534,7 @@ watch(
             <div v-else class="cr-hint">尚未點選</div>
           </div>
         </FloatingWidget>
+        </Teleport>
         </ClientOnly>
 
         <!-- 單位詳細資訊圖卡（#5）：點單位顯示血量/狀態/座標/武器；點空白取消（#6）。 -->
@@ -1606,6 +1662,29 @@ watch(
   font-weight: 600;
   color: #94a3b8;
   margin-bottom: 0.4rem;
+}
+/* #12 停靠側欄：拖到最左/右緣的視窗排成側欄（Photoshop 式）。空欄以 :empty 隱藏。 */
+.dock-col {
+  position: fixed;
+  top: 52px;
+  bottom: 8px;
+  width: 312px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.4rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.dock-col.left {
+  left: 0;
+}
+.dock-col.right {
+  right: 0;
+}
+.dock-col:empty {
+  display: none;
 }
 /* 浮動視窗內：解除子面板原本的絕對定位，改為填滿視窗本體 */
 :deep(.fw .toggles),
