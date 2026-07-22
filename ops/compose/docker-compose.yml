@@ -74,6 +74,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8080/v1}
       TERRAIN_GRPC_TARGET: ${TERRAIN_GRPC_TARGET:-terrain:50051}
+      WEATHER_GRPC_TARGET: ${WEATHER_GRPC_TARGET:-weather:50052}
     ports: ["8000:8000"]
     depends_on:
       mariadb: { condition: service_healthy }

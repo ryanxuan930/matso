@@ -52,8 +52,8 @@ def _adjudicator(db: Session, hot: InMemoryHotState) -> EngagementAdjudicator:
         db,
         hot,
         DeterministicRNG(1, "adjudication"),
-        lambda _u: _WEAPON,
-        lambda _s, _t: EnvSnapshot(range_m=500.0, los_clear=True),
+        lambda _cmd: _WEAPON,
+        lambda _s, _t, _indirect=False: EnvSnapshot(range_m=500.0, los_clear=True),
     )
 
 

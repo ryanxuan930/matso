@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 
+import h3
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,7 @@ from app.adjudication.engagement import EnvSnapshot
 from app.adjudication.weapon import WeaponProfile
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.state.hot_state import HotStateStore
+from app.weather import WeatherState, engagement_weather_modifier
 
 _EARTH_R_M = 6_371_000.0
 
@@ -155,16 +157,31 @@ def seed_combat_state(
 _ENGAGE_OBS_M = 10.0
 
 
-def make_engage_env(hot: HotStateStore, gateway: object | None = None):  # type: ignore[no-untyped-def]
-    """回傳 env_for(shooter_id, target_id) → EnvSnapshot：由座標算射程 + 真實地形 LOS（Phase 3）。
+def _weather_res(weather: WeatherState) -> int:
+    """由天氣快照的 cell 鍵推得其 h3 解析度（供把射手座標換算到同解析度查修正）。預設 8。"""
+    cells = getattr(weather, "_cells", None)
+    if isinstance(cells, dict) and cells:
+        try:
+            return int(h3.get_resolution(next(iter(cells))))
+        except (ValueError, TypeError):
+            return 8
+    return 8
 
-    - range_m：由射手/目標熱狀態座標 haversine。座標缺失 → 極大 → OUT_OF_RANGE 拒絕（安全退化）。
-    - los_clear：有 `gateway`（terrain gRPC）時查真實視線（射手↔目標，離地各 10m）——目標退入稜線後
-      即遮蔽（直瞄拒絕、間瞄仍可）。無 gateway 或 RPC 失敗 → 退回 True（地形服務中斷不凍結戰鬥）。
-    - 地形 LOS 給定座標具決定性 → replay 安全。天氣/cover 係數（STEP2/3）仍預設 1.0。
+
+def make_engage_env(  # type: ignore[no-untyped-def]
+    hot: HotStateStore, gateway: object | None = None, weather: WeatherState | None = None
+):
+    """回傳 env_for(shooter, target, indirect_fire) → EnvSnapshot（射程+地形LOS+天氣，Phase3）。
+
+    - range_m：由射手/目標座標 haversine。缺失 → 極大 → OUT_OF_RANGE 拒絕（安全退化）。
+    - los_clear：有 `gateway`（terrain gRPC）時查真實視線（離地各 10m）；目標退入稜線→直瞄遮蔽。
+      無 gateway 或 RPC 失敗 → True（地形服務中斷不凍結戰鬥）。
+    - weather_modifier：有 `weather` 快照時取射手 cell 的交戰天氣修正（直瞄看能見度、間瞄看散佈）。
+      無天氣或查無 cell → CLEAR（1.0）。給定座標/快照具決定性 → replay 安全。
     """
+    w_res = _weather_res(weather) if weather is not None else 8
 
-    def env_for(shooter_id: str, target_id: str) -> EnvSnapshot:
+    def env_for(shooter_id: str, target_id: str, indirect_fire: bool = False) -> EnvSnapshot:
         s = hot.get_unit(shooter_id) or {}
         t = hot.get_unit(target_id) or {}
         try:
@@ -182,6 +199,10 @@ def make_engage_env(hot: HotStateStore, gateway: object | None = None):  # type:
                 los_clear = bool(outcome.visible)
             except Exception:
                 los_clear = True
-        return EnvSnapshot(range_m=range_m, los_clear=los_clear)
+        weather_mod = 1.0
+        if weather is not None:
+            effects = weather.effects_at(h3.latlng_to_cell(s_lat, s_lng, w_res))
+            weather_mod = engagement_weather_modifier(effects, indirect_fire)
+        return EnvSnapshot(range_m=range_m, los_clear=los_clear, weather_modifier=weather_mod)
 
     return env_for

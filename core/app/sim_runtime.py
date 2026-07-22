@@ -37,6 +37,7 @@ from app.sim_control import session_pause_key
 from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerWriter
+from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
 
@@ -56,6 +57,25 @@ def _engage_gateway() -> object | None:
         return get_gateway()
     except Exception:
         _LOG.warning("交戰 gateway 建立失敗，LOS 退回可見")
+        return None
+
+
+def _weather_snapshot() -> WeatherState | None:
+    """交戰天氣修正用的 WeatherState 快照（Phase 3 STEP2）——session 啟動時取一次（決定性）。
+
+    失敗（無 grpc/服務未起）→ None，make_engage_env 天氣修正退回 1.0（晴天，不阻斷活模擬）。
+    v0：整局用啟動快照；逐 weather-tick 刷新列為後續（PROGRESS Backlog）。
+    """
+    try:
+        import grpc
+
+        from app.config import Settings
+        from app.plugins.weather_client import WeatherClient
+
+        channel = grpc.insecure_channel(Settings().weather_grpc_target)
+        return WeatherClient(channel).fetch_state(0)  # 失敗 → WeatherState.clear()
+    except Exception:
+        _LOG.warning("交戰 weather 快照建立失敗，天氣修正退回晴天")
         return None
 
 
@@ -111,7 +131,7 @@ class SimManager:
                     hot,
                     DeterministicRNG(seed, "adjudication"),
                     resolver.weapon_for,
-                    make_engage_env(hot, _engage_gateway()),
+                    make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,

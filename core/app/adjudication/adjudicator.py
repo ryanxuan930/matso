@@ -34,7 +34,8 @@ from app.orders.state_machine import next_status
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
-EngageEnvLookup = Callable[[str, str], EnvSnapshot]  # (shooter_id, target_id) → EnvSnapshot
+# (shooter_id, target_id, indirect_fire) → EnvSnapshot（indirect_fire 供天氣散佈修正區分直/間瞄）
+EngageEnvLookup = Callable[[str, str, bool], EnvSnapshot]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +110,7 @@ class EngagementAdjudicator:
             return []
 
         weapon = self._weapon_for(order)
-        env = self._env_for(order.shooter_id, order.target_id)
+        env = self._env_for(order.shooter_id, order.target_id, weapon.indirect_fire)
         result = resolve_engagement(
             weapon,
             Shooter(unit_id=order.shooter_id, ammo_count=int(shooter_state.get("ammo", 0))),

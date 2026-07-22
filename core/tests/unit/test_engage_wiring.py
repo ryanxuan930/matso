@@ -200,3 +200,23 @@ def test_make_engage_env_gateway_failure_falls_back_visible() -> None:
 
     env = make_engage_env(_two_unit_hot(), _Boom())("s", "t")
     assert env.los_clear is True  # 服務中斷不凍結戰鬥
+
+
+def test_make_engage_env_weather_modifier_direct_vs_indirect() -> None:
+    # 天氣快照：射手 cell 光學 0.4（暴雨）、散佈 2.0 → 直瞄看能見度、間瞄看散佈。
+    import h3
+
+    from app.weather import CellEffects, WeatherState
+
+    key = h3.latlng_to_cell(23.75, 121.25, 8)
+    state = WeatherState(
+        {key: CellEffects(sensor_optical_modifier=0.4, artillery_dispersion_modifier=2.0)}
+    )
+    env_fn = make_engage_env(_two_unit_hot(), None, state)
+    assert env_fn("s", "t", False).weather_modifier == pytest.approx(0.4)  # 直瞄：能見度
+    assert env_fn("s", "t", True).weather_modifier == pytest.approx(0.5)  # 間瞄：1/2.0
+
+
+def test_make_engage_env_no_weather_is_clear() -> None:
+    env = make_engage_env(_two_unit_hot())("s", "t")
+    assert env.weather_modifier == pytest.approx(1.0)

@@ -175,7 +175,7 @@ async def test_scripted_battle_full_flow() -> None:
 
     faction = {blue_id: "BLUE", red_id: "RED"}
 
-    def engage_env(shooter_id: str, target_id: str) -> EnvSnapshot:
+    def engage_env(shooter_id: str, target_id: str, indirect_fire: bool = False) -> EnvSnapshot:
         s, t = hot.get_unit(shooter_id), hot.get_unit(target_id)
         assert s is not None and t is not None
         return EnvSnapshot(
