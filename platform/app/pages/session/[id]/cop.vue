@@ -59,7 +59,6 @@ const contourMinor = ref(50)
 const latlngGrid = ref(false)
 const mgrsGrid = ref(false)
 const gridStepDeg = ref(0.5)
-const coordQuery = ref(false)
 const queryPoint = ref<{ lng: number; lat: number } | null>(null)
 const queryMgrs = ref('')
 const hexMaxRes = ref(8) // 六角網格最細解析度上限（設定最小網格）
@@ -71,17 +70,59 @@ const hexLineWidth = ref(0.5)
 const contourMajorWidth = ref(1.2)
 const contourMinorWidth = ref(0.5)
 const lineWidthModal = ref(false)
-// #12 GIS 工具列：左側工具面板各段收合 + 左右換邊（持久化）+ 地圖元素顯隱。
-const panelSide = ref<'left' | 'right'>('left')
-const panelCollapse = ref<{ units: boolean; events: boolean; orders: boolean }>({
-  units: false,
-  events: false,
-  orders: false,
+// #12 浮動工具視窗：六個小工具皆可拖拉/縮放/關閉，並以工具選單勾選開關；幾何+開關持久化。
+// 取代舊的左右固定面板/換邊。coordQuery/mapEditorOpen 改為對應 widget 的開關別名。
+type WidgetId = 'layers' | 'units' | 'events' | 'orders' | 'mapedit' | 'coords'
+interface WStat {
+  open: boolean
+  x: number
+  y: number
+  w: number
+  h: number
+  z: number
+}
+const WIDGET_DEFS: { id: WidgetId; title: string; label: string }[] = [
+  { id: 'layers', title: '圖層 / 底圖', label: '圖層' },
+  { id: 'units', title: '單位 / 下令', label: '單位' },
+  { id: 'events', title: '戰況事件', label: '戰況事件' },
+  { id: 'orders', title: '指令', label: '指令' },
+  { id: 'mapedit', title: '地圖編輯', label: '地圖編輯' },
+  { id: 'coords', title: '座標查詢', label: '座標' },
+]
+function defaultWidgets(): Record<WidgetId, WStat> {
+  const vw = import.meta.client ? window.innerWidth : 1280
+  const rx = Math.max(324, vw - 320) // 右欄 x（貼右緣）
+  return {
+    layers: { open: true, x: 12, y: 60, w: 296, h: 470, z: 11 },
+    units: { open: true, x: rx, y: 60, w: 300, h: 300, z: 12 },
+    events: { open: true, x: rx, y: 372, w: 300, h: 148, z: 13 },
+    orders: { open: true, x: rx, y: 532, w: 300, h: 180, z: 14 },
+    mapedit: { open: false, x: 12, y: 60, w: 326, h: 540, z: 15 },
+    coords: { open: false, x: 12, y: 540, w: 260, h: 170, z: 16 },
+  }
+}
+const widgets = ref<Record<WidgetId, WStat>>(defaultWidgets())
+const widgetZTop = ref(20)
+const widgetMenuOpen = ref(false)
+function focusWidget(id: WidgetId) {
+  widgetZTop.value += 1
+  widgets.value[id].z = widgetZTop.value
+}
+function toggleWidget(id: WidgetId) {
+  const w = widgets.value[id]
+  w.open = !w.open
+  if (w.open) focusWidget(id)
+}
+function setWidgetGeom(id: WidgetId, g: { x: number; y: number; w: number; h: number }) {
+  Object.assign(widgets.value[id], g)
+}
+const coordQuery = computed({
+  get: () => widgets.value.coords.open,
+  set: (v: boolean) => {
+    widgets.value.coords.open = v
+  },
 })
 const hiddenFeatureIds = ref<string[]>([]) // session-local：隱藏的地圖元素
-function togglePanelSide() {
-  panelSide.value = panelSide.value === 'left' ? 'right' : 'left'
-}
 function toggleFeatureHidden(id: string) {
   const i = hiddenFeatureIds.value.indexOf(id)
   if (i >= 0) hiddenFeatureIds.value.splice(i, 1)
@@ -136,7 +177,12 @@ const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 
 // 地圖編輯器（stage ③b）——標註/工事/武器據點的繪製與管理。
 const mapFeatures = ref<MapFeature[]>([])
-const mapEditorOpen = ref(false)
+const mapEditorOpen = computed({
+  get: () => widgets.value.mapedit.open,
+  set: (v: boolean) => {
+    widgets.value.mapedit.open = v
+  },
+})
 const drawKind = ref<DraftKind | null>(null)
 const drawFeatureKind = ref('OBSTACLE')
 const drawWeaponTemplate = ref('')
@@ -825,9 +871,20 @@ onMounted(() => {
     if (typeof p.dayNight === 'boolean') dayNight.value = p.dayNight
     if (typeof p.timeOfDay === 'number') timeOfDay.value = p.timeOfDay
     if (typeof p.preciseMove === 'boolean') preciseMove.value = p.preciseMove
-    if (p.panelSide === 'left' || p.panelSide === 'right') panelSide.value = p.panelSide
-    if (p.panelCollapse && typeof p.panelCollapse === 'object') {
-      panelCollapse.value = { ...panelCollapse.value, ...p.panelCollapse }
+    if (p.widgets && typeof p.widgets === 'object') {
+      for (const id of Object.keys(widgets.value) as WidgetId[]) {
+        const s = p.widgets[id]
+        if (!s || typeof s !== 'object') continue
+        const cur = widgets.value[id]
+        widgets.value[id] = {
+          open: typeof s.open === 'boolean' ? s.open : cur.open,
+          x: typeof s.x === 'number' ? s.x : cur.x,
+          y: typeof s.y === 'number' ? s.y : cur.y,
+          w: typeof s.w === 'number' ? s.w : cur.w,
+          h: typeof s.h === 'number' ? s.h : cur.h,
+          z: cur.z,
+        }
+      }
     }
     if (typeof p.hexLineWidth === 'number') hexLineWidth.value = p.hexLineWidth
     if (typeof p.contourMajorWidth === 'number') contourMajorWidth.value = p.contourMajorWidth
@@ -857,8 +914,7 @@ watch(
     hexLineWidth,
     contourMajorWidth,
     contourMinorWidth,
-    panelSide,
-    panelCollapse,
+    widgets,
   ],
   () => {
     if (!import.meta.client) return
@@ -882,8 +938,7 @@ watch(
           dayNight: dayNight.value,
           timeOfDay: timeOfDay.value,
           preciseMove: preciseMove.value,
-          panelSide: panelSide.value,
-          panelCollapse: panelCollapse.value,
+          widgets: widgets.value,
           hexLineWidth: hexLineWidth.value,
           contourMajorWidth: contourMajorWidth.value,
           contourMinorWidth: contourMinorWidth.value,
@@ -912,35 +967,63 @@ watch(
         >
           ⚙ 白軍控制台
         </button>
+        <div class="widget-menu">
+          <button
+            data-testid="nav-widgets"
+            :class="{ on: widgetMenuOpen }"
+            title="工具視窗（開啟/關閉小工具）"
+            @click="widgetMenuOpen = !widgetMenuOpen"
+          >
+            ⊞ 工具
+          </button>
+          <template v-if="widgetMenuOpen">
+            <div class="wm-backdrop" @click="widgetMenuOpen = false" />
+            <div class="wm-pop" data-testid="widget-menu">
+              <div class="wm-hd">工具視窗</div>
+              <label
+                v-for="d in WIDGET_DEFS"
+                v-show="d.id !== 'mapedit' || canDraw"
+                :key="d.id"
+                :class="{ off: !widgets[d.id].open }"
+                :data-testid="`widget-toggle-${d.id}`"
+              >
+                <input type="checkbox" :checked="widgets[d.id].open" @change="toggleWidget(d.id)">
+                {{ d.label }}
+              </label>
+            </div>
+          </template>
+        </div>
         <button
           v-if="canDraw"
           data-testid="nav-map-editor"
           :class="{ on: mapEditorOpen }"
-          @click="mapEditorOpen = !mapEditorOpen"
+          @click="toggleWidget('mapedit')"
         >
           🗺 地圖編輯
         </button>
         <button
           data-testid="nav-coord-query"
           :class="{ on: coordQuery }"
-          @click="coordQuery = !coordQuery"
+          @click="toggleWidget('coords')"
         >
           🎯 座標查詢
         </button>
         <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)">📊 AAR</button>
       </nav>
     </header>
-    <div class="body" :class="{ 'panel-right': panelSide === 'right' }">
-      <aside class="panel">
-        <div class="panel-tools">
-          <button data-testid="panel-swap" title="工具面板左右換邊" @click="togglePanelSide">
-            ⇄ {{ panelSide === 'left' ? '移至右側' : '移至左側' }}
-          </button>
-        </div>
-        <button class="sec-hd" data-testid="sec-units" @click="panelCollapse.units = !panelCollapse.units">
-          <span class="chev">{{ panelCollapse.units ? '▸' : '▾' }}</span> 單位（{{ realUnits.length }}）
-        </button>
-        <ul v-show="!panelCollapse.units" class="units" data-testid="unit-list">
+    <div class="body">
+      <ClientOnly>
+      <FloatingWidget
+        v-if="widgets.units.open"
+        title="單位 / 下令"
+        :geom="widgets.units"
+        :z="widgets.units.z"
+        @update:geom="(g) => setWidgetGeom('units', g)"
+        @close="widgets.units.open = false"
+        @focus="focusWidget('units')"
+      >
+        <div class="wsec-hd">單位（{{ realUnits.length }}）</div>
+        <ul class="units" data-testid="unit-list">
           <li
             v-for="u in realUnits"
             :key="u.id"
@@ -1019,23 +1102,37 @@ watch(
             </ul>
           </div>
         </div>
+      </FloatingWidget>
 
-        <button class="sec-hd" data-testid="sec-events" @click="panelCollapse.events = !panelCollapse.events">
-          <span class="chev">{{ panelCollapse.events ? '▸' : '▾' }}</span>
-          戰況事件 <span class="ws">· {{ stream.status }}</span>
-        </button>
-        <ul v-show="!panelCollapse.events" class="events" data-testid="event-list">
+      <FloatingWidget
+        v-if="widgets.events.open"
+        title="戰況事件"
+        :geom="widgets.events"
+        :z="widgets.events.z"
+        @update:geom="(g) => setWidgetGeom('events', g)"
+        @close="widgets.events.open = false"
+        @focus="focusWidget('events')"
+      >
+        <div class="wsec-hd">戰況事件 <span class="ws">· {{ stream.status }}</span></div>
+        <ul class="events" data-testid="event-list">
           <li v-for="(e, i) in streamEvents" :key="i" data-testid="event-row">
             {{ formatEvent(e.payload as Record<string, unknown>) }}
           </li>
           <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
         </ul>
+      </FloatingWidget>
 
-        <button class="sec-hd" data-testid="sec-orders" @click="panelCollapse.orders = !panelCollapse.orders">
-          <span class="chev">{{ panelCollapse.orders ? '▸' : '▾' }}</span>
-          指令（{{ orders.length }}）
-        </button>
-        <ul v-show="!panelCollapse.orders" class="orders" data-testid="order-list">
+      <FloatingWidget
+        v-if="widgets.orders.open"
+        title="指令"
+        :geom="widgets.orders"
+        :z="widgets.orders.z"
+        @update:geom="(g) => setWidgetGeom('orders', g)"
+        @close="widgets.orders.open = false"
+        @focus="focusWidget('orders')"
+      >
+        <div class="wsec-hd">指令（{{ orders.length }}）</div>
+        <ul class="orders" data-testid="order-list">
           <li v-for="o in orders" :key="o.id" data-testid="order-row">
             {{ orderTypeLabel(o.order_type) }} · {{ orderStatusLabel(o.status) }}
             <button
@@ -1049,7 +1146,8 @@ watch(
           </li>
           <li v-if="!orders.length" class="empty">（無指令）</li>
         </ul>
-      </aside>
+      </FloatingWidget>
+      </ClientOnly>
 
       <div class="map-wrap">
         <ClientOnly>
@@ -1099,27 +1197,38 @@ watch(
             <div class="map-loading" data-testid="map-loading">地圖載入中…</div>
           </template>
         </ClientOnly>
-        <LayerToggles
-          v-model:hex="hex"
-          v-model:hillshade="hillshade"
-          v-model:contour="contour"
-          v-model:basemap="basemap"
-          v-model:layer-opacity="layerOpacity"
-          v-model:layer-order="layerOrder"
-          v-model:contour-major="contourMajor"
-          v-model:contour-minor="contourMinor"
-          v-model:latlng-grid="latlngGrid"
-          v-model:mgrs-grid="mgrsGrid"
-          v-model:grid-step-deg="gridStepDeg"
-          v-model:hex-max-res="hexMaxRes"
-          v-model:hex-limit-km="hexLimitKm"
-          v-model:day-night="dayNight"
-          v-model:time-of-day="timeOfDay"
-          :class="{ 'dock-left': panelSide === 'right' }"
-          :hillshade-enabled="hasTiles"
-          :contour-enabled="hasTiles"
-          :basemaps="basemapSources"
-        />
+        <ClientOnly>
+        <FloatingWidget
+          v-if="widgets.layers.open"
+          title="圖層 / 底圖"
+          :geom="widgets.layers"
+          :z="widgets.layers.z"
+          @update:geom="(g) => setWidgetGeom('layers', g)"
+          @close="widgets.layers.open = false"
+          @focus="focusWidget('layers')"
+        >
+          <LayerToggles
+            v-model:hex="hex"
+            v-model:hillshade="hillshade"
+            v-model:contour="contour"
+            v-model:basemap="basemap"
+            v-model:layer-opacity="layerOpacity"
+            v-model:layer-order="layerOrder"
+            v-model:contour-major="contourMajor"
+            v-model:contour-minor="contourMinor"
+            v-model:latlng-grid="latlngGrid"
+            v-model:mgrs-grid="mgrsGrid"
+            v-model:grid-step-deg="gridStepDeg"
+            v-model:hex-max-res="hexMaxRes"
+            v-model:hex-limit-km="hexLimitKm"
+            v-model:day-night="dayNight"
+            v-model:time-of-day="timeOfDay"
+            :hillshade-enabled="hasTiles"
+            :contour-enabled="hasTiles"
+            :basemaps="basemapSources"
+          />
+        </FloatingWidget>
+        </ClientOnly>
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
           <strong>離線底圖模式</strong>
           <span>目前顯示經緯格線 + 單位符號（無向量瓦片）。要載入台灣街道/地形底圖，需由
@@ -1188,11 +1297,17 @@ watch(
         </template>
 
         <!-- 地圖編輯器（stage ③b）：繪製標註/工事/武器據點。 -->
-        <div v-if="mapEditorOpen && canDraw" class="map-editor" data-testid="map-editor">
-          <div class="me-hd">
-            <strong>地圖編輯</strong>
-            <button class="me-x" data-testid="map-editor-close" @click="mapEditorOpen = false">✕</button>
-          </div>
+        <ClientOnly>
+        <FloatingWidget
+          v-if="mapEditorOpen && canDraw"
+          title="地圖編輯"
+          :geom="widgets.mapedit"
+          :z="widgets.mapedit.z"
+          @update:geom="(g) => setWidgetGeom('mapedit', g)"
+          @close="widgets.mapedit.open = false"
+          @focus="focusWidget('mapedit')"
+        >
+          <div class="map-editor" data-testid="map-editor">
           <div v-if="!drawActive" class="me-tools">
             <label class="me-kind">
               類別
@@ -1321,18 +1436,32 @@ watch(
             <input v-model="editFeatNotes" class="me-in" data-testid="edit-feat-notes" placeholder="備註">
             <button class="me-save" data-testid="save-feat-edit" @click="saveFeatureEdit">儲存屬性</button>
           </div>
-        </div>
+          </div>
+        </FloatingWidget>
+        </ClientOnly>
 
         <!-- 座標查詢讀值（#10）：點地圖任一點顯示經緯度 + MGRS。 -->
-        <div v-if="coordQuery" class="coord-readout" data-testid="coord-readout">
-          <div class="cr-hd">座標查詢 · 點地圖任一點</div>
-          <template v-if="queryPoint">
-            <div class="cr-row"><span>緯度</span><code>{{ queryPoint.lat.toFixed(5) }}</code></div>
-            <div class="cr-row"><span>經度</span><code>{{ queryPoint.lng.toFixed(5) }}</code></div>
-            <div class="cr-row"><span>MGRS</span><code data-testid="coord-mgrs">{{ queryMgrs }}</code></div>
-          </template>
-          <div v-else class="cr-hint">尚未點選</div>
-        </div>
+        <ClientOnly>
+        <FloatingWidget
+          v-if="coordQuery"
+          title="座標查詢"
+          :geom="widgets.coords"
+          :z="widgets.coords.z"
+          @update:geom="(g) => setWidgetGeom('coords', g)"
+          @close="widgets.coords.open = false"
+          @focus="focusWidget('coords')"
+        >
+          <div class="coord-readout" data-testid="coord-readout">
+            <div class="cr-hd">座標查詢 · 點地圖任一點</div>
+            <template v-if="queryPoint">
+              <div class="cr-row"><span>緯度</span><code>{{ queryPoint.lat.toFixed(5) }}</code></div>
+              <div class="cr-row"><span>經度</span><code>{{ queryPoint.lng.toFixed(5) }}</code></div>
+              <div class="cr-row"><span>MGRS</span><code data-testid="coord-mgrs">{{ queryMgrs }}</code></div>
+            </template>
+            <div v-else class="cr-hint">尚未點選</div>
+          </div>
+        </FloatingWidget>
+        </ClientOnly>
 
         <!-- 單位詳細資訊圖卡（#5）：點單位顯示血量/狀態/座標/武器；點空白取消（#6）。 -->
         <div v-if="selectedUnit" class="unit-card" data-testid="unit-detail-card">
@@ -1405,6 +1534,77 @@ watch(
   padding: 0.5rem 1rem;
   background: #0f172a;
   border-bottom: 1px solid #1e293b;
+  position: relative;
+  z-index: 1000; /* 頂列 + 工具選單永遠壓過浮動視窗 */
+}
+/* #12 工具視窗開關選單 */
+.widget-menu {
+  position: relative;
+}
+.wm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+.wm-pop {
+  position: absolute;
+  top: 110%;
+  left: 0;
+  z-index: 1001;
+  min-width: 9rem;
+  padding: 0.35rem;
+  background: #0f1b2e;
+  border: 1px solid #24344a;
+  border-radius: 0.4rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.wm-hd {
+  font-size: 0.68rem;
+  color: #64748b;
+  padding: 0.1rem 0.3rem 0.25rem;
+}
+.wm-pop label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.78rem;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+.wm-pop label:hover {
+  background: #1e293b;
+}
+.wm-pop label.off {
+  color: #64748b;
+}
+/* 段落小標（取代舊 sec-hd，浮動視窗內用） */
+.wsec-hd {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-bottom: 0.4rem;
+}
+/* 浮動視窗內：解除子面板原本的絕對定位，改為填滿視窗本體 */
+:deep(.fw .toggles),
+:deep(.fw .map-editor),
+:deep(.fw .coord-readout) {
+  position: static;
+  inset: auto;
+  transform: none;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  z-index: auto;
+  box-shadow: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
 }
 .cop-bar button {
   padding: 0.25rem 0.75rem;
@@ -1603,69 +1803,11 @@ watch(
   flex: 1;
   min-height: 0;
 }
-.panel {
-  width: 18rem;
-  overflow-y: auto;
-  padding: 0.75rem 1rem;
-  background: #0f172a;
-  border-right: 1px solid #1e293b;
-  font-size: 0.8125rem;
-}
-.panel h3 {
+/* 下令面板小標（浮動視窗內） */
+.order h3 {
   margin: 0.75rem 0 0.375rem;
   font-size: 0.8125rem;
   color: #94a3b8;
-}
-/* #12 GIS 工具列：左右換邊 + 可收合段落 + 元素顯隱。 */
-.body.panel-right {
-  flex-direction: row-reverse;
-}
-.body.panel-right .panel {
-  border-right: none;
-  border-left: 1px solid #1e293b;
-}
-:deep(.toggles.dock-left) {
-  right: auto !important;
-  left: 1rem;
-}
-.panel-tools {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 0.4rem;
-}
-.panel-tools button {
-  padding: 0.2rem 0.5rem;
-  border: 1px solid #334155;
-  border-radius: 0.25rem;
-  background: transparent;
-  color: #7dd3fc;
-  cursor: pointer;
-  font-size: 0.72rem;
-}
-.panel-tools button:hover {
-  border-color: #2563eb;
-}
-.sec-hd {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0.75rem 0 0.375rem;
-  padding: 0.15rem 0;
-  border: 0;
-  background: transparent;
-  color: #94a3b8;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: left;
-}
-.sec-hd:hover {
-  color: #e2e8f0;
-}
-.sec-hd .chev {
-  color: #64748b;
-  font-size: 0.7rem;
 }
 .feye {
   border: none;
