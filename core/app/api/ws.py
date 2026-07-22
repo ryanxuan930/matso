@@ -58,6 +58,11 @@ async def session_stream(
 ) -> None:
     # 1) 認證 + faction 解析（accept 前先驗，失敗即拒）
     identity = _authenticate(db, auth, session_id, token)
+    # DB 僅認證需要——用完立即歸還連線池，勿隨 WS 生命週期長握。WS handler 活到連線關閉為止，
+    # 而 get_db 的 finally 要到那時才 close；不提早釋放的話每條開著的 WS 都佔住一個 pool 連線，
+    # 數條併發即耗盡（QueuePool size 5 + overflow 10 → login 等 DB 端點逾時掛住）。
+    # close() 冪等：端點結束時 get_db 再關一次無妨。之後的 _run_stream 只用 Redis，不碰 DB。
+    db.close()
     if identity is None:
         await websocket.close(code=CLOSE_UNAUTHORIZED)
         return

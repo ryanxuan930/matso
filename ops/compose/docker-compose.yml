@@ -43,8 +43,8 @@ services:
       # 由 Core 健檢決定預案。掛載真檔時：解除下方 volumes 註解並指向掛載點。
       MATSO_DTED_PATH: ${MATSO_DTED_PATH:-/data/TW_ALL.tif}
       MATSO_HEX_CACHE_DIR: ${MATSO_HEX_CACHE_DIR:-/data/hexcache}
-    # volumes:
-    #   - ${M200_MAPS:-/Volumes/M200/Maps}:/data:ro   # 外接硬碟掛載（開發機）
+    volumes:
+      - ${M200_MAPS:-/Volumes/M200/Maps}:/data:ro   # 外接硬碟掛載（開發機）；未掛載時 terrain DEGRADED
     ports: ["50051:50051"]
 
   weather:
@@ -84,7 +84,9 @@ services:
     build:
       context: ../../platform
     environment:
-      NUXT_PUBLIC_API_BASE: http://core:8000
+      # 瀏覽器（非容器）發 API：apiBase 由瀏覽器直連，故用主機可達位址（非容器內部 core:8000）。
+      # 前端所有呼叫皆 client-side（無 SSR fetch），故 localhost:8000 正確；可由 .env 覆寫。
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8000}
       # 離線 tile server URL（瀏覽器可達）。預設空 → 地圖以背景+經緯網格+hex 離線渲染（O4.2）。
       # 啟用底圖：掛載 .mbtiles + `docker compose --profile tiles up` + 設 TILE_URL=http://localhost:8081
       NUXT_PUBLIC_TILE_URL: ${TILE_URL:-}

@@ -127,7 +127,8 @@ export interface IconSpec {
 
 export interface UnitFeature {
   type: 'Feature'
-  properties: { icon: string; opacity: number; kind: 'own' | 'contact' }
+  // id/faction 供地圖點選命中與高亮（選取藍環 / 目標紅環）與 ENGAGE 目標鎖定（O4.5 UX 改版）。
+  properties: { id: string; faction: string; icon: string; opacity: number; kind: 'own' | 'contact' }
   geometry: { type: 'Point'; coordinates: [number, number] }
 }
 
@@ -151,6 +152,8 @@ export function buildUnitFeatures(
   const iconMap = new Map<string, IconSpec>()
 
   const push = (
+    id: string,
+    faction: string,
     sidc: string,
     options: SymbolOpts,
     lng: number,
@@ -162,7 +165,7 @@ export function buildUnitFeatures(
     if (!iconMap.has(key)) iconMap.set(key, { key, sidc, options })
     features.push({
       type: 'Feature',
-      properties: { icon: key, opacity, kind },
+      properties: { id, faction, icon: key, opacity, kind },
       geometry: { type: 'Point', coordinates: [lng, lat] },
     })
   }
@@ -172,7 +175,7 @@ export function buildUnitFeatures(
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
-    push(sidcForOwnUnit(u), options, u.lng, u.lat, ownUnitOpacity(u.comms), 'own')
+    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, ownUnitOpacity(u.comms), 'own')
   }
   for (const c of contacts) {
     const options: SymbolOpts =
@@ -180,7 +183,7 @@ export function buildUnitFeatures(
     // IDENTIFIED 且已知陣營 → 以該陣營顏色渲染（三方混戰時區分不同敵對陣營）。
     if (c.faction) options.fillColor = factionColor(c.faction, palette)
     const opacity = stalenessOpacity(Math.max(0, currentTick - c.lastSeenTick))
-    push(sidcForContact(c), options, c.lng, c.lat, opacity, 'contact')
+    push(c.contactId, c.faction ?? '', sidcForContact(c), options, c.lng, c.lat, opacity, 'contact')
   }
 
   return { collection: { type: 'FeatureCollection', features }, icons: [...iconMap.values()] }

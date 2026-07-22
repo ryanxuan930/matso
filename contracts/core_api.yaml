@@ -231,10 +231,10 @@ paths:
             schema: { $ref: "#/components/schemas/RefreshRequest" }
       responses:
         "200":
-          description: New access token
+          description: 新的 token 對（滑動續期：access + 新 refresh）
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/AccessToken" }
+              schema: { $ref: "#/components/schemas/TokenPair" }
         "401": { description: Invalid or expired refresh token, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /auth/logout:
     post:

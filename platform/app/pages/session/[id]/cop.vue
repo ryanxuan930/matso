@@ -2,15 +2,25 @@
 import type { Contact, OwnUnit } from '~/composables/useUnits'
 import type { UnitView, OrderResponse } from '~/composables/useOrders'
 import type { ApiError } from '~/composables/useApi'
+import { apiFetch } from '~/composables/useApi'
 import { cancelOrder, fetchOrders, fetchUnits, submitOrder } from '~/composables/useOrders'
 
 // COP（SPEC §13.1/§13.4）：地圖基座（O4.2）+ 單位/fog of war（O4.4）+ 下令 UX（O4.5）。
 const route = useRoute()
 const sessionId = computed(() => String(route.params.id))
 
+// 白軍控制台（時間控制 / 注入 / 視角）限統裁角色（SPEC §12）；其餘角色不顯示入口。
+const auth = useAuthStore()
+const canControl = computed(() =>
+  ['EXERCISE_DIRECTOR', 'WHITE_CELL_STAFF'].includes(auth.user?.role ?? ''),
+)
+
 const hex = ref(false)
 const hillshade = ref(false)
 const currentTick = ref(100)
+
+// 是否已設定離線 tile server（有 .mbtiles）。未設 → 顯示離線底圖提示（SPEC §13.2）。
+const hasTiles = computed(() => !!useRuntimeConfig().public.tileUrl)
 
 const TYPES = ['INFANTRY', 'ARMOR', 'ARTILLERY', 'RECON', 'HQ']
 
@@ -35,6 +45,7 @@ const syntheticUnits = computed<OwnUnit[]>(() => {
 
 // 真單位（GET /units；下令對象）
 const realUnits = ref<UnitView[]>([])
+const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
 const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
@@ -44,15 +55,36 @@ const targetUnitId = ref<string | null>(null)
 const precheck = ref<OrderResponse['precheck'] | null>(null)
 const message = ref('')
 
+// 真單位依「我方 / 他軍」分流渲染：我方＝友軍符號（可選取指揮）；他軍＝敵情符號（可鎖為攻擊目標）。
+// myFaction 未知（純白軍全知）時，全部以友軍呈現以便至少可見。
 const realAsOwn = computed<OwnUnit[]>(() =>
-  realUnits.value.map((u) => ({
-    id: u.id,
-    faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
-    lng: u.lng ?? 121,
-    lat: u.lat ?? 23.7,
-    comms: (u.comms as OwnUnit['comms']) ?? 'ONLINE',
-    lastReportedTick: 100,
-  })),
+  realUnits.value
+    .filter((u) => !myFaction.value || u.faction === myFaction.value)
+    .map((u) => ({
+      id: u.id,
+      faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
+      lng: u.lng ?? 121,
+      lat: u.lat ?? 23.7,
+      comms: (u.comms as OwnUnit['comms']) ?? 'ONLINE',
+      lastReportedTick: 100,
+    })),
+)
+const realAsContacts = computed<Contact[]>(() =>
+  myFaction.value
+    ? realUnits.value
+        .filter((u) => u.faction !== myFaction.value)
+        .map((u) => ({
+          contactId: u.id,
+          fidelity: 'IDENTIFIED' as const,
+          lng: u.lng ?? 121,
+          lat: u.lat ?? 23.7,
+          errorRadiusM: 0,
+          designation: u.designation,
+          lastSeenTick: 100,
+          faction: u.faction,
+          relation: 'HOSTILE' as const, // 前端保守標敵；真 ROE 由後端關係矩陣裁決
+        }))
+    : [],
 )
 // 固定示範一個 OFFLINE 虛影（fog of war demo，O4.4）
 const GHOST: OwnUnit = {
@@ -65,18 +97,26 @@ const GHOST: OwnUnit = {
   lastReportedTick: 60,
 }
 const ownUnits = computed<OwnUnit[]>(() => [GHOST, ...syntheticUnits.value, ...realAsOwn.value])
-const contacts = computed<Contact[]>(() => [
+const DEMO_CONTACTS: Contact[] = [
   { contactId: 'c-det', fidelity: 'DETECTED', lng: 121.4, lat: 23.5, errorRadiusM: 2000, lastSeenTick: 40 },
   { contactId: 'c-cls', fidelity: 'CLASSIFIED', lng: 121.5, lat: 23.6, errorRadiusM: 800, unitType: 'ARMOR', lastSeenTick: 80 },
-  // IDENTIFIED 敵對（RED，H，紅色）
   { contactId: 'c-id', fidelity: 'IDENTIFIED', lng: 121.6, lat: 23.7, errorRadiusM: 200, unitType: 'ARTILLERY', designation: '3-BN', lastSeenTick: 98, faction: 'RED', relation: 'HOSTILE' },
-  // 三方 demo（§12.1/O6.10）：IDENTIFIED 中立第三方（YELLOW，N，黃色）——與紅軍視覺可區分
   { contactId: 'c-neutral', fidelity: 'IDENTIFIED', lng: 121.55, lat: 23.55, errorRadiusM: 200, unitType: 'RECON', designation: 'Y-1', lastSeenTick: 96, faction: 'YELLOW', relation: 'NEUTRAL' },
-])
+]
+const contacts = computed<Contact[]>(() => [...DEMO_CONTACTS, ...realAsContacts.value])
+
+// 可作 ENGAGE 目標的真單位（他軍）——供下拉與地圖點選鎖定共用。
+const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
+const engageTargets = computed(() =>
+  realUnits.value.filter((u) => u.id !== selectedId.value && u.faction !== myFaction.value),
+)
 
 async function refresh() {
   realUnits.value = await fetchUnits(sessionId.value).catch(() => [])
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
+  // 我方陣營（決定友/敵渲染與目標可選集）——由 session 摘要取得。
+  const sessions = await apiFetch<{ id: string; my_faction?: string }[]>('/sessions').catch(() => [])
+  myFaction.value = sessions.find((s) => s.id === sessionId.value)?.my_faction ?? ''
 }
 
 function selectUnit(id: string) {
@@ -88,11 +128,31 @@ function selectUnit(id: string) {
 }
 
 function onMapClick(e: { h3: string }) {
-  if (targeting.value) {
+  if (orderType.value === 'MOVE' && targeting.value) {
     destH3.value = e.h3
     targeting.value = false
   }
 }
+
+// 點地圖上的單位符號：我方 → 選取指揮；他軍（有選取的我方單位時）→ 鎖為 ENGAGE 目標。
+function onUnitClick(e: { id: string; faction: string; kind: string }) {
+  const isReal = realUnitIds.value.has(e.id)
+  const isMine = isReal && e.faction === myFaction.value
+  if (isMine) {
+    selectUnit(e.id)
+    return
+  }
+  if (isReal && selectedId.value && e.faction !== myFaction.value) {
+    orderType.value = 'ENGAGE'
+    targetUnitId.value = e.id
+    targeting.value = false
+    precheck.value = null
+    message.value = `已鎖定目標：${realUnits.value.find((u) => u.id === e.id)?.designation ?? e.id}`
+  }
+}
+
+const selectedUnit = computed(() => realUnits.value.find((u) => u.id === selectedId.value) ?? null)
+const targetUnit = computed(() => realUnits.value.find((u) => u.id === targetUnitId.value) ?? null)
 
 async function submit() {
   if (!selectedId.value) return
@@ -135,7 +195,8 @@ async function back() {
   await navigateTo('/lobby')
 }
 
-onMounted(() => {
+onMounted(async () => {
+  if (!auth.user) await auth.fetchMe() // 直接開/重整 COP 時補抓使用者，讓角色相關入口（白軍控制台）正確顯示
   refresh()
   stream.connect(sessionId.value)
 })
@@ -148,6 +209,17 @@ onBeforeUnmount(() => stream.disconnect())
       <button data-testid="back-lobby" @click="back">← 大廳</button>
       <span class="sid" data-testid="cop-session">Session {{ sessionId }}</span>
       <span class="count" data-testid="unit-count">單位 {{ ownUnits.length }}</span>
+      <nav class="cop-nav">
+        <button
+          v-if="canControl"
+          data-testid="nav-white-cell"
+          @click="navigateTo(`/session/${sessionId}/white-cell`)"
+        >
+          ⚙ 白軍控制台
+        </button>
+        <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)">📊 AAR</button>
+        <a class="help" href="/help" target="_blank">操作教學</a>
+      </nav>
     </header>
     <div class="body">
       <aside class="panel">
@@ -166,7 +238,7 @@ onBeforeUnmount(() => stream.disconnect())
         </ul>
 
         <div v-if="selectedId" class="order" data-testid="order-panel">
-          <h3>下令</h3>
+          <h3>下令 · <span class="selunit" data-testid="selected-unit">{{ selectedUnit?.designation ?? selectedId }}</span></h3>
           <select v-model="orderType" data-testid="order-type">
             <option value="MOVE">移動 MOVE</option>
             <option value="ENGAGE">攻擊 ENGAGE</option>
@@ -178,17 +250,21 @@ onBeforeUnmount(() => stream.disconnect())
             <div class="dest" data-testid="dest-h3">{{ destH3 || '未設目標' }}</div>
           </template>
           <template v-else>
+            <div class="hint">點地圖上的敵方單位鎖定目標（紅環），或從清單選：</div>
             <select v-model="targetUnitId" data-testid="engage-target">
               <option :value="null">選目標</option>
-              <option v-for="u in realUnits" :key="u.id" :value="u.id">{{ u.designation }}</option>
+              <option v-for="u in engageTargets" :key="u.id" :value="u.id">{{ u.designation }}</option>
             </select>
+            <div class="dest" data-testid="target-label">
+              {{ targetUnit ? `🎯 ${targetUnit.designation}（${targetUnit.faction}）` : '未鎖定目標' }}
+            </div>
           </template>
           <button
             data-testid="submit-order"
             :disabled="orderType === 'MOVE' ? !destH3 : !targetUnitId"
             @click="submit"
           >
-            送出
+            {{ orderType === 'MOVE' ? '送出移動' : '送出攻擊' }}
           </button>
           <p v-if="message" data-testid="order-message">{{ message }}</p>
           <div v-if="precheck" class="precheck" data-testid="precheck">
@@ -237,13 +313,21 @@ onBeforeUnmount(() => stream.disconnect())
             :own-units="ownUnits"
             :contacts="contacts"
             :current-tick="currentTick"
+            :selected-id="selectedId"
+            :target-id="targetUnitId"
             @map-click="onMapClick"
+            @unit-click="onUnitClick"
           />
           <template #fallback>
             <div class="map-loading" data-testid="map-loading">地圖載入中…</div>
           </template>
         </ClientOnly>
-        <LayerToggles v-model:hex="hex" v-model:hillshade="hillshade" />
+        <LayerToggles v-model:hex="hex" v-model:hillshade="hillshade" :hillshade-enabled="hasTiles" />
+        <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
+          <strong>離線底圖模式</strong>
+          <span>目前顯示經緯格線 + 單位符號（無向量瓦片）。要載入台灣街道/地形底圖，需由
+            <code>taiwan.osm.pbf</code> 產生 mbtiles 並啟用 tileserver — 見「操作教學」。</span>
+        </div>
       </div>
     </div>
   </div>
@@ -277,6 +361,55 @@ onBeforeUnmount(() => stream.disconnect())
 .count {
   font-size: 0.875rem;
   color: #94a3b8;
+}
+.cop-nav {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.cop-nav button {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+.cop-nav button:hover {
+  border-color: #2563eb;
+}
+.cop-nav .help {
+  font-size: 0.8125rem;
+  color: #60a5fa;
+  text-decoration: none;
+}
+.cop-nav .help:hover {
+  text-decoration: underline;
+}
+.map-notice {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 10;
+  max-width: 22rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid #1e3a5f;
+  background: rgba(15, 23, 42, 0.9);
+  font-size: 0.75rem;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+.map-notice strong {
+  color: #e2e8f0;
+}
+.map-notice code {
+  color: #7dd3fc;
+  font-size: 0.7rem;
 }
 .body {
   display: flex;
@@ -352,6 +485,15 @@ onBeforeUnmount(() => stream.disconnect())
 .dest {
   font-family: monospace;
   color: #94a3b8;
+}
+.order .selunit {
+  color: #60a5fa;
+  font-weight: 600;
+}
+.order .hint {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  line-height: 1.4;
 }
 .precheck .ok {
   color: #4ade80;

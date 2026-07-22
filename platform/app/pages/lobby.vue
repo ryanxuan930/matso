@@ -5,6 +5,10 @@ import { apiFetch } from '~/composables/useApi'
 type SessionSummary = components['schemas']['SessionSummary']
 
 const auth = useAuthStore()
+// 想定編輯限統裁/管理角色（SPEC §11.2 / §12）。
+const canEditScenario = computed(() =>
+  ['EXERCISE_DIRECTOR', 'WHITE_CELL_STAFF', 'ADMIN'].includes(auth.user?.role ?? ''),
+)
 const sessions = ref<SessionSummary[]>([])
 const newName = ref('')
 const loading = ref(true)
@@ -47,6 +51,13 @@ onMounted(async () => {
     <header>
       <h1>推演大廳</h1>
       <div class="who">
+        <a
+          v-if="canEditScenario"
+          class="help"
+          href="/scenario-editor"
+          data-testid="nav-scenario-editor"
+        >想定編輯器</a>
+        <a class="help" href="/help">操作教學</a>
         <span v-if="auth.user" data-testid="current-user">{{ auth.user.username }}（{{ auth.user.role }}）</span>
         <button data-testid="logout" @click="onLogout">登出</button>
       </div>
@@ -99,6 +110,16 @@ h1 {
   gap: 0.75rem;
   align-items: center;
   font-size: 0.875rem;
+}
+.who .help {
+  color: #60a5fa;
+  text-decoration: none;
+}
+.who .help:hover {
+  text-decoration: underline;
+}
+.who span {
+  color: #94a3b8;
 }
 .create {
   display: flex;

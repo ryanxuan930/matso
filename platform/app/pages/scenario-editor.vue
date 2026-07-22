@@ -104,12 +104,17 @@ function doImport() {
 </template>
 
 <style scoped>
-.editor { max-width: 900px; margin: 1rem auto; padding: 0 1rem; }
-section { margin: 1rem 0; border-top: 1px solid #ccc; padding-top: 0.5rem; }
+.editor { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
+section { margin: 1rem 0; border-top: 1px solid #1e293b; padding-top: 0.75rem; }
+h2 { font-size: 0.9375rem; color: #94a3b8; }
 .row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; }
 .meta { display: flex; gap: 1rem; flex-wrap: wrap; }
 .io { display: flex; gap: 1rem; }
 .io > div { flex: 1; }
+input, textarea {
+  background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.25rem; padding: 0.375rem 0.5rem;
+}
 textarea { width: 100%; font-family: monospace; font-size: 0.75rem; }
-.hint { color: #888; font-size: 0.8rem; }
+button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.25rem; padding: 0.375rem 0.75rem; cursor: pointer; }
+.hint { color: #94a3b8; font-size: 0.8rem; }
 </style>

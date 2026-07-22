@@ -54,8 +54,11 @@ def list_units(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> list[UnitView]:
-    participant = require_participant(db, user, session_id)
-    omniscient = is_omniscient(participant.role)
+    # 全知（統裁/白軍/管理）由**使用者全域角色**判定，非 session 內參與者角色——EXERCISE_DIRECTOR
+    # 即使以某軍 COMMANDER 身分參戰，仍具全知視角（與 WS resolve_ws_identity 一致，SPEC §12）。
+    omniscient = is_omniscient(user.role)
+    # 非全知者才需為此 session 參與者（faction-scope）；全知者（含非參與者的純白軍）放行。
+    participant = None if omniscient else require_participant(db, user, session_id)
     stmt = select(TacticalUnit).where(TacticalUnit.session_id == session_id)
 
     if as_faction is not None:
@@ -65,6 +68,7 @@ def list_units(
         stmt = stmt.where(TacticalUnit.faction == validate_faction_id(as_faction))
     elif not omniscient and not settings.stub_gateway:
         # 一般角色：faction 過濾下推 SQL（C12）；STUB_GATEWAY E2E affordance 放行全單位。
+        assert participant is not None  # 非全知 → 必為參與者（上方已 require）
         stmt = stmt.where(TacticalUnit.faction == participant.faction)
     # else：全知且未指定視角 → 全部（god view）
 

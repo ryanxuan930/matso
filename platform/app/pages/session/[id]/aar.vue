@@ -87,9 +87,10 @@ onMounted(load)
 </template>
 
 <style scoped>
-.aar { max-width: 900px; margin: 1rem auto; padding: 0 1rem; }
-section { border-top: 1px solid #ccc; padding-top: 0.5rem; margin-top: 1rem; }
-.ok { color: #2a6; font-size: 0.8rem; }
-.err { color: #c33; }
-a { margin-right: 1rem; }
+.aar { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
+section { border-top: 1px solid #1e293b; padding-top: 0.75rem; margin-top: 1rem; }
+h2 { font-size: 0.9375rem; color: #94a3b8; }
+.ok { color: #4ade80; font-size: 0.8rem; }
+.err { color: #f87171; }
+a { margin-right: 1rem; color: #60a5fa; }
 </style>

@@ -56,7 +56,11 @@ watch(viewpoint, loadUnits)
 
 <template>
   <div class="wc" data-testid="white-cell-console">
-    <h1>白軍控制台 · {{ sessionId }}</h1>
+    <header class="wc-bar">
+      <button data-testid="wc-back-cop" @click="navigateTo(`/session/${sessionId}/cop`)">← 圖台</button>
+      <h1>白軍控制台 · {{ sessionId }}</h1>
+      <a class="help" href="/help" target="_blank">操作教學</a>
+    </header>
     <p v-if="status" class="status" data-testid="wc-status">{{ status }}</p>
 
     <section class="controls">
@@ -100,9 +104,23 @@ watch(viewpoint, loadUnits)
 </template>
 
 <style scoped>
-.wc { max-width: 1000px; margin: 1rem auto; padding: 0 1rem; }
+.wc { max-width: 1000px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
+.wc-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.wc-bar h1 { font-size: 1.25rem; margin: 0; }
+.wc-bar .help { margin-left: auto; font-size: 0.8125rem; color: #60a5fa; text-decoration: none; }
+.wc-bar .help:hover { text-decoration: underline; }
+h2 { font-size: 0.9375rem; color: #94a3b8; margin: 0 0 0.5rem; }
 .controls { display: flex; gap: 2rem; flex-wrap: wrap; }
-.status { color: #2a6; }
-section { border-top: 1px solid #ccc; padding-top: 0.5rem; margin-top: 1rem; }
-button { margin-right: 0.4rem; }
+.status { color: #4ade80; }
+section { border-top: 1px solid #1e293b; padding-top: 0.75rem; margin-top: 1rem; }
+ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8125rem; }
+input, select {
+  padding: 0.375rem 0.5rem; border: 1px solid #334155; border-radius: 0.25rem;
+  background: #0f172a; color: #e2e8f0;
+}
+button {
+  margin-right: 0.4rem; padding: 0.375rem 0.75rem; border: 1px solid #334155;
+  border-radius: 0.25rem; background: #1e293b; color: #e2e8f0; cursor: pointer;
+}
+button:hover { border-color: #2563eb; }
 </style>
