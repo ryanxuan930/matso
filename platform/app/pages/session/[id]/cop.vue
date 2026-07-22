@@ -65,6 +65,17 @@ const targetUnitId = ref<string | null>(null)
 const precheck = ref<OrderResponse['precheck'] | null>(null)
 const message = ref('')
 
+// WS 串流（含活模擬 STATE_DIFF 位置）——先宣告以供 livePos 使用。
+const stream = useSessionStreamStore()
+// 活模擬位置（O10.1）：優先用 STATE_DIFF 累積的最新座標，否則用 GET /units 的初始座標。
+function livePos(u: UnitView): { lat: number; lng: number } {
+  const p = stream.unitPatches[u.id]
+  return {
+    lat: (typeof p?.lat === 'number' ? p.lat : u.lat) ?? 23.7,
+    lng: (typeof p?.lng === 'number' ? p.lng : u.lng) ?? 121,
+  }
+}
+
 // 真單位依「我方 / 他軍」分流渲染：我方＝友軍符號（可選取指揮）；他軍＝敵情符號（可鎖為攻擊目標）。
 // myFaction 未知（純白軍全知）時，全部以友軍呈現以便至少可見。
 const realAsOwn = computed<OwnUnit[]>(() =>
@@ -73,8 +84,7 @@ const realAsOwn = computed<OwnUnit[]>(() =>
     .map((u) => ({
       id: u.id,
       faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
-      lng: u.lng ?? 121,
-      lat: u.lat ?? 23.7,
+      ...livePos(u),
       comms: (u.comms as OwnUnit['comms']) ?? 'ONLINE',
       lastReportedTick: 100,
     })),
@@ -86,8 +96,7 @@ const realAsContacts = computed<Contact[]>(() =>
         .map((u) => ({
           contactId: u.id,
           fidelity: 'IDENTIFIED' as const,
-          lng: u.lng ?? 121,
-          lat: u.lat ?? 23.7,
+          ...livePos(u),
           errorRadiusM: 0,
           designation: u.designation,
           lastSeenTick: 100,
@@ -204,8 +213,7 @@ async function cancel(id: string) {
   await refresh()
 }
 
-// WS stream（O4.3/O4.6）：連 session，顯示收到的裁決事件
-const stream = useSessionStreamStore()
+// WS stream（O4.3/O4.6）：連 session，顯示收到的裁決事件（stream 於上方 livePos 處宣告）
 const streamEvents = computed(() =>
   stream.events.filter((e) => e.type === 'EVENT').slice(-20).reverse(),
 )
