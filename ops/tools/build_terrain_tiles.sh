@@ -38,4 +38,16 @@ rm -f /out/contours.mbtiles
 ogr2ogr -f MBTILES -t_srs EPSG:3857 -dsco MAXZOOM=14 -nln contour /out/contours.mbtiles contours.gpkg
 echo 'done: hillshade.mbtiles + contours.mbtiles'
 "
-echo "完成 → $OUT。重啟 tileserver 生效：cd ops/compose && docker compose --profile tiles restart tileserver"
+# tileserver-gl-light 的 auto-mode 只服務單一 mbtiles；多來源需 config.json。
+# 對映到前端預期路徑：街道=/data/v3、地形陰影=/data/hillshade、等高線=/data/contours。
+cat > "$OUT/config.json" <<'JSON'
+{
+  "options": { "paths": { "root": "/data", "mbtiles": "/data" } },
+  "data": {
+    "v3": { "mbtiles": "taiwan.mbtiles" },
+    "hillshade": { "mbtiles": "hillshade.mbtiles" },
+    "contours": { "mbtiles": "contours.mbtiles" }
+  }
+}
+JSON
+echo "完成 → $OUT（含 config.json）。重啟 tileserver 生效：cd ops/compose && docker compose --profile tiles restart tileserver"
