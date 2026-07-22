@@ -33,6 +33,7 @@ from app.engine.subsystems import (
 )
 from app.models import WargameSession
 from app.runtime import PerfCounterClock, TickPacer, run_paced
+from app.sim_control import session_pause_key
 from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerWriter
@@ -115,7 +116,15 @@ class SimManager:
                 wall_clock=PerfCounterClock(),
             )
             pacer = TickPacer(_TICK_RATE_MS, compression=_PACE_COMPRESSION)
-            await run_paced(kernel, pacer, should_stop=self._stop.is_set)
+            # White Cell 暫停旗標（新 #6）：control 端點 PAUSE 設 Redis 鍵、RESUME 清除；
+            # 迴圈輪詢此鍵 → 暫停時凍結活模擬。
+            pause_key = session_pause_key(session_id)
+            await run_paced(
+                kernel,
+                pacer,
+                should_stop=self._stop.is_set,
+                should_pause=lambda: bool(client.exists(pause_key)),
+            )
         except asyncio.CancelledError:
             raise
         except Exception:

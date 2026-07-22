@@ -16,6 +16,7 @@ from app.api.deps import get_current_user, get_settings
 from app.auth.schemas import CurrentUser
 from app.config import Settings
 from app.errors import AuthForbiddenError
+from app.sim_control import session_pause_key
 from app.stream.faction_filter import is_white_cell
 from app.stream.publish import publish_event
 
@@ -51,6 +52,12 @@ def session_control(
         payload["target_tick"] = req.target_tick
     try:
         client = redis.from_url(settings.redis_url, decode_responses=True)
+        # 暫停/續行實際作用於活模擬（新 #6）：設/清暫停旗標，sim_runtime 迴圈輪詢之。
+        # ROLLBACK 屬 recover 部署層（O1.5），此處仍只發事件。
+        if req.action == "PAUSE":
+            client.set(session_pause_key(session_id), "1")
+        elif req.action == "RESUME":
+            client.delete(session_pause_key(session_id))
         seq = publish_event(client, session_id, "SESSION_CONTROL", payload)
         client.close()
     except redis.RedisError as exc:

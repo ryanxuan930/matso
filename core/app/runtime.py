@@ -80,14 +80,23 @@ async def run_paced(
     ticks: int | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+    pause_poll_s: float = 0.25,
 ) -> int:
-    """以牆鐘節奏連續執行 tick。ticks=None 表示跑到 should_stop 為 True。回傳執行的 tick 數。"""
+    """以牆鐘節奏連續執行 tick。ticks=None 表示跑到 should_stop 為 True。回傳執行的 tick 數。
+
+    `should_pause`（新 #6）：White Cell 暫停旗標。為 True 時凍結——不推進 tick、不消耗 ticks 配額，
+    每 `pause_poll_s` 輪詢一次直到解除或 should_stop。使白軍控制台的暫停/續行真正作用於活模擬。
+    """
     if ticks is None and should_stop is None:
         raise ValueError("ticks=None 時必須提供 should_stop，否則迴圈無法終止")
     count = 0
     while ticks is None or count < ticks:
         if should_stop is not None and should_stop():
             break
+        if should_pause is not None and should_pause():
+            await sleep(pause_poll_s)  # 暫停中：凍結、輪詢，不推進 tick
+            continue
         report = await kernel.run_tick()
         count += 1
         await sleep(pacer.next_delay_s(report))
