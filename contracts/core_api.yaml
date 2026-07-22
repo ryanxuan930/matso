@@ -34,6 +34,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    TemplateId:
+      name: tid
+      in: path
+      required: true
+      schema: { type: string }
     TaskId:
       name: tid
       in: path
@@ -188,6 +193,14 @@ components:
       required: [template_id]
       properties:
         template_id: { type: string }
+    EquipmentTemplateEdit:
+      type: object
+      description: 建立/更新裝備範本（武器屬性/功能）——base_stats 依 weaponeering.schema.json 驗證
+      required: [name, category, base_stats]
+      properties:
+        name: { type: string, minLength: 1 }
+        category: { type: string, description: KINETIC / SENSOR / COMMS / LOGISTICS / DRONE }
+        base_stats: { type: object }
     EquipmentStateEdit:
       type: object
       required: [current_state]
@@ -389,6 +402,42 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/EquipmentTemplateView" } }
+    post:
+      operationId: createEquipmentTemplate
+      security: [{ bearerAuth: [] }]
+      description: 建立武器/裝備範本（限統裁/管理；base_stats 依 weaponeering.schema.json 驗證）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EquipmentTemplateEdit" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EquipmentTemplateView" }
+        "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: base_stats invalid, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /equipment-templates/{tid}:
+    parameters: [{ $ref: "#/components/parameters/TemplateId" }]
+    put:
+      operationId: updateEquipmentTemplate
+      security: [{ bearerAuth: [] }]
+      description: 更新武器/裝備範本屬性（限統裁/管理；影響全域目錄）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EquipmentTemplateEdit" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EquipmentTemplateView" }
+        "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: base_stats invalid, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/units/{uid}/equipment:
     parameters:
       - { $ref: "#/components/parameters/SessionId" }

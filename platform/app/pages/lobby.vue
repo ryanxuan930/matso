@@ -82,6 +82,12 @@ onMounted(async () => {
           href="/scenario-editor"
           data-testid="nav-scenario-editor"
         >劇本編輯器</a>
+        <a
+          v-if="canEditScenario"
+          class="help"
+          href="/armory"
+          data-testid="nav-armory"
+        >武器庫</a>
         <a class="help" href="/help">操作教學</a>
         <span v-if="auth.user" data-testid="current-user">{{ auth.user.username }}（{{ auth.user.role }}）</span>
         <button data-testid="logout" @click="onLogout">登出</button>

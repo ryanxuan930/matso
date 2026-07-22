@@ -12,9 +12,12 @@ DELETE /api/v1/sessions/{id}/units/{uid}/equipment/{eid}      移除一件裝備
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response, status
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,6 +30,38 @@ from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit, Warga
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1", tags=["equipment"])
+
+# weaponeering.schema.json：base_stats 依 category 對應 $def 驗證（資料驅動裁決的權威）。
+_WEAPONEERING_SCHEMA = json.loads(
+    (Path(__file__).resolve().parents[3] / "contracts" / "weaponeering.schema.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def _validate_base_stats(category: str, base_stats: dict[str, Any]) -> None:
+    """依 category 對 weaponeering.schema.json 的對應 $def 驗證 base_stats。"""
+    defs = _WEAPONEERING_SCHEMA.get("$defs", {})
+    subschema = defs.get(category.lower())
+    if subschema is None:
+        raise OrderValidationError(
+            f"未知裝備類別：{category}", error_code="EQUIPMENT_CATEGORY_UNKNOWN"
+        )
+    validator = Draft202012Validator(subschema)
+    errors = sorted(validator.iter_errors(base_stats), key=lambda e: list(e.path))
+    if errors:
+        detail = "; ".join(
+            f"{'/'.join(map(str, e.path)) or '(root)'}: {e.message}" for e in errors[:5]
+        )
+        raise OrderValidationError(
+            f"裝備屬性不符 schema：{detail}", error_code="EQUIPMENT_INVALID_STATS"
+        )
+
+
+def _require_admin(user: CurrentUser) -> None:
+    """全域武器庫（範本目錄）僅統裁/白軍/管理可增改（影響所有 session）。"""
+    if not is_omniscient(user.role):
+        raise AuthForbiddenError("僅統裁/管理可編輯武器庫")
 
 
 class EquipmentTemplateView(BaseModel):
@@ -47,6 +82,12 @@ class EquipmentInstanceView(BaseModel):
 
 class AddEquipmentRequest(BaseModel):
     template_id: str
+
+
+class EquipmentTemplateEdit(BaseModel):
+    name: str
+    category: str
+    base_stats: dict[str, Any]
 
 
 class EquipmentStateEdit(BaseModel):
@@ -118,6 +159,53 @@ def list_equipment_templates(
         )
         for t in tmpls
     ]
+
+
+def _template_view(t: EquipmentTemplate) -> EquipmentTemplateView:
+    return EquipmentTemplateView(
+        id=t.id, name=t.name, category=t.category, base_stats=dict(t.base_stats or {})
+    )
+
+
+@router.post(
+    "/equipment-templates",
+    response_model=EquipmentTemplateView,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_equipment_template(
+    body: EquipmentTemplateEdit,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EquipmentTemplateView:
+    _require_admin(user)
+    category = body.category.upper()
+    _validate_base_stats(category, body.base_stats)
+    tmpl = EquipmentTemplate(name=body.name, category=category, base_stats=dict(body.base_stats))
+    db.add(tmpl)
+    db.commit()
+    return _template_view(tmpl)
+
+
+@router.put("/equipment-templates/{tid}", response_model=EquipmentTemplateView)
+def update_equipment_template(
+    tid: str,
+    body: EquipmentTemplateEdit,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EquipmentTemplateView:
+    _require_admin(user)
+    category = body.category.upper()
+    _validate_base_stats(category, body.base_stats)
+    tmpl = db.get(EquipmentTemplate, tid)
+    if tmpl is None:
+        raise OrderValidationError(
+            f"裝備範本不存在：{tid}", error_code="EQUIPMENT_TEMPLATE_NOT_FOUND"
+        )
+    tmpl.name = body.name
+    tmpl.category = category
+    tmpl.base_stats = dict(body.base_stats)
+    db.commit()
+    return _template_view(tmpl)
 
 
 @router.get(

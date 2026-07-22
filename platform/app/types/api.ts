@@ -173,6 +173,26 @@ export interface paths {
         /** @description 裝備範本目錄（編裝編輯器配發用） */
         get: operations["listEquipmentTemplates"];
         put?: never;
+        /** @description 建立武器/裝備範本（限統裁/管理；base_stats 依 weaponeering.schema.json 驗證） */
+        post: operations["createEquipmentTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/equipment-templates/{tid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description 更新武器/裝備範本屬性（限統裁/管理；影響全域目錄） */
+        put: operations["updateEquipmentTemplate"];
         post?: never;
         delete?: never;
         options?: never;
@@ -551,6 +571,13 @@ export interface components {
         AddEquipmentRequest: {
             template_id: string;
         };
+        /** @description 建立/更新裝備範本（武器屬性/功能）——base_stats 依 weaponeering.schema.json 驗證 */
+        EquipmentTemplateEdit: {
+            name: string;
+            /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
+            category: string;
+            base_stats: Record<string, never>;
+        };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
             current_state: Record<string, never>;
@@ -614,6 +641,7 @@ export interface components {
         OrderId: string;
         UnitId: string;
         EquipmentId: string;
+        TemplateId: string;
         TaskId: string;
         PluginName: string;
     };
@@ -920,6 +948,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EquipmentTemplateView"][];
+                };
+            };
+        };
+    };
+    createEquipmentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EquipmentTemplateEdit"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentTemplateView"];
+                };
+            };
+            /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description base_stats invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateEquipmentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EquipmentTemplateEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentTemplateView"];
+                };
+            };
+            /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description base_stats invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };

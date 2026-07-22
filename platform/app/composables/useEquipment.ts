@@ -8,6 +8,18 @@ export type EquipmentInstance = components['schemas']['EquipmentInstanceView']
 export function fetchEquipmentTemplates(): Promise<EquipmentTemplate[]> {
   return apiFetch<EquipmentTemplate[]>('/equipment-templates')
 }
+
+export interface TemplateEdit {
+  name: string
+  category: string
+  base_stats: Record<string, unknown>
+}
+export function createEquipmentTemplate(body: TemplateEdit): Promise<EquipmentTemplate> {
+  return apiFetch<EquipmentTemplate>('/equipment-templates', { method: 'POST', body })
+}
+export function updateEquipmentTemplate(tid: string, body: TemplateEdit): Promise<EquipmentTemplate> {
+  return apiFetch<EquipmentTemplate>(`/equipment-templates/${tid}`, { method: 'PUT', body })
+}
 export function fetchUnitEquipment(sessionId: string, unitId: string): Promise<EquipmentInstance[]> {
   return apiFetch<EquipmentInstance[]>(`/sessions/${sessionId}/units/${unitId}/equipment`)
 }

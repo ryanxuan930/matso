@@ -134,3 +134,58 @@ def test_bad_template_422(session_factory: sessionmaker[Session]) -> None:
         _base(world, world.blue_unit_id), json={"template_id": "nope"}, headers=_white(world)
     )
     assert r.status_code == 422
+
+
+# ---------------- stage ②：武器庫（範本）建立/更新 + 驗證 + admin RBAC ----------------
+
+_VALID_KINETIC = {
+    "max_range_m": 800,
+    "min_range_m": 0,
+    "ph_by_range_band": [[400, 0.6], [800, 0.3]],
+    "damage_by_armor_class": {"INFANTRY": 30},
+    "ammo_types": ["AMMO_X"],
+}
+
+
+def test_create_template_admin_ok(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    r = client.post(
+        "/api/v1/equipment-templates",
+        json={"name": "TEST_GUN", "category": "KINETIC", "base_stats": _VALID_KINETIC},
+        headers=_white(world),
+    )
+    assert r.status_code == 201, r.text
+    tid = r.json()["id"]
+    # 更新射程
+    upd = {**_VALID_KINETIC, "max_range_m": 1200}
+    r = client.put(
+        f"/api/v1/equipment-templates/{tid}",
+        json={"name": "TEST_GUN", "category": "KINETIC", "base_stats": upd},
+        headers=_white(world),
+    )
+    assert r.status_code == 200
+    assert r.json()["base_stats"]["max_range_m"] == 1200
+
+
+def test_create_template_commander_403(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    r = client.post(
+        "/api/v1/equipment-templates",
+        json={"name": "X", "category": "KINETIC", "base_stats": _VALID_KINETIC},
+        headers=_cmdr(world),
+    )
+    assert r.status_code == 403
+
+
+def test_create_template_invalid_stats_422(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    # 缺 required 的 ph_by_range_band / ammo_types → schema 驗證失敗
+    r = client.post(
+        "/api/v1/equipment-templates",
+        json={"name": "X", "category": "KINETIC", "base_stats": {"max_range_m": 500}},
+        headers=_white(world),
+    )
+    assert r.status_code == 422
