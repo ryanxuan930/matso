@@ -162,17 +162,18 @@ def test_make_engage_env_missing_coords_is_out_of_range() -> None:
 
 
 class _LosOutcome:
-    def __init__(self, visible: bool) -> None:
+    def __init__(self, visible: bool, clearance_m: float = 100.0) -> None:
         self.visible = visible
-        self.fresnel_clearance = 10.0
+        self.clearance_m = clearance_m
 
 
 class _FakeGateway:
-    def __init__(self, visible: bool) -> None:
+    def __init__(self, visible: bool, clearance_m: float = 100.0) -> None:
         self._visible = visible
+        self._clearance = clearance_m
 
     def has_los(self, observer: object, target: object) -> _LosOutcome:
-        return _LosOutcome(self._visible)
+        return _LosOutcome(self._visible, self._clearance)
 
 
 def _two_unit_hot() -> InMemoryHotState:
@@ -185,6 +186,16 @@ def _two_unit_hot() -> InMemoryHotState:
 def test_make_engage_env_uses_gateway_los_visible() -> None:
     env = make_engage_env(_two_unit_hot(), _FakeGateway(True))("s", "t")
     assert env.los_clear is True
+    assert env.terrain_cover_modifier == pytest.approx(1.0)  # 大餘隙＝開闊，無遮蔽
+
+
+def test_make_engage_env_grazing_shot_applies_terrain_cover() -> None:
+    # 掠地射擊（餘隙 0）→ 目標半遮蔽 → terrain_cover_modifier 降低（直瞄）。
+    env = make_engage_env(_two_unit_hot(), _FakeGateway(True, clearance_m=0.0))("s", "t", False)
+    assert env.terrain_cover_modifier == pytest.approx(0.55)
+    # 間瞄不受地形遮蔽。
+    env_ind = make_engage_env(_two_unit_hot(), _FakeGateway(True, clearance_m=0.0))("s", "t", True)
+    assert env_ind.terrain_cover_modifier == pytest.approx(1.0)
 
 
 def test_make_engage_env_gateway_blocks_los_when_obstructed() -> None:

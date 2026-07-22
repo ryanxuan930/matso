@@ -25,6 +25,7 @@ from app.adjudication.engagement import EnvSnapshot
 from app.adjudication.weapon import WeaponProfile
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.state.hot_state import HotStateStore
+from app.terrain import engagement_cover_modifier
 from app.weather import WeatherState, engagement_weather_modifier
 
 _EARTH_R_M = 6_371_000.0
@@ -178,6 +179,8 @@ def make_engage_env(  # type: ignore[no-untyped-def]
       無 gateway 或 RPC 失敗 → True（地形服務中斷不凍結戰鬥）。
     - weather_modifier：有 `weather` 快照時取射手 cell 的交戰天氣修正（直瞄看能見度、間瞄看散佈）。
       無天氣或查無 cell → CLEAR（1.0）。給定座標/快照具決定性 → replay 安全。
+    - terrain_cover_modifier（STEP3）：由視線最小餘隙導出——掠地射擊＝目標半遮蔽 → 命中降低（直瞄）；
+      間瞄不受地形遮蔽。無 gateway/餘隙 → 1.0。
     """
     w_res = _weather_res(weather) if weather is not None else 8
 
@@ -191,18 +194,28 @@ def make_engage_env(  # type: ignore[no-untyped-def]
         except (KeyError, TypeError, ValueError):
             return EnvSnapshot(range_m=float("inf"), los_clear=True)
         los_clear = True
+        cover_mod = 1.0
         if gateway is not None:
             try:
                 outcome = gateway.has_los(  # type: ignore[attr-defined]
                     (s_lat, s_lng, _ENGAGE_OBS_M), (t_lat, t_lng, _ENGAGE_OBS_M)
                 )
                 los_clear = bool(outcome.visible)
+                # 地形遮蔽命中修正（STEP3）：由最小餘隙導出——掠地射擊代表目標半遮蔽 → 較難命中。
+                # 間瞄彈道越過地形，不受遮蔽。
+                if los_clear and not indirect_fire:
+                    cover_mod = engagement_cover_modifier(getattr(outcome, "clearance_m", None))
             except Exception:
                 los_clear = True
         weather_mod = 1.0
         if weather is not None:
             effects = weather.effects_at(h3.latlng_to_cell(s_lat, s_lng, w_res))
             weather_mod = engagement_weather_modifier(effects, indirect_fire)
-        return EnvSnapshot(range_m=range_m, los_clear=los_clear, weather_modifier=weather_mod)
+        return EnvSnapshot(
+            range_m=range_m,
+            los_clear=los_clear,
+            weather_modifier=weather_mod,
+            terrain_cover_modifier=cover_mod,
+        )
 
     return env_for
