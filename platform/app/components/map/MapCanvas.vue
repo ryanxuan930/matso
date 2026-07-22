@@ -366,10 +366,11 @@ onMounted(async () => {
         paint: { 'raster-opacity': 0.5 },
       })
       // 等高線（#3）——tileserver 服務 gdal_contour 產的向量瓦片（source-layer=contour）。
+      // minzoom 9：等高線僅於戰術縮放顯示，避免低縮放時載入 25m 密集等高線的巨大 overview 瓦片。
       map.addSource(CONTOUR_SRC, {
         type: 'vector',
         tiles: [`${tileUrl}/data/contours/{z}/{x}/{y}.pbf`],
-        minzoom: 0,
+        minzoom: 9,
         maxzoom: 14,
       })
       // 次等高線（細）先加 → 主等高線（粗）疊其上（#8，間距可設定；filter 依 elev%interval）。
@@ -651,6 +652,11 @@ onMounted(async () => {
     applyDayNight() // #6 日照視覺
     applyAllOpacity() // #9 初始透明度
     applyOrder() // #9 初始套疊順序
+    // 修正水合競態：地圖若於容器尺寸未定時初始化，canvas 會停在 400×300 預設（畫面空白）。
+    // 載入完成後強制重量測，並延遲再測一次以捕捉版面在下一幀才穩定的情況。
+    map.resize()
+    requestAnimationFrame(() => map?.resize())
+    setTimeout(() => map?.resize(), 300)
     loaded.value = true
     ;(window as unknown as { __matsoMap?: MapLibreMap }).__matsoMap = map
   })
