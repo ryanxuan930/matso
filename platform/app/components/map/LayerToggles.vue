@@ -21,6 +21,15 @@ const hexLimitKm = defineModel<number>('hexLimitKm', { default: 0 })
 // #6 日照視覺（晨昏/夜間色調）+ 一日時間。
 const dayNight = defineModel<boolean>('dayNight', { default: false })
 const timeOfDay = defineModel<number>('timeOfDay', { default: 12 })
+// #22 線條粗細（原為獨立 modal，現併入本面板）+ 顏色。
+const hexLineWidth = defineModel<number>('hexLineWidth', { default: 0.5 })
+const contourMajorWidth = defineModel<number>('contourMajorWidth', { default: 1.2 })
+const contourMinorWidth = defineModel<number>('contourMinorWidth', { default: 0.5 })
+const hexLineColor = defineModel<string>('hexLineColor', { default: '#38bdf8' })
+const contourColor = defineModel<string>('contourColor', { default: '#c9a15c' })
+const gridColor = defineModel<string>('gridColor', { default: '#5b7fa6' })
+const gridWidth = defineModel<number>('gridWidth', { default: 0.5 })
+const mgrsColor = defineModel<string>('mgrsColor', { default: '#facc15' })
 
 // 地形陰影/等高線需 tileserver 提供瓦片；無 tileUrl 時停用並註記（避免 no-op 勾選誤導）。
 withDefaults(
@@ -79,6 +88,12 @@ function move(key: string, dir: -1 | 1) {
       <label>交戰範圍(km)
         <input v-model.number="hexLimitKm" type="number" min="0" step="5" data-testid="hex-limit-km">
       </label>
+      <label>線寬 {{ hexLineWidth.toFixed(1) }}
+        <input v-model.number="hexLineWidth" type="range" min="0.1" max="4" step="0.1" data-testid="hex-line-width">
+      </label>
+      <label class="clr">線色
+        <input v-model="hexLineColor" type="color" data-testid="hex-line-color">
+      </label>
     </div>
     <div class="lyr" :class="{ disabled: !hillshadeEnabled }">
       <label>
@@ -107,6 +122,15 @@ function move(key: string, dir: -1 | 1) {
       <label>次等高線（細）
         <input v-model.number="contourMinor" type="number" min="25" step="25" data-testid="contour-minor"> m
       </label>
+      <label>主線寬 {{ contourMajorWidth.toFixed(1) }}
+        <input v-model.number="contourMajorWidth" type="range" min="0.1" max="4" step="0.1" data-testid="contour-major-width">
+      </label>
+      <label>次線寬 {{ contourMinorWidth.toFixed(1) }}
+        <input v-model.number="contourMinorWidth" type="range" min="0.1" max="4" step="0.1" data-testid="contour-minor-width">
+      </label>
+      <label class="clr">線色
+        <input v-model="contourColor" type="color" data-testid="contour-color">
+      </label>
     </div>
 
     <div class="title spaced">座標網格</div>
@@ -125,6 +149,15 @@ function move(key: string, dir: -1 | 1) {
     <div v-if="latlngGrid || mgrsGrid" class="intervals">
       <label>密度（度）
         <input v-model.number="gridStepDeg" type="number" min="0.05" step="0.05" data-testid="grid-step">
+      </label>
+      <label v-if="latlngGrid">網格線寬 {{ gridWidth.toFixed(1) }}
+        <input v-model.number="gridWidth" type="range" min="0.1" max="4" step="0.1" data-testid="grid-width">
+      </label>
+      <label v-if="latlngGrid" class="clr">網格色
+        <input v-model="gridColor" type="color" data-testid="grid-color">
+      </label>
+      <label v-if="mgrsGrid" class="clr">MGRS 色
+        <input v-model="mgrsColor" type="color" data-testid="mgrs-color">
       </label>
     </div>
 
@@ -240,6 +273,19 @@ label em {
   border: 1px solid #334155;
   border-radius: 0.25rem;
   padding: 0.1rem 0.25rem;
+}
+.intervals input[type='range'] {
+  width: 5rem;
+  accent-color: #38bdf8;
+}
+.intervals label.clr input[type='color'] {
+  width: 2rem;
+  height: 1.1rem;
+  padding: 0;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  background: transparent;
+  cursor: pointer;
 }
 .order {
   list-style: none;

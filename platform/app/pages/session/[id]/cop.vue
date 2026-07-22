@@ -69,7 +69,12 @@ const timeOfDay = ref(12) // 一日時間 0–24（#6）
 const hexLineWidth = ref(0.5)
 const contourMajorWidth = ref(1.2)
 const contourMinorWidth = ref(0.5)
-const lineWidthModal = ref(false)
+// #22 線條顏色 + 座標網格線寬（併入圖層小工具，取代舊 modal）。
+const hexLineColor = ref('#38bdf8')
+const contourColor = ref('#c9a15c')
+const gridColor = ref('#5b7fa6')
+const gridWidth = ref(0.5)
+const mgrsColor = ref('#facc15')
 // #12 浮動工具視窗：六個小工具皆可拖拉/縮放/關閉，並以工具選單勾選開關；幾何+開關持久化。
 // 取代舊的左右固定面板/換邊。coordQuery/mapEditorOpen 改為對應 widget 的開關別名。
 type WidgetId = 'layers' | 'units' | 'events' | 'orders' | 'mapedit' | 'coords'
@@ -967,6 +972,11 @@ onMounted(() => {
     if (typeof p.hexLineWidth === 'number') hexLineWidth.value = p.hexLineWidth
     if (typeof p.contourMajorWidth === 'number') contourMajorWidth.value = p.contourMajorWidth
     if (typeof p.contourMinorWidth === 'number') contourMinorWidth.value = p.contourMinorWidth
+    if (typeof p.hexLineColor === 'string') hexLineColor.value = p.hexLineColor
+    if (typeof p.contourColor === 'string') contourColor.value = p.contourColor
+    if (typeof p.gridColor === 'string') gridColor.value = p.gridColor
+    if (typeof p.gridWidth === 'number') gridWidth.value = p.gridWidth
+    if (typeof p.mgrsColor === 'string') mgrsColor.value = p.mgrsColor
   } catch {
     /* 壞資料忽略，用預設 */
   }
@@ -992,6 +1002,11 @@ watch(
     hexLineWidth,
     contourMajorWidth,
     contourMinorWidth,
+    hexLineColor,
+    contourColor,
+    gridColor,
+    gridWidth,
+    mgrsColor,
     widgets,
   ],
   () => {
@@ -1020,6 +1035,11 @@ watch(
           hexLineWidth: hexLineWidth.value,
           contourMajorWidth: contourMajorWidth.value,
           contourMinorWidth: contourMinorWidth.value,
+          hexLineColor: hexLineColor.value,
+          contourColor: contourColor.value,
+          gridColor: gridColor.value,
+          gridWidth: gridWidth.value,
+          mgrsColor: mgrsColor.value,
         }),
       )
     } catch {
@@ -1275,6 +1295,11 @@ watch(
             :hex-line-width="hexLineWidth"
             :contour-major-width="contourMajorWidth"
             :contour-minor-width="contourMinorWidth"
+            :hex-line-color="hexLineColor"
+            :contour-color="contourColor"
+            :grid-color="gridColor"
+            :grid-width="gridWidth"
+            :mgrs-color="mgrsColor"
             :feature-fc="featureFc"
             :feat-symbol-fc="featSymbol.fc"
             :feat-symbol-icons="featSymbol.icons"
@@ -1336,6 +1361,14 @@ watch(
             v-model:hex-limit-km="hexLimitKm"
             v-model:day-night="dayNight"
             v-model:time-of-day="timeOfDay"
+            v-model:hex-line-width="hexLineWidth"
+            v-model:contour-major-width="contourMajorWidth"
+            v-model:contour-minor-width="contourMinorWidth"
+            v-model:hex-line-color="hexLineColor"
+            v-model:contour-color="contourColor"
+            v-model:grid-color="gridColor"
+            v-model:grid-width="gridWidth"
+            v-model:mgrs-color="mgrsColor"
             :hillshade-enabled="hasTiles"
             :contour-enabled="hasTiles"
             :basemaps="basemapSources"
@@ -1349,36 +1382,7 @@ watch(
             <code>taiwan.osm.pbf</code> 產生 mbtiles 並啟用 tileserver。</span>
         </div>
 
-        <!-- 線條粗細設定（#5）：專屬 modal 調整六角網格 + 主/次等高線線寬。 -->
-        <button class="linewidth-btn" data-testid="open-line-width" title="線條粗細設定" @click="lineWidthModal = true">
-          ✎ 線寬
-        </button>
-        <div
-          v-if="lineWidthModal"
-          class="modal-overlay"
-          data-testid="line-width-modal"
-          @click.self="lineWidthModal = false"
-        >
-          <div class="modal">
-            <h3>線條粗細設定</h3>
-            <label>六角網格線 <b>{{ hexLineWidth.toFixed(1) }} px</b>
-              <input v-model.number="hexLineWidth" type="range" min="0.1" max="4" step="0.1" data-testid="hex-line-width">
-            </label>
-            <label>主等高線 <b>{{ contourMajorWidth.toFixed(1) }} px</b>
-              <input v-model.number="contourMajorWidth" type="range" min="0.1" max="4" step="0.1" data-testid="contour-major-width">
-            </label>
-            <label>次等高線 <b>{{ contourMinorWidth.toFixed(1) }} px</b>
-              <input v-model.number="contourMinorWidth" type="range" min="0.1" max="4" step="0.1" data-testid="contour-minor-width">
-            </label>
-            <p class="modal-hint">變更即時套用並自動保存，跨換頁/重整保留。</p>
-            <div class="modal-btns">
-              <button class="ghost" data-testid="line-width-reset" @click="hexLineWidth = 0.5; contourMajorWidth = 1.2; contourMinorWidth = 0.5">
-                回預設
-              </button>
-              <button data-testid="line-width-close" @click="lineWidthModal = false">完成</button>
-            </div>
-          </div>
-        </div>
+        <!-- 線條粗細/顏色（#22）已併入「圖層」小工具，不再獨立浮動 modal。 -->
 
         <!-- 右鍵選單（#3，ATAK 式移動/攻擊）：右鍵單位/地圖 → 移動/攻擊 → 十字準星 → 點目標。 -->
         <template v-if="ctxMenu">
