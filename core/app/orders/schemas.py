@@ -37,10 +37,11 @@ class MovePayload(BaseModel):
 
 
 class EngagePayload(BaseModel):
-    """ENGAGE 指令載荷：目標單位（+ 選用武器實例）。"""
+    """ENGAGE 指令載荷：目標單位（+ 選用武器實例 + 彈種）。"""
 
     target_unit_id: str = Field(min_length=1)
     weapon_id: str | None = None
+    ammo_type: str | None = None
 
 
 class PrecheckCheck(BaseModel):

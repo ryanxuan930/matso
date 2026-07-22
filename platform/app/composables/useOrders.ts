@@ -2,12 +2,18 @@ import type { components } from '~/types/api'
 import { apiFetch } from '~/composables/useApi'
 
 export type UnitView = components['schemas']['UnitView']
+export type WeaponView = components['schemas']['WeaponView']
 export type OrderResponse = components['schemas']['OrderResponse']
 type OrderRequest = components['schemas']['OrderRequest']
 
 /** 取 session 的 faction-scoped 單位（下令對象）。 */
 export function fetchUnits(sessionId: string): Promise<UnitView[]> {
   return apiFetch<UnitView[]>(`/sessions/${sessionId}/units`)
+}
+
+/** 取單位可用武器（ENGAGE 選武器/彈種；資料驅動 baseStats）。他方單位後端回 403。 */
+export function fetchWeapons(sessionId: string, unitId: string): Promise<WeaponView[]> {
+  return apiFetch<WeaponView[]>(`/sessions/${sessionId}/units/${unitId}/weapons`)
 }
 
 /** 取 session 的指令（pending + 歷史）。 */

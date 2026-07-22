@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { Contact, OwnUnit } from '~/composables/useUnits'
-import type { UnitView, OrderResponse } from '~/composables/useOrders'
+import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
 import type { ApiError } from '~/composables/useApi'
 import { apiFetch } from '~/composables/useApi'
 import { buildBasemapSources } from '~/composables/useMapStyle'
-import { cancelOrder, fetchOrders, fetchUnits, submitOrder } from '~/composables/useOrders'
+import { cancelOrder, fetchOrders, fetchUnits, fetchWeapons, submitOrder } from '~/composables/useOrders'
 
 // COP（SPEC §13.1/§13.4）：地圖基座（O4.2）+ 單位/fog of war（O4.4）+ 下令 UX（O4.5）。
 const route = useRoute()
@@ -68,6 +68,16 @@ const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
 const destH3 = ref<string | null>(null)
 const targeting = ref(false)
 const targetUnitId = ref<string | null>(null)
+// ENGAGE 武器/彈種（資料驅動 baseStats；選取單位時抓 GET /units/{id}/weapons）
+const weapons = ref<WeaponView[]>([])
+const weaponId = ref<string | null>(null)
+const ammoType = ref<string | null>(null)
+const selectedWeapon = computed(() => weapons.value.find((w) => w.id === weaponId.value) ?? null)
+const ammoOptions = computed(() => selectedWeapon.value?.ammo_types ?? [])
+// 換武器 → 清空彈種（避免殘留他武器的彈種）
+watch(weaponId, () => {
+  ammoType.value = null
+})
 const precheck = ref<OrderResponse['precheck'] | null>(null)
 const message = ref('')
 
@@ -154,12 +164,16 @@ async function refresh() {
   myFaction.value = sessions.find((s) => s.id === sessionId.value)?.my_faction ?? ''
 }
 
-function selectUnit(id: string) {
+async function selectUnit(id: string) {
   selectedId.value = id
   precheck.value = null
   message.value = ''
   destH3.value = null
   targetUnitId.value = null
+  weaponId.value = null
+  ammoType.value = null
+  // 抓此單位可用武器（ENGAGE 選武器/彈種）；失敗（他方/無裝備）→ 空清單，下拉隱藏。
+  weapons.value = await fetchWeapons(sessionId.value, id).catch(() => [])
 }
 
 function onMapClick(e: { h3: string }) {
@@ -196,7 +210,11 @@ async function submit() {
   const payload =
     orderType.value === 'MOVE'
       ? { to_h3: destH3.value, mobility_profile: 'FOOT' }
-      : { target_unit_id: targetUnitId.value }
+      : {
+          target_unit_id: targetUnitId.value,
+          ...(weaponId.value ? { weapon_id: weaponId.value } : {}),
+          ...(ammoType.value ? { ammo_type: ammoType.value } : {}),
+        }
   try {
     const resp = await submitOrder(sessionId.value, {
       unit_id: selectedId.value,
@@ -292,6 +310,18 @@ onBeforeUnmount(() => stream.disconnect())
             <div class="dest" data-testid="target-label">
               {{ targetUnit ? `🎯 ${targetUnit.designation}（${targetUnit.faction}）` : '未鎖定目標' }}
             </div>
+            <template v-if="weapons.length">
+              <select v-model="weaponId" data-testid="engage-weapon">
+                <option :value="null">選武器（預設第一項）</option>
+                <option v-for="w in weapons" :key="w.id" :value="w.id">
+                  {{ w.name }}<span v-if="w.ammo_remaining != null"> · 彈 {{ w.ammo_remaining }}</span>
+                </option>
+              </select>
+              <select v-if="ammoOptions.length" v-model="ammoType" data-testid="engage-ammo">
+                <option :value="null">彈種（預設）</option>
+                <option v-for="a in ammoOptions" :key="a" :value="a">{{ a }}</option>
+              </select>
+            </template>
           </template>
           <button
             data-testid="submit-order"

@@ -197,12 +197,18 @@ def _load_msel(root: Path, rel_path: str | None) -> list[MselEntry]:
 
 
 def create_session_from_scenario(
-    db: Session, loaded: LoadedScenario, *, master_seed: int, scenario_id: str | None = None
+    db: Session,
+    loaded: LoadedScenario,
+    *,
+    master_seed: int,
+    scenario_id: str | None = None,
+    seed_default_equipment: bool = False,
 ) -> str:
     """依載入的想定開局：建 WargameSession + TacticalUnits（含 parent 連結）。回 session id。
 
     relations 熱狀態載入與 kernel 綁定屬部署層/O7.4；本函式只落地 session 與單位。
     scenario_id：連結到已存的 Scenario 列（#7 create-from-scenario）；None 則不連結。
+    seed_default_equipment=True：為每個單位配發預設武器（供資料驅動的 ENGAGE 武器/彈種選擇）。
     """
     from app.models import SessionMode, TacticalUnit, WargameSession
 
@@ -235,6 +241,10 @@ def create_session_from_scenario(
             by_designation[(u.faction, u.designation)].parent_id = by_designation[
                 (u.faction, u.parent)
             ].id
+    if seed_default_equipment:
+        from app.adjudication import seed_session_equipment
+
+        seed_session_equipment(db, session.id)
     db.commit()
     return session.id
 

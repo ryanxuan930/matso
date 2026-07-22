@@ -91,7 +91,11 @@ class LobbyService:
             raise ScenarioInvalidError(str(exc)) from exc
         seed = _derive_seed(loaded.name, user.id, str(req.scenario_id))
         sid = create_session_from_scenario(
-            self._db, loaded, master_seed=seed, scenario_id=req.scenario_id
+            self._db,
+            loaded,
+            master_seed=seed,
+            scenario_id=req.scenario_id,
+            seed_default_equipment=True,  # 配發預設武器，供資料驅動的 ENGAGE 武器/彈種選擇
         )
         self._db.add(
             SessionParticipant(

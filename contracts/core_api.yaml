@@ -24,6 +24,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    UnitId:
+      name: uid
+      in: path
+      required: true
+      schema: { type: string }
     TaskId:
       name: tid
       in: path
@@ -138,6 +143,19 @@ components:
         lng: { type: [number, "null"] }
         health: { type: number }
         comms: { type: string }
+    WeaponView:
+      type: object
+      description: 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種
+      required: [id, template_id, name, category, min_range_m, ammo_types]
+      properties:
+        id: { type: string }
+        template_id: { type: string }
+        name: { type: string }
+        category: { type: string }
+        max_range_m: { type: [number, "null"] }
+        min_range_m: { type: number }
+        ammo_types: { type: array, items: { type: string } }
+        ammo_remaining: { type: [integer, "null"] }
     CreateSessionRequest:
       type: object
       required: [name]
@@ -177,7 +195,7 @@ components:
         order_type: { $ref: "#/components/schemas/OrderType" }
         payload:
           type: object
-          description: "依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?}"
+          description: "依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?,ammo_type?}"
     PrecheckCheck:
       type: object
       required: [name, passed]
@@ -308,6 +326,21 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/UnitView" } }
         "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/units/{uid}/weapons:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { $ref: "#/components/parameters/UnitId" }
+    get:
+      operationId: listUnitWeapons
+      security: [{ bearerAuth: [] }]
+      description: 單位可用武器（資料驅動 baseStats）；fog of war：全知見任一，否則僅己方單位（他方→403）
+      responses:
+        "200":
+          description: Weapons
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/WeaponView" } }
+        "403": { description: Not own faction, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/inject:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

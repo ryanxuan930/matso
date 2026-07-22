@@ -143,6 +143,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/units/{uid}/weapons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        /** @description 單位可用武器（資料驅動 baseStats）；fog of war：全知見任一，否則僅己方單位（他方→403） */
+        get: operations["listUnitWeapons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/inject": {
         parameters: {
             query?: never;
@@ -431,6 +451,17 @@ export interface components {
             health: number;
             comms: string;
         };
+        /** @description 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種 */
+        WeaponView: {
+            id: string;
+            template_id: string;
+            name: string;
+            category: string;
+            max_range_m?: number | null;
+            min_range_m: number;
+            ammo_types: string[];
+            ammo_remaining?: number | null;
+        };
         CreateSessionRequest: {
             name: string;
             scenario_id?: string | null;
@@ -462,7 +493,7 @@ export interface components {
         OrderRequest: {
             unit_id: string;
             order_type: components["schemas"]["OrderType"];
-            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?} */
+            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?,ammo_type?} */
             payload?: Record<string, never>;
         };
         PrecheckCheck: {
@@ -488,6 +519,7 @@ export interface components {
     parameters: {
         SessionId: string;
         OrderId: string;
+        UnitId: string;
         TaskId: string;
         PluginName: string;
     };
@@ -543,13 +575,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New access token */
+            /** @description 新的 token 對（滑動續期：access + 新 refresh） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AccessToken"];
+                    "application/json": components["schemas"]["TokenPair"];
                 };
             };
             /** @description Invalid or expired refresh token */
@@ -736,6 +768,38 @@ export interface operations {
                 };
             };
             /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listUnitWeapons: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Weapons */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeaponView"][];
+                };
+            };
+            /** @description Not own faction */
             403: {
                 headers: {
                     [name: string]: unknown;

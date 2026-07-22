@@ -14,10 +14,12 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import h3
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.adjudication.weapon import WeaponProfile
 from app.factions import FactionRelations
-from app.models.tables import TacticalUnit
+from app.models.tables import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.orders.schemas import (
     EngagePayload,
     MovePayload,
@@ -58,6 +60,9 @@ _CHECK_ERROR_CODES = {
     "target_exists": "ORDER_TARGET_NOT_FOUND",
     "line_of_sight": "ORDER_NO_LOS",
     "roe": "ORDER_ROE_VIOLATION",
+    "weapon": "ORDER_INVALID_PAYLOAD",
+    "range": "ORDER_OUT_OF_RANGE",
+    "ammo": "ORDER_NO_AMMO",
 }
 
 
@@ -157,7 +162,80 @@ def _precheck_engage(
             f"地形遮蔽：{dist:.1f} km 直線視線於{loc}附近被地形擋住，"
             f"最低點高出視線約 {deficit:.0f} m（觀測/目標離地各 {_ENGAGE_OBS_M:.0f} m）"
         )
-    return [PrecheckCheck(name="line_of_sight", passed=out.visible, detail=detail)]
+    los = PrecheckCheck(name="line_of_sight", passed=out.visible, detail=detail)
+    # 無視線 → 直接不可行（間接火力例外於後續卡）；有視線才續查武器射程/彈種。
+    if not out.visible:
+        return [los]
+    return [los, *_weapon_checks(db, unit, target, payload)]
+
+
+def _weapon_checks(
+    db: Session,
+    unit: TacticalUnit,
+    target: TacticalUnit,
+    payload: EngagePayload,
+) -> list[PrecheckCheck]:
+    """武器/射程/彈種檢查（資料驅動 baseStats）。單位無裝備 → 回 []（優雅降級，維持既有測試綠）。
+
+    weapon_id 指定時須為此單位所屬的 EquipmentInstance（否則 weapon 失敗→ORDER_INVALID_PAYLOAD）；
+    未指定則自動選第一件。射程用大圓距離對 WeaponProfile.in_envelope；彈種須在武器 ammo_types 內。
+    武器 baseStats 無法解析（ValueError）→ weapon 失敗，不冒 500。
+    """
+    instances = (
+        db.execute(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id))
+        .scalars()
+        .all()
+    )
+    if not instances:
+        return []  # 無裝備 → 略過武器檢查（維持既有 ENGAGE 測試綠）
+
+    if payload.weapon_id is not None:
+        inst = next((i for i in instances if i.id == payload.weapon_id), None)
+        if inst is None:
+            detail = f"指定武器不屬於此單位：{payload.weapon_id}"
+            return [PrecheckCheck(name="weapon", passed=False, detail=detail)]
+    else:
+        inst = instances[0]
+
+    tmpl = db.get(EquipmentTemplate, inst.template_id)
+    if tmpl is None:
+        return [PrecheckCheck(name="weapon", passed=False, detail="武器模板遺失")]
+    try:
+        profile = WeaponProfile.from_base_stats(tmpl.base_stats)
+    except ValueError as exc:
+        return [PrecheckCheck(name="weapon", passed=False, detail=f"武器參數無效：{exc}")]
+
+    # 到此 LOS 已過，射手/目標座標必為非 None（上游 position 檢查已保證）。
+    assert unit.current_lat is not None and unit.current_lng is not None
+    assert target.current_lat is not None and target.current_lng is not None
+    dist_m = (
+        _haversine_km(unit.current_lat, unit.current_lng, target.current_lat, target.current_lng)
+        * 1000.0
+    )
+    envelope = f"[{profile.min_range_m:.0f}, {profile.max_range_m:.0f}] m"
+    in_range = profile.in_envelope(dist_m)
+    range_check = PrecheckCheck(
+        name="range",
+        passed=in_range,
+        detail=(
+            f"距離 {dist_m:.0f} m 位於 {tmpl.name} 射程包絡 {envelope} 內"
+            if in_range
+            else f"距離 {dist_m:.0f} m 超出 {tmpl.name} 射程包絡 {envelope}"
+        ),
+    )
+    if not in_range:
+        return [range_check]
+
+    available = ", ".join(profile.ammo_types)
+    ammo_ok = payload.ammo_type is None or payload.ammo_type in profile.ammo_types
+    if not ammo_ok:
+        ammo_detail = f"{tmpl.name} 不支援彈種 {payload.ammo_type}（可用：{available}）"
+    elif payload.ammo_type is None:
+        ammo_detail = f"未指定彈種，使用 {tmpl.name} 預設（可用：{available}）"
+    else:
+        ammo_detail = f"彈種 {payload.ammo_type} 可用（{tmpl.name}）"
+    ammo_check = PrecheckCheck(name="ammo", passed=ammo_ok, detail=ammo_detail)
+    return [range_check, ammo_check]
 
 
 class TerrainGatewayAdapter:
