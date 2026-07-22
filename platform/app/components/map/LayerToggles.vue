@@ -1,16 +1,39 @@
 <script setup lang="ts">
-// 圖層開關 + 底圖切換（SPEC §13.2）。O4.2 提供 hex/hillshade；底圖來源可抽換（#2）。
+// 圖層開關 + 底圖切換 + 透明度/套疊順序/等高線間距（SPEC §13.2；#8/#9）。
 import type { BasemapSource } from '~/composables/useMapStyle'
 
 const hex = defineModel<boolean>('hex', { default: false })
 const hillshade = defineModel<boolean>('hillshade', { default: false })
 const contour = defineModel<boolean>('contour', { default: false })
 const basemap = defineModel<string>('basemap', { default: 'offline' })
+// #9 透明度乘數（0–1，key＝群）＋套疊順序（上→下）；#8 主/次等高線間距（m）。
+const layerOpacity = defineModel<Record<string, number>>('layerOpacity', { default: () => ({}) })
+const layerOrder = defineModel<string[]>('layerOrder', { default: () => ['hex', 'contour', 'hillshade'] })
+const contourMajor = defineModel<number>('contourMajor', { default: 100 })
+const contourMinor = defineModel<number>('contourMinor', { default: 50 })
+
 // 地形陰影/等高線需 tileserver 提供瓦片；無 tileUrl 時停用並註記（避免 no-op 勾選誤導）。
 withDefaults(
   defineProps<{ hillshadeEnabled?: boolean; contourEnabled?: boolean; basemaps?: BasemapSource[] }>(),
   { hillshadeEnabled: true, contourEnabled: true, basemaps: () => [] },
 )
+
+const OVERLAY_LABEL: Record<string, string> = { hex: '六角網格', contour: '等高線', hillshade: '地形陰影' }
+
+function opacityOf(key: string): number {
+  return layerOpacity.value[key] ?? 1
+}
+function setOpacity(key: string, e: Event) {
+  layerOpacity.value = { ...layerOpacity.value, [key]: Number((e.target as HTMLInputElement).value) }
+}
+function move(key: string, dir: -1 | 1) {
+  const arr = [...layerOrder.value]
+  const i = arr.indexOf(key)
+  const j = i + dir
+  if (i < 0 || j < 0 || j >= arr.length) return
+  ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
+  layerOrder.value = arr
+}
 </script>
 
 <template>
@@ -20,30 +43,64 @@ withDefaults(
       <option v-for="b in basemaps" :key="b.id" :value="b.id">{{ b.label }}</option>
     </select>
     <div v-else class="single">離線格線（無向量瓦片）</div>
+    <div v-if="basemap !== 'offline'" class="op">
+      <span>透明度</span>
+      <input
+        type="range" min="0" max="1" step="0.05" :value="opacityOf('basemap')"
+        data-testid="opacity-basemap" @input="setOpacity('basemap', $event)"
+      >
+    </div>
 
     <div class="title spaced">圖層</div>
-    <label>
-      <input v-model="hex" data-testid="toggle-hex" type="checkbox">
-      <span>六角網格</span>
-    </label>
-    <label :class="{ disabled: !hillshadeEnabled }">
+    <div class="lyr">
+      <label>
+        <input v-model="hex" data-testid="toggle-hex" type="checkbox">
+        <span>六角網格</span>
+      </label>
       <input
-        v-model="hillshade"
-        data-testid="toggle-hillshade"
-        type="checkbox"
-        :disabled="!hillshadeEnabled"
+        type="range" min="0" max="1" step="0.05" :value="opacityOf('hex')"
+        data-testid="opacity-hex" @input="setOpacity('hex', $event)"
       >
-      <span>地形陰影<em v-if="!hillshadeEnabled"> · 需底圖</em></span>
-    </label>
-    <label :class="{ disabled: !contourEnabled }">
+    </div>
+    <div class="lyr" :class="{ disabled: !hillshadeEnabled }">
+      <label>
+        <input v-model="hillshade" data-testid="toggle-hillshade" type="checkbox" :disabled="!hillshadeEnabled">
+        <span>地形陰影<em v-if="!hillshadeEnabled"> · 需底圖</em></span>
+      </label>
       <input
-        v-model="contour"
-        data-testid="toggle-contour"
-        type="checkbox"
-        :disabled="!contourEnabled"
+        type="range" min="0" max="1" step="0.05" :value="opacityOf('hillshade')"
+        data-testid="opacity-hillshade" :disabled="!hillshadeEnabled" @input="setOpacity('hillshade', $event)"
       >
-      <span>等高線<em v-if="!contourEnabled"> · 需底圖</em></span>
-    </label>
+    </div>
+    <div class="lyr" :class="{ disabled: !contourEnabled }">
+      <label>
+        <input v-model="contour" data-testid="toggle-contour" type="checkbox" :disabled="!contourEnabled">
+        <span>等高線<em v-if="!contourEnabled"> · 需底圖</em></span>
+      </label>
+      <input
+        type="range" min="0" max="1" step="0.05" :value="opacityOf('contour')"
+        data-testid="opacity-contour" :disabled="!contourEnabled" @input="setOpacity('contour', $event)"
+      >
+    </div>
+    <div v-if="contour && contourEnabled" class="intervals">
+      <label>主等高線（粗）
+        <input v-model.number="contourMajor" type="number" min="50" step="50" data-testid="contour-major"> m
+      </label>
+      <label>次等高線（細）
+        <input v-model.number="contourMinor" type="number" min="50" step="50" data-testid="contour-minor"> m
+      </label>
+    </div>
+
+    <div class="title spaced">疊放順序（上＝上層）</div>
+    <ul class="order" data-testid="layer-order">
+      <li v-for="(k, i) in layerOrder" :key="k">
+        <span>{{ OVERLAY_LABEL[k] ?? k }}</span>
+        <span class="ord-btns">
+          <button :disabled="i === 0" :data-testid="`order-up-${k}`" @click="move(k, -1)">▲</button>
+          <button :disabled="i === layerOrder.length - 1" :data-testid="`order-down-${k}`" @click="move(k, 1)">▼</button>
+        </span>
+      </li>
+    </ul>
   </div>
 </template>
 
@@ -61,7 +118,7 @@ withDefaults(
   background: rgba(15, 23, 42, 0.9);
   color: #e2e8f0;
   font-size: 0.8125rem;
-  min-width: 9rem;
+  min-width: 11rem;
 }
 .title {
   font-weight: 600;
@@ -81,19 +138,88 @@ withDefaults(
   color: #64748b;
   font-size: 0.72rem;
 }
+.lyr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.lyr.disabled label {
+  color: #64748b;
+}
+.lyr input[type='range'],
+.op input[type='range'] {
+  width: 4.5rem;
+  accent-color: #38bdf8;
+}
+.op {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
 label {
   display: flex;
   gap: 0.5rem;
   align-items: center;
   cursor: pointer;
 }
-label.disabled {
-  cursor: default;
-  color: #64748b;
-}
 label em {
   font-style: normal;
   color: #64748b;
   font-size: 0.7rem;
+}
+.intervals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.25rem 0.375rem;
+  border-left: 2px solid #334155;
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+.intervals label {
+  justify-content: space-between;
+}
+.intervals input[type='number'] {
+  width: 3.5rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.25rem;
+}
+.order {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.order li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.15rem 0.375rem;
+  border: 1px solid #1e293b;
+  border-radius: 0.25rem;
+}
+.ord-btns button {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0 0.15rem;
+}
+.ord-btns button:disabled {
+  color: #334155;
+  cursor: default;
+}
+.ord-btns button:not(:disabled):hover {
+  color: #e2e8f0;
 }
 </style>

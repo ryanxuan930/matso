@@ -53,6 +53,59 @@ export function openMapTilesDarkLayers(sourceId: string): StyleSpecification['la
   ]
 }
 
+// ---------------- COP 圖層管理：透明度（乘上各子層 base）+ 套疊順序（#9） ----------------
+
+export type OpacityProp = 'raster-opacity' | 'fill-opacity' | 'line-opacity'
+export interface LayerMember {
+  id: string
+  prop: OpacityProp
+  base: number // 設計基準透明度；UI 滑桿為 0–1 乘數（100%＝原設計外觀，向下淡化）
+}
+
+/**
+ * 可調透明度＋套疊順序的疊加圖層群。units/rings/graticule 釘住（不列入）；
+ * basemap 子層動態（依 raster/vector），由 basemapOpacityMembers() 解析。
+ */
+export const OVERLAY_LAYER_GROUPS: { key: string; label: string; members: LayerMember[] }[] = [
+  { key: 'hillshade', label: '地形陰影', members: [{ id: 'hillshade', prop: 'raster-opacity', base: 0.5 }] },
+  {
+    key: 'contour',
+    label: '等高線',
+    members: [
+      { id: 'contours-line-major', prop: 'line-opacity', base: 0.8 },
+      { id: 'contours-line-minor', prop: 'line-opacity', base: 0.5 },
+    ],
+  },
+  {
+    key: 'hex',
+    label: '六角網格',
+    members: [
+      { id: 'hexgrid-fill', prop: 'fill-opacity', base: 0.06 },
+      { id: 'hexgrid-line', prop: 'line-opacity', base: 0.5 },
+    ],
+  },
+]
+
+/** basemap 子層的 opacity paint + base（vector 深色樣式，值須與 openMapTilesDarkLayers 一致）。 */
+export function basemapOpacityMembers(type: 'raster' | 'vector' | 'offline'): LayerMember[] {
+  if (type === 'raster') return [{ id: 'basemap', prop: 'raster-opacity', base: 1 }]
+  if (type === 'vector')
+    return [
+      { id: 'basemap-landcover', prop: 'fill-opacity', base: 0.6 },
+      { id: 'basemap-landuse', prop: 'fill-opacity', base: 0.5 },
+      { id: 'basemap-park', prop: 'fill-opacity', base: 0.5 },
+      { id: 'basemap-water', prop: 'fill-opacity', base: 1 },
+      { id: 'basemap-waterway', prop: 'line-opacity', base: 1 },
+      { id: 'basemap-transportation', prop: 'line-opacity', base: 1 },
+      { id: 'basemap-building', prop: 'fill-opacity', base: 0.7 },
+      { id: 'basemap-boundary', prop: 'line-opacity', base: 1 },
+    ]
+  return []
+}
+
+/** 疊加層預設套疊順序（上→下）。basemap 恆在最下（不列入 reorder）。 */
+export const DEFAULT_OVERLAY_ORDER = ['hex', 'contour', 'hillshade']
+
 export interface BasemapConfig {
   tileUrl?: string // 本地 tileserver（街道，OpenMapTiles）
   satelliteUrl?: string // 衛星 raster XYZ 模板（商用 / 軍用影像）

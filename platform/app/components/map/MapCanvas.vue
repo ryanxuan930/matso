@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
+import type { FilterSpecification, GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
 import {
+  DEFAULT_OVERLAY_ORDER,
   DEFAULT_ZOOM,
+  OVERLAY_LAYER_GROUPS,
   TAIWAN_CENTER,
+  basemapOpacityMembers,
   buildBasemapSources,
   buildGraticule,
   buildOfflineStyle,
@@ -33,6 +36,10 @@ const props = withDefaults(
     targetId?: string | null // ENGAGE 鎖定的目標（紅色高亮環）
     basemapId?: string // 當前底圖來源 id（offline / street / satellite / 軍用…）
     destH3?: string | null // MOVE 目的格（res 8）——畫出吸附後的格與格心，讓「點哪→到哪」透明（#4b）
+    layerOpacity?: Record<string, number> // 各圖層群透明度乘數（#9；basemap/hillshade/contour/hex）
+    layerOrder?: string[] // 疊加層套疊順序（上→下，#9）
+    contourMajor?: number // 主等高線間距 m（較粗，#8；預設 100）
+    contourMinor?: number // 次等高線間距 m（較細，#8；預設 50）
   }>(),
   {
     hexVisible: false,
@@ -45,6 +52,10 @@ const props = withDefaults(
     targetId: null,
     basemapId: 'offline',
     destH3: null,
+    layerOpacity: () => ({}),
+    layerOrder: () => [...DEFAULT_OVERLAY_ORDER],
+    contourMajor: 100,
+    contourMinor: 50,
   },
 )
 
@@ -95,6 +106,7 @@ function applyBasemap(id: string) {
     })
     for (const layer of openMapTilesDarkLayers('basemap')) map.addLayer(layer, GRAT_SRC)
   }
+  applyOpacity('basemap') // 底圖重建後重套透明度（#9）
 }
 
 const NONE = '__matso_none__' // 過濾器 sentinel：無選取時不匹配任何 feature
@@ -129,6 +141,55 @@ function destFeatures(h3: string | null): { type: 'FeatureCollection'; features:
 function syncDest() {
   const src = map?.getSource(DEST_SRC) as GeoJSONSource | undefined
   src?.setData(destFeatures(props.destH3) as never)
+}
+
+// ---- 圖層透明度 + 套疊順序（#9）----
+const PIN_TOP = 'move-dest-fill' // 疊加層維持在此之下（目的標記/血量環/選取環/單位釘在最上）
+
+/** 解析圖層群 → maplibre 子層（basemap 依當前來源型別動態）。 */
+function groupMembers(key: string) {
+  if (key === 'basemap') {
+    const src = basemapSources.find((s) => s.id === props.basemapId)
+    return basemapOpacityMembers((src?.type as 'raster' | 'vector' | 'offline') ?? 'offline')
+  }
+  return OVERLAY_LAYER_GROUPS.find((g) => g.key === key)?.members ?? []
+}
+
+/** 套用單一群透明度＝各子層 base × 乘數（預設 1）。 */
+function applyOpacity(key: string) {
+  if (!map) return
+  const factor = props.layerOpacity?.[key] ?? 1
+  for (const m of groupMembers(key)) {
+    if (map.getLayer(m.id)) map.setPaintProperty(m.id, m.prop, Number((m.base * factor).toFixed(3)))
+  }
+}
+function applyAllOpacity() {
+  for (const k of ['basemap', 'hillshade', 'contour', 'hex']) applyOpacity(k)
+}
+
+/** 依 layerOrder（上→下）重排疊加層，全維持於 PIN_TOP 之下。 */
+function applyOrder() {
+  if (!map || !map.getLayer(PIN_TOP)) return
+  const order = props.layerOrder?.length ? props.layerOrder : DEFAULT_OVERLAY_ORDER
+  for (const key of [...order].reverse()) {
+    // 由最下群開始，逐一插到 PIN_TOP 之下 → 陣列末端（最上群）最後插＝最上層。
+    for (const m of OVERLAY_LAYER_GROUPS.find((g) => g.key === key)?.members ?? []) {
+      if (map.getLayer(m.id)) map.moveLayer(m.id, PIN_TOP)
+    }
+  }
+}
+
+/** 主/次等高線 filter：elev 為 major/minor 倍數（minor 排除 major 倍數避免疊線，#8）。 */
+function contourFilter(which: 'major' | 'minor'): FilterSpecification {
+  const major = Math.max(1, Math.round(props.contourMajor ?? 100))
+  const minor = Math.max(1, Math.round(props.contourMinor ?? 50))
+  const elev = ['to-number', ['get', 'elev']]
+  if (which === 'major') return ['==', ['%', elev, major], 0] as unknown as FilterSpecification
+  return ['all', ['==', ['%', elev, minor], 0], ['!=', ['%', elev, major], 0]] as unknown as FilterSpecification
+}
+function applyContourFilters() {
+  if (map?.getLayer('contours-line-major')) map.setFilter('contours-line-major', contourFilter('major'))
+  if (map?.getLayer('contours-line-minor')) map.setFilter('contours-line-minor', contourFilter('minor'))
 }
 
 function refreshHex() {
@@ -220,13 +281,24 @@ onMounted(async () => {
         minzoom: 0,
         maxzoom: 14,
       })
+      // 次等高線（細）先加 → 主等高線（粗）疊其上（#8，間距可設定；filter 依 elev%interval）。
       map.addLayer({
-        id: 'contours-line',
+        id: 'contours-line-minor',
         type: 'line',
         source: CONTOUR_SRC,
         'source-layer': 'contour',
         layout: { visibility: props.contourVisible ? 'visible' : 'none' },
-        paint: { 'line-color': '#a98b57', 'line-width': 0.6, 'line-opacity': 0.55 },
+        filter: contourFilter('minor'),
+        paint: { 'line-color': '#8f7546', 'line-width': 0.5, 'line-opacity': 0.5 },
+      })
+      map.addLayer({
+        id: 'contours-line-major',
+        type: 'line',
+        source: CONTOUR_SRC,
+        'source-layer': 'contour',
+        layout: { visibility: props.contourVisible ? 'visible' : 'none' },
+        filter: contourFilter('major'),
+        paint: { 'line-color': '#c9a15c', 'line-width': 1.2, 'line-opacity': 0.8 },
       })
     }
     map.addSource(HEX_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
@@ -331,6 +403,8 @@ onMounted(async () => {
     refreshHex()
     syncUnits()
     syncDest()
+    applyAllOpacity() // #9 初始透明度
+    applyOrder() // #9 初始套疊順序
     loaded.value = true
     ;(window as unknown as { __matsoMap?: MapLibreMap }).__matsoMap = map
   })
@@ -364,9 +438,15 @@ watch(
   },
 )
 watch(() => props.hillshadeVisible, (v) => setLayerVisibility('hillshade', v))
-watch(() => props.contourVisible, (v) => setLayerVisibility('contours-line', v))
+watch(() => props.contourVisible, (v) => {
+  setLayerVisibility('contours-line-major', v)
+  setLayerVisibility('contours-line-minor', v)
+})
 watch(() => props.basemapId, (v) => applyBasemap(v))
 watch(() => props.destH3, syncDest)
+watch(() => props.layerOpacity, applyAllOpacity, { deep: true }) // #9 透明度
+watch(() => props.layerOrder, applyOrder, { deep: true }) // #9 套疊順序
+watch([() => props.contourMajor, () => props.contourMinor], applyContourFilters) // #8 等高線間距
 watch(
   () => props.selectedId,
   (v) => {

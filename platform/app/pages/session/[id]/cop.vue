@@ -21,6 +21,12 @@ const hex = ref(false)
 const hillshade = ref(false)
 const contour = ref(false)
 const currentTick = ref(100)
+// 圖層透明度乘數 + 套疊順序（#9）+ 主/次等高線間距（#8）——localStorage 持久化。
+const layerOpacity = ref<Record<string, number>>({ basemap: 1, hillshade: 1, contour: 1, hex: 1 })
+const layerOrder = ref<string[]>(['hex', 'contour', 'hillshade'])
+const contourMajor = ref(100)
+const contourMinor = ref(50)
+const LAYER_PREFS_KEY = 'matso.cop.layers'
 
 // 底圖來源（可抽換，#2）：離線 / 街道 / 衛星 / 軍用…由 runtimeConfig 注入。
 const _pub = useRuntimeConfig().public
@@ -279,6 +285,40 @@ onMounted(async () => {
   stream.connect(sessionId.value)
 })
 onBeforeUnmount(() => stream.disconnect())
+
+// 圖層偏好持久化（#9）：載入 → 存檔（跨重整保留操作員的 COP 設定）。
+onMounted(() => {
+  if (!import.meta.client) return
+  try {
+    const p = JSON.parse(localStorage.getItem(LAYER_PREFS_KEY) ?? '{}')
+    if (p.layerOpacity) layerOpacity.value = { ...layerOpacity.value, ...p.layerOpacity }
+    if (Array.isArray(p.layerOrder) && p.layerOrder.length) layerOrder.value = p.layerOrder
+    if (typeof p.contourMajor === 'number') contourMajor.value = p.contourMajor
+    if (typeof p.contourMinor === 'number') contourMinor.value = p.contourMinor
+  } catch {
+    /* 壞資料忽略，用預設 */
+  }
+})
+watch(
+  [layerOpacity, layerOrder, contourMajor, contourMinor],
+  () => {
+    if (!import.meta.client) return
+    try {
+      localStorage.setItem(
+        LAYER_PREFS_KEY,
+        JSON.stringify({
+          layerOpacity: layerOpacity.value,
+          layerOrder: layerOrder.value,
+          contourMajor: contourMajor.value,
+          contourMinor: contourMinor.value,
+        }),
+      )
+    } catch {
+      /* 配額/隱私模式忽略 */
+    }
+  },
+  { deep: true },
+)
 </script>
 
 <template>
@@ -411,6 +451,10 @@ onBeforeUnmount(() => stream.disconnect())
             :target-id="targetUnitId"
             :basemap-id="basemap"
             :dest-h3="destH3"
+            :layer-opacity="layerOpacity"
+            :layer-order="layerOrder"
+            :contour-major="contourMajor"
+            :contour-minor="contourMinor"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @basemap-error="onBasemapError"
@@ -424,6 +468,10 @@ onBeforeUnmount(() => stream.disconnect())
           v-model:hillshade="hillshade"
           v-model:contour="contour"
           v-model:basemap="basemap"
+          v-model:layer-opacity="layerOpacity"
+          v-model:layer-order="layerOrder"
+          v-model:contour-major="contourMajor"
+          v-model:contour-minor="contourMinor"
           :hillshade-enabled="hasTiles"
           :contour-enabled="hasTiles"
           :basemaps="basemapSources"
