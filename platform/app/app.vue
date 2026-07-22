@@ -11,6 +11,7 @@ onMounted(() => {
   <div :data-hydrated="hydrated">
     <NuxtRouteAnnouncer />
     <NuxtPage />
+    <AppToasts />
   </div>
 </template>
 

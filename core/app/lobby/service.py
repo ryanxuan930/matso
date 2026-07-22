@@ -130,6 +130,11 @@ class LobbyService:
             mode=session.mode.value,
             status="ENDED" if session.end_time is not None else "ACTIVE",
             my_faction=my_faction,
+            start_time=(
+                session.start_time.isoformat()
+                if hasattr(session.start_time, "isoformat")
+                else (str(session.start_time) if session.start_time else None)
+            ),
         )
 
 

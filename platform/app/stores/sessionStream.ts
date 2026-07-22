@@ -26,6 +26,7 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
   const lastSeq = ref<number | null>(null)
   const events = ref<Envelope[]>([])
   const faction = ref<string | null>(null)
+  const lastTick = ref<number | null>(null) // 最新 sim tick（供 COP 系統牆鐘顯示，#4；rollback 後可非單調）
   // 活模擬（O10.1）：STATE_DIFF 累積的 per-unit 最新欄位（lat/lng/health…）→ COP 據此即時移動圖標。
   const unitPatches = ref<Record<string, Record<string, unknown>>>({})
 
@@ -75,6 +76,8 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
   }
 
   async function handleMessage(env: Envelope): Promise<void> {
+    // 最新 sim tick（任何帶 tick 的 envelope 都更新；取最新值而非最大，rollback 會使 tick 回退）。
+    if (typeof env.tick === 'number') lastTick.value = env.tick
     switch (env.type) {
       case 'WELCOME':
         status.value = 'live'
@@ -123,5 +126,5 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
     status.value = 'closed'
   }
 
-  return { status, lastSeq, events, faction, unitPatches, connect, disconnect }
+  return { status, lastSeq, lastTick, events, faction, unitPatches, connect, disconnect }
 })

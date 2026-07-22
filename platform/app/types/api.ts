@@ -440,6 +440,8 @@ export interface components {
             status: string;
             /** @description 呼叫者在此 session 的陣營（非參與者為 null） */
             my_faction?: string | null;
+            /** @description 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 */
+            start_time?: string | null;
         };
         UnitView: {
             id: string;

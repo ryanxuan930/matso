@@ -20,3 +20,4 @@ class SessionSummary(BaseModel):
     mode: str
     status: str  # ACTIVE / ENDED（由 end_time 推導）
     my_faction: str | None  # 呼叫者在此 session 的陣營（非參與者為 null）
+    start_time: str | None = None  # 開局時間 ISO8601（供 COP 顯示執行時間，#4）

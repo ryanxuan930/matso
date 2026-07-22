@@ -77,6 +77,7 @@ const syntheticUnits = computed<OwnUnit[]>(() => {
 // 真單位（GET /units；下令對象）
 const realUnits = ref<UnitView[]>([])
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
+const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
 const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
 const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
@@ -95,6 +96,9 @@ watch(weaponId, () => {
 })
 const precheck = ref<OrderResponse['precheck'] | null>(null)
 const message = ref('')
+
+// 全域通知（下令被拒等，#7）。
+const toasts = useToasts()
 
 // WS 串流（含活模擬 STATE_DIFF 位置）——先宣告以供 livePos 使用。
 const stream = useSessionStreamStore()
@@ -180,9 +184,13 @@ const engageTargets = computed(() =>
 async function refresh() {
   realUnits.value = await fetchUnits(sessionId.value).catch(() => [])
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
-  // 我方陣營（決定友/敵渲染與目標可選集）——由 session 摘要取得。
-  const sessions = await apiFetch<{ id: string; my_faction?: string }[]>('/sessions').catch(() => [])
-  myFaction.value = sessions.find((s) => s.id === sessionId.value)?.my_faction ?? ''
+  // 我方陣營（決定友/敵渲染與目標可選集）+ 開局時間（#4 執行時間）——由 session 摘要取得。
+  const sessions = await apiFetch<{ id: string; my_faction?: string; start_time?: string | null }[]>(
+    '/sessions',
+  ).catch(() => [])
+  const me = sessions.find((s) => s.id === sessionId.value)
+  myFaction.value = me?.my_faction ?? ''
+  sessionStart.value = me?.start_time ?? null
 }
 
 // 清空選取與下令子狀態（#6 點空白取消選取 / 選新單位前重置）。
@@ -262,13 +270,28 @@ async function submit() {
       payload,
     })
     precheck.value = resp.precheck ?? null
-    message.value = `已下令（${resp.status}）`
+    message.value = `已下令（${orderStatusLabel(resp.status)}）`
+    toasts.push({
+      severity: 'success',
+      title: `已下令：${orderTypeLabel(orderType.value)} · ${selectedUnit.value?.designation ?? ''}`,
+      timeoutMs: 4000,
+    })
     await refresh()
   } catch (e) {
     const err = e as ApiError & { message?: string }
     const pc = (err as unknown as { details?: { precheck?: OrderResponse['precheck'] } }).details
     precheck.value = pc?.precheck ?? null
     message.value = `不可行：${err.code ?? ''}`
+    // #7：下令被系統拒絕 → 彈出通知，逐項列出失敗預檢的詳細原因（地形遮蔽/超出射程/無彈…）。
+    const failed = (precheck.value?.checks ?? []).filter((c) => !c.passed)
+    const lines = failed.map((c) => `✗ ${c.name}${c.detail ? ` — ${c.detail}` : ''}`)
+    toasts.push({
+      severity: 'error',
+      title: `下令被拒：${orderTypeLabel(orderType.value)}${err.code ? `（${err.code}）` : ''}`,
+      detail: lines.length ? undefined : err.message ?? '系統拒絕此指令',
+      lines,
+      timeoutMs: 0, // 錯誤需使用者自行關閉
+    })
   }
 }
 
@@ -347,6 +370,7 @@ watch(
       <button data-testid="back-lobby" @click="back">← 系統首頁</button>
       <span class="sid" data-testid="cop-session">Session {{ sessionId }}</span>
       <span class="count" data-testid="unit-count">單位 {{ ownUnits.length }}</span>
+      <ClientOnly><SimClockBar :tick="stream.lastTick" :start-time="sessionStart" /></ClientOnly>
       <nav class="cop-nav">
         <button
           v-if="canControl"

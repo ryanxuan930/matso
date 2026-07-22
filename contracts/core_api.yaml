@@ -131,6 +131,7 @@ components:
         mode: { type: string }
         status: { type: string }
         my_faction: { type: [string, "null"], description: 呼叫者在此 session 的陣營（非參與者為 null） }
+        start_time: { type: [string, "null"], description: 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 }
     UnitView:
       type: object
       required: [id, designation, unit_level, faction, health, comms]
