@@ -40,6 +40,11 @@ class OrderService:
     def submit(self, session_id: str, req: OrderRequest, issuer_id: str) -> OrderResponse:
         """驗證 + 預檢 + 落庫。不可行 → 持久化 REJECTED 後拋 PrecheckFailedError（API 轉 422）。"""
         validated = validate_order(self._db, session_id, req, issuer_id)
+        # 去重（補充 2d）：多機同時查看/操作時，同單位 + 同型別 + 同 payload 的未終結指令若已存在，
+        # 採先到先處理、忽略後到重複——回既有指令（idempotent），不重複落庫。驗證在前確保授權無誤。
+        dup = self._find_active_duplicate(session_id, req)
+        if dup is not None:
+            return _to_response(dup, _precheck_of(dup))
         precheck = run_precheck(self._db, validated, self._gateway, self._relations)
 
         order = Order(
@@ -64,6 +69,26 @@ class OrderService:
                 details={"order_id": order.id, "precheck": precheck.model_dump()},
             )
         return _to_response(order, precheck)
+
+    def _find_active_duplicate(self, session_id: str, req: OrderRequest) -> Order | None:
+        """尋找同單位 + 同型別 + 同 payload 的未終結（PENDING/VALIDATED/EXECUTING）指令。"""
+        active = (OrderStatus.PENDING, OrderStatus.VALIDATED, OrderStatus.EXECUTING)
+        existing = (
+            self._db.execute(
+                select(Order).where(
+                    Order.session_id == session_id,
+                    Order.unit_id == req.unit_id,
+                    Order.order_type == req.order_type.value,
+                    Order.status.in_(active),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for o in existing:
+            if (o.payload or {}) == (req.payload or {}):
+                return o
+        return None
 
     def list_orders(self, session_id: str, faction: str, omniscient: bool) -> list[OrderResponse]:
         """列出 session 的指令（pending + 歷史），依 faction 過濾（omniscient 見全部）。

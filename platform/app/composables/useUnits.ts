@@ -129,6 +129,11 @@ export function isGhost(u: OwnUnit): boolean {
   return u.comms === 'OFFLINE'
 }
 
+/** 被摧毀（health≤0）的單位淡化顯示（乘 0.3），讓戰損在地圖上一望即知（補充 2a）。 */
+export function destroyedFade(health: number | undefined, base: number): number {
+  return health != null && health <= 0 ? base * 0.3 : base
+}
+
 // ---------------- GeoJSON 特徵 + icon 規格（供 MapLibre symbol 層） ----------------
 
 export type SymbolOpts = Record<string, string>
@@ -203,7 +208,7 @@ export function buildUnitFeatures(
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
-    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, ownUnitOpacity(u.comms), 'own', u.health)
+    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health)
   }
   for (const c of contacts) {
     const options: SymbolOpts =
@@ -211,7 +216,7 @@ export function buildUnitFeatures(
     // IDENTIFIED 且已知陣營 → 以該陣營顏色渲染（三方混戰時區分不同敵對陣營）。
     if (c.faction) options.fillColor = factionColor(c.faction, palette)
     const opacity = stalenessOpacity(Math.max(0, currentTick - c.lastSeenTick))
-    push(c.contactId, c.faction ?? '', sidcForContact(c), options, c.lng, c.lat, opacity, 'contact', c.health)
+    push(c.contactId, c.faction ?? '', sidcForContact(c), options, c.lng, c.lat, destroyedFade(c.health, opacity), 'contact', c.health)
   }
 
   return { collection: { type: 'FeatureCollection', features }, icons: [...iconMap.values()] }

@@ -558,18 +558,51 @@ async function cancel(id: string) {
 const streamEvents = computed(() =>
   stream.events.filter((e) => e.type === 'EVENT').slice(-20).reverse(),
 )
+// 事件 → 可讀文字（ID→番號、交戰命中/未命中/戰損）。供戰況 feed 即時回饋（含多機同步）。
+function unitName(id?: unknown): string {
+  const s = typeof id === 'string' ? id : ''
+  return (s && realUnits.value.find((u) => u.id === s)?.designation) || s
+}
+function formatEvent(payload: Record<string, unknown>): string {
+  const type = String(payload?.event_type ?? '')
+  const ini = unitName(payload?.initiator_id)
+  const tgt = unitName(payload?.target_id)
+  if (type === 'ENGAGEMENT_RESOLVED') {
+    const status = String(payload?.status ?? '')
+    if (status === 'HIT') {
+      const dmg = payload?.damage != null ? ` −${Math.round(Number(payload.damage))}` : ''
+      const hp = Number(payload?.target_health_after)
+      const after = Number.isFinite(hp) ? `（剩 ${Math.round(hp)}%）` : ''
+      const ko = Number.isFinite(hp) && hp <= 0 ? ' ✖摧毀' : ''
+      return `交戰命中 ${ini} → ${tgt}${dmg}${after}${ko}`
+    }
+    if (status === 'MISS') return `交戰未命中 ${ini} → ${tgt}`
+    if (status === 'REJECTED') return `交戰不可行 ${ini} → ${tgt}（${payload?.reason ?? ''}）`
+    return `交戰 ${ini} → ${tgt}`
+  }
+  if (type === 'UNIT_ARRIVED') return `${ini} 已抵達目標`
+  const ot = payload?.order_type ? ` · ${orderTypeLabel(String(payload.order_type))}` : ''
+  return `${type}${ot}`
+}
 
 async function back() {
   stream.disconnect()
   await navigateTo('/lobby')
 }
 
+// 定時與核心系統重新同步（補充 2b/2c）：WS STATE_DIFF 已即時推變動，但週期性重抓
+// GET /units + orders 讓多機同時查看（教學情境）在初始狀態/漏收/DB 權威更新後仍趨於一致。
+let resyncTimer: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   if (!auth.user) await auth.fetchMe() // 直接開/重整 COP 時補抓使用者，讓角色相關入口（白軍控制台）正確顯示
   refresh()
   stream.connect(sessionId.value)
+  if (import.meta.client) resyncTimer = setInterval(() => refresh(), 10_000)
 })
-onBeforeUnmount(() => stream.disconnect())
+onBeforeUnmount(() => {
+  stream.disconnect()
+  if (resyncTimer) clearInterval(resyncTimer)
+})
 
 // 圖層/底圖偏好持久化（#3/#9）：載入 → 存檔（跨換頁/重整保留操作員的 COP 設定：
 // 開啟的圖層、底圖、透明度、套疊順序、等高線間距）。
@@ -779,9 +812,7 @@ watch(
         <h3>戰況事件 <span class="ws" :data-testid="'ws-status'">· {{ stream.status }}</span></h3>
         <ul class="events" data-testid="event-list">
           <li v-for="(e, i) in streamEvents" :key="i" data-testid="event-row">
-            {{ (e.payload as Record<string, unknown>)?.event_type }}
-            <span v-if="(e.payload as Record<string, unknown>)?.order_type">
-              · {{ orderTypeLabel(String((e.payload as Record<string, unknown>).order_type)) }}</span>
+            {{ formatEvent(e.payload as Record<string, unknown>) }}
           </li>
           <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
         </ul>
