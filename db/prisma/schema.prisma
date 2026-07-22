@@ -108,6 +108,13 @@ model TacticalUnit {
   currentLat   Float? // WGS84
   currentLng   Float? // WGS84
   elevation    Float? // 由 Terrain Module 查詢
+  // 戰力（真實化交戰）：authorizedStrength＝滿編戰力（TO&E 分母，不遞減）；currentStrength＝當前
+  // 戰力（唯一權威量，交戰扣此）；healthStatus 改為由 currentStrength/authorizedStrength 經凹形
+  // 折點曲線導出的「效能%」（供 COP 顯示，不再是權威 HP）。人員數供顯示/回報（可空）。
+  authorizedStrength  Float @default(100.0)
+  currentStrength     Float @default(100.0)
+  personnelAuthorized Int?
+  personnelCurrent    Int?
   healthStatus Float      @default(100.0)
   commsStatus  CommsState @default(ONLINE)
 

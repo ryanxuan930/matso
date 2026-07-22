@@ -93,6 +93,12 @@ class TacticalUnit(Base):
     current_lat: Mapped[float | None] = mapped_column("currentLat", Double)
     current_lng: Mapped[float | None] = mapped_column("currentLng", Double)
     elevation: Mapped[float | None] = mapped_column("elevation", Double)
+    # 戰力（真實化交戰）：authorized＝滿編（分母，不遞減）；current＝當前權威戰力（交戰扣此）；
+    # health_status 改為由 current/authorized 導出的效能%（顯示用）。人員數供顯示/回報（可空）。
+    authorized_strength: Mapped[float] = mapped_column("authorizedStrength", Double, default=100.0)
+    current_strength: Mapped[float] = mapped_column("currentStrength", Double, default=100.0)
+    personnel_authorized: Mapped[int | None] = mapped_column("personnelAuthorized", Integer)
+    personnel_current: Mapped[int | None] = mapped_column("personnelCurrent", Integer)
     health_status: Mapped[float] = mapped_column("healthStatus", Double, default=100.0)
     comms_status: Mapped[CommsState] = mapped_column(
         "commsStatus", SAEnum(CommsState), default=CommsState.ONLINE

@@ -98,6 +98,23 @@ def test_base_ph_polynomial_two_points_equals_linear() -> None:
     assert w.base_ph(200) == pytest.approx(0.65)
 
 
+def test_expected_casualties_uses_pk_when_present() -> None:
+    stats = {**SEED_WEAPONS["ATGM"], "pk_by_armor_class": {"ARMOR": 0.8, "INFANTRY": 0.5}}
+    w = WeaponProfile.from_base_stats(stats)
+    assert w.expected_casualties("ARMOR") == pytest.approx(0.8)
+    assert w.expected_casualties("INFANTRY") == pytest.approx(0.5)
+    assert w.expected_casualties("UAS") == pytest.approx(0.0)  # 未列 → 0
+
+
+def test_expected_casualties_falls_back_to_damage_over_100() -> None:
+    # 無 pk_by_armor_class → 舊 damage 值視為百分比擊殺率。
+    stats = dict(SEED_WEAPONS["RIFLE_556"])
+    stats.pop("pk_by_armor_class", None)
+    w = WeaponProfile.from_base_stats(stats)
+    assert w.expected_casualties("INFANTRY") == pytest.approx(35.0 / 100.0)
+    assert w.expected_casualties("ARMOR") == pytest.approx(0.0)
+
+
 def test_damage_against_unknown_armor_is_zero() -> None:
     w = WeaponProfile.from_base_stats(SEED_WEAPONS["RIFLE_556"])
     assert w.damage_against("ARMOR") == pytest.approx(0.0)

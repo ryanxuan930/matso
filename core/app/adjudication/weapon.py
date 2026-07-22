@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import pairwise
 from typing import Any
 
@@ -45,6 +45,9 @@ class WeaponProfile:
     rate_per_tick: float
     # 命中率插值法："linear"（預設）或 "polynomial"（拉格朗日多項式，#4）
     ph_interp: str = "linear"
+    # 每發對各裝甲級別的擊殺機率 P(kill|hit) ∈ [0,1]（真實化交戰 Phase 1）。有值＝命中造成
+    # 期望傷亡＝pk×每平台戰力；無值則退回 damage_by_armor_class[ac]/100 以相容既有種子。
+    pk_by_armor_class: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_base_stats(cls, stats: dict[str, Any]) -> WeaponProfile:
@@ -72,6 +75,9 @@ class WeaponProfile:
             ammo_types=tuple(str(a) for a in stats["ammo_types"]),
             rate_per_tick=float(stats.get("rate_per_tick", 1.0)),
             ph_interp=interp,
+            pk_by_armor_class={
+                str(k): float(v) for k, v in (stats.get("pk_by_armor_class") or {}).items()
+            },
         )
 
     def base_ph(self, range_m: float) -> float:
@@ -100,3 +106,13 @@ class WeaponProfile:
     def damage_against(self, armor_class: str) -> float:
         """對該裝甲類別的傷害；未列入的裝甲類別視為無效（0）。"""
         return self.damage_by_armor_class.get(armor_class, 0.0)
+
+    def expected_casualties(self, armor_class: str) -> float:
+        """命中時對該裝甲級別的期望傷亡（每平台擊殺機率，真實化交戰 Phase 1）。
+
+        優先用 pk_by_armor_class（P(kill|hit)∈[0,1]）；無則退回 damage_by_armor_class[ac]/100
+        （把舊的 0–100 傷害值視為百分比擊殺率），確保既有種子在導入 pk 前行為相容。
+        """
+        if self.pk_by_armor_class:
+            return self.pk_by_armor_class.get(armor_class, 0.0)
+        return self.damage_by_armor_class.get(armor_class, 0.0) / 100.0

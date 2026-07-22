@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
+from typing import Any
 
+from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.weapon import WeaponProfile
 from app.engine.rng import DeterministicRNG
 from app.state.ledger import LedgerEvent
@@ -37,7 +39,12 @@ class Shooter:
 class Target:
     unit_id: str
     armor_class: str
-    health: float
+    health: float = 100.0
+    # 真實化交戰（Phase 1）：提供 strength 三欄時走「每平台傷亡」公式（漸進消耗），命中扣一個平台
+    # 份量的戰力；authorized 為滿編分母、platform_count 為平台/建制數。缺則退回舊 flat 傷害路徑。
+    current_strength: float | None = None
+    authorized_strength: float | None = None
+    platform_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +71,8 @@ class EngagementResult:
     target_health_after: float
     coefficients: dict[str, float]
     reason: str | None  # REJECTED 原因 code（NO_AMMO / OUT_OF_RANGE / NO_LOS）
+    # 真實化交戰：走 strength 路徑時的命中後當前戰力（供 _apply 寫回 + AAR）；flat 路徑為 None。
+    target_strength_after: float | None = None
     events: list[LedgerEvent] = field(default_factory=list)
 
 
@@ -102,12 +111,39 @@ def resolve_engagement(
     roll = rng.random()
     hit = roll < p_hit
 
-    # [d] 傷害 / 血量
-    damage = weapon.damage_against(target.armor_class) if hit else 0.0
-    health_after = max(0.0, target.health - damage)
+    # [d] 傷害 / 戰力消耗。strength 路徑（真實化）：命中扣「每平台戰力 × 期望擊殺率」，血量由
+    # 戰力比經效能曲線導出（漸進消耗）；否則退回舊 flat 傷害（相容既有種子/測試）。
+    strength_after: float | None = None
+    authorized = target.authorized_strength
+    if target.current_strength is not None and authorized is not None and authorized > 0.0:
+        cp_per_platform = authorized / max(1, target.platform_count)
+        expected = weapon.expected_casualties(target.armor_class) if hit else 0.0
+        loss = expected * cp_per_platform
+        strength_after = max(0.0, target.current_strength - loss)
+        damage = loss  # damage_calc 記戰力損失
+        health_after = effectiveness_pct(strength_after / authorized)
+        coefficients = {
+            **coefficients,
+            "cp_per_platform": cp_per_platform,
+            "strength_loss": loss,
+            "strength_after": strength_after,
+        }
+    else:
+        damage = weapon.damage_against(target.armor_class) if hit else 0.0
+        health_after = max(0.0, target.health - damage)
     status = Resolution.HIT if hit else Resolution.MISS
 
     # [e] 事件（含所有中間係數，供 AAR）
+    ai_decision: dict[str, Any] = {
+        "status": status.value,
+        "p_hit": p_hit,
+        "roll": roll,
+        "hit": hit,
+        "coefficients": coefficients,
+        "target_health_after": health_after,
+    }
+    if strength_after is not None:
+        ai_decision["target_strength_after"] = strength_after
     event = LedgerEvent(
         event_type="ENGAGEMENT_RESOLVED",
         tick=tick,
@@ -115,14 +151,7 @@ def resolve_engagement(
         target_id=target.unit_id,
         terrain_modifier=env.terrain_cover_modifier,
         damage_calc=damage,
-        ai_decision={
-            "status": status.value,
-            "p_hit": p_hit,
-            "roll": roll,
-            "hit": hit,
-            "coefficients": coefficients,
-            "target_health_after": health_after,
-        },
+        ai_decision=ai_decision,
     )
     return EngagementResult(
         status=status,
@@ -132,6 +161,7 @@ def resolve_engagement(
         target_health_after=health_after,
         coefficients=coefficients,
         reason=None,
+        target_strength_after=strength_after,
         events=[event],
     )
 

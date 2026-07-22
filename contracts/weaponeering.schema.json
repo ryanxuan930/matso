@@ -42,6 +42,11 @@
           "description": "armor_class → damage（healthStatus 扣點）。鍵建議取自 $defs.armor_class 詞彙，但允許自訂鍵（可擴充）。",
           "additionalProperties": { "type": "number", "minimum": 0 }
         },
+        "pk_by_armor_class": {
+          "type": "object",
+          "description": "armor_class → 每發擊殺機率 P(kill|hit) ∈ [0,1]（真實化交戰）。有值時命中造成期望傷亡＝pk×每平台戰力（漸進消耗）；無值則引擎退回 damage_by_armor_class/100 相容既有種子。",
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
         "ammo_types": { "type": "array", "items": { "type": "string" } },
         "rate_per_tick": { "type": "number", "exclusiveMinimum": 0, "default": 1 }
       }

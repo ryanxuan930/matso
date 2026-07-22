@@ -170,7 +170,11 @@ components:
         faction: { type: string }
         lat: { type: [number, "null"] }
         lng: { type: [number, "null"] }
-        health: { type: number }
+        health: { type: number, description: "作戰效能%（由 current/authorized 戰力比經效能曲線導出，真實化交戰）" }
+        strength: { type: number, description: "當前戰力（權威量；交戰漸進扣減）" }
+        authorized_strength: { type: number, description: "滿編戰力（TO&E 分母）" }
+        platform_count: { type: integer, description: "平台/建制數（每次命中僅損一個平台份量）" }
+        personnel_current: { type: [integer, "null"], description: "當前人員數（顯示用，可空）" }
         comms: { type: string }
     WeaponView:
       type: object

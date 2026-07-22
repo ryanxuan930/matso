@@ -30,7 +30,11 @@ class UnitView(BaseModel):
     faction: str
     lat: float | None
     lng: float | None
-    health: float
+    health: float  # 作戰效能%（由戰力比導出）
+    strength: float  # 當前戰力（權威）
+    authorized_strength: float  # 滿編戰力
+    platform_count: int  # 平台/建制數
+    personnel_current: int | None = None  # 當前人員數（顯示用）
     comms: str
 
 
@@ -56,8 +60,21 @@ def _view(u: TacticalUnit) -> UnitView:
         lat=u.current_lat,
         lng=u.current_lng,
         health=u.health_status,
+        strength=u.current_strength,
+        authorized_strength=u.authorized_strength,
+        platform_count=_platform_count(u),
+        personnel_current=u.personnel_current,
         comms=u.comms_status.value,
     )
+
+
+def _platform_count(u: TacticalUnit) -> int:
+    pc = u.attributes.get("platform_count") if isinstance(u.attributes, dict) else None
+    if isinstance(pc, (int, float)) and pc >= 1:
+        return int(pc)
+    if isinstance(u.personnel_current, int) and u.personnel_current >= 1:
+        return u.personnel_current
+    return 1
 
 
 @router.get("/{session_id}/units", response_model=list[UnitView])

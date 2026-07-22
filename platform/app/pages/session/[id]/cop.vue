@@ -491,13 +491,30 @@ async function removeFeature(fid: string) {
   }
 }
 
-// 資訊圖卡血量（#5）——活血量優先；缺值時退回 API 初值。
+// 資訊圖卡效能%（#5）——活值優先；缺值時退回 API 初值。health 已是由戰力比導出的效能%。
 const hpPct = computed(() => {
   const u = selectedUnit.value
   if (!u) return 0
   return Math.round((liveHealth(u) ?? u.health ?? 100) as number)
 })
 const hpColor = computed(() => healthColor(hpPct.value))
+// 活戰力（真實化交戰）：STATE_DIFF 帶入的當前戰力優先，否則 GET /units 初值。
+function liveStrength(u: UnitView): number | undefined {
+  const p = stream.unitPatches[u.id]
+  const s = (typeof p?.strength === 'number' ? p.strength : u.strength) as number | undefined
+  return s
+}
+// 選取單位的戰力/平台顯示（漸進消耗一望即知：如「戰力 82/100 · 14 平台」）。
+const selForce = computed(() => {
+  const u = selectedUnit.value
+  if (!u || typeof u.authorized_strength !== 'number') return null
+  return {
+    cur: Math.round(liveStrength(u) ?? u.strength ?? u.authorized_strength),
+    auth: Math.round(u.authorized_strength),
+    platforms: u.platform_count ?? 1,
+    personnel: u.personnel_current ?? null,
+  }
+})
 
 async function submit() {
   if (!selectedId.value) return
@@ -1041,11 +1058,19 @@ watch(
             <strong class="cname">{{ selectedUnit.designation }}</strong>
             <span class="clevel">{{ unitLevelLabel(selectedUnit.unit_level) }} · {{ selectedUnit.faction }}</span>
           </div>
-          <div class="hpbar" :title="`HP ${hpPct}%`">
+          <div class="hpbar" :title="`作戰效能 ${hpPct}%`">
             <div class="hpfill" :style="{ width: `${hpPct}%`, background: hpColor }" />
-            <span class="hptxt">HP {{ hpPct }}%</span>
+            <span class="hptxt">效能 {{ hpPct }}%</span>
           </div>
           <dl class="card-meta">
+            <div v-if="selForce">
+              <dt>戰力</dt>
+              <dd>
+                {{ selForce.cur }}/{{ selForce.auth }}
+                <span class="dim">· {{ selForce.platforms }} 平台</span>
+                <span v-if="selForce.personnel != null" class="dim">· {{ selForce.personnel }} 人</span>
+              </dd>
+            </div>
             <div><dt>通聯</dt><dd>{{ commsLabel(selectedUnit.comms) }}</dd></div>
             <div>
               <dt>座標</dt>

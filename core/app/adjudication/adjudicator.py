@@ -117,6 +117,11 @@ class EngagementAdjudicator:
                 unit_id=order.target_id,
                 armor_class=str(target_state.get("armor_class", "INFANTRY")),
                 health=float(target_state.get("health", 100.0)),
+                current_strength=float(
+                    target_state.get("strength") or target_state.get("health") or 100.0
+                ),
+                authorized_strength=float(target_state.get("authorized_strength") or 100.0),
+                platform_count=int(target_state.get("platform_count") or 1),
             ),
             env,
             self._rng,
@@ -132,11 +137,17 @@ class EngagementAdjudicator:
         ammo = int(self._hot.get_unit(order.shooter_id).get("ammo", 0))  # type: ignore[union-attr]
         self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - 1)})
         if result.status is Resolution.HIT:
-            self._hot.update_unit(order.target_id, {"health": result.target_health_after})
-            # 戰損也持久化到 DB（healthStatus 權威）——GET /units 反映、重連/AAR/重啟保留（新回報）。
+            patch: dict[str, float] = {"health": result.target_health_after}
+            if result.target_strength_after is not None:
+                patch["strength"] = result.target_strength_after  # 當前戰力（唯一權威量）
+            self._hot.update_unit(order.target_id, patch)
+            # 戰損持久化到 DB：current_strength（權威）+ healthStatus（導出效能%）——供 GET /units、
+            # 重連/AAR/重啟保留；current_strength 使漸進消耗跨 tick/重啟累積。
             target = self._db.get(TacticalUnit, order.target_id)
             if target is not None:
                 target.health_status = result.target_health_after
+                if result.target_strength_after is not None:
+                    target.current_strength = result.target_strength_after
 
     def _complete(self, order_id: str, tick: int) -> None:
         order = self._db.get(Order, order_id)

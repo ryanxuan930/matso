@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSource
+from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
 from app.adjudication.weapon import WeaponProfile
 from app.engine.clock import SimClock
@@ -165,6 +166,9 @@ async def test_scripted_battle_full_flow() -> None:
             "lat": _RED_LL[0],
             "lng": _RED_LL[1],
             "health": 100.0,
+            "strength": 100.0,
+            "authorized_strength": 100.0,
+            "platform_count": 1,
             "armor_class": "INFANTRY",
         },
     )
@@ -246,10 +250,13 @@ async def test_scripted_battle_full_flow() -> None:
     for _ in range(2):
         await kernel.run_tick()
 
-    # 戰損入帳：紅軍血量下降 + ENGAGEMENT_RESOLVED 事件寫入 Ledger
-    assert hot.get_unit(red_id)["health"] == pytest.approx(60.0)  # 100 − 40
-    # 戰損也持久化到 DB healthStatus（GET /units 權威、重連/重啟保留）
-    assert db.get(TacticalUnit, red_id).health_status == pytest.approx(60.0)  # type: ignore[union-attr]
+    # 戰損入帳（真實化交戰）：紅軍當前戰力下降 + ENGAGEMENT_RESOLVED 事件寫入 Ledger。
+    # 無 pk → 期望傷亡 40/100=0.4，單體 cp=100 → loss 40 → strength 100->60。
+    assert hot.get_unit(red_id)["strength"] == pytest.approx(60.0)
+    # 戰損持久化到 DB currentStrength（權威）；healthStatus 為導出效能%。
+    red_row = db.get(TacticalUnit, red_id)
+    assert red_row.current_strength == pytest.approx(60.0)  # type: ignore[union-attr]
+    assert red_row.health_status == pytest.approx(effectiveness_pct(0.60))  # type: ignore[union-attr]
     resolved = [e for e in sink.events if e.event_type == "ENGAGEMENT_RESOLVED"]
     assert resolved and resolved[0].damage_calc == pytest.approx(40.0)
     assert resolved[0].target_id == red_id

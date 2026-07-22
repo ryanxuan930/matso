@@ -623,7 +623,16 @@ export interface components {
             faction: string;
             lat?: number | null;
             lng?: number | null;
+            /** @description 作戰效能%（由 current/authorized 戰力比經效能曲線導出，真實化交戰） */
             health: number;
+            /** @description 當前戰力（權威量；交戰漸進扣減） */
+            strength?: number;
+            /** @description 滿編戰力（TO&E 分母） */
+            authorized_strength?: number;
+            /** @description 平台/建制數（每次命中僅損一個平台份量） */
+            platform_count?: number;
+            /** @description 當前人員數（顯示用，可空） */
+            personnel_current?: number | null;
             comms: string;
         };
         /** @description 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種 */

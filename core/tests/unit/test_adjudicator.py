@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import pytest
 from _order_fakes import FakeGateway, seed_world
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSource
+from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
 from app.adjudication.weapon import WeaponProfile
 from app.engine.clock import SimTime
@@ -79,7 +81,10 @@ async def test_hit_applies_damage_and_completes(session_factory: sessionmaker[Se
         hot.put_unit(world.blue_unit_id, {"ammo": 5})
         hot.put_unit(world.red_unit_id, {"health": 100.0, "armor_class": "INFANTRY"})
         events = _adjudicator(db, hot).resolve(cmd, SimTime(0, 0))
-        assert hot.get_unit(world.red_unit_id)["health"] == 60.0  # 命中 −40
+        # 真實化交戰：strength 為權威量（無 pk → 期望傷亡 40/100=0.4，單體 cp=100 → loss 40）；
+        # health 改為由戰力比 0.60 經效能曲線導出（非 flat 100−40）。
+        assert hot.get_unit(world.red_unit_id)["strength"] == pytest.approx(60.0)
+        assert hot.get_unit(world.red_unit_id)["health"] == pytest.approx(effectiveness_pct(0.60))
         assert hot.get_unit(world.blue_unit_id)["ammo"] == 4  # 彈藥 −1
         assert events[0].event_type == "ENGAGEMENT_RESOLVED"
         assert db.get(Order, oid).status is OrderStatus.COMPLETED  # type: ignore[union-attr]

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.adjudication.adjudicator import EngageCommand
+from app.adjudication.effectiveness import effectiveness_pct
 from app.engine.engage_wiring import WeaponResolver, make_engage_env, seed_combat_state
 from app.models import Base
 from app.models.enums import UnitLevel
@@ -48,8 +49,10 @@ def _seed(db: Session) -> tuple[str, str, str, str]:
         faction="BLUE",
         current_lat=23.75,
         current_lng=121.25,
+        current_strength=88.0,
+        authorized_strength=100.0,
         health_status=88.0,
-        attributes={"armor_class": "LIGHT_VEHICLE"},
+        attributes={"armor_class": "LIGHT_VEHICLE", "platform_count": 4},
     )
     rifle = EquipmentTemplate(name="RIFLE", category="KINETIC", base_stats=_RIFLE)
     atgm = EquipmentTemplate(name="ATGM", category="KINETIC", base_stats=_ATGM)
@@ -118,7 +121,11 @@ def test_seed_combat_state_populates_health_armor_ammo() -> None:
     assert n == 1
     st = hot.get_unit(uid)
     assert st is not None
-    assert st["health"] == pytest.approx(88.0)
+    # 真實化交戰：seed 戰力 + 平台數；health 由戰力比 0.88 經效能曲線導出（非直接 88）。
+    assert st["strength"] == pytest.approx(88.0)
+    assert st["authorized_strength"] == pytest.approx(100.0)
+    assert st["platform_count"] == 4
+    assert st["health"] == pytest.approx(effectiveness_pct(0.88))
     assert st["armor_class"] == "LIGHT_VEHICLE"
     assert st["ammo"] == 8  # 主武器 ATGM 彈藥
     assert st["lat"] == pytest.approx(23.75)

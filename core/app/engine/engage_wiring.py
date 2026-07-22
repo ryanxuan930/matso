@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication.adjudicator import EngageCommand
+from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
 from app.adjudication.weapon import WeaponProfile
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
@@ -101,6 +102,20 @@ def _ammo_of(inst: EquipmentInstance) -> int:
     return int(raw) if isinstance(raw, (int, float)) else 0
 
 
+def _platform_count_of(unit: TacticalUnit) -> int:
+    """單位的平台/建制數：attributes.platform_count 優先，否則 personnel_current，皆無則 1（單體）。
+
+    決定「每平台戰力」＝authorized/platform_count——大部隊每次命中僅損一個平台份量（漸進消耗），
+    單體則整個承受（易毀）。legacy 未設者退回 1（如同單體），待 orbat 補 platform_count。
+    """
+    pc = unit.attributes.get("platform_count") if isinstance(unit.attributes, dict) else None
+    if isinstance(pc, (int, float)) and pc >= 1:
+        return int(pc)
+    if isinstance(unit.personnel_current, int) and unit.personnel_current >= 1:
+        return unit.personnel_current
+    return 1
+
+
 def seed_combat_state(
     db: Session, hot: HotStateStore, session_id: str, resolver: WeaponResolver
 ) -> int:
@@ -116,8 +131,16 @@ def seed_combat_state(
         if unit.current_lat is not None and unit.current_lng is not None:
             patch["lat"] = unit.current_lat
             patch["lng"] = unit.current_lng
+        authorized = float(unit.authorized_strength) or 100.0
+        if "strength" not in existing:
+            patch["strength"] = float(unit.current_strength)
+        if "authorized_strength" not in existing:
+            patch["authorized_strength"] = authorized
+        if "platform_count" not in existing:
+            patch["platform_count"] = _platform_count_of(unit)
         if "health" not in existing:
-            patch["health"] = float(unit.health_status)
+            # health＝由當前戰力比導出的效能%（與 strength 一致，不再是獨立 HP）。
+            patch["health"] = effectiveness_pct(float(unit.current_strength) / authorized)
         if "armor_class" not in existing:
             ac = unit.attributes.get("armor_class") if isinstance(unit.attributes, dict) else None
             patch["armor_class"] = str(ac) if ac else "INFANTRY"
