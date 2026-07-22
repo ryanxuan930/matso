@@ -35,7 +35,11 @@ onMounted(load)
 
 <template>
   <div class="aar" data-testid="aar-dashboard">
-    <h1>行動後檢討（AAR） · {{ sessionId }}</h1>
+    <header class="aar-bar">
+      <button data-testid="aar-back-cop" @click="navigateTo(`/session/${sessionId}/cop`)">← 圖台</button>
+      <h1>行動後檢討（AAR） · {{ sessionId }}</h1>
+      <a class="help" href="/help" target="_blank">操作教學</a>
+    </header>
     <p v-if="error" class="err">{{ error }}</p>
 
     <section v-if="stats" data-testid="aar-stats">
@@ -88,6 +92,12 @@ onMounted(load)
 
 <style scoped>
 .aar { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
+.aar-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.aar-bar h1 { font-size: 1.25rem; margin: 0; }
+.aar-bar button { padding: 0.375rem 0.75rem; border: 1px solid #334155; border-radius: 0.25rem; background: #1e293b; color: #e2e8f0; cursor: pointer; }
+.aar-bar button:hover { border-color: #2563eb; }
+.aar-bar .help { margin-left: auto; font-size: 0.8125rem; color: #60a5fa; text-decoration: none; }
+.aar-bar .help:hover { text-decoration: underline; }
 section { border-top: 1px solid #1e293b; padding-top: 0.75rem; margin-top: 1rem; }
 h2 { font-size: 0.9375rem; color: #94a3b8; }
 .ok { color: #4ade80; font-size: 0.8rem; }

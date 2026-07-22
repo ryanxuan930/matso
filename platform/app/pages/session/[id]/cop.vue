@@ -106,14 +106,24 @@ const GHOST: OwnUnit = {
   comms: 'OFFLINE',
   lastReportedTick: 60,
 }
-const ownUnits = computed<OwnUnit[]>(() => [GHOST, ...syntheticUnits.value, ...realAsOwn.value])
+// 展示用假件（GHOST 虛影 + DEMO_CONTACTS 假敵情）僅在 ?demo=1 或 ?units=N 時顯示；
+// 正常 COP 只呈現真單位——避免與左側清單不符的多餘圖標（3-BN / Y-1 等，使用者回報）。
+const demoMode = computed(() => route.query.demo === '1' || Number(route.query.units) > 0)
+const ownUnits = computed<OwnUnit[]>(() => [
+  ...(demoMode.value ? [GHOST] : []),
+  ...syntheticUnits.value,
+  ...realAsOwn.value,
+])
 const DEMO_CONTACTS: Contact[] = [
   { contactId: 'c-det', fidelity: 'DETECTED', lng: 121.4, lat: 23.5, errorRadiusM: 2000, lastSeenTick: 40 },
   { contactId: 'c-cls', fidelity: 'CLASSIFIED', lng: 121.5, lat: 23.6, errorRadiusM: 800, unitType: 'ARMOR', lastSeenTick: 80 },
   { contactId: 'c-id', fidelity: 'IDENTIFIED', lng: 121.6, lat: 23.7, errorRadiusM: 200, unitType: 'ARTILLERY', designation: '3-BN', lastSeenTick: 98, faction: 'RED', relation: 'HOSTILE' },
   { contactId: 'c-neutral', fidelity: 'IDENTIFIED', lng: 121.55, lat: 23.55, errorRadiusM: 200, unitType: 'RECON', designation: 'Y-1', lastSeenTick: 96, faction: 'YELLOW', relation: 'NEUTRAL' },
 ]
-const contacts = computed<Contact[]>(() => [...DEMO_CONTACTS, ...realAsContacts.value])
+const contacts = computed<Contact[]>(() => [
+  ...(demoMode.value ? DEMO_CONTACTS : []),
+  ...realAsContacts.value,
+])
 
 // 可作 ENGAGE 目標的真單位（他軍）——供下拉與地圖點選鎖定共用。
 const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
