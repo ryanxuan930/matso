@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import get_current_user, get_lobby_service
 from app.auth.schemas import CurrentUser
-from app.lobby.schemas import CreateSessionRequest, SessionSummary
+from app.lobby.schemas import CreateSessionRequest, EditSessionRequest, SessionSummary
 from app.lobby.service import LobbyService
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["lobby"])
@@ -31,3 +31,14 @@ def create_session(
     lobby: LobbyService = Depends(get_lobby_service),
 ) -> SessionSummary:
     return lobby.create_session(user, req)
+
+
+@router.patch("/{session_id}", response_model=SessionSummary)
+def edit_session(
+    session_id: str,
+    req: EditSessionRequest,
+    user: CurrentUser = Depends(get_current_user),
+    lobby: LobbyService = Depends(get_lobby_service),
+) -> SessionSummary:
+    """編輯已開推演設定（名稱 / 想定世界初始日期時間）——限統裁/管理（#16）。"""
+    return lobby.edit_session(user, session_id, req)

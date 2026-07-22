@@ -78,3 +78,23 @@ def test_director_sees_all_sessions(session_factory: sessionmaker[Session]) -> N
     ids = [s["id"] for s in listing]
     assert made["id"] in ids
     assert listing[0]["my_faction"] is None  # chief 非參與者
+
+
+def test_edit_session_name_and_world_time(session_factory: sessionmaker[Session]) -> None:
+    """建立者（本 session 的統裁參與者）可編輯名稱 + 想定世界初始時間（#16）。"""
+    seed_user(session_factory)
+    client = make_client(session_factory)
+    h = auth_header(login(client)["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "原名"}, headers=h).json()["id"]
+    r = client.patch(
+        f"/api/v1/sessions/{sid}",
+        json={"name": "新名", "world_start_time": "2030-06-01T06:00"},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == "新名"
+    assert body["world_start_time"] and body["world_start_time"].startswith("2030-06-01T06:00")
+    # 清除 world_start_time（空字串）
+    r2 = client.patch(f"/api/v1/sessions/{sid}", json={"world_start_time": ""}, headers=h)
+    assert r2.status_code == 200 and r2.json()["world_start_time"] is None

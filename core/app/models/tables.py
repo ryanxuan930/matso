@@ -66,6 +66,8 @@ class WargameSession(Base):
         "startTime", DateTime(timezone=False), server_default=func.now()
     )
     end_time: Mapped[str | None] = mapped_column("endTime", DateTime(timezone=False))
+    # 想定世界初始日期時間（in-world t=0；供 #6 日照推算，可編輯 #16）。
+    world_start_time: Mapped[str | None] = mapped_column("worldStartTime", DateTime(timezone=False))
     current_weather: Mapped[dict] = mapped_column("currentWeather", JSON)  # type: ignore[type-arg]
     # #6：允許自行編輯本軍編裝的陣營清單（White Cell 設定）。None = 僅白軍可編。
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]

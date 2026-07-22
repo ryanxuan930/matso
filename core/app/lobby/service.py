@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.schemas import CurrentUser
 from app.factions import WHITE_CELL
-from app.lobby.schemas import CreateSessionRequest, SessionSummary
+from app.lobby.schemas import CreateSessionRequest, EditSessionRequest, SessionSummary
 from app.models import SessionParticipant, UserRole, WargameSession
 
 # 看得到全部 session 的統裁/管理角色（其餘只看自己參與的）
@@ -146,7 +146,52 @@ class LobbyService:
                 if hasattr(session.start_time, "isoformat")
                 else (str(session.start_time) if session.start_time else None)
             ),
+            world_start_time=(
+                session.world_start_time.isoformat()
+                if session.world_start_time is not None
+                and hasattr(session.world_start_time, "isoformat")
+                else (str(session.world_start_time) if session.world_start_time else None)
+            ),
         )
+
+    def edit_session(
+        self, user: CurrentUser, session_id: str, req: EditSessionRequest
+    ) -> SessionSummary:
+        """編輯已開推演設定（#16）——名稱 / 想定世界初始日期時間。限統裁/管理（全知）。"""
+        from datetime import datetime
+
+        from app.errors import AuthForbiddenError, SessionNotFoundError
+
+        # 全知（統裁/白軍/管理）恆可編；否則須為本 session 的統裁/白軍參與者（含建立者）。
+        if user.role not in _OMNISCIENT_ROLES:
+            part = self._db.execute(
+                select(SessionParticipant).where(
+                    SessionParticipant.user_id == user.id,
+                    SessionParticipant.session_id == session_id,
+                )
+            ).scalar_one_or_none()
+            if part is None or part.role not in (
+                UserRole.EXERCISE_DIRECTOR,
+                UserRole.WHITE_CELL_STAFF,
+            ):
+                raise AuthForbiddenError("僅統裁/管理可編輯推演設定")
+        session = self._db.get(WargameSession, session_id)
+        if session is None:
+            raise SessionNotFoundError(f"session 不存在：{session_id}")
+        if req.name is not None:
+            session.name = req.name
+        if req.world_start_time is not None:
+            wst = req.world_start_time.strip()
+            if wst == "":
+                session.world_start_time = None
+            else:
+                try:
+                    session.world_start_time = datetime.fromisoformat(wst)  # type: ignore[assignment]
+                except ValueError as exc:
+                    raise AuthForbiddenError(f"世界初始時間格式錯誤：{wst}") from exc
+        self._db.commit()
+        my_faction = self._participant_factions(user.id).get(session_id)
+        return self._summary(session, my_faction, orbat_edit=True)
 
 
 def _derive_seed(name: str, user_id: str, session_id: str) -> int:

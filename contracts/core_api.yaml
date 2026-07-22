@@ -152,7 +152,14 @@ components:
         status: { type: string }
         my_faction: { type: [string, "null"], description: 呼叫者在此 session 的陣營（非參與者為 null） }
         start_time: { type: [string, "null"], description: 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 }
+        world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（#16/#6 日照） }
         orbat_edit: { type: boolean, default: false, description: 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編） }
+    EditSessionRequest:
+      type: object
+      description: 編輯已開推演設定（#16）——限統裁/管理
+      properties:
+        name: { type: [string, "null"], minLength: 1 }
+        world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（空字串＝清除） }
     UnitView:
       type: object
       required: [id, designation, unit_level, faction, health, comms]
@@ -394,6 +401,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SessionSummary" }
         "401": { description: Unauthenticated, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    patch:
+      operationId: editSession
+      security: [{ bearerAuth: [] }]
+      description: 編輯已開推演設定（名稱 / 想定世界初始日期時間）——限統裁/管理（#16）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EditSessionRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionSummary" }
+        "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/lifecycle:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

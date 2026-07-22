@@ -60,6 +60,33 @@ async function createFromScenario() {
   }
 }
 
+// 編輯已開推演設定（#16）——名稱 + 想定世界初始日期時間。限統裁/管理。
+const editing = ref<SessionSummary | null>(null)
+const editName = ref('')
+const editWorldTime = ref('') // datetime-local 值（YYYY-MM-DDTHH:mm）
+const editErr = ref('')
+function openEdit(s: SessionSummary) {
+  editing.value = s
+  editName.value = s.name
+  // ISO8601 → datetime-local（去尾秒/時區）
+  editWorldTime.value = s.world_start_time ? String(s.world_start_time).slice(0, 16) : ''
+  editErr.value = ''
+}
+async function saveEdit() {
+  if (!editing.value) return
+  editErr.value = ''
+  try {
+    await apiFetch<SessionSummary>(`/sessions/${editing.value.id}`, {
+      method: 'PATCH',
+      body: { name: editName.value.trim(), world_start_time: editWorldTime.value || '' },
+    })
+    editing.value = null
+    await refresh()
+  } catch (e) {
+    editErr.value = `儲存失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+  }
+}
+
 async function onLogout() {
   auth.logout()
   await navigateTo('/login')
@@ -132,9 +159,33 @@ onMounted(async () => {
           <span class="name">{{ s.name }}</span>
           <span class="meta">{{ s.mode }} · {{ s.status }}</span>
           <span v-if="s.my_faction" class="faction">{{ s.my_faction }}</span>
+          <button
+            v-if="canEditScenario"
+            class="edit-btn"
+            data-testid="edit-session"
+            title="編輯設定"
+            @click.stop="openEdit(s)"
+          >⚙</button>
         </li>
       </ul>
     </section>
+
+    <!-- 編輯已開推演設定（#16） -->
+    <div v-if="editing" class="modal-overlay" data-testid="edit-session-modal" @click.self="editing = null">
+      <div class="modal">
+        <h3>編輯推演設定</h3>
+        <label>名稱 <input v-model="editName" data-testid="edit-session-name"></label>
+        <label>想定初始日期時間
+          <input v-model="editWorldTime" type="datetime-local" data-testid="edit-world-time">
+        </label>
+        <p class="modal-hint">想定世界的 t=0 日期時間（供日照/晨昏推算）。留空＝未設定。</p>
+        <p v-if="editErr" class="modal-err" data-testid="edit-session-err">{{ editErr }}</p>
+        <div class="modal-btns">
+          <button class="ghost" @click="editing = null">取消</button>
+          <button data-testid="save-session-edit" @click="saveEdit">儲存</button>
+        </div>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -227,5 +278,77 @@ ul {
   border-radius: 0.25rem;
   background: #334155;
   font-size: 0.75rem;
+}
+.edit-btn {
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+.edit-btn:hover {
+  border-color: #2563eb;
+  color: #e2e8f0;
+}
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.modal {
+  width: 22rem;
+  max-width: 90vw;
+  padding: 1.25rem;
+  border-radius: 0.5rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.modal h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+.modal input {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+}
+.modal-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+.modal-err {
+  margin: 0;
+  color: #f87171;
+  font-size: 0.78rem;
+}
+.modal-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.modal-btns .ghost {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #e2e8f0;
 }
 </style>

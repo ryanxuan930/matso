@@ -86,6 +86,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description 編輯已開推演設定（名稱 / 想定世界初始日期時間）——限統裁/管理（#16） */
+        patch: operations["editSession"];
+        trace?: never;
+    };
     "/sessions/{id}/lifecycle": {
         parameters: {
             query?: never;
@@ -583,11 +602,19 @@ export interface components {
             my_faction?: string | null;
             /** @description 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 */
             start_time?: string | null;
+            /** @description 想定世界初始日期時間 ISO8601（#16/#6 日照） */
+            world_start_time?: string | null;
             /**
              * @description 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編）
              * @default false
              */
             orbat_edit: boolean;
+        };
+        /** @description 編輯已開推演設定（#16）——限統裁/管理 */
+        EditSessionRequest: {
+            name?: string | null;
+            /** @description 想定世界初始日期時間 ISO8601（空字串＝清除） */
+            world_start_time?: string | null;
         };
         UnitView: {
             id: string;
@@ -710,7 +737,7 @@ export interface components {
         OrderRequest: {
             unit_id: string;
             order_type: components["schemas"]["OrderType"];
-            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?,ammo_type?} */
+            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?} */
             payload?: Record<string, never>;
         };
         PrecheckCheck: {
@@ -916,6 +943,41 @@ export interface operations {
             };
             /** @description Unauthenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not admin */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
