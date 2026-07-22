@@ -40,6 +40,24 @@ export interface OwnUnit {
   unitType?: string
   comms: CommsState
   lastReportedTick: number
+  health?: number // 0–100 HP（僅我方；供地圖血量環 + 資訊卡 #5）。fog of war：contact 無血量。
+}
+
+/** 編制層級 → 中文（兵-伍-班-排…，#5.3；與想定編輯器同義）。 */
+export const UNIT_LEVEL_LABELS: Record<string, string> = {
+  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', PLATOON: '排', COMPANY: '連',
+  BATTALION: '營', BRIGADE: '旅', DIVISION: '師', CORPS: '軍', THEATER: '戰區',
+}
+export function unitLevelLabel(l?: string): string {
+  return (l && UNIT_LEVEL_LABELS[l]) || l || '—'
+}
+/** 通聯狀態 → 中文。 */
+export function commsLabel(c?: string): string {
+  return c === 'ONLINE' ? '即時通聯' : c === 'DEGRADED' ? '通聯不良' : c === 'OFFLINE' ? '失聯' : c || '—'
+}
+/** 血量 → 顏色帶（綠/琥珀/紅）——地圖血量環與資訊卡共用。 */
+export function healthColor(pct: number): string {
+  return pct < 34 ? '#ef4444' : pct < 67 ? '#f59e0b' : '#22c55e'
 }
 
 /** 敵方 contact（INTEL_UPDATE 餵入；ContactView 投影，已去識別化）。 */
@@ -128,7 +146,15 @@ export interface IconSpec {
 export interface UnitFeature {
   type: 'Feature'
   // id/faction 供地圖點選命中與高亮（選取藍環 / 目標紅環）與 ENGAGE 目標鎖定（O4.5 UX 改版）。
-  properties: { id: string; faction: string; icon: string; opacity: number; kind: 'own' | 'contact' }
+  // health 僅我方（供血量環 #5）；contact 依 fog of war 不帶血量。
+  properties: {
+    id: string
+    faction: string
+    icon: string
+    opacity: number
+    kind: 'own' | 'contact'
+    health?: number
+  }
   geometry: { type: 'Point'; coordinates: [number, number] }
 }
 
@@ -160,12 +186,13 @@ export function buildUnitFeatures(
     lat: number,
     opacity: number,
     kind: 'own' | 'contact',
+    health?: number,
   ) => {
     const key = iconKey(sidc, options)
     if (!iconMap.has(key)) iconMap.set(key, { key, sidc, options })
     features.push({
       type: 'Feature',
-      properties: { id, faction, icon: key, opacity, kind },
+      properties: { id, faction, icon: key, opacity, kind, ...(health != null ? { health } : {}) },
       geometry: { type: 'Point', coordinates: [lng, lat] },
     })
   }
@@ -175,7 +202,7 @@ export function buildUnitFeatures(
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
-    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, ownUnitOpacity(u.comms), 'own')
+    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, ownUnitOpacity(u.comms), 'own', u.health)
   }
   for (const c of contacts) {
     const options: SymbolOpts =

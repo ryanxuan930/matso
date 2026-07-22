@@ -16,13 +16,15 @@ export interface HexFeatureCollection {
   }>
 }
 
-/** 依縮放層級選 H3 解析度（拉遠→粗，避免 cell 數爆量）。SPEC 預設 res 8，此處為顯示層。 */
+/** 依縮放層級選 H3 解析度（拉遠→粗，避免 cell 數爆量）。SPEC 預設 res 8，此處為顯示層。
+ * 高縮放（z≥13）對齊移動格 res 8：使用者看到/點選的格＝MOVE 單位吸附的目的格（#4b）。 */
 export function resForZoom(zoom: number): number {
   if (zoom < 6) return 3
   if (zoom < 8) return 4
   if (zoom < 10) return 5
   if (zoom < 12) return 6
-  return 7
+  if (zoom < 13) return 7
+  return 8
 }
 
 /**

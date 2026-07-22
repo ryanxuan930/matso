@@ -9,7 +9,7 @@ import {
   openMapTilesDarkLayers,
 } from '~/composables/useMapStyle'
 import { hexCellsForBounds } from '~/composables/useHexGrid'
-import { latLngToCell } from 'h3-js'
+import { cellToBoundary, cellToLatLng, latLngToCell } from 'h3-js'
 import { type Contact, type OwnUnit, buildUnitFeatures } from '~/composables/useUnits'
 import { symbolImage } from '~/composables/useMilsymbol'
 
@@ -32,6 +32,7 @@ const props = withDefaults(
     selectedId?: string | null // 選取的我方單位（藍色高亮環）
     targetId?: string | null // ENGAGE 鎖定的目標（紅色高亮環）
     basemapId?: string // 當前底圖來源 id（offline / street / satellite / 軍用…）
+    destH3?: string | null // MOVE 目的格（res 8）——畫出吸附後的格與格心，讓「點哪→到哪」透明（#4b）
   }>(),
   {
     hexVisible: false,
@@ -43,6 +44,7 @@ const props = withDefaults(
     selectedId: null,
     targetId: null,
     basemapId: 'offline',
+    destH3: null,
   },
 )
 
@@ -106,6 +108,28 @@ const GRAT_SRC = 'graticule'
 const HILLSHADE_SRC = 'hillshade'
 const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
+const DEST_SRC = 'move-dest'
+
+const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] }
+
+/** MOVE 目的格（res 8）→ 吸附後的六角格多邊形 + 格心點（#4b：讓「點哪→實際到哪」透明）。 */
+function destFeatures(h3: string | null): { type: 'FeatureCollection'; features: unknown[] } {
+  if (!h3) return EMPTY_FC
+  const ring = cellToBoundary(h3, true) // [lng,lat][]
+  const [clat, clng] = cellToLatLng(h3)
+  return {
+    type: 'FeatureCollection',
+    features: [
+      { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]!]] } },
+      { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [clng, clat] } },
+    ],
+  }
+}
+
+function syncDest() {
+  const src = map?.getSource(DEST_SRC) as GeoJSONSource | undefined
+  src?.setData(destFeatures(props.destH3) as never)
+}
 
 function refreshHex() {
   if (!map) return
@@ -220,6 +244,34 @@ onMounted(async () => {
       layout: { visibility: props.hexVisible ? 'visible' : 'none' },
       paint: { 'line-color': '#38bdf8', 'line-width': 0.5, 'line-opacity': 0.5 },
     })
+    // MOVE 目的格（#4b）：吸附後的六角格 + 格心，讓使用者看見單位「實際會到的位置」。
+    map.addSource(DEST_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'move-dest-fill',
+      type: 'fill',
+      source: DEST_SRC,
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': '#eab308', 'fill-opacity': 0.14 },
+    })
+    map.addLayer({
+      id: 'move-dest-line',
+      type: 'line',
+      source: DEST_SRC,
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'line-color': '#facc15', 'line-width': 1.6, 'line-dasharray': [2, 1] },
+    })
+    map.addLayer({
+      id: 'move-dest-center',
+      type: 'circle',
+      source: DEST_SRC,
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': 4,
+        'circle-color': '#facc15',
+        'circle-stroke-color': '#0a1626',
+        'circle-stroke-width': 1.5,
+      },
+    })
     // 單位 symbol 層（milsymbol icon；資料驅動 icon-image + icon-opacity）
     map.addSource(UNITS_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     // 高亮環（選取＝藍、目標＝紅）——置於 symbol 層下方，繞在單位符號外圈；以 filter 依 id 只顯示一個。
@@ -247,6 +299,24 @@ onMounted(async () => {
         'circle-stroke-width': 3,
       },
     })
+    // 血量環（#5）：我方單位常駐，環色依血量帶（綠/琥珀/紅）。contact 無血量（fog of war）→ 不畫。
+    map.addLayer({
+      id: 'unit-health-ring',
+      type: 'circle',
+      source: UNITS_SRC,
+      filter: ['all', ['==', ['get', 'kind'], 'own'], ['has', 'health']],
+      minzoom: 8,
+      paint: {
+        'circle-radius': 15,
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-stroke-width': 2.5,
+        'circle-stroke-opacity': 0.9,
+        'circle-stroke-color': [
+          'step', ['to-number', ['get', 'health']],
+          '#ef4444', 34, '#f59e0b', 67, '#22c55e',
+        ],
+      },
+    })
     map.addLayer({
       id: 'units',
       type: 'symbol',
@@ -260,6 +330,7 @@ onMounted(async () => {
     })
     refreshHex()
     syncUnits()
+    syncDest()
     loaded.value = true
     ;(window as unknown as { __matsoMap?: MapLibreMap }).__matsoMap = map
   })
@@ -295,6 +366,7 @@ watch(
 watch(() => props.hillshadeVisible, (v) => setLayerVisibility('hillshade', v))
 watch(() => props.contourVisible, (v) => setLayerVisibility('contours-line', v))
 watch(() => props.basemapId, (v) => applyBasemap(v))
+watch(() => props.destH3, syncDest)
 watch(
   () => props.selectedId,
   (v) => {

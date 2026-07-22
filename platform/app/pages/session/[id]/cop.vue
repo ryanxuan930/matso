@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Contact, OwnUnit } from '~/composables/useUnits'
+import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composables/useUnits'
 import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
 import type { ApiError } from '~/composables/useApi'
 import { apiFetch } from '~/composables/useApi'
@@ -91,6 +92,11 @@ function livePos(u: UnitView): { lat: number; lng: number } {
     lng: (typeof p?.lng === 'number' ? p.lng : u.lng) ?? 121,
   }
 }
+// 活血量（#5）：交戰 HIT 後由 STATE_DIFF 帶入，否則用 GET /units 初始值。
+function liveHealth(u: UnitView): number | undefined {
+  const p = stream.unitPatches[u.id]
+  return (typeof p?.health === 'number' ? p.health : u.health) ?? undefined
+}
 
 // 真單位依「我方 / 他軍」分流渲染：我方＝友軍符號（可選取指揮）；他軍＝敵情符號（可鎖為攻擊目標）。
 // myFaction 未知（純白軍全知）時，全部以友軍呈現以便至少可見。
@@ -103,6 +109,7 @@ const realAsOwn = computed<OwnUnit[]>(() =>
       ...livePos(u),
       comms: (u.comms as OwnUnit['comms']) ?? 'ONLINE',
       lastReportedTick: 100,
+      health: liveHealth(u), // 血量環（#5）；fog of war：僅我方單位帶血量
     })),
 )
 const realAsContacts = computed<Contact[]>(() =>
@@ -164,14 +171,22 @@ async function refresh() {
   myFaction.value = sessions.find((s) => s.id === sessionId.value)?.my_faction ?? ''
 }
 
-async function selectUnit(id: string) {
-  selectedId.value = id
+// 清空選取與下令子狀態（#6 點空白取消選取 / 選新單位前重置）。
+function clearSelection() {
+  selectedId.value = null
   precheck.value = null
   message.value = ''
   destH3.value = null
+  targeting.value = false
   targetUnitId.value = null
   weaponId.value = null
   ammoType.value = null
+  weapons.value = []
+}
+
+async function selectUnit(id: string) {
+  clearSelection()
+  selectedId.value = id
   // 抓此單位可用武器（ENGAGE 選武器/彈種）；失敗（他方/無裝備）→ 空清單，下拉隱藏。
   weapons.value = await fetchWeapons(sessionId.value, id).catch(() => [])
 }
@@ -180,7 +195,10 @@ function onMapClick(e: { h3: string }) {
   if (orderType.value === 'MOVE' && targeting.value) {
     destH3.value = e.h3
     targeting.value = false
+    return
   }
+  // 點空白處（非設定目標中）→ 取消選取，避免單位一直被選著（#6）。
+  if (selectedId.value) clearSelection()
 }
 
 // 點地圖上的單位符號：我方 → 選取指揮；他軍（有選取的我方單位時）→ 鎖為 ENGAGE 目標。
@@ -202,6 +220,14 @@ function onUnitClick(e: { id: string; faction: string; kind: string }) {
 
 const selectedUnit = computed(() => realUnits.value.find((u) => u.id === selectedId.value) ?? null)
 const targetUnit = computed(() => realUnits.value.find((u) => u.id === targetUnitId.value) ?? null)
+
+// 資訊圖卡血量（#5）——活血量優先；缺值時退回 API 初值。
+const hpPct = computed(() => {
+  const u = selectedUnit.value
+  if (!u) return 0
+  return Math.round((liveHealth(u) ?? u.health ?? 100) as number)
+})
+const hpColor = computed(() => healthColor(hpPct.value))
 
 async function submit() {
   if (!selectedId.value) return
@@ -299,7 +325,10 @@ onBeforeUnmount(() => stream.disconnect())
             <button data-testid="pick-dest" :class="{ armed: targeting }" @click="targeting = true">
               {{ targeting ? '點地圖設目標…' : '設定目標點' }}
             </button>
-            <div class="dest" data-testid="dest-h3">{{ destH3 || '未設目標' }}</div>
+            <div class="dest" data-testid="dest-h3">
+              {{ destH3 || '未設目標' }}
+              <span v-if="destH3" class="snaphint">· 吸附至六角格心（地圖黃色標記＝實際落點）</span>
+            </div>
           </template>
           <template v-else>
             <div class="hint">點地圖上的敵方單位鎖定目標（紅環），或從清單選：</div>
@@ -381,6 +410,7 @@ onBeforeUnmount(() => stream.disconnect())
             :selected-id="selectedId"
             :target-id="targetUnitId"
             :basemap-id="basemap"
+            :dest-h3="destH3"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @basemap-error="onBasemapError"
@@ -402,6 +432,39 @@ onBeforeUnmount(() => stream.disconnect())
           <strong>離線底圖模式</strong>
           <span>目前顯示經緯格線 + 單位符號（無向量瓦片）。要載入台灣街道/地形底圖，需由
             <code>taiwan.osm.pbf</code> 產生 mbtiles 並啟用 tileserver — 見「操作教學」。</span>
+        </div>
+
+        <!-- 單位詳細資訊圖卡（#5）：點單位顯示血量/狀態/座標/武器；點空白取消（#6）。 -->
+        <div v-if="selectedUnit" class="unit-card" data-testid="unit-detail-card">
+          <button class="card-close" data-testid="card-close" title="關閉（取消選取）" @click="clearSelection">
+            ✕
+          </button>
+          <div class="card-hd">
+            <span class="fdot" :style="{ background: factionColor(selectedUnit.faction) }" />
+            <strong class="cname">{{ selectedUnit.designation }}</strong>
+            <span class="clevel">{{ unitLevelLabel(selectedUnit.unit_level) }} · {{ selectedUnit.faction }}</span>
+          </div>
+          <div class="hpbar" :title="`HP ${hpPct}%`">
+            <div class="hpfill" :style="{ width: `${hpPct}%`, background: hpColor }" />
+            <span class="hptxt">HP {{ hpPct }}%</span>
+          </div>
+          <dl class="card-meta">
+            <div><dt>通聯</dt><dd>{{ commsLabel(selectedUnit.comms) }}</dd></div>
+            <div>
+              <dt>座標</dt>
+              <dd>{{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}</dd>
+            </div>
+          </dl>
+          <div v-if="weapons.length" class="card-weapons">
+            <div class="card-sub">武器裝載</div>
+            <ul>
+              <li v-for="w in weapons" :key="w.id">
+                {{ w.name }}
+                <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
+                <span v-if="w.ammo_remaining != null" class="dim">· 彈 {{ w.ammo_remaining }}</span>
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
     </div>
@@ -561,6 +624,11 @@ onBeforeUnmount(() => stream.disconnect())
   font-family: monospace;
   color: #94a3b8;
 }
+.dest .snaphint {
+  font-family: system-ui, sans-serif;
+  color: #eab308;
+  font-size: 0.68rem;
+}
 .order .selunit {
   color: #60a5fa;
   font-weight: 600;
@@ -592,6 +660,113 @@ onBeforeUnmount(() => stream.disconnect())
 .map-wrap {
   position: relative;
   flex: 1;
+}
+/* 單位詳細資訊圖卡（#5）——浮在地圖左下。 */
+.unit-card {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 11;
+  width: 15rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid #1e3a5f;
+  background: rgba(15, 23, 42, 0.95);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-size: 0.78rem;
+  color: #e2e8f0;
+}
+.unit-card .card-close {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  padding: 0 0.3rem;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.unit-card .card-close:hover {
+  color: #e2e8f0;
+}
+.unit-card .card-hd {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-right: 1rem;
+}
+.unit-card .fdot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  flex: none;
+}
+.unit-card .cname {
+  color: #f8fafc;
+}
+.unit-card .clevel {
+  color: #94a3b8;
+  font-size: 0.68rem;
+}
+.unit-card .hpbar {
+  position: relative;
+  height: 1.05rem;
+  margin: 0.5rem 0 0.4rem;
+  border-radius: 0.25rem;
+  background: #1e293b;
+  overflow: hidden;
+}
+.unit-card .hpfill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+.unit-card .hptxt {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: #0a1626;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.4);
+}
+.unit-card .card-meta {
+  margin: 0.25rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.unit-card .card-meta > div {
+  display: flex;
+  gap: 0.5rem;
+}
+.unit-card .card-meta dt {
+  color: #64748b;
+  min-width: 2.5rem;
+}
+.unit-card .card-meta dd {
+  margin: 0;
+  color: #cbd5e1;
+  font-family: monospace;
+}
+.unit-card .card-sub {
+  margin: 0.5rem 0 0.2rem;
+  color: #64748b;
+  font-size: 0.68rem;
+}
+.unit-card .card-weapons ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.unit-card .card-weapons .dim {
+  color: #94a3b8;
+  font-size: 0.7rem;
 }
 .map-loading {
   position: absolute;
