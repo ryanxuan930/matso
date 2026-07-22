@@ -98,3 +98,37 @@ def test_edit_session_name_and_world_time(session_factory: sessionmaker[Session]
     # 清除 world_start_time（空字串）
     r2 = client.patch(f"/api/v1/sessions/{sid}", json={"world_start_time": ""}, headers=h)
     assert r2.status_code == 200 and r2.json()["world_start_time"] is None
+
+
+def test_archive_unarchive_and_delete(session_factory: sessionmaker[Session]) -> None:
+    """#31：建立者可封存/還原/刪除本局（統裁參與者權限）。"""
+    seed_user(session_factory)
+    client = make_client(session_factory)
+    h = auth_header(login(client)["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "待封存"}, headers=h).json()["id"]
+
+    # 封存 → status ARCHIVED、archived_at 有值。
+    r = client.post(f"/api/v1/sessions/{sid}/archive", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "ARCHIVED" and r.json()["archived_at"]
+
+    # 還原 → 回 ACTIVE。
+    r = client.post(f"/api/v1/sessions/{sid}/unarchive", headers=h)
+    assert r.status_code == 200 and r.json()["status"] == "ACTIVE"
+    assert r.json()["archived_at"] is None
+
+    # 刪除 → 204，列表不再出現。
+    assert client.delete(f"/api/v1/sessions/{sid}", headers=h).status_code == 204
+    assert all(s["id"] != sid for s in client.get("/api/v1/sessions", headers=h).json())
+
+
+def test_non_director_cannot_delete(session_factory: sessionmaker[Session]) -> None:
+    """非本局統裁/管理者不可封存或刪除（#31）。"""
+    seed_user(session_factory, username="alice", role=UserRole.COMMANDER)
+    seed_user(session_factory, username="mallory", role=UserRole.COMMANDER)
+    client = make_client(session_factory)
+    a = auth_header(login(client, "alice")["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "alice 的局"}, headers=a).json()["id"]
+    m = auth_header(login(client, "mallory")["access_token"])
+    assert client.post(f"/api/v1/sessions/{sid}/archive", headers=m).status_code == 403
+    assert client.delete(f"/api/v1/sessions/{sid}", headers=m).status_code == 403

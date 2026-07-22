@@ -98,11 +98,50 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** @description 永久刪除推演（#31，連同單位/事件/標註）——限統裁/管理，前端須二次確認 */
+        delete: operations["deleteSession"];
         options?: never;
         head?: never;
         /** @description 編輯已開推演設定（名稱 / 想定世界初始日期時間）——限統裁/管理（#16） */
         patch: operations["editSession"];
+        trace?: never;
+    };
+    "/sessions/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 封存推演（#31）——移入歷史頁、活模擬凍結。限統裁/管理 */
+        post: operations["archiveSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 還原封存推演（#31）——移回進行中。限統裁/管理 */
+        post: operations["unarchiveSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/sessions/{id}/lifecycle": {
@@ -642,6 +681,8 @@ export interface components {
             start_time?: string | null;
             /** @description 想定世界初始日期時間 ISO8601（#16/#6 日照） */
             world_start_time?: string | null;
+            /** @description 封存時間 ISO8601（#31；有值＝已封存） */
+            archived_at?: string | null;
             /**
              * @description 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編）
              * @default false
@@ -1082,6 +1123,35 @@ export interface operations {
             };
         };
     };
+    deleteSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     editSession: {
         parameters: {
             query?: never;
@@ -1107,6 +1177,68 @@ export interface operations {
                 };
             };
             /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    archiveSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    unarchiveSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Restored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not permitted */
             403: {
                 headers: {
                     [name: string]: unknown;

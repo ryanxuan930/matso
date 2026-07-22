@@ -33,6 +33,7 @@ model WargameSession {
   mode           SessionMode @default(REALTIME)
   startTime      DateTime  @default(now())
   endTime        DateTime?
+  archivedAt     DateTime? // #31 封存時間（歷史頁）：有值＝已封存（活模擬凍結、可還原/刪除）
   worldStartTime DateTime? // 想定世界初始日期時間（in-world t=0；供 #6 日照/晨昏推算；可編輯 #16）
   currentWeather Json // Processed output strictly from the Weather Module
   // #6：允許「自行編輯本軍編裝（ORBAT）」的陣營清單（White Cell 設定）。null/[] = 僅白軍可編。

@@ -105,8 +105,16 @@ class SimManager:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._scan_interval)
 
     def _session_ids(self) -> list[str]:
+        # #31 已封存的推演凍結：不起 Kernel 迴圈（活模擬停擺，移入歷史頁）。
         with self._factory() as db:
-            return [s.id for s in db.execute(select(WargameSession)).scalars().all()]
+            return [
+                s.id
+                for s in db.execute(
+                    select(WargameSession).where(WargameSession.archived_at.is_(None))
+                )
+                .scalars()
+                .all()
+            ]
 
     def _ensure(self, session_id: str) -> None:
         task = self._tasks.get(session_id)

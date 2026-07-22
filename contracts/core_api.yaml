@@ -153,6 +153,7 @@ components:
         my_faction: { type: [string, "null"], description: 呼叫者在此 session 的陣營（非參與者為 null） }
         start_time: { type: [string, "null"], description: 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 }
         world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（#16/#6 日照） }
+        archived_at: { type: [string, "null"], description: 封存時間 ISO8601（#31；有值＝已封存） }
         orbat_edit: { type: boolean, default: false, description: 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編） }
     EditSessionRequest:
       type: object
@@ -481,6 +482,31 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SessionSummary" }
         "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteSession
+      security: [{ bearerAuth: [] }]
+      description: 永久刪除推演（#31，連同單位/事件/標註）——限統裁/管理，前端須二次確認
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/archive:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: archiveSession
+      security: [{ bearerAuth: [] }]
+      description: 封存推演（#31）——移入歷史頁、活模擬凍結。限統裁/管理
+      responses:
+        "200": { description: Archived, content: { application/json: { schema: { $ref: "#/components/schemas/SessionSummary" } } } }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/unarchive:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: unarchiveSession
+      security: [{ bearerAuth: [] }]
+      description: 還原封存推演（#31）——移回進行中。限統裁/管理
+      responses:
+        "200": { description: Restored, content: { application/json: { schema: { $ref: "#/components/schemas/SessionSummary" } } } }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/lifecycle:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

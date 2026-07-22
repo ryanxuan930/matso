@@ -66,6 +66,8 @@ class WargameSession(Base):
         "startTime", DateTime(timezone=False), server_default=func.now()
     )
     end_time: Mapped[str | None] = mapped_column("endTime", DateTime(timezone=False))
+    # #31 封存時間（歷史頁）：有值＝已封存（活模擬凍結、於歷史頁可還原/刪除）。
+    archived_at: Mapped[str | None] = mapped_column("archivedAt", DateTime(timezone=False))
     # 想定世界初始日期時間（in-world t=0；供 #6 日照推算，可編輯 #16）。
     world_start_time: Mapped[str | None] = mapped_column("worldStartTime", DateTime(timezone=False))
     current_weather: Mapped[dict] = mapped_column("currentWeather", JSON)  # type: ignore[type-arg]
