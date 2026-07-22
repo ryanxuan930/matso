@@ -121,7 +121,10 @@ const selectedId = ref<string | null>(null)
 const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
 const destH3 = ref<string | null>(null)
 const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
-const preciseMove = ref(false) // 精確移動：跳過六角格心吸附（<1km 近距作戰）
+// 精確移動預設「開」：跳過六角格心吸附，單位精確走到點擊處。六角格心吸附在 <1km 近距作戰
+// （校園/大樓）會把落點吸回格心（≈原位）造成「下令後跑回原位」的錯覺（#2/#15）；預設關閉吸附
+// 消除此問題。需大範圍推演的粗略化/省算時，可取消勾選改回六角吸附。
+const preciseMove = ref(true)
 const targeting = ref(false)
 const targetUnitId = ref<string | null>(null)
 // ENGAGE 武器/彈種（資料驅動 baseStats；選取單位時抓 GET /units/{id}/weapons）
@@ -499,6 +502,7 @@ onMounted(() => {
     if (typeof p.hexLimitKm === 'number') hexLimitKm.value = p.hexLimitKm
     if (typeof p.dayNight === 'boolean') dayNight.value = p.dayNight
     if (typeof p.timeOfDay === 'number') timeOfDay.value = p.timeOfDay
+    if (typeof p.preciseMove === 'boolean') preciseMove.value = p.preciseMove
   } catch {
     /* 壞資料忽略，用預設 */
   }
@@ -520,6 +524,7 @@ watch(
     hexLimitKm,
     dayNight,
     timeOfDay,
+    preciseMove,
   ],
   () => {
     if (!import.meta.client) return
@@ -542,6 +547,7 @@ watch(
           hexLimitKm: hexLimitKm.value,
           dayNight: dayNight.value,
           timeOfDay: timeOfDay.value,
+          preciseMove: preciseMove.value,
         }),
       )
     } catch {
@@ -610,15 +616,15 @@ watch(
           <template v-if="orderType === 'MOVE'">
             <label class="precise">
               <input v-model="preciseMove" type="checkbox" data-testid="precise-move">
-              精確移動（不吸附六角格心）
+              精確移動（走到點擊處，不吸附六角格心）
             </label>
             <button data-testid="pick-dest" :class="{ armed: targeting }" @click="targeting = true">
               {{ targeting ? '點地圖設目標…' : '設定目標點' }}
             </button>
             <div class="dest" data-testid="dest-h3">
               {{ destH3 || '未設目標' }}
-              <span v-if="destH3 && !preciseMove" class="snaphint">· 吸附至六角格心（黃色標記＝落點）</span>
-              <span v-if="destH3 && preciseMove" class="snaphint precise">· 精確落點（近距作戰；可能增加運算量）</span>
+              <span v-if="destH3 && !preciseMove" class="snaphint">· 吸附至六角格心（大範圍省算；近距會跑回格心）</span>
+              <span v-if="destH3 && preciseMove" class="snaphint precise">· 精確落點（單位走到黃色標記；近距作戰建議）</span>
             </div>
           </template>
           <template v-else>
@@ -678,11 +684,12 @@ watch(
           <li v-for="o in orders" :key="o.id" data-testid="order-row">
             {{ orderTypeLabel(o.order_type) }} · {{ orderStatusLabel(o.status) }}
             <button
-              v-if="o.status === 'VALIDATED' || o.status === 'PENDING'"
+              v-if="o.status === 'VALIDATED' || o.status === 'PENDING' || o.status === 'EXECUTING'"
               data-testid="cancel-order"
+              :title="o.status === 'EXECUTING' ? '停止移動並就地凍結（不彈回原位）' : '取消未執行指令'"
               @click="cancel(o.id)"
             >
-              取消
+              {{ o.status === 'EXECUTING' ? '停止' : '取消' }}
             </button>
           </li>
           <li v-if="!orders.length" class="empty">（無指令）</li>

@@ -54,11 +54,12 @@ def test_terminal_states_have_no_exits() -> None:
             assert not can_transition(terminal, dst)
 
 
-def test_user_cancellable_only_before_execution() -> None:
+def test_user_cancellable_until_terminal() -> None:
+    # 未完成者皆可取消——含 EXECUTING（取消執行中移動＝就地凍結，不彈回原位，#15）。
     assert is_user_cancellable(OrderStatus.PENDING)
     assert is_user_cancellable(OrderStatus.VALIDATED)
+    assert is_user_cancellable(OrderStatus.EXECUTING)
     for status in (
-        OrderStatus.EXECUTING,
         OrderStatus.COMPLETED,
         OrderStatus.REJECTED,
         OrderStatus.CANCELLED,

@@ -6,7 +6,7 @@ import pytest
 from _order_fakes import FakeGateway, OrderWorld, seed_world
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.errors import IllegalOrderTransitionError, OrderNotFoundError, PrecheckFailedError
+from app.errors import OrderNotFoundError, PrecheckFailedError
 from app.models.enums import OrderStatus
 from app.models.tables import Order
 from app.orders.schemas import OrderRequest, OrderType
@@ -79,12 +79,13 @@ def test_cancel_unknown_order(session_factory: sessionmaker[Session]) -> None:
         OrderService(db, FakeGateway()).cancel(world.session_id, "nope", "BLUE", False)
 
 
-def test_cannot_cancel_executing(session_factory: sessionmaker[Session]) -> None:
+def test_cancel_executing_order_freezes_in_place(session_factory: sessionmaker[Session]) -> None:
+    # 取消執行中的移動＝就地凍結（#15）：狀態機允許 EXECUTING→CANCELLED，移動系統遂不再推進該單位。
     world = seed_world(session_factory)
     with session_factory() as db:
         service = OrderService(db, FakeGateway(reachable=True))
         created = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
         db.get(Order, created.id).status = OrderStatus.EXECUTING  # type: ignore[union-attr]
         db.commit()
-        with pytest.raises(IllegalOrderTransitionError):
-            service.cancel(world.session_id, created.id, "BLUE", False)
+        cancelled = service.cancel(world.session_id, created.id, "BLUE", False)
+        assert cancelled.status is OrderStatus.CANCELLED

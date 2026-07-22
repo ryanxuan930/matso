@@ -13,8 +13,10 @@
 - EXECUTING：Kernel 於某 tick 取出開始執行（O3.3/O3.4）。
 - COMPLETED/REJECTED/CANCELLED：終態。
 
-**使用者取消**（DELETE 端點）只允許尚未執行者（PENDING/VALIDATED）；EXECUTING→CANCELLED
-保留給 Kernel 端的中斷（如移動被地形事件打斷，O3.4），非使用者可觸發。
+**使用者取消**（DELETE 端點）允許尚未完成者（PENDING/VALIDATED/EXECUTING）。取消執行中的
+MOVE 會讓單位「就地凍結」——移動系統只撿 VALIDATED/EXECUTING 指令，CANCELLED 後不再推進，
+單位停在當前位置（不彈回原位，#15）。EXECUTING→CANCELLED 亦供 Kernel 端中斷（如移動被地形
+事件打斷，O3.4）。
 """
 
 from __future__ import annotations
@@ -39,8 +41,10 @@ TERMINAL_STATUSES: frozenset[OrderStatus] = frozenset(
     status for status, nexts in _TRANSITIONS.items() if not nexts
 )
 
-# 使用者可主動取消的狀態（尚未執行）
-_USER_CANCELLABLE: frozenset[OrderStatus] = frozenset({OrderStatus.PENDING, OrderStatus.VALIDATED})
+# 使用者可主動取消的狀態（尚未完成）——含 EXECUTING：取消執行中的移動＝就地凍結（#15）。
+_USER_CANCELLABLE: frozenset[OrderStatus] = frozenset(
+    {OrderStatus.PENDING, OrderStatus.VALIDATED, OrderStatus.EXECUTING}
+)
 
 
 def can_transition(current: OrderStatus, target: OrderStatus) -> bool:
