@@ -192,6 +192,7 @@ const realAsContacts = computed<Contact[]>(() =>
           lastSeenTick: 100,
           faction: u.faction,
           relation: 'HOSTILE' as const, // 前端保守標敵；真 ROE 由後端關係矩陣裁決
+          health: liveHealth(u), // 敵情血量：STATE_DIFF 已帶 ground truth → 供地圖血量環/摧毀顯示
         }))
     : [],
 )
@@ -703,7 +704,12 @@ watch(
             data-testid="unit-item"
             @click="selectUnit(u.id)"
           >
-            {{ u.designation }} · {{ u.faction }} · {{ Math.round(u.health) }}%
+            <span class="u-dot" :style="{ background: factionColor(u.faction) }" />
+            {{ u.designation }} · {{ u.faction }} ·
+            <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
+              {{ Math.round(liveHealth(u) ?? 100) }}%
+            </span>
+            <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
           </li>
           <li v-if="!realUnits.length" class="empty">（此 session 無可下令單位）</li>
         </ul>
@@ -1298,6 +1304,24 @@ watch(
 .units li.sel {
   border-color: #2563eb;
   background: #172554;
+}
+.units li .u-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+.units li .u-hp {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.units li .u-ko {
+  margin-left: 0.35rem;
+  color: #ef4444;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 .empty {
   color: #64748b;

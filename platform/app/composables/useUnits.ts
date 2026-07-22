@@ -72,6 +72,7 @@ export interface Contact {
   lastSeenTick: number
   faction?: string // IDENTIFIED 才揭露（後端去識別化）——用於顏色與 affiliation
   relation?: Relation // 觀測者對該 contact 陣營的關係（IDENTIFIED 時已知）
+  health?: number // 敵情血量（活模擬 STATE_DIFF ground truth）——供地圖血量環/摧毀顯示
 }
 
 // 少數 2525C function ID（SPEC 未細列，取常見兵種；DETECTED 未知 → 通用）。
@@ -210,7 +211,7 @@ export function buildUnitFeatures(
     // IDENTIFIED 且已知陣營 → 以該陣營顏色渲染（三方混戰時區分不同敵對陣營）。
     if (c.faction) options.fillColor = factionColor(c.faction, palette)
     const opacity = stalenessOpacity(Math.max(0, currentTick - c.lastSeenTick))
-    push(c.contactId, c.faction ?? '', sidcForContact(c), options, c.lng, c.lat, opacity, 'contact')
+    push(c.contactId, c.faction ?? '', sidcForContact(c), options, c.lng, c.lat, opacity, 'contact', c.health)
   }
 
   return { collection: { type: 'FeatureCollection', features }, icons: [...iconMap.values()] }

@@ -248,6 +248,8 @@ async def test_scripted_battle_full_flow() -> None:
 
     # 戰損入帳：紅軍血量下降 + ENGAGEMENT_RESOLVED 事件寫入 Ledger
     assert hot.get_unit(red_id)["health"] == pytest.approx(60.0)  # 100 − 40
+    # 戰損也持久化到 DB healthStatus（GET /units 權威、重連/重啟保留）
+    assert db.get(TacticalUnit, red_id).health_status == pytest.approx(60.0)  # type: ignore[union-attr]
     resolved = [e for e in sink.events if e.event_type == "ENGAGEMENT_RESOLVED"]
     assert resolved and resolved[0].damage_calc == pytest.approx(40.0)
     assert resolved[0].target_id == red_id

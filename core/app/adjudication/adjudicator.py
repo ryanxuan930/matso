@@ -28,7 +28,7 @@ from app.adjudication.weapon import WeaponProfile
 from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
 from app.models.enums import OrderStatus
-from app.models.tables import Order
+from app.models.tables import Order, TacticalUnit
 from app.orders.schemas import OrderType
 from app.orders.state_machine import next_status
 from app.state.hot_state import HotStateStore
@@ -133,6 +133,10 @@ class EngagementAdjudicator:
         self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - 1)})
         if result.status is Resolution.HIT:
             self._hot.update_unit(order.target_id, {"health": result.target_health_after})
+            # 戰損也持久化到 DB（healthStatus 權威）——GET /units 反映、重連/AAR/重啟保留（新回報）。
+            target = self._db.get(TacticalUnit, order.target_id)
+            if target is not None:
+                target.health_status = result.target_health_after
 
     def _complete(self, order_id: str, tick: int) -> None:
         order = self._db.get(Order, order_id)
