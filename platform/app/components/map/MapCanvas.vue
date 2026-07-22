@@ -46,6 +46,9 @@ const props = withDefaults(
     layerOrder?: string[] // 疊加層套疊順序（上→下，#9）
     contourMajor?: number // 主等高線間距 m（較粗，#8；預設 100）
     contourMinor?: number // 次等高線間距 m（較細，#8；預設 50）
+    hexLineWidth?: number // 六角網格線寬 px（#5 線條粗細設定）
+    contourMajorWidth?: number // 主等高線線寬 px（#5）
+    contourMinorWidth?: number // 次等高線線寬 px（#5）
     featureFc?: Fc // 地圖標註/工事（stage ③b）
     influenceFc?: Fc // 影響範圍圓
     draftFc?: Fc // 繪製中草稿
@@ -76,6 +79,9 @@ const props = withDefaults(
     layerOrder: () => [...DEFAULT_OVERLAY_ORDER],
     contourMajor: 100,
     contourMinor: 50,
+    hexLineWidth: 0.5,
+    contourMajorWidth: 1.2,
+    contourMinorWidth: 0.5,
     featureFc: () => ({ type: 'FeatureCollection', features: [] }),
     influenceFc: () => ({ type: 'FeatureCollection', features: [] }),
     draftFc: () => ({ type: 'FeatureCollection', features: [] }),
@@ -289,6 +295,16 @@ function applyContourFilters() {
   if (map?.getLayer('contours-line-minor')) map.setFilter('contours-line-minor', contourFilter('minor'))
   if (map?.getLayer('contours-label')) map.setFilter('contours-label', contourFilter('major'))
 }
+/** 線條粗細（#5）：六角網格 + 主/次等高線線寬即時套用。 */
+function applyLineWidths() {
+  if (!map) return
+  const set = (id: string, w: number) => {
+    if (map?.getLayer(id)) map.setPaintProperty(id, 'line-width', Math.max(0.1, w))
+  }
+  set('hexgrid-line', props.hexLineWidth ?? 0.5)
+  set('contours-line-major', props.contourMajorWidth ?? 1.2)
+  set('contours-line-minor', props.contourMinorWidth ?? 0.5)
+}
 
 function refreshHex() {
   if (!map) return
@@ -395,7 +411,7 @@ onMounted(async () => {
         'source-layer': 'contour',
         layout: { visibility: props.contourVisible ? 'visible' : 'none' },
         filter: contourFilter('minor'),
-        paint: { 'line-color': '#8f7546', 'line-width': 0.5, 'line-opacity': 0.5 },
+        paint: { 'line-color': '#8f7546', 'line-width': props.contourMinorWidth, 'line-opacity': 0.5 },
       })
       map.addLayer({
         id: 'contours-line-major',
@@ -404,7 +420,7 @@ onMounted(async () => {
         'source-layer': 'contour',
         layout: { visibility: props.contourVisible ? 'visible' : 'none' },
         filter: contourFilter('major'),
-        paint: { 'line-color': '#c9a15c', 'line-width': 1.2, 'line-opacity': 0.8 },
+        paint: { 'line-color': '#c9a15c', 'line-width': props.contourMajorWidth, 'line-opacity': 0.8 },
       })
       // 等高線高度標籤（#11，沿線放置；主等高線；需 glyphs）。
       if (tileUrl) {
@@ -439,7 +455,7 @@ onMounted(async () => {
       type: 'line',
       source: HEX_SRC,
       layout: { visibility: props.hexVisible ? 'visible' : 'none' },
-      paint: { 'line-color': '#38bdf8', 'line-width': 0.5, 'line-opacity': 0.5 },
+      paint: { 'line-color': '#38bdf8', 'line-width': props.hexLineWidth, 'line-opacity': 0.5 },
     })
     // 座標網格（#9）：經緯度網格線 + 標籤 + MGRS 標記（標籤需 glyphs → 僅 tileUrl 時加）。
     hasGlyphs = !!tileUrl
@@ -743,6 +759,10 @@ watch(
 watch(() => props.layerOpacity, applyAllOpacity, { deep: true }) // #9 透明度
 watch(() => props.layerOrder, applyOrder, { deep: true }) // #9 套疊順序
 watch([() => props.contourMajor, () => props.contourMinor], applyContourFilters) // #8 等高線間距
+watch(
+  [() => props.hexLineWidth, () => props.contourMajorWidth, () => props.contourMinorWidth],
+  applyLineWidths,
+) // #5 線條粗細
 watch(
   () => props.selectedId,
   (v) => {
