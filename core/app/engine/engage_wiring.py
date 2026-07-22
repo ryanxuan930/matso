@@ -53,7 +53,9 @@ class WeaponResolver:
     """
 
     def __init__(self, db: Session, session_id: str) -> None:
-        self._by_template: dict[str, WeaponProfile] = {}
+        # 以「武器範本 id」與「裝備實例 id」雙鍵登錄——COP 下令的 weapon_id 實為 EquipmentInstance.id
+        # （見 GET /units/{id}/weapons 回傳 id=inst.id），故兩者皆需可對應到 profile。
+        self._by_weapon: dict[str, WeaponProfile] = {}
         self._primary: dict[str, WeaponProfile] = {}
         self._primary_ammo: dict[str, int] = {}
         self._build(db, session_id)
@@ -74,7 +76,8 @@ class WeaponResolver:
                     profile = WeaponProfile.from_base_stats(tmpl.base_stats)
                 except (ValueError, KeyError, TypeError):
                     continue  # baseStats 壞 → 略過
-                self._by_template[inst.template_id] = profile
+                self._by_weapon[inst.template_id] = profile
+                self._by_weapon[inst.id] = profile  # COP weapon_id = 實例 id
                 ammo = _ammo_of(inst)
                 # 主武器＝射程最遠者（活執行期最小版；未指定選武器時的預設）。
                 if best is None or profile.max_range_m > best.max_range_m:
@@ -84,8 +87,8 @@ class WeaponResolver:
                 self._primary_ammo[unit.id] = best_ammo
 
     def weapon_for(self, cmd: EngageCommand) -> WeaponProfile:
-        if cmd.weapon_template_id and cmd.weapon_template_id in self._by_template:
-            return self._by_template[cmd.weapon_template_id]
+        if cmd.weapon_template_id and cmd.weapon_template_id in self._by_weapon:
+            return self._by_weapon[cmd.weapon_template_id]
         return self._primary.get(cmd.shooter_id, _NO_WEAPON)
 
     def primary_ammo(self, unit_id: str) -> int:

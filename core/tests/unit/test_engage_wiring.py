@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -84,6 +84,21 @@ def test_weapon_resolver_honors_chosen_weapon() -> None:
         EngageCommand(order_id="o", shooter_id=uid, target_id="t", weapon_template_id=rifle_id)
     )
     assert prof.max_range_m == pytest.approx(600)  # honor 選定的 RIFLE
+
+
+def test_weapon_resolver_honors_chosen_weapon_by_instance_id() -> None:
+    # COP 下令的 weapon_id 實為 EquipmentInstance.id（非 template id）——須也能 honor。
+    db = _db()
+    sid, uid, rifle_id, _atgm = _seed(db)
+    rifle_inst = db.scalars(
+        select(EquipmentInstance).where(EquipmentInstance.template_id == rifle_id)
+    ).first()
+    assert rifle_inst is not None
+    r = WeaponResolver(db, sid)
+    prof = r.weapon_for(
+        EngageCommand(order_id="o", shooter_id=uid, target_id="t", weapon_template_id=rifle_inst.id)
+    )
+    assert prof.max_range_m == pytest.approx(600)  # honor 選定的 RIFLE（以實例 id）
 
 
 def test_weapon_resolver_unknown_unit_returns_no_weapon() -> None:
