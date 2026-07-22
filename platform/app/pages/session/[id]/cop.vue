@@ -16,6 +16,7 @@ import {
 } from '~/composables/useOrders'
 import { fetchEquipmentTemplates, type EquipmentTemplate } from '~/composables/useEquipment'
 import { forward as mgrsForward } from 'mgrs'
+import { latLngToCell } from 'h3-js'
 import {
   FEATURE_KINDS,
   createMapFeature,
@@ -293,6 +294,11 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
     targeting.value = false
     return
   }
+  // ENGAGE 瞄準中點到空白（未命中敵方單位）→ 取消瞄準但保留選取（避免誤點就丟失單位，#3）。
+  if (targeting.value) {
+    targeting.value = false
+    return
+  }
   // 點空白處（非設定目標中）→ 取消選取，避免單位/標註一直被選著（#6）。
   if (selectedId.value) clearSelection()
   if (selectedFeatureId.value) selectedFeatureId.value = null
@@ -313,6 +319,87 @@ function onUnitClick(e: { id: string; faction: string; kind: string }) {
     precheck.value = null
     message.value = `已鎖定目標：${realUnits.value.find((u) => u.id === e.id)?.designation ?? e.id}`
   }
+}
+
+// ---- 右鍵選單（#3，ATAK 式移動/攻擊）----
+// 流程：右鍵我方單位 → 選單「移動/攻擊」→ 十字準星 → 點地圖選落點/目標 → 於下令面板確認。
+const ctxMenu = ref<{
+  x: number
+  y: number
+  lng: number
+  lat: number
+  unitId?: string
+  faction?: string
+  kind?: string
+} | null>(null)
+const ctxIsMine = computed(
+  () =>
+    !!ctxMenu.value?.unitId &&
+    realUnitIds.value.has(ctxMenu.value.unitId) &&
+    ctxMenu.value.faction === myFaction.value,
+)
+const ctxIsEnemy = computed(
+  () =>
+    !!ctxMenu.value?.unitId &&
+    realUnitIds.value.has(ctxMenu.value.unitId) &&
+    ctxMenu.value.faction !== myFaction.value,
+)
+const ctxUnitName = computed(() => {
+  const id = ctxMenu.value?.unitId
+  return (id && realUnits.value.find((u) => u.id === id)?.designation) || id || ''
+})
+function onContextMenu(e: {
+  x: number
+  y: number
+  lng: number
+  lat: number
+  unitId?: string
+  faction?: string
+  kind?: string
+}) {
+  // 繪圖/座標查詢時不彈選單（避免干擾）。
+  if (drawActive.value || coordQuery.value) return
+  ctxMenu.value = e
+}
+function closeCtx() {
+  ctxMenu.value = null
+}
+// 選單動作：武裝「移動」——選該單位（若右鍵在單位上），進入 MOVE 目標設定（十字準星）。
+function ctxArmMove() {
+  if (ctxMenu.value?.unitId && ctxIsMine.value) selectUnit(ctxMenu.value.unitId)
+  if (!selectedId.value) return closeCtx()
+  orderType.value = 'MOVE'
+  targeting.value = true
+  closeCtx()
+}
+// 選單動作：武裝「攻擊」——選該單位，進入 ENGAGE，點敵方單位鎖定目標。
+function ctxArmAttack() {
+  if (ctxMenu.value?.unitId && ctxIsMine.value) selectUnit(ctxMenu.value.unitId)
+  if (!selectedId.value) return closeCtx()
+  orderType.value = 'ENGAGE'
+  targeting.value = true
+  closeCtx()
+}
+// 選單動作：直接「移動至此」——用右鍵點擊處為落點（免再點一次）。
+function ctxMoveHere() {
+  const c = ctxMenu.value
+  if (!c || !selectedId.value) return closeCtx()
+  orderType.value = 'MOVE'
+  destH3.value = latLngToCell(c.lat, c.lng, 8)
+  destLatLng.value = preciseMove.value ? { lng: c.lng, lat: c.lat } : null
+  targeting.value = false
+  closeCtx()
+}
+// 選單動作：右鍵敵方單位（已選我方）→ 直接鎖為攻擊目標。
+function ctxLockTarget() {
+  const c = ctxMenu.value
+  if (!c?.unitId || !selectedId.value) return closeCtx()
+  orderType.value = 'ENGAGE'
+  targetUnitId.value = c.unitId
+  targeting.value = false
+  precheck.value = null
+  message.value = `已鎖定目標：${ctxUnitName.value}`
+  closeCtx()
 }
 
 const selectedUnit = computed(() => realUnits.value.find((u) => u.id === selectedId.value) ?? null)
@@ -744,10 +831,12 @@ watch(
             :hex-limit-km="hexLimitKm"
             :day-night="dayNight"
             :time-of-day="timeOfDay"
+            :targeting="targeting"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @feature-click="onFeatureClick"
             @basemap-error="onBasemapError"
+            @context-menu="onContextMenu"
           />
           <template #fallback>
             <div class="map-loading" data-testid="map-loading">地圖載入中…</div>
@@ -809,6 +898,36 @@ watch(
             </div>
           </div>
         </div>
+
+        <!-- 右鍵選單（#3，ATAK 式移動/攻擊）：右鍵單位/地圖 → 移動/攻擊 → 十字準星 → 點目標。 -->
+        <template v-if="ctxMenu">
+          <div class="ctx-backdrop" @click="closeCtx" @contextmenu.prevent="closeCtx" />
+          <div
+            class="ctx-menu"
+            data-testid="ctx-menu"
+            :style="{ left: `${ctxMenu.x}px`, top: `${ctxMenu.y}px` }"
+          >
+            <template v-if="ctxIsMine">
+              <div class="ctx-title">{{ ctxUnitName }}</div>
+              <button data-testid="ctx-move" @click="ctxArmMove">🡒 移動</button>
+              <button data-testid="ctx-attack" @click="ctxArmAttack">🎯 攻擊</button>
+            </template>
+            <template v-else-if="ctxIsEnemy && selectedId">
+              <div class="ctx-title">目標：{{ ctxUnitName }}</div>
+              <button data-testid="ctx-lock-target" @click="ctxLockTarget">
+                🎯 以「{{ selectedUnit?.designation ?? selectedId }}」攻擊
+              </button>
+            </template>
+            <template v-else-if="selectedId">
+              <div class="ctx-title">{{ selectedUnit?.designation ?? selectedId }}</div>
+              <button data-testid="ctx-move-here" @click="ctxMoveHere">🡒 移動至此</button>
+              <button data-testid="ctx-attack" @click="ctxArmAttack">🎯 攻擊…</button>
+            </template>
+            <template v-else>
+              <div class="ctx-empty">先選取我方單位</div>
+            </template>
+          </div>
+        </template>
 
         <!-- 地圖編輯器（stage ③b）：繪製標註/工事/武器據點。 -->
         <div v-if="mapEditorOpen && canDraw" class="map-editor" data-testid="map-editor">
@@ -1022,6 +1141,51 @@ watch(
 .linewidth-btn:hover {
   border-color: #2563eb;
   color: #e2e8f0;
+}
+/* 右鍵選單（#3）——ATAK 式移動/攻擊。 */
+.ctx-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+}
+.ctx-menu {
+  position: absolute;
+  z-index: 21;
+  min-width: 8rem;
+  transform: translate(2px, 2px);
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem;
+  border: 1px solid #334155;
+  border-radius: 0.4rem;
+  background: rgba(15, 23, 42, 0.97);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.ctx-title {
+  padding: 0.25rem 0.5rem 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #7dd3fc;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 0.2rem;
+}
+.ctx-menu button {
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.ctx-menu button:hover {
+  background: #1d4ed8;
+}
+.ctx-empty {
+  padding: 0.4rem 0.55rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
 }
 /* 通用 modal（#5 線寬 / 其他 COP 設定）。 */
 .modal-overlay {

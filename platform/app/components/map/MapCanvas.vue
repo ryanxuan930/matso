@@ -22,6 +22,10 @@ const emit = defineEmits<{
   unitClick: [{ id: string; faction: string; kind: string }]
   featureClick: [{ id: string }] // 點到地圖標註/工事（stage ③b）
   basemapError: [{ id: string }] // 底圖瓦片載入失敗（供上層回退離線）
+  // 右鍵選單（#3，ATAK 式移動/攻擊）：螢幕座標 + 經緯 + 游標下的單位（若有）。
+  contextMenu: [
+    { x: number; y: number; lng: number; lat: number; unitId?: string; faction?: string; kind?: string },
+  ]
 }>()
 
 type Fc = { type: 'FeatureCollection'; features: unknown[] }
@@ -54,6 +58,7 @@ const props = withDefaults(
     draftFc?: Fc // 繪製中草稿
     selectedFeatureId?: string | null // 選取的標註（高亮）
     drawActive?: boolean // 繪圖模式：地圖點擊視為加頂點（不選單位/標註）
+    targeting?: boolean // 設定目標中（#3）：游標改十字準星，提示「點地圖選落點/目標」
     latlngGrid?: boolean // 經緯度網格（#9）
     mgrsGrid?: boolean // MGRS 標記（#9）
     gridStepDeg?: number // 網格密度（度，#9）
@@ -87,6 +92,7 @@ const props = withDefaults(
     draftFc: () => ({ type: 'FeatureCollection', features: [] }),
     selectedFeatureId: null,
     drawActive: false,
+    targeting: false,
     latlngGrid: false,
     mgrsGrid: false,
     gridStepDeg: 0.5,
@@ -713,10 +719,30 @@ onMounted(async () => {
     }
     emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
   })
-  // 滑過單位符號時游標變手指（可點示意）
-  map.on('mouseenter', 'units', () => { if (map) map.getCanvas().style.cursor = 'pointer' })
-  map.on('mouseleave', 'units', () => { if (map) map.getCanvas().style.cursor = '' })
+  // 滑過單位符號時游標變手指（可點示意）；設定目標中則維持十字準星（#3）。
+  map.on('mouseenter', 'units', () => { if (map && !props.targeting) map.getCanvas().style.cursor = 'pointer' })
+  map.on('mouseleave', 'units', () => { if (map && !props.targeting) map.getCanvas().style.cursor = '' })
+  // 右鍵選單（#3）：阻止瀏覽器選單，emit 螢幕座標 + 經緯 + 游標下單位（供 ATAK 式移動/攻擊）。
+  map.on('contextmenu', (e) => {
+    const hit = map?.queryRenderedFeatures(e.point, { layers: ['units'] })?.[0]
+    const p = hit?.properties
+    emit('contextMenu', {
+      x: e.point.x,
+      y: e.point.y,
+      lng: e.lngLat.lng,
+      lat: e.lngLat.lat,
+      ...(p && p.id != null
+        ? { unitId: String(p.id), faction: String(p.faction ?? ''), kind: String(p.kind ?? '') }
+        : {}),
+    })
+  })
 })
+
+/** 設定目標中（#3）：整個畫布游標改十字準星，離開則回復。 */
+function applyTargetingCursor() {
+  const c = map?.getCanvas()
+  if (c) c.style.cursor = props.targeting ? 'crosshair' : ''
+}
 
 onBeforeUnmount(() => {
   map?.remove()
@@ -742,6 +768,7 @@ watch([() => props.featureFc, () => props.influenceFc, () => props.draftFc], syn
 watch([() => props.latlngGrid, () => props.mgrsGrid, () => props.gridStepDeg], refreshGrid)
 watch([() => props.hexMaxRes, () => props.hexLimitKm], refreshHex)
 watch([() => props.dayNight, () => props.timeOfDay], applyDayNight)
+watch(() => props.targeting, applyTargetingCursor) // #3 十字準星
 watch(() => props.queryPoint, syncQuery)
 watch(
   () => props.selectedFeatureId,
