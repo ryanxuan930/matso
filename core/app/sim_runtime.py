@@ -21,12 +21,12 @@ from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSourc
 from app.cache import make_redis
 from app.db import default_session_factory
 from app.engine.clock import SimClock
+from app.engine.comms import CommsSystem
 from app.engine.engage_wiring import WeaponResolver, make_engage_env, seed_combat_state
 from app.engine.kernel import Kernel
 from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.subsystems import (
-    NoOpCommsSystem,
     NoOpLogisticsSystem,
     NoOpSensorSystem,
     NoOpTriggerChecker,
@@ -153,7 +153,11 @@ class SimManager:
                     rng=DeterministicRNG(seed, "movement"),  # #28 強穿隨機耗損
                 ),
                 sensors=NoOpSensorSystem(),
-                comms=NoOpCommsSystem(),
+                comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 5 tick 重算鏈路狀態
+                    session_id=session_id,
+                    session_factory=self._factory,
+                    hot_state=hot,
+                ),
                 logistics=NoOpLogisticsSystem(),
                 trigger_checker=NoOpTriggerChecker(),
                 broadcaster=RedisBroadcaster(client, session_id),

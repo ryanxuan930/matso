@@ -863,6 +863,11 @@ function liveStrength(u: UnitView): number | undefined {
   const s = (typeof p?.strength === 'number' ? p.strength : u.strength) as number | undefined
   return s
 }
+// 活通聯狀態（#33 comms 子系統）：STATE_DIFF 的 comms_state 優先，否則單位初值。
+function liveComms(u: UnitView): string {
+  const p = stream.unitPatches[u.id]
+  return (typeof p?.comms_state === 'string' ? p.comms_state : (u.comms ?? 'ONLINE')) as string
+}
 // 選取單位的戰力/平台顯示（漸進消耗一望即知：如「戰力 82/100 · 14 平台」）。
 const selForce = computed(() => {
   const u = selectedUnit.value
@@ -1060,6 +1065,13 @@ function formatEvent(payload: Record<string, unknown>): string {
     return `交戰 ${ini} → ${tgt}`
   }
   if (type === 'UNIT_ARRIVED') return `${ini} 已抵達目標`
+  if (type === 'MOVE_ATTRITION') {
+    const dmg = payload?.damage != null ? Math.round(Number(payload.damage)) : ''
+    return `${ini} 強穿阻礙受損 −${dmg}`
+  }
+  if (type === 'COMMS_STATE_CHANGED') {
+    return `${ini} 通聯 ${commsLabel(String(payload?.from ?? ''))}→${commsLabel(String(payload?.to ?? ''))}`
+  }
   const ot = payload?.order_type ? ` · ${orderTypeLabel(String(payload.order_type))}` : ''
   return `${type}${ot}`
 }
@@ -1848,7 +1860,12 @@ watch(
                 <span v-if="selForce.personnel != null" class="dim">· {{ selForce.personnel }} 人</span>
               </dd>
             </div>
-            <div><dt>通聯</dt><dd>{{ commsLabel(selectedUnit.comms) }}</dd></div>
+            <div>
+              <dt>通聯</dt>
+              <dd :class="`comms-${liveComms(selectedUnit).toLowerCase()}`" data-testid="unit-comms">
+                {{ commsLabel(liveComms(selectedUnit)) }}
+              </dd>
+            </div>
             <div>
               <dt>座標</dt>
               <dd>{{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}</dd>
@@ -2807,6 +2824,16 @@ watch(
   margin: 0;
   color: #cbd5e1;
   font-family: monospace;
+}
+/* #33 通聯狀態色：上線綠 / 降級黃 / 離線紅 */
+.unit-card .card-meta dd.comms-online {
+  color: #4ade80;
+}
+.unit-card .card-meta dd.comms-degraded {
+  color: #facc15;
+}
+.unit-card .card-meta dd.comms-offline {
+  color: #f87171;
 }
 .unit-card .card-sub {
   margin: 0.5rem 0 0.2rem;
