@@ -19,8 +19,12 @@ import { symbolImage } from '~/composables/useMilsymbol'
 const emit = defineEmits<{
   mapClick: [{ lng: number; lat: number; h3: string }]
   unitClick: [{ id: string; faction: string; kind: string }]
+  featureClick: [{ id: string }] // 點到地圖標註/工事（stage ③b）
   basemapError: [{ id: string }] // 底圖瓦片載入失敗（供上層回退離線）
 }>()
+
+type Fc = { type: 'FeatureCollection'; features: unknown[] }
+const _EMPTY_FEAT_FC: Fc = { type: 'FeatureCollection', features: [] }
 
 // 由 <ClientOnly> 包裹確保只在 client 掛載；maplibre-gl 於 onMounted 動態 import（絕不進 SSR，
 // 因其 module 於 import 時觸及 window/document）。
@@ -40,6 +44,11 @@ const props = withDefaults(
     layerOrder?: string[] // 疊加層套疊順序（上→下，#9）
     contourMajor?: number // 主等高線間距 m（較粗，#8；預設 100）
     contourMinor?: number // 次等高線間距 m（較細，#8；預設 50）
+    featureFc?: Fc // 地圖標註/工事（stage ③b）
+    influenceFc?: Fc // 影響範圍圓
+    draftFc?: Fc // 繪製中草稿
+    selectedFeatureId?: string | null // 選取的標註（高亮）
+    drawActive?: boolean // 繪圖模式：地圖點擊視為加頂點（不選單位/標註）
   }>(),
   {
     hexVisible: false,
@@ -56,6 +65,11 @@ const props = withDefaults(
     layerOrder: () => [...DEFAULT_OVERLAY_ORDER],
     contourMajor: 100,
     contourMinor: 50,
+    featureFc: () => ({ type: 'FeatureCollection', features: [] }),
+    influenceFc: () => ({ type: 'FeatureCollection', features: [] }),
+    draftFc: () => ({ type: 'FeatureCollection', features: [] }),
+    selectedFeatureId: null,
+    drawActive: false,
   },
 )
 
@@ -121,6 +135,16 @@ const HILLSHADE_SRC = 'hillshade'
 const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
 const DEST_SRC = 'move-dest'
+const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
+const INFL_SRC = 'mapinfluence' // 影響範圍圓
+const DRAFT_SRC = 'mapdraft' // 繪製中草稿
+const FEAT_NONE = '__matso_feat_none__'
+
+function syncFeatures() {
+  ;(map?.getSource(FEAT_SRC) as GeoJSONSource | undefined)?.setData((props.featureFc ?? _EMPTY_FEAT_FC) as never)
+  ;(map?.getSource(INFL_SRC) as GeoJSONSource | undefined)?.setData((props.influenceFc ?? _EMPTY_FEAT_FC) as never)
+  ;(map?.getSource(DRAFT_SRC) as GeoJSONSource | undefined)?.setData((props.draftFc ?? _EMPTY_FEAT_FC) as never)
+}
 
 const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] }
 
@@ -316,6 +340,88 @@ onMounted(async () => {
       layout: { visibility: props.hexVisible ? 'visible' : 'none' },
       paint: { 'line-color': '#38bdf8', 'line-width': 0.5, 'line-opacity': 0.5 },
     })
+    // 地圖標註/工事（stage ③b）：影響範圍圓（最下）→ 面/線/點 → 選取高亮 → 草稿。
+    map.addSource(INFL_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'mapinfluence-fill',
+      type: 'fill',
+      source: INFL_SRC,
+      paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.1 },
+    })
+    map.addSource(FEAT_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'mapfeat-fill',
+      type: 'fill',
+      source: FEAT_SRC,
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.18 },
+    })
+    map.addLayer({
+      id: 'mapfeat-line',
+      type: 'line',
+      source: FEAT_SRC,
+      filter: ['match', ['geometry-type'], ['LineString', 'Polygon'], true, false],
+      paint: { 'line-color': ['get', 'color'], 'line-width': 2 },
+    })
+    map.addLayer({
+      id: 'mapfeat-point',
+      type: 'circle',
+      source: FEAT_SRC,
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': ['get', 'color'],
+        'circle-stroke-color': '#0a1626',
+        'circle-stroke-width': 1.5,
+      },
+    })
+    // 選取高亮（線/面白外框 + 點白環）。
+    map.addLayer({
+      id: 'mapfeat-sel-line',
+      type: 'line',
+      source: FEAT_SRC,
+      filter: ['==', ['get', 'id'], props.selectedFeatureId ?? FEAT_NONE],
+      paint: { 'line-color': '#ffffff', 'line-width': 3, 'line-opacity': 0.9 },
+    })
+    map.addLayer({
+      id: 'mapfeat-sel-point',
+      type: 'circle',
+      source: FEAT_SRC,
+      filter: [
+        'all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'id'], props.selectedFeatureId ?? FEAT_NONE],
+      ],
+      paint: {
+        'circle-radius': 10,
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2.5,
+      },
+    })
+    // 繪製中草稿（amber）。
+    map.addSource(DRAFT_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'mapdraft-fill',
+      type: 'fill',
+      source: DRAFT_SRC,
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': '#eab308', 'fill-opacity': 0.15 },
+    })
+    map.addLayer({
+      id: 'mapdraft-line',
+      type: 'line',
+      source: DRAFT_SRC,
+      filter: ['==', ['geometry-type'], 'LineString'],
+      paint: { 'line-color': '#facc15', 'line-width': 2, 'line-dasharray': [2, 1] },
+    })
+    map.addLayer({
+      id: 'mapdraft-point',
+      type: 'circle',
+      source: DRAFT_SRC,
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 4, 'circle-color': '#facc15', 'circle-stroke-color': '#0a1626', 'circle-stroke-width': 1 },
+    })
     // MOVE 目的格（#4b）：吸附後的六角格 + 格心，讓使用者看見單位「實際會到的位置」。
     map.addSource(DEST_SRC, { type: 'geojson', data: EMPTY_FC })
     map.addLayer({
@@ -403,6 +509,7 @@ onMounted(async () => {
     refreshHex()
     syncUnits()
     syncDest()
+    syncFeatures() // stage ③b 標註/工事
     applyAllOpacity() // #9 初始透明度
     applyOrder() // #9 初始套疊順序
     loaded.value = true
@@ -410,12 +517,22 @@ onMounted(async () => {
   })
 
   map.on('moveend', refreshHex)
-  // 點單位符號 → unitClick（選我方 / 鎖敵方目標）；點空白 → mapClick（MOVE 目標點）。
+  // 繪圖模式 → 每次點擊都當加頂點（mapClick）；否則：點單位→unitClick、點標註→featureClick、點空白→mapClick。
   map.on('click', (e) => {
+    if (props.drawActive) {
+      emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
+      return
+    }
     const hit = map?.queryRenderedFeatures(e.point, { layers: ['units'] })?.[0]
     const p = hit?.properties
     if (p && p.id != null) {
       emit('unitClick', { id: String(p.id), faction: String(p.faction ?? ''), kind: String(p.kind ?? '') })
+      return
+    }
+    const featLayers = ['mapfeat-point', 'mapfeat-line', 'mapfeat-fill'].filter((l) => map?.getLayer(l))
+    const fhit = featLayers.length ? map?.queryRenderedFeatures(e.point, { layers: featLayers })?.[0] : undefined
+    if (fhit?.properties?.id != null) {
+      emit('featureClick', { id: String(fhit.properties.id) })
       return
     }
     emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
@@ -444,6 +561,20 @@ watch(() => props.contourVisible, (v) => {
 })
 watch(() => props.basemapId, (v) => applyBasemap(v))
 watch(() => props.destH3, syncDest)
+watch([() => props.featureFc, () => props.influenceFc, () => props.draftFc], syncFeatures, { deep: true })
+watch(
+  () => props.selectedFeatureId,
+  (v) => {
+    if (map?.getLayer('mapfeat-sel-line'))
+      map.setFilter('mapfeat-sel-line', ['==', ['get', 'id'], v ?? FEAT_NONE])
+    if (map?.getLayer('mapfeat-sel-point'))
+      map.setFilter('mapfeat-sel-point', [
+        'all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'id'], v ?? FEAT_NONE],
+      ])
+  },
+)
 watch(() => props.layerOpacity, applyAllOpacity, { deep: true }) // #9 透明度
 watch(() => props.layerOrder, applyOrder, { deep: true }) // #9 套疊順序
 watch([() => props.contourMajor, () => props.contourMinor], applyContourFilters) // #8 等高線間距
