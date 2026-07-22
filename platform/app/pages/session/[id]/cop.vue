@@ -120,6 +120,8 @@ const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
 const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
 const destH3 = ref<string | null>(null)
+const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
+const preciseMove = ref(false) // 精確移動：跳過六角格心吸附（<1km 近距作戰）
 const targeting = ref(false)
 const targetUnitId = ref<string | null>(null)
 // ENGAGE 武器/彈種（資料驅動 baseStats；選取單位時抓 GET /units/{id}/weapons）
@@ -239,6 +241,7 @@ function clearSelection() {
   precheck.value = null
   message.value = ''
   destH3.value = null
+  destLatLng.value = null
   targeting.value = false
   targetUnitId.value = null
   weaponId.value = null
@@ -277,6 +280,8 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
   }
   if (orderType.value === 'MOVE' && targeting.value) {
     destH3.value = e.h3
+    // 精確移動：記錄精確點；否則落點＝六角格心（destLatLng=null）。
+    destLatLng.value = preciseMove.value ? { lng: e.lng, lat: e.lat } : null
     targeting.value = false
     return
   }
@@ -404,7 +409,13 @@ async function submit() {
   precheck.value = null
   const payload =
     orderType.value === 'MOVE'
-      ? { to_h3: destH3.value, mobility_profile: 'FOOT' }
+      ? {
+          to_h3: destH3.value,
+          mobility_profile: 'FOOT',
+          ...(destLatLng.value
+            ? { to_lat: destLatLng.value.lat, to_lng: destLatLng.value.lng }
+            : {}),
+        }
       : {
           target_unit_id: targetUnitId.value,
           ...(weaponId.value ? { weapon_id: weaponId.value } : {}),
@@ -597,12 +608,17 @@ watch(
             <option value="ENGAGE">交戰</option>
           </select>
           <template v-if="orderType === 'MOVE'">
+            <label class="precise">
+              <input v-model="preciseMove" type="checkbox" data-testid="precise-move">
+              精確移動（不吸附六角格心）
+            </label>
             <button data-testid="pick-dest" :class="{ armed: targeting }" @click="targeting = true">
               {{ targeting ? '點地圖設目標…' : '設定目標點' }}
             </button>
             <div class="dest" data-testid="dest-h3">
               {{ destH3 || '未設目標' }}
-              <span v-if="destH3" class="snaphint">· 吸附至六角格心（地圖黃色標記＝實際落點）</span>
+              <span v-if="destH3 && !preciseMove" class="snaphint">· 吸附至六角格心（黃色標記＝落點）</span>
+              <span v-if="destH3 && preciseMove" class="snaphint precise">· 精確落點（近距作戰；可能增加運算量）</span>
             </div>
           </template>
           <template v-else>
@@ -686,6 +702,7 @@ watch(
             :target-id="targetUnitId"
             :basemap-id="basemap"
             :dest-h3="destH3"
+            :dest-point="destLatLng"
             :layer-opacity="layerOpacity"
             :layer-order="layerOrder"
             :contour-major="contourMajor"
@@ -1012,6 +1029,17 @@ watch(
   font-family: system-ui, sans-serif;
   color: #eab308;
   font-size: 0.68rem;
+}
+.dest .snaphint.precise {
+  color: #f472b6;
+}
+.order .precise {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  cursor: pointer;
 }
 .order .selunit {
   color: #60a5fa;

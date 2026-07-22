@@ -41,6 +41,7 @@ const props = withDefaults(
     targetId?: string | null // ENGAGE 鎖定的目標（紅色高亮環）
     basemapId?: string // 當前底圖來源 id（offline / street / satellite / 軍用…）
     destH3?: string | null // MOVE 目的格（res 8）——畫出吸附後的格與格心，讓「點哪→到哪」透明（#4b）
+    destPoint?: { lng: number; lat: number } | null // 精確移動落點（#2）——有值時只畫精確點、不畫吸附格
     layerOpacity?: Record<string, number> // 各圖層群透明度乘數（#9；basemap/hillshade/contour/hex）
     layerOrder?: string[] // 疊加層套疊順序（上→下，#9）
     contourMajor?: number // 主等高線間距 m（較粗，#8；預設 100）
@@ -70,6 +71,7 @@ const props = withDefaults(
     targetId: null,
     basemapId: 'offline',
     destH3: null,
+    destPoint: null,
     layerOpacity: () => ({}),
     layerOrder: () => [...DEFAULT_OVERLAY_ORDER],
     contourMajor: 100,
@@ -207,8 +209,20 @@ function syncFeatures() {
 
 const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] }
 
-/** MOVE 目的格（res 8）→ 吸附後的六角格多邊形 + 格心點（#4b：讓「點哪→實際到哪」透明）。 */
-function destFeatures(h3: string | null): { type: 'FeatureCollection'; features: unknown[] } {
+/** MOVE 目的地標記：精確移動（destPoint）→ 只畫精確點；否則→ 吸附六角格 + 格心（#4b/#2）。 */
+function destFeatures(
+  h3: string | null,
+  point: { lng: number; lat: number } | null,
+): { type: 'FeatureCollection'; features: unknown[] } {
+  if (point) {
+    // 精確移動：只畫精確落點（粉色，見 move-dest-center），不畫吸附格。
+    return {
+      type: 'FeatureCollection',
+      features: [
+        { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [point.lng, point.lat] } },
+      ],
+    }
+  }
   if (!h3) return EMPTY_FC
   const ring = cellToBoundary(h3, true) // [lng,lat][]
   const [clat, clng] = cellToLatLng(h3)
@@ -223,7 +237,7 @@ function destFeatures(h3: string | null): { type: 'FeatureCollection'; features:
 
 function syncDest() {
   const src = map?.getSource(DEST_SRC) as GeoJSONSource | undefined
-  src?.setData(destFeatures(props.destH3) as never)
+  src?.setData(destFeatures(props.destH3, props.destPoint ?? null) as never)
 }
 
 // ---- 圖層透明度 + 套疊順序（#9）----
@@ -707,7 +721,7 @@ watch(() => props.contourVisible, (v) => {
   setLayerVisibility('contours-label', v)
 })
 watch(() => props.basemapId, (v) => applyBasemap(v))
-watch(() => props.destH3, syncDest)
+watch([() => props.destH3, () => props.destPoint], syncDest)
 watch([() => props.featureFc, () => props.influenceFc, () => props.draftFc], syncFeatures, { deep: true })
 watch([() => props.latlngGrid, () => props.mgrsGrid, () => props.gridStepDeg], refreshGrid)
 watch([() => props.hexMaxRes, () => props.hexLimitKm], refreshHex)

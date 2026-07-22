@@ -30,10 +30,16 @@ class OrderRequest(BaseModel):
 
 
 class MovePayload(BaseModel):
-    """MOVE 指令載荷：目標 hex + 機動側寫。"""
+    """MOVE 指令載荷：目標 hex + 機動側寫。
+
+    to_lat/to_lng＝精確移動（#2）：預檢仍以 to_h3 做可達/地形判定，但最終落點用精確座標，
+    不吸附到六角格心——供 <1km 的近距作戰規劃（校園/大樓等）。
+    """
 
     to_h3: str = Field(min_length=1)
     mobility_profile: str = Field(min_length=1)
+    to_lat: float | None = Field(default=None, ge=-90, le=90)
+    to_lng: float | None = Field(default=None, ge=-180, le=180)
 
 
 class EngagePayload(BaseModel):

@@ -84,10 +84,16 @@ class UnitMovementSystem:
             )
             for o in orders:
                 unit = db.get(TacticalUnit, o.unit_id)
-                dest = (o.payload or {}).get("to_h3")
+                p = o.payload or {}
+                dest = p.get("to_h3")
                 if unit is None or unit.current_lat is None or unit.current_lng is None or not dest:
                     continue
-                dlat, dlng = h3.cell_to_latlng(dest)
+                # 精確移動（#2）：payload 帶 to_lat/to_lng → 精確落點；否則吸附六角格心。
+                to_lat, to_lng = p.get("to_lat"), p.get("to_lng")
+                if isinstance(to_lat, (int, float)) and isinstance(to_lng, (int, float)):
+                    dlat, dlng = float(to_lat), float(to_lng)
+                else:
+                    dlat, dlng = h3.cell_to_latlng(dest)
                 remaining = _haversine_km(unit.current_lat, unit.current_lng, dlat, dlng)
                 if remaining <= self._step_km:
                     unit.current_lat, unit.current_lng = float(dlat), float(dlng)
