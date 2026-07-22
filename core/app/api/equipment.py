@@ -42,12 +42,14 @@ _WEAPONEERING_SCHEMA = json.loads(
 def _validate_base_stats(category: str, base_stats: dict[str, Any]) -> None:
     """依 category 對 weaponeering.schema.json 的對應 $def 驗證 base_stats。"""
     defs = _WEAPONEERING_SCHEMA.get("$defs", {})
-    subschema = defs.get(category.lower())
-    if subschema is None:
+    if category.lower() not in defs:
         raise OrderValidationError(
             f"未知裝備類別：{category}", error_code="EQUIPMENT_CATEGORY_UNKNOWN"
         )
-    validator = Draft202012Validator(subschema)
+    # 以「$ref 目標 def + 內嵌 $defs」為驗證 schema，讓 allOf $ref（如 missile/artillery→kinetic）
+    # 能於同一文件內解析（否則裸 subschema 的 #/$defs/kinetic 無處可尋）。
+    schema = {"$ref": f"#/$defs/{category.lower()}", "$defs": defs}
+    validator = Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(base_stats), key=lambda e: list(e.path))
     if errors:
         detail = "; ".join(

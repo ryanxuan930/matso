@@ -1,18 +1,39 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import tailwindcss from "@tailwindcss/vite";
+import { definePreset } from '@primevue/themes';
 import Aura from '@primevue/themes/aura';
+
+// 主色調＝Blue（對齊深色背景）。以 Aura primitive 的 blue 色階覆蓋 semantic primary。
+const MatsoAura = definePreset(Aura, {
+  semantic: {
+    primary: {
+      50: '{blue.50}',
+      100: '{blue.100}',
+      200: '{blue.200}',
+      300: '{blue.300}',
+      400: '{blue.400}',
+      500: '{blue.500}',
+      600: '{blue.600}',
+      700: '{blue.700}',
+      800: '{blue.800}',
+      900: '{blue.900}',
+      950: '{blue.950}',
+    },
+  },
+});
 
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
+  // 全站套用 Aura Dark（html.app-dark 對齊 darkModeSelector），讓 PrimeVue 元件與深色背景一致。
+  app: { head: { htmlAttrs: { class: 'app-dark' } } },
   modules: ['@nuxt/fonts', '@nuxt/scripts', '@nuxt/eslint', '@pinia/nuxt', '@primevue/nuxt-module'],
-  // PrimeVue（v4 + @primevue/themes Aura 預設；v4 為 Apache-2.0 無授權水印，air-gapped 友善）。
-  // darkModeSelector 對齊 app.vue 的全域深色基底。
-  // cssLayer 關閉（未用 @layer；避免與 Tailwind v4 的層級順序衝突）。
+  // PrimeVue（v4 + Aura Dark，主色 Blue；v4 為 Apache-2.0 無授權水印，air-gapped 友善）。
+  // darkModeSelector='.app-dark'（永遠掛在 html 上 → 恆深色）；cssLayer 關閉（未用 @layer）。
   primevue: {
     options: {
       theme: {
-        preset: Aura,
+        preset: MatsoAura,
         options: { darkModeSelector: '.app-dark', cssLayer: false },
       },
     },

@@ -193,6 +193,87 @@ def test_create_template_admin_ok(session_factory: sessionmaker[Session]) -> Non
     assert r.json()["base_stats"]["max_range_m"] == 1200
 
 
+_MISSILE_STATS = {
+    "max_range_m": 2500,
+    "min_range_m": 65,
+    "ph_by_range_band": [[500, 0.9], [2500, 0.85]],
+    "damage_by_armor_class": {"ARMOR": 200},
+    "pk_by_armor_class": {"ARMOR": 0.9},
+    "ammo_types": ["FGM148"],
+    "missile_kind": "ATGM",
+    "guidance": "FIRE_AND_FORGET",
+    "warhead": "TANDEM_HEAT",
+    "top_attack": True,
+    "flight_speed_ms": 200,
+}
+
+
+def test_create_missile_template_validates(session_factory: sessionmaker[Session]) -> None:
+    # #飛彈：MISSILE（allOf kinetic + 飛彈諸元）建立成功。
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    r = client.post(
+        "/api/v1/equipment-templates",
+        json={"name": "JAVELIN", "category": "MISSILE", "base_stats": _MISSILE_STATS},
+        headers=_white(world),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["category"] == "MISSILE"
+
+    # 缺 kinetic 必填（ammo_types）→ 422
+    bad = {k: v for k, v in _MISSILE_STATS.items() if k != "ammo_types"}
+    r2 = client.post(
+        "/api/v1/equipment-templates",
+        json={"name": "BAD", "category": "MISSILE", "base_stats": bad},
+        headers=_white(world),
+    )
+    assert r2.status_code == 422
+
+
+def test_create_support_category_templates(session_factory: sessionmaker[Session]) -> None:
+    # 感測器/通信/後勤/無人機結構化屬性建立成功（enriched schema，含新增可選欄位）。
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    cases = {
+        "SENSOR": {
+            "sensor_kind": "RADAR",
+            "max_range_m": 40000,
+            "detect_curve": [[20000, 0.9]],
+            "fov_deg": 120,
+            "passive": False,
+            "min_target_rcs_m2": 2,
+        },
+        "COMMS": {
+            "band": "SATCOM",
+            "tx_power_dbm": 40,
+            "rx_sensitivity_dbm": -110,
+            "freq_mhz": 1500,
+            "encrypted": True,
+            "leo_satcom": True,
+        },
+        "LOGISTICS": {
+            "capacity": {"AMMO": 500, "FUEL": 800},
+            "resupply_rate_per_tick": 50,
+            "crew": 3,
+        },
+        "DRONE": {
+            "drone_kind": "LOITERING_MUNITION",
+            "endurance_ticks": 60,
+            "cruise_speed_ms": 45,
+            "is_expendable": True,
+            "sensor_payload": "EO_IR",
+            "weather_limits": {"max_wind_ms": 15},
+        },
+    }
+    for cat, stats in cases.items():
+        r = client.post(
+            "/api/v1/equipment-templates",
+            json={"name": f"T_{cat}", "category": cat, "base_stats": stats},
+            headers=_white(world),
+        )
+        assert r.status_code == 201, f"{cat}: {r.text}"
+
+
 def test_create_template_commander_403(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     client = _client(session_factory)

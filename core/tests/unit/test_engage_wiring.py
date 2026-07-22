@@ -79,6 +79,45 @@ def test_weapon_resolver_primary_is_longest_range() -> None:
     assert r.primary_ammo(uid) == 8
 
 
+def test_weapon_resolver_accepts_missile_and_artillery() -> None:
+    # MISSILE / ARTILLERY 類別（baseStats allOf kinetic）也應解析為可用武器（#飛彈）。
+    db = _db()
+    s = WargameSession(name="w", master_seed=1, current_weather={})
+    db.add(s)
+    db.flush()
+    u = TacticalUnit(
+        session_id=s.id,
+        designation="AT",
+        unit_level=UnitLevel.PLATOON,
+        faction="BLUE",
+        current_lat=23.75,
+        current_lng=121.25,
+    )
+    javelin = EquipmentTemplate(
+        name="JAVELIN",
+        category="MISSILE",
+        base_stats={
+            "max_range_m": 2500,
+            "ph_by_range_band": [[500, 0.9], [2500, 0.85]],
+            "damage_by_armor_class": {"ARMOR": 200},
+            "pk_by_armor_class": {"ARMOR": 0.9},
+            "ammo_types": ["FGM148"],
+            "missile_kind": "ATGM",
+            "guidance": "FIRE_AND_FORGET",
+            "warhead": "TANDEM_HEAT",
+            "top_attack": True,
+        },
+    )
+    db.add_all([u, javelin])
+    db.flush()
+    db.add(EquipmentInstance(template_id=javelin.id, owner_id=u.id, current_state={"ammo": 4}))
+    db.commit()
+    r = WeaponResolver(db, s.id)
+    prof = r.weapon_for(EngageCommand(order_id="o", shooter_id=u.id, target_id="t"))
+    assert prof.max_range_m == pytest.approx(2500)
+    assert r.primary_ammo(u.id) == 4
+
+
 def test_weapon_resolver_honors_chosen_weapon() -> None:
     db = _db()
     sid, uid, rifle_id, _atgm = _seed(db)

@@ -30,6 +30,10 @@ from app.weather import WeatherState, engagement_weather_modifier
 
 _EARTH_R_M = 6_371_000.0
 
+# 可產生 WeaponProfile 的裝備類別（baseStats allOf kinetic → 有 max_range/ph/傷害/pk）。
+# KINETIC 直射動能、ARTILLERY 火砲間瞄、MISSILE 飛彈導引皆走同一資料驅動裁決管線。
+_WEAPON_CATEGORIES = frozenset({"KINETIC", "ARTILLERY", "MISSILE"})
+
 # 無武器單位的退化 profile：射程近乎 0 → 任何真實距離皆 OUT_OF_RANGE → 交戰被物理拒絕（非崩潰）。
 _NO_WEAPON = WeaponProfile.from_base_stats(
     {
@@ -78,7 +82,7 @@ class WeaponResolver:
             best_qty = 1
             for inst in instances:
                 tmpl = db.get(EquipmentTemplate, inst.template_id)
-                if tmpl is None or tmpl.category != "KINETIC":
+                if tmpl is None or tmpl.category not in _WEAPON_CATEGORIES:
                     continue
                 try:
                     profile = WeaponProfile.from_base_stats(tmpl.base_stats)
