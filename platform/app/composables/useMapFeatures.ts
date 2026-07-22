@@ -3,7 +3,8 @@ import type { components } from '~/types/api'
 import { apiFetch } from '~/composables/useApi'
 
 export type MapFeature = components['schemas']['MapFeatureView']
-export type DraftKind = 'POINT' | 'LINE' | 'POLYGON'
+// 繪製工具（#11 ATAK 式）：點/線/多邊形 + 圓形/矩形（兩者以 2 點繪製，存為 POLYGON）。
+export type DraftKind = 'POINT' | 'LINE' | 'POLYGON' | 'CIRCLE' | 'RECTANGLE'
 
 // ---- CRUD ----
 export function fetchMapFeatures(sessionId: string): Promise<MapFeature[]> {
@@ -45,6 +46,35 @@ export const FEATURE_KINDS = [
 export function featureColor(kind: string): string {
   return FEATURE_KINDS.find((k) => k.value === kind)?.color ?? '#22d3ee'
 }
+/** 特徵顯示色：自訂 attributes.color 優先，否則類別預設色（#11）。 */
+export function featureDisplayColor(f: MapFeature): string {
+  const c = (f.attributes as Record<string, unknown> | undefined)?.color
+  return typeof c === 'string' && c ? c : featureColor(f.kind)
+}
+
+const R_EARTH = 6378137
+/** 兩點（[lng,lat]）間近似距離（公尺）——供圓形半徑。 */
+export function haversineM(a: number[], b: number[]): number {
+  const toR = Math.PI / 180
+  const dLat = (b[1]! - a[1]!) * toR
+  const dLng = (b[0]! - a[0]!) * toR
+  const la1 = a[1]! * toR
+  const la2 = b[1]! * toR
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2
+  return 2 * R_EARTH * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+/** 兩對角點 → 軸對齊矩形環（POLYGON 單環，未閉合；#11）。 */
+export function rectRing(a: number[], b: number[]): number[][] {
+  const [x0, x1] = [Math.min(a[0]!, b[0]!), Math.max(a[0]!, b[0]!)]
+  const [y0, y1] = [Math.min(a[1]!, b[1]!), Math.max(a[1]!, b[1]!)]
+  return [
+    [x0, y0],
+    [x1, y0],
+    [x1, y1],
+    [x0, y1],
+  ]
+}
 
 type FC = { type: 'FeatureCollection'; features: unknown[] }
 const EMPTY: FC = { type: 'FeatureCollection', features: [] }
@@ -74,8 +104,9 @@ export function featuresToFc(features: MapFeature[]): FC {
         id: f.id,
         kind: f.kind,
         owner: f.owner_faction,
-        color: featureColor(f.kind),
+        color: featureDisplayColor(f),
         gtype: f.geometry_type,
+        label: f.label ?? '',
       },
       geometry,
     })
@@ -113,7 +144,7 @@ export function influenceToFc(features: MapFeature[]): FC {
   return { type: 'FeatureCollection', features: out }
 }
 
-/** 繪製中的草稿（已點的頂點 + 線/面預覽）→ GeoJSON。 */
+/** 繪製中的草稿（已點的頂點 + 線/面/圓/矩預覽）→ GeoJSON。 */
 export function draftToFc(kind: DraftKind | null, coords: number[][]): FC {
   if (!kind || !coords.length) return EMPTY
   const feats: unknown[] = coords.map((c) => ({
@@ -133,5 +164,25 @@ export function draftToFc(kind: DraftKind | null, coords: number[][]): FC {
   } else if (kind === 'POLYGON' && coords.length === 2) {
     feats.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } })
   }
+  if (kind === 'RECTANGLE' && coords.length >= 2) {
+    const ring = rectRing(coords[0]!, coords[1]!)
+    feats.push({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]!]] },
+    })
+  }
+  if (kind === 'CIRCLE' && coords.length >= 2) {
+    const ring = genCircle(coords[0]![0]!, coords[0]![1]!, haversineM(coords[0]!, coords[1]!))
+    feats.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } })
+  }
   return { type: 'FeatureCollection', features: feats }
+}
+
+/** 兩點草稿 → 存放用 POLYGON 幾何環（圓/矩，#11）。 */
+export function shapeToPolygon(kind: DraftKind, coords: number[][]): number[][] | null {
+  if (coords.length < 2) return null
+  if (kind === 'RECTANGLE') return rectRing(coords[0]!, coords[1]!)
+  if (kind === 'CIRCLE') return genCircle(coords[0]![0]!, coords[0]![1]!, haversineM(coords[0]!, coords[1]!))
+  return null
 }

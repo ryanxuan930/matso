@@ -572,6 +572,28 @@ onMounted(async () => {
         'circle-stroke-width': 2.5,
       },
     })
+    // 特徵名稱標籤（#11；需 glyphs → 僅 tileUrl 時加）。
+    if (hasGlyphs) {
+      map.addLayer({
+        id: 'mapfeat-label',
+        type: 'symbol',
+        source: FEAT_SRC,
+        filter: ['!=', ['get', 'label'], ''],
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 11,
+          'text-offset': [0, 0.9],
+          'text-anchor': 'top',
+          'text-allow-overlap': false,
+        },
+        paint: {
+          'text-color': ['get', 'color'],
+          'text-halo-color': '#0a1626',
+          'text-halo-width': 1.4,
+        },
+      })
+    }
     // 繪製中草稿（amber）。
     map.addSource(DRAFT_SRC, { type: 'geojson', data: EMPTY_FC })
     map.addLayer({

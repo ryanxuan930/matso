@@ -22,10 +22,12 @@ import {
   createMapFeature,
   deleteMapFeature,
   draftToFc,
-  featureColor,
+  editMapFeature,
+  featureDisplayColor,
   featuresToFc,
   fetchMapFeatures,
   influenceToFc,
+  shapeToPolygon,
   type DraftKind,
   type FeatureCreate,
   type MapFeature,
@@ -120,7 +122,17 @@ const drawKind = ref<DraftKind | null>(null)
 const drawFeatureKind = ref('OBSTACLE')
 const drawWeaponTemplate = ref('')
 const draftCoords = ref<number[][]>([])
+// 繪製屬性（#11）：名稱/顏色/備註/高度（障礙/建築預設 2m）。
+const drawLabel = ref('')
+const drawColor = ref('')
+const drawNotes = ref('')
+const drawHeight = ref<number | null>(null)
 const selectedFeatureId = ref<string | null>(null)
+// 選取特徵的編輯欄位（#11）
+const editFeatLabel = ref('')
+const editFeatColor = ref('')
+const editFeatNotes = ref('')
+const editFeatHeight = ref<number | null>(null)
 const weaponTemplates = ref<EquipmentTemplate[]>([])
 const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
@@ -268,11 +280,14 @@ async function selectUnit(id: string) {
 }
 
 function onMapClick(e: { lng: number; lat: number; h3: string }) {
-  // 繪圖中：點擊＝加頂點（POINT 一點即完成，其餘累積至「完成」）。
+  // 繪圖中：點擊＝加頂點。POINT 一點完成；CIRCLE/RECTANGLE 兩點完成（#11）；線/面累積至「完成」。
   if (drawActive.value) {
     if (drawKind.value === 'POINT') {
       draftCoords.value = [[e.lng, e.lat]]
       finishDraw()
+    } else if (drawKind.value === 'CIRCLE' || drawKind.value === 'RECTANGLE') {
+      draftCoords.value = [...draftCoords.value, [e.lng, e.lat]]
+      if (draftCoords.value.length >= 2) finishDraw() // 中心+邊 / 兩對角
     } else {
       draftCoords.value = [...draftCoords.value, [e.lng, e.lat]]
     }
@@ -434,6 +449,11 @@ function startDraw(kind: DraftKind, featureKind: string) {
   drawFeatureKind.value = featureKind
   drawKind.value = kind
   draftCoords.value = []
+  drawLabel.value = ''
+  drawColor.value = ''
+  drawNotes.value = ''
+  // 障礙/建築預設高度 2m（#11）。
+  drawHeight.value = featureKind === 'OBSTACLE' || featureKind === 'BUILDING' ? 2 : null
 }
 async function startWeaponDraw() {
   await ensureWeaponTemplates()
@@ -451,13 +471,21 @@ async function finishDraw() {
   const isWeapon = drawFeatureKind.value === 'WEAPON_EMPLACEMENT'
   const tmpl = isWeapon ? weaponTemplates.value.find((t) => t.id === drawWeaponTemplate.value) : null
   const range = Number((tmpl?.base_stats as Record<string, unknown> | undefined)?.max_range_m)
+  // 圓/矩存為 POLYGON（環由中心+邊 / 兩對角導出）；其餘照舊。
+  const isShape = drawKind.value === 'CIRCLE' || drawKind.value === 'RECTANGLE'
+  const ring = isShape ? shapeToPolygon(drawKind.value, draftCoords.value) : null
+  const attrs: Record<string, unknown> = {}
+  if (drawColor.value) attrs.color = drawColor.value
+  if (drawNotes.value.trim()) attrs.notes = drawNotes.value.trim()
+  if (drawHeight.value != null) attrs.height_m = drawHeight.value
   const body: FeatureCreate = {
     kind: drawFeatureKind.value,
-    geometry_type: drawKind.value,
-    geometry: drawKind.value === 'POINT' ? draftCoords.value[0] : draftCoords.value,
-    label: tmpl?.name ?? null,
+    geometry_type: isShape ? 'POLYGON' : drawKind.value,
+    geometry: isShape ? ring : drawKind.value === 'POINT' ? draftCoords.value[0] : draftCoords.value,
+    label: drawLabel.value.trim() || tmpl?.name || null,
     weapon_template_id: isWeapon ? drawWeaponTemplate.value || null : null,
     influence_radius_m: isWeapon && Number.isFinite(range) ? range : null,
+    attributes: Object.keys(attrs).length ? attrs : undefined,
   }
   try {
     await createMapFeature(sessionId.value, body)
@@ -475,6 +503,42 @@ async function finishDraw() {
 }
 function onFeatureClick(e: { id: string }) {
   selectedFeatureId.value = e.id
+  const f = mapFeatures.value.find((x) => x.id === e.id)
+  const a = (f?.attributes ?? {}) as Record<string, unknown>
+  editFeatLabel.value = f?.label ?? ''
+  editFeatColor.value = typeof a.color === 'string' ? a.color : ''
+  editFeatNotes.value = typeof a.notes === 'string' ? a.notes : ''
+  editFeatHeight.value = typeof a.height_m === 'number' ? a.height_m : null
+}
+const selectedFeature = computed(
+  () => mapFeatures.value.find((f) => f.id === selectedFeatureId.value) ?? null,
+)
+async function saveFeatureEdit() {
+  const fid = selectedFeatureId.value
+  if (!fid) return
+  const f = mapFeatures.value.find((x) => x.id === fid)
+  const attrs: Record<string, unknown> = { ...((f?.attributes ?? {}) as Record<string, unknown>) }
+  if (editFeatColor.value) attrs.color = editFeatColor.value
+  else delete attrs.color
+  if (editFeatNotes.value.trim()) attrs.notes = editFeatNotes.value.trim()
+  else delete attrs.notes
+  if (editFeatHeight.value != null) attrs.height_m = editFeatHeight.value
+  else delete attrs.height_m
+  try {
+    await editMapFeature(sessionId.value, fid, {
+      label: editFeatLabel.value.trim() || null,
+      attributes: attrs,
+    })
+    await loadFeatures()
+    toasts.push({ severity: 'success', title: '已更新標註', timeoutMs: 2000 })
+  } catch (e) {
+    toasts.push({
+      severity: 'error',
+      title: '更新失敗',
+      detail: (e as { message?: string }).message,
+      timeoutMs: 0,
+    })
+  }
 }
 async function removeFeature(fid: string) {
   try {
@@ -1000,6 +1064,21 @@ watch(
               <button data-testid="draw-point" @click="startDraw('POINT', drawFeatureKind)">點</button>
               <button data-testid="draw-line" @click="startDraw('LINE', drawFeatureKind)">線</button>
               <button data-testid="draw-polygon" @click="startDraw('POLYGON', drawFeatureKind)">面</button>
+              <button data-testid="draw-rect" @click="startDraw('RECTANGLE', drawFeatureKind)">矩形</button>
+              <button data-testid="draw-circle" @click="startDraw('CIRCLE', drawFeatureKind)">圓形</button>
+            </div>
+            <div class="me-attrs">
+              <input v-model="drawLabel" class="me-in" data-testid="draw-label" placeholder="名稱（選填）">
+              <div class="me-row2">
+                <label class="me-color" title="顏色">
+                  <input v-model="drawColor" type="color">
+                  顏色
+                </label>
+                <label v-if="drawFeatureKind === 'OBSTACLE' || drawFeatureKind === 'BUILDING'" class="me-h">
+                  高度<input v-model.number="drawHeight" type="number" min="0" step="0.5"> m
+                </label>
+              </div>
+              <input v-model="drawNotes" class="me-in" data-testid="draw-notes" placeholder="備註（選填）">
             </div>
             <div class="me-weapon">
               <select v-model="drawWeaponTemplate" data-testid="draw-weapon-tmpl" @focus="ensureWeaponTemplates">
@@ -1012,9 +1091,15 @@ watch(
             </div>
           </div>
           <div v-else class="me-drawing">
-            <span>繪製中 · {{ draftCoords.length }} 點 · 點地圖加點</span>
+            <span v-if="drawKind === 'CIRCLE'">繪圓：先點中心，再點邊緣</span>
+            <span v-else-if="drawKind === 'RECTANGLE'">繪矩形：點兩個對角</span>
+            <span v-else>繪製中 · {{ draftCoords.length }} 點 · 點地圖加點</span>
             <div class="me-btns">
-              <button v-if="drawKind !== 'POINT'" data-testid="draw-finish" @click="finishDraw">完成</button>
+              <button
+                v-if="drawKind === 'LINE' || drawKind === 'POLYGON'"
+                data-testid="draw-finish"
+                @click="finishDraw"
+              >完成</button>
               <button data-testid="draw-cancel" @click="cancelDraw">取消</button>
             </div>
           </div>
@@ -1026,14 +1111,27 @@ watch(
                 :key="f.id"
                 :class="{ sel: f.id === selectedFeatureId }"
                 data-testid="feature-row"
-                @click="selectedFeatureId = f.id"
+                @click="onFeatureClick({ id: f.id })"
               >
-                <span class="fdot" :style="{ background: featureColor(f.kind) }" />
+                <span class="fdot" :style="{ background: featureDisplayColor(f) }" />
                 <span class="fname">{{ f.label || f.kind }}</span>
                 <button class="frm" data-testid="feature-delete" @click.stop="removeFeature(f.id)">✕</button>
               </li>
               <li v-if="!mapFeatures.length" class="empty">（尚無標註）</li>
             </ul>
+          </div>
+          <!-- 選取特徵的屬性編輯（#11）：名稱/顏色/備註/高度 → PATCH。 -->
+          <div v-if="selectedFeature" class="me-edit" data-testid="feature-edit">
+            <div class="me-sub">編輯：{{ selectedFeature.kind }}</div>
+            <input v-model="editFeatLabel" class="me-in" data-testid="edit-feat-label" placeholder="名稱">
+            <div class="me-row2">
+              <label class="me-color"><input v-model="editFeatColor" type="color"> 顏色</label>
+              <label v-if="selectedFeature.kind === 'OBSTACLE' || selectedFeature.kind === 'BUILDING'" class="me-h">
+                高度<input v-model.number="editFeatHeight" type="number" min="0" step="0.5"> m
+              </label>
+            </div>
+            <input v-model="editFeatNotes" class="me-in" data-testid="edit-feat-notes" placeholder="備註">
+            <button class="me-save" data-testid="save-feat-edit" @click="saveFeatureEdit">儲存屬性</button>
           </div>
         </div>
 
@@ -1565,6 +1663,63 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+/* 繪製/編輯屬性欄（#11） */
+.map-editor .me-attrs,
+.map-editor .me-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.3rem 0;
+}
+.map-editor .me-edit {
+  border-top: 1px solid #1e293b;
+  padding-top: 0.4rem;
+}
+.map-editor .me-in {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+}
+.map-editor .me-row2 {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+.map-editor .me-color,
+.map-editor .me-h {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+.map-editor .me-color input {
+  width: 1.6rem;
+  height: 1.3rem;
+  padding: 0;
+  border: none;
+  background: none;
+}
+.map-editor .me-h input {
+  width: 3rem;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  background: #0a1626;
+  color: #e2e8f0;
+}
+.map-editor .me-save {
+  padding: 0.3rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.75rem;
 }
 .map-editor .me-sub {
   color: #64748b;
