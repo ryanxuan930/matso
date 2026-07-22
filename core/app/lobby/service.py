@@ -46,7 +46,12 @@ class LobbyService:
         return [self._summary(s, my_factions.get(s.id)) for s in sessions]
 
     def create_session(self, user: CurrentUser, req: CreateSessionRequest) -> SessionSummary:
-        """建立 session 列，建立者成為 EXERCISE_DIRECTOR 參與者（WHITE_CELL faction）。"""
+        """建立 session 列，建立者成為 EXERCISE_DIRECTOR 參與者（WHITE_CELL faction）。
+
+        帶 `scenario_id` → 由已存想定開局（建 session + orbat 單位 + relations，#7）；否則建空局。
+        """
+        if req.scenario_id:
+            return self._create_from_scenario(user, req)
         session = WargameSession(
             name=req.name,
             scenario_id=req.scenario_id,
@@ -68,6 +73,39 @@ class LobbyService:
         self._db.add(participant)
         self._db.commit()
         return self._summary(session, participant.faction)
+
+    def _create_from_scenario(self, user: CurrentUser, req: CreateSessionRequest) -> SessionSummary:
+        """由已存想定開局（#7）：載回 bundle → 建 session + 單位 → 建立者為統裁參與者。"""
+        import json
+
+        from app.errors import ScenarioInvalidError, ScenarioNotFoundError
+        from app.models import Scenario
+        from app.scenario import ScenarioError, create_session_from_scenario, load_scenario_bundle
+
+        row = self._db.get(Scenario, req.scenario_id)
+        if row is None:
+            raise ScenarioNotFoundError(f"想定不存在：{req.scenario_id}")
+        try:
+            loaded = load_scenario_bundle(json.loads(bytes(row.package_blob)))
+        except ScenarioError as exc:
+            raise ScenarioInvalidError(str(exc)) from exc
+        seed = _derive_seed(loaded.name, user.id, str(req.scenario_id))
+        sid = create_session_from_scenario(
+            self._db, loaded, master_seed=seed, scenario_id=req.scenario_id
+        )
+        self._db.add(
+            SessionParticipant(
+                user_id=user.id,
+                session_id=sid,
+                faction=WHITE_CELL,
+                role=UserRole.EXERCISE_DIRECTOR,
+                unit_scope=[],
+            )
+        )
+        self._db.commit()
+        session = self._db.get(WargameSession, sid)
+        assert session is not None
+        return self._summary(session, WHITE_CELL)
 
     def _participant_factions(self, user_id: str) -> dict[str, str]:
         rows = (

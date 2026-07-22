@@ -19,6 +19,7 @@ from app.api import (
     intel_router,
     lobby_router,
     orders_router,
+    scenarios_router,
     units_router,
     ws_router,
 )
@@ -79,6 +80,7 @@ install_error_handlers(app)
 app.include_router(auth_router)
 app.include_router(lobby_router)
 app.include_router(orders_router)
+app.include_router(scenarios_router)
 app.include_router(units_router)
 app.include_router(intel_router)
 app.include_router(inject_router)

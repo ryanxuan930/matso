@@ -74,6 +74,13 @@ class AuthForbiddenError(MatsoError):
     http_status = 403
 
 
+class ScenarioInvalidError(MatsoError):
+    """想定 bundle 驗證失敗（#7 存檔/開局前全量驗證）。訊息含精確路徑。"""
+
+    error_code = "SCENARIO_INVALID"
+    http_status = 422
+
+
 class ScenarioNotFoundError(MatsoError):
     error_code = "SCENARIO_NOT_FOUND"
     http_status = 404

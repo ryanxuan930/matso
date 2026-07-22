@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // 想定編輯器（O7.3，SPEC §11.2）——factions/relations/units/victory 編輯 + 匯出/匯入 roundtrip。
+import { apiFetch } from '~/composables/useApi'
+import type { ApiError } from '~/composables/useApi'
 import {
   emptyScenario,
   exportScenario,
@@ -42,11 +44,38 @@ function doImport() {
     importError.value = `匯入失敗：${(e as Error).message}`
   }
 }
+
+const saveStatus = ref('')
+const saving = ref(false)
+async function saveToServer() {
+  saving.value = true
+  saveStatus.value = ''
+  try {
+    const bundle = exportScenario(model.value)
+    const r = await apiFetch<{ id: string; name: string; version: string }>('/scenarios', {
+      method: 'POST',
+      body: bundle,
+    })
+    saveStatus.value = `已存到伺服器：${r.name} v${r.version}`
+  } catch (e) {
+    const err = e as ApiError
+    saveStatus.value = `存檔失敗：${err.code === 'SCENARIO_INVALID' ? err.message : err.code}`
+  } finally {
+    saving.value = false
+  }
+}
 </script>
 
 <template>
   <div class="editor" data-testid="scenario-editor">
-    <h1>想定編輯器</h1>
+    <header class="sc-bar">
+      <button data-testid="sc-back-lobby" @click="navigateTo('/lobby')">← 大廳</button>
+      <h1>想定編輯器</h1>
+      <button data-testid="sc-save" :disabled="saving" @click="saveToServer">
+        {{ saving ? '存檔中…' : '存到伺服器' }}
+      </button>
+    </header>
+    <p v-if="saveStatus" class="sc-status" data-testid="sc-save-status">{{ saveStatus }}</p>
 
     <section class="meta">
       <label>名稱 <input v-model="model.name" data-testid="sc-name"></label>
@@ -105,6 +134,10 @@ function doImport() {
 
 <style scoped>
 .editor { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
+.sc-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+.sc-bar h1 { font-size: 1.25rem; margin: 0; }
+.sc-bar > button:last-child { margin-left: auto; background: #2563eb; }
+.sc-status { color: #4ade80; font-size: 0.85rem; margin: 0 0 0.75rem; }
 section { margin: 1rem 0; border-top: 1px solid #1e293b; padding-top: 0.75rem; }
 h2 { font-size: 0.9375rem; color: #94a3b8; }
 .row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; }

@@ -35,6 +35,31 @@ async function createSession() {
   }
 }
 
+// 從已存想定開局（#7）——限統裁/管理。
+type ScenarioItem = { id: string; name: string; version: string }
+const scenarios = ref<ScenarioItem[]>([])
+const selectedScenarioId = ref('')
+
+async function loadScenarios() {
+  if (!canEditScenario.value) return
+  scenarios.value = await apiFetch<ScenarioItem[]>('/scenarios').catch(() => [])
+}
+
+async function createFromScenario() {
+  if (!selectedScenarioId.value) return
+  creating.value = true
+  try {
+    await apiFetch<SessionSummary>('/sessions', {
+      method: 'POST',
+      body: { name: '想定局', scenario_id: selectedScenarioId.value },
+    })
+    selectedScenarioId.value = ''
+    await refresh()
+  } finally {
+    creating.value = false
+  }
+}
+
 async function onLogout() {
   auth.logout()
   await navigateTo('/login')
@@ -42,7 +67,7 @@ async function onLogout() {
 
 onMounted(async () => {
   if (!auth.user) await auth.fetchMe()
-  await refresh()
+  await Promise.all([refresh(), loadScenarios()])
 })
 </script>
 
@@ -66,6 +91,20 @@ onMounted(async () => {
     <section class="create">
       <input v-model="newName" data-testid="new-session-name" placeholder="新推演名稱" @keyup.enter="createSession">
       <button data-testid="create-session" :disabled="creating" @click="createSession">建立推演</button>
+    </section>
+
+    <section v-if="canEditScenario && scenarios.length" class="create" data-testid="scenario-create">
+      <select v-model="selectedScenarioId" data-testid="scenario-select" class="sc-select">
+        <option value="">選想定開局…</option>
+        <option v-for="s in scenarios" :key="s.id" :value="s.id">{{ s.name }} · v{{ s.version }}</option>
+      </select>
+      <button
+        data-testid="create-from-scenario"
+        :disabled="creating || !selectedScenarioId"
+        @click="createFromScenario"
+      >
+        從想定建立
+      </button>
     </section>
 
     <section>
@@ -126,7 +165,8 @@ h1 {
   gap: 0.5rem;
   margin-bottom: 1.5rem;
 }
-.create input {
+.create input,
+.sc-select {
   flex: 1;
   padding: 0.5rem;
   border: 1px solid #334155;
