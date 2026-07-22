@@ -122,6 +122,36 @@ def test_archive_unarchive_and_delete(session_factory: sessionmaker[Session]) ->
     assert all(s["id"] != sid for s in client.get("/api/v1/sessions", headers=h).json())
 
 
+def test_delete_session_with_children(session_factory: sessionmaker[Session]) -> None:
+    """#31：刪除有子表（單位/裝備/事件）的推演應成功（清子表，不因 FK 違反 500）。"""
+    from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit, UnitLevel
+
+    seed_user(session_factory)
+    client = make_client(session_factory)
+    h = auth_header(login(client)["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "有子表"}, headers=h).json()["id"]
+    # 加單位（真 FK，無 cascade——舊實作刪 session 會 500）+ 裝備（owner cascade）。
+    with session_factory() as db:
+        u = TacticalUnit(
+            session_id=sid, designation="U1", unit_level=UnitLevel.PLATOON, faction="BLUE"
+        )
+        db.add(u)
+        db.flush()
+        tmpl = EquipmentTemplate(name="R", category="KINETIC", base_stats={})
+        db.add(tmpl)
+        db.flush()
+        db.add(EquipmentInstance(template_id=tmpl.id, owner_id=u.id, current_state={}))
+        db.commit()
+    # 刪除應 204（先清子表再刪 session）。
+    assert client.delete(f"/api/v1/sessions/{sid}", headers=h).status_code == 204
+    assert all(s["id"] != sid for s in client.get("/api/v1/sessions", headers=h).json())
+    # 子表已清（單位、事件不再存在）。
+    with session_factory() as db:
+        from sqlalchemy import select as _select
+
+        assert not db.execute(_select(TacticalUnit).where(TacticalUnit.session_id == sid)).first()
+
+
 def test_non_director_cannot_delete(session_factory: sessionmaker[Session]) -> None:
     """非本局統裁/管理者不可封存或刪除（#31）。"""
     seed_user(session_factory, username="alice", role=UserRole.COMMANDER)

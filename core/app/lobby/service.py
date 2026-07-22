@@ -239,8 +239,40 @@ class LobbyService:
         return self._summary(session, my_faction, orbat_edit=True)
 
     def delete_session(self, user: CurrentUser, session_id: str) -> None:
-        """永久刪除一局（連同單位/事件/標註，DB cascade）。限統裁/管理，前端須二次確認。"""
+        """永久刪除一局（連同所有子表）。限統裁/管理，前端須二次確認。
+
+        多數子表（單位/事件/指令/參與者/檢查點/情報/AI 記錄/AAR）未設 DB 級 onDelete cascade，
+        直接刪 session 會觸發 FK 違反 → 500。故此依 FK 安全順序先清子表再刪 session；
+        EquipmentInstance / 單位階層由 TacticalUnit 的 ondelete=CASCADE 一併帶走。
+        """
+        from sqlalchemy import delete as sa_delete
+
+        from app.models import (
+            AARReport,
+            AIInvocationLog,
+            IntelContact,
+            MapFeature,
+            Order,
+            SessionParticipant,
+            SimCheckpoint,
+            TacticalEventLog,
+            TacticalUnit,
+        )
+
         session = self._require_director(user, session_id)
+        # 先清 referencing units 的表（Order/IntelContact），再清單位，最後刪 session。
+        for model in (
+            AARReport,
+            AIInvocationLog,
+            SimCheckpoint,
+            IntelContact,
+            Order,
+            TacticalEventLog,
+            SessionParticipant,
+            MapFeature,
+            TacticalUnit,
+        ):
+            self._db.execute(sa_delete(model).where(model.session_id == session_id))
         self._db.delete(session)
         self._db.commit()
 
