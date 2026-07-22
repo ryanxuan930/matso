@@ -1,7 +1,9 @@
-"""想定持久化 REST（#7，SPEC §11）——存 / 列想定（限統裁/管理）。
+"""想定持久化 REST（#7，SPEC §11）——存 / 列 / 取 / 刪想定（限統裁/管理）。
 
-POST /api/v1/scenarios  存編輯器 bundle（存前全量驗證）
-GET  /api/v1/scenarios  列出已存想定
+POST   /api/v1/scenarios        存編輯器 bundle（存前全量驗證）
+GET    /api/v1/scenarios        列出已存想定
+GET    /api/v1/scenarios/{sid}  取回單一想定 bundle（供編輯器載入編輯）
+DELETE /api/v1/scenarios/{sid}  刪除想定
 
 開局：lobby `create_session` 帶 `scenario_id` → 載回 bundle → 建 session + 單位。
 """
@@ -12,14 +14,14 @@ import hashlib
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
 from app.auth.schemas import CurrentUser
-from app.errors import AuthForbiddenError, ScenarioInvalidError
+from app.errors import AuthForbiddenError, ScenarioInvalidError, ScenarioNotFoundError
 from app.models import Scenario
 from app.scenario import ScenarioError, load_scenario_bundle
 from app.stream.faction_filter import is_omniscient
@@ -43,6 +45,13 @@ def _require_editor(user: CurrentUser) -> None:
     """想定編輯/存取限統裁/管理角色（SPEC §11.2 / §12）。"""
     if not is_omniscient(user.role):
         raise AuthForbiddenError("僅統裁/管理角色可存取想定")
+
+
+def _get_or_404(db: Session, sid: str) -> Scenario:
+    row = db.get(Scenario, sid)
+    if row is None:
+        raise ScenarioNotFoundError(f"想定不存在：{sid}")
+    return row
 
 
 @router.post("", response_model=ScenarioSaved)
@@ -78,3 +87,29 @@ def list_scenarios(
     _require_editor(user)
     rows = db.execute(select(Scenario).order_by(Scenario.created_at.desc())).scalars().all()
     return [ScenarioSaved(id=r.id, name=r.name, version=r.version) for r in rows]
+
+
+@router.get("/{sid}")
+def get_scenario(
+    sid: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """回傳已存想定 bundle（編輯器載入既有想定編輯用）；查無 → 404。"""
+    _require_editor(user)
+    row = _get_or_404(db, sid)
+    bundle: dict[str, Any] = json.loads(bytes(row.package_blob).decode("utf-8"))
+    return bundle
+
+
+@router.delete("/{sid}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scenario(
+    sid: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    _require_editor(user)
+    row = _get_or_404(db, sid)
+    db.delete(row)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

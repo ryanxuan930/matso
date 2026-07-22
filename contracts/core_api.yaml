@@ -54,6 +54,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    ScenarioId:
+      name: sid
+      in: path
+      required: true
+      schema: { type: string }
   schemas:
     Error:
       type: object
@@ -702,6 +707,22 @@ paths:
   /scenarios:
     get: { operationId: listScenarios, responses: { "200": { description: Scenarios } } }
     post: { operationId: uploadScenario, responses: { "201": { description: Validated & stored } } }
+  /scenarios/{sid}:
+    parameters: [{ $ref: "#/components/parameters/ScenarioId" }]
+    get:
+      operationId: getScenario
+      description: "回傳已存想定 bundle（供編輯器載入）；限統裁/管理"
+      responses:
+        "200":
+          description: Scenario bundle
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "404": { description: Not found }
+    delete:
+      operationId: deleteScenario
+      description: "刪除想定；限統裁/管理"
+      responses: { "204": { description: Deleted } }
   /admin/plugins:
     get: { operationId: listPlugins, responses: { "200": { description: Plugin registry } } }
   /admin/plugins/{name}/toggle:

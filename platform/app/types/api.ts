@@ -471,6 +471,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scenarios/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: components["parameters"]["ScenarioId"];
+            };
+            cookie?: never;
+        };
+        /** @description 回傳已存想定 bundle（供編輯器載入）；限統裁/管理 */
+        get: operations["getScenario"];
+        put?: never;
+        post?: never;
+        /** @description 刪除想定；限統裁/管理 */
+        delete: operations["deleteScenario"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/plugins": {
         parameters: {
             query?: never;
@@ -722,6 +742,7 @@ export interface components {
         FeatureId: string;
         TaskId: string;
         PluginName: string;
+        ScenarioId: string;
     };
     requestBodies: never;
     headers: never;
@@ -1709,6 +1730,57 @@ export interface operations {
         responses: {
             /** @description Validated & stored */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: components["parameters"]["ScenarioId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scenario bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: components["parameters"]["ScenarioId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
