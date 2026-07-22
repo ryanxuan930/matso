@@ -47,11 +47,20 @@ rm -f /out/contours.mbtiles
 ogr2ogr -f MBTILES -t_srs EPSG:3857 -dsco MAXZOOM=14 -nln contour /out/contours.mbtiles contours.gpkg
 echo 'done'
 "
-# tileserver-gl-light 的 auto-mode 只服務單一 mbtiles；多來源需 config.json。
-# 對映到前端預期路徑：街道=/data/v3、地形陰影=/data/hillshade、等高線=/data/contours。
+# 字型（地圖文字標籤需 glyphs：MGRS/經緯格網/等高線高度）——由 tileserver 影像內建的
+# Noto Sans Regular 複製到 $OUT/fonts；serveAllFonts 讓未被 style 引用的字型也可服務。
+if [ ! -d "$OUT/fonts/Noto Sans Regular" ]; then
+  echo '[fonts] 複製 Noto Sans Regular 供地圖標籤（glyphs）'
+  mkdir -p "$OUT/fonts"
+  docker run --rm -v "$OUT/fonts":/dst maptiler/tileserver-gl-light:latest \
+    sh -c 'cp -r "/usr/src/app/node_modules/tileserver-gl-styles/fonts/Noto Sans Regular" /dst/' 2>/dev/null \
+    || echo '  （字型複製失敗，可稍後手動 docker cp；無字型時地圖標籤不顯示）'
+fi
+# tileserver-gl-light 的 auto-mode 只服務單一 mbtiles；多來源 + 字型需 config.json。
+# 對映到前端預期路徑：街道=/data/v3、地形陰影=/data/hillshade、等高線=/data/contours、字型=/data/fonts。
 cat > "$OUT/config.json" <<'JSON'
 {
-  "options": { "paths": { "root": "/data", "mbtiles": "/data" } },
+  "options": { "paths": { "root": "/data", "mbtiles": "/data", "fonts": "fonts" }, "serveAllFonts": true },
   "data": {
     "v3": { "mbtiles": "taiwan.mbtiles" },
     "hillshade": { "mbtiles": "hillshade.mbtiles" },
@@ -59,4 +68,4 @@ cat > "$OUT/config.json" <<'JSON'
   }
 }
 JSON
-echo "完成 → $OUT（含 config.json）。重啟 tileserver 生效：cd ops/compose && docker compose --profile tiles restart tileserver"
+echo "完成 → $OUT（含 config.json + fonts）。重啟 tileserver 生效：cd ops/compose && docker compose --profile tiles restart tileserver"

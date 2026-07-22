@@ -11,6 +11,16 @@ const layerOpacity = defineModel<Record<string, number>>('layerOpacity', { defau
 const layerOrder = defineModel<string[]>('layerOrder', { default: () => ['hex', 'contour', 'hillshade'] })
 const contourMajor = defineModel<number>('contourMajor', { default: 100 })
 const contourMinor = defineModel<number>('contourMinor', { default: 50 })
+// #9 座標網格：經緯度網格 / MGRS 標記 / 密度（度）。
+const latlngGrid = defineModel<boolean>('latlngGrid', { default: false })
+const mgrsGrid = defineModel<boolean>('mgrsGrid', { default: false })
+const gridStepDeg = defineModel<number>('gridStepDeg', { default: 0.5 })
+// 六角網格最細解析度上限 + 交戰範圍限制（km；降低運算量）。
+const hexMaxRes = defineModel<number>('hexMaxRes', { default: 8 })
+const hexLimitKm = defineModel<number>('hexLimitKm', { default: 0 })
+// #6 日照視覺（晨昏/夜間色調）+ 一日時間。
+const dayNight = defineModel<boolean>('dayNight', { default: false })
+const timeOfDay = defineModel<number>('timeOfDay', { default: 12 })
 
 // 地形陰影/等高線需 tileserver 提供瓦片；無 tileUrl 時停用並註記（避免 no-op 勾選誤導）。
 withDefaults(
@@ -62,6 +72,14 @@ function move(key: string, dir: -1 | 1) {
         data-testid="opacity-hex" @input="setOpacity('hex', $event)"
       >
     </div>
+    <div v-if="hex" class="intervals">
+      <label>最細解析度
+        <input v-model.number="hexMaxRes" type="number" min="3" max="9" data-testid="hex-max-res">
+      </label>
+      <label>交戰範圍(km)
+        <input v-model.number="hexLimitKm" type="number" min="0" step="5" data-testid="hex-limit-km">
+      </label>
+    </div>
     <div class="lyr" :class="{ disabled: !hillshadeEnabled }">
       <label>
         <input v-model="hillshade" data-testid="toggle-hillshade" type="checkbox" :disabled="!hillshadeEnabled">
@@ -84,10 +102,42 @@ function move(key: string, dir: -1 | 1) {
     </div>
     <div v-if="contour && contourEnabled" class="intervals">
       <label>主等高線（粗）
-        <input v-model.number="contourMajor" type="number" min="50" step="50" data-testid="contour-major"> m
+        <input v-model.number="contourMajor" type="number" min="25" step="25" data-testid="contour-major"> m
       </label>
       <label>次等高線（細）
-        <input v-model.number="contourMinor" type="number" min="50" step="50" data-testid="contour-minor"> m
+        <input v-model.number="contourMinor" type="number" min="25" step="25" data-testid="contour-minor"> m
+      </label>
+    </div>
+
+    <div class="title spaced">座標網格</div>
+    <div class="lyr">
+      <label>
+        <input v-model="latlngGrid" data-testid="toggle-latlng-grid" type="checkbox">
+        <span>經緯度網格</span>
+      </label>
+    </div>
+    <div class="lyr">
+      <label>
+        <input v-model="mgrsGrid" data-testid="toggle-mgrs-grid" type="checkbox">
+        <span>MGRS 標記</span>
+      </label>
+    </div>
+    <div v-if="latlngGrid || mgrsGrid" class="intervals">
+      <label>密度（度）
+        <input v-model.number="gridStepDeg" type="number" min="0.05" step="0.05" data-testid="grid-step">
+      </label>
+    </div>
+
+    <div class="title spaced">日照</div>
+    <div class="lyr">
+      <label>
+        <input v-model="dayNight" data-testid="toggle-daynight" type="checkbox">
+        <span>晨昏/夜間色調</span>
+      </label>
+    </div>
+    <div v-if="dayNight" class="intervals">
+      <label>時間 {{ Math.floor(timeOfDay) }}:{{ String(Math.round((timeOfDay % 1) * 60)).padStart(2, '0') }}
+        <input v-model.number="timeOfDay" type="range" min="0" max="24" step="0.5" data-testid="time-of-day">
       </label>
     </div>
 

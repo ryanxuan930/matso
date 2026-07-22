@@ -12,6 +12,7 @@ import {
   openMapTilesDarkLayers,
 } from '~/composables/useMapStyle'
 import { hexCellsForBounds } from '~/composables/useHexGrid'
+import { buildLatLngGrid, buildMgrsLabels } from '~/composables/useCoordGrid'
 import { cellToBoundary, cellToLatLng, latLngToCell } from 'h3-js'
 import { type Contact, type OwnUnit, buildUnitFeatures } from '~/composables/useUnits'
 import { symbolImage } from '~/composables/useMilsymbol'
@@ -49,6 +50,14 @@ const props = withDefaults(
     draftFc?: Fc // 繪製中草稿
     selectedFeatureId?: string | null // 選取的標註（高亮）
     drawActive?: boolean // 繪圖模式：地圖點擊視為加頂點（不選單位/標註）
+    latlngGrid?: boolean // 經緯度網格（#9）
+    mgrsGrid?: boolean // MGRS 標記（#9）
+    gridStepDeg?: number // 網格密度（度，#9）
+    queryPoint?: { lng: number; lat: number } | null // 座標查詢點（#10）
+    hexMaxRes?: number // 六角網格最細解析度上限（設定最小網格）
+    hexLimitKm?: number // 交戰範圍：僅計算視野中心此半徑內的格（0=不限）
+    dayNight?: boolean // 日照視覺（晨昏/夜間色調，#6）
+    timeOfDay?: number // 一日時間 0–24（#6）
   }>(),
   {
     hexVisible: false,
@@ -70,8 +79,32 @@ const props = withDefaults(
     draftFc: () => ({ type: 'FeatureCollection', features: [] }),
     selectedFeatureId: null,
     drawActive: false,
+    latlngGrid: false,
+    mgrsGrid: false,
+    gridStepDeg: 0.5,
+    queryPoint: null,
+    hexMaxRes: 8,
+    hexLimitKm: 0,
+    dayNight: false,
+    timeOfDay: 12,
   },
 )
+
+/** 日照視覺（#6）：依一日時間對地圖畫布套 CSS filter（正午亮、夜間暗藍、晨昏偏暖）。 */
+function applyDayNight() {
+  const canvas = map?.getCanvas()
+  if (!canvas) return
+  if (!props.dayNight) {
+    canvas.style.filter = ''
+    return
+  }
+  const t = props.timeOfDay ?? 12
+  const day = Math.max(0, Math.cos(((t - 13) / 24) * 2 * Math.PI)) // 約 13:00 最亮
+  const brightness = (0.5 + 0.5 * day).toFixed(2)
+  const saturate = (0.65 + 0.35 * day).toFixed(2)
+  const dawnDusk = (t >= 5 && t <= 8) || (t >= 16.5 && t <= 20) ? 0.35 : 0 // 晨昏暖色
+  canvas.style.filter = `brightness(${brightness}) saturate(${saturate}) sepia(${dawnDusk})`
+}
 
 // 可抽換底圖來源（由 runtimeConfig 注入；#2）。
 const _cfg = useRuntimeConfig().public
@@ -139,6 +172,32 @@ const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
 const INFL_SRC = 'mapinfluence' // 影響範圍圓
 const DRAFT_SRC = 'mapdraft' // 繪製中草稿
 const FEAT_NONE = '__matso_feat_none__'
+const GRIDL_SRC = 'coordgrid-lines' // 經緯度網格線（#9）
+const GRIDT_SRC = 'coordgrid-labels' // 經緯度標籤
+const MGRS_SRC = 'mgrs-labels' // MGRS 標記
+const QUERY_SRC = 'coord-query' // 座標查詢點（#10）
+let hasGlyphs = false // tileUrl 存在時才有字型 → 才畫標籤
+
+/** 依視野 bbox + 密度重建座標網格（#9），moveend + 開關/密度變更時呼叫。 */
+function refreshGrid() {
+  if (!map) return
+  const b = map.getBounds()
+  const bounds = { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() }
+  const step = props.gridStepDeg && props.gridStepDeg > 0 ? props.gridStepDeg : 0.5
+  const ll = props.latlngGrid ? buildLatLngGrid(bounds, step) : { lines: EMPTY_FC, labels: EMPTY_FC }
+  ;(map.getSource(GRIDL_SRC) as GeoJSONSource | undefined)?.setData(ll.lines as never)
+  ;(map.getSource(GRIDT_SRC) as GeoJSONSource | undefined)?.setData(ll.labels as never)
+  const mgrs = props.mgrsGrid ? buildMgrsLabels(bounds, step, 4) : EMPTY_FC
+  ;(map.getSource(MGRS_SRC) as GeoJSONSource | undefined)?.setData(mgrs as never)
+}
+
+function syncQuery() {
+  const p = props.queryPoint
+  const fc = p
+    ? { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [p.lng, p.lat] } }] }
+    : EMPTY_FC
+  ;(map?.getSource(QUERY_SRC) as GeoJSONSource | undefined)?.setData(fc as never)
+}
 
 function syncFeatures() {
   ;(map?.getSource(FEAT_SRC) as GeoJSONSource | undefined)?.setData((props.featureFc ?? _EMPTY_FEAT_FC) as never)
@@ -214,14 +273,21 @@ function contourFilter(which: 'major' | 'minor'): FilterSpecification {
 function applyContourFilters() {
   if (map?.getLayer('contours-line-major')) map.setFilter('contours-line-major', contourFilter('major'))
   if (map?.getLayer('contours-line-minor')) map.setFilter('contours-line-minor', contourFilter('minor'))
+  if (map?.getLayer('contours-label')) map.setFilter('contours-label', contourFilter('major'))
 }
 
 function refreshHex() {
   if (!map) return
   const b = map.getBounds()
+  const c = map.getCenter()
+  const limitKm = props.hexLimitKm ?? 0
   const fc = hexCellsForBounds(
     { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() },
     map.getZoom(),
+    {
+      maxRes: props.hexMaxRes ?? 8,
+      limit: limitKm > 0 ? { lng: c.lng, lat: c.lat, radiusKm: limitKm } : undefined,
+    },
   )
   const src = map.getSource(HEX_SRC) as GeoJSONSource | undefined
   src?.setData(fc)
@@ -256,7 +322,8 @@ onMounted(async () => {
 
   map = new MapCtor({
     container: container.value,
-    style: buildOfflineStyle(),
+    // tileUrl 存在時掛上本地字型 glyphs（供標籤：MGRS/經緯格網/等高線高度）。
+    style: buildOfflineStyle(tileUrl ? `${tileUrl}/fonts/{fontstack}/{range}.pbf` : undefined),
     center: TAIWAN_CENTER,
     zoom: DEFAULT_ZOOM,
     attributionControl: false,
@@ -324,6 +391,25 @@ onMounted(async () => {
         filter: contourFilter('major'),
         paint: { 'line-color': '#c9a15c', 'line-width': 1.2, 'line-opacity': 0.8 },
       })
+      // 等高線高度標籤（#11，沿線放置；主等高線；需 glyphs）。
+      if (tileUrl) {
+        map.addLayer({
+          id: 'contours-label',
+          type: 'symbol',
+          source: CONTOUR_SRC,
+          'source-layer': 'contour',
+          layout: {
+            visibility: props.contourVisible ? 'visible' : 'none',
+            'symbol-placement': 'line',
+            'text-field': ['concat', ['to-string', ['get', 'elev']], ' m'],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': 10,
+            'symbol-spacing': 300,
+          },
+          filter: contourFilter('major'),
+          paint: { 'text-color': '#e6c88a', 'text-halo-color': '#0a1626', 'text-halo-width': 1.4 },
+        })
+      }
     }
     map.addSource(HEX_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     map.addLayer({
@@ -339,6 +425,56 @@ onMounted(async () => {
       source: HEX_SRC,
       layout: { visibility: props.hexVisible ? 'visible' : 'none' },
       paint: { 'line-color': '#38bdf8', 'line-width': 0.5, 'line-opacity': 0.5 },
+    })
+    // 座標網格（#9）：經緯度網格線 + 標籤 + MGRS 標記（標籤需 glyphs → 僅 tileUrl 時加）。
+    hasGlyphs = !!tileUrl
+    map.addSource(GRIDL_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'coordgrid-line',
+      type: 'line',
+      source: GRIDL_SRC,
+      paint: { 'line-color': '#5b7fa6', 'line-width': 0.5, 'line-opacity': 0.6 },
+    })
+    map.addSource(GRIDT_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addSource(MGRS_SRC, { type: 'geojson', data: EMPTY_FC })
+    if (hasGlyphs) {
+      map.addLayer({
+        id: 'coordgrid-label',
+        type: 'symbol',
+        source: GRIDT_SRC,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 11,
+          'text-allow-overlap': false,
+        },
+        paint: { 'text-color': '#bcd0e6', 'text-halo-color': '#0a1626', 'text-halo-width': 1.4 },
+      })
+      map.addLayer({
+        id: 'mgrs-label',
+        type: 'symbol',
+        source: MGRS_SRC,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 10,
+          'text-allow-overlap': false,
+        },
+        paint: { 'text-color': '#facc15', 'text-halo-color': '#0a1626', 'text-halo-width': 1.4 },
+      })
+    }
+    // 座標查詢點（#10）：十字標記。
+    map.addSource(QUERY_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'coord-query-pt',
+      type: 'circle',
+      source: QUERY_SRC,
+      paint: {
+        'circle-radius': 5,
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-stroke-color': '#f472b6',
+        'circle-stroke-width': 2.5,
+      },
     })
     // 地圖標註/工事（stage ③b）：影響範圍圓（最下）→ 面/線/點 → 選取高亮 → 草稿。
     map.addSource(INFL_SRC, { type: 'geojson', data: EMPTY_FC })
@@ -510,6 +646,9 @@ onMounted(async () => {
     syncUnits()
     syncDest()
     syncFeatures() // stage ③b 標註/工事
+    refreshGrid() // #9 座標網格
+    syncQuery() // #10 查詢點
+    applyDayNight() // #6 日照視覺
     applyAllOpacity() // #9 初始透明度
     applyOrder() // #9 初始套疊順序
     loaded.value = true
@@ -517,6 +656,7 @@ onMounted(async () => {
   })
 
   map.on('moveend', refreshHex)
+  map.on('moveend', refreshGrid)
   // 繪圖模式 → 每次點擊都當加頂點（mapClick）；否則：點單位→unitClick、點標註→featureClick、點空白→mapClick。
   map.on('click', (e) => {
     if (props.drawActive) {
@@ -558,10 +698,15 @@ watch(() => props.hillshadeVisible, (v) => setLayerVisibility('hillshade', v))
 watch(() => props.contourVisible, (v) => {
   setLayerVisibility('contours-line-major', v)
   setLayerVisibility('contours-line-minor', v)
+  setLayerVisibility('contours-label', v)
 })
 watch(() => props.basemapId, (v) => applyBasemap(v))
 watch(() => props.destH3, syncDest)
 watch([() => props.featureFc, () => props.influenceFc, () => props.draftFc], syncFeatures, { deep: true })
+watch([() => props.latlngGrid, () => props.mgrsGrid, () => props.gridStepDeg], refreshGrid)
+watch([() => props.hexMaxRes, () => props.hexLimitKm], refreshHex)
+watch([() => props.dayNight, () => props.timeOfDay], applyDayNight)
+watch(() => props.queryPoint, syncQuery)
 watch(
   () => props.selectedFeatureId,
   (v) => {

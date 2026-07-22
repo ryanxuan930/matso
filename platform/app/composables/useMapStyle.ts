@@ -9,10 +9,13 @@ export const DEFAULT_ZOOM = 7
  * 依 basemap 來源動態加為 raster 層（可抽換），不寫死於 style；斷網 / 無底圖時仍顯背景。
  * 不引用任何外部 CDN 的 style/glyphs/sprite（air-gapped，SPEC §12/§20）。
  */
-export function buildOfflineStyle(): StyleSpecification {
+export function buildOfflineStyle(glyphs?: string): StyleSpecification {
   return {
     version: 8,
     name: 'matso-offline',
+    // 地圖文字標籤（MGRS/經緯格網/等高線高度）需 glyphs；由 tileserver 提供（air-gapped，本地 Noto Sans）。
+    // 無 tileUrl（純離線）時省略 → 無標籤，其餘照常。
+    ...(glyphs ? { glyphs } : {}),
     sources: {},
     layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#0a1626' } }],
   }

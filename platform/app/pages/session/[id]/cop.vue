@@ -15,6 +15,7 @@ import {
   submitOrder,
 } from '~/composables/useOrders'
 import { fetchEquipmentTemplates, type EquipmentTemplate } from '~/composables/useEquipment'
+import { forward as mgrsForward } from 'mgrs'
 import {
   FEATURE_KINDS,
   createMapFeature,
@@ -48,6 +49,17 @@ const layerOpacity = ref<Record<string, number>>({ basemap: 1, hillshade: 1, con
 const layerOrder = ref<string[]>(['hex', 'contour', 'hillshade'])
 const contourMajor = ref(100)
 const contourMinor = ref(50)
+// 座標網格（#9）+ 座標查詢（#10）
+const latlngGrid = ref(false)
+const mgrsGrid = ref(false)
+const gridStepDeg = ref(0.5)
+const coordQuery = ref(false)
+const queryPoint = ref<{ lng: number; lat: number } | null>(null)
+const queryMgrs = ref('')
+const hexMaxRes = ref(8) // 六角網格最細解析度上限（設定最小網格）
+const hexLimitKm = ref(0) // 交戰範圍限制（km；0=不限）
+const dayNight = ref(false) // 日照視覺（#6）
+const timeOfDay = ref(12) // 一日時間 0–24（#6）
 const LAYER_PREFS_KEY = 'matso.cop.layers'
 
 // 底圖來源（可抽換，#2）：離線 / 街道 / 衛星 / 軍用…由 runtimeConfig 注入。
@@ -250,6 +262,16 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
       finishDraw()
     } else {
       draftCoords.value = [...draftCoords.value, [e.lng, e.lat]]
+    }
+    return
+  }
+  // 座標查詢模式（#10）：點地圖 → 顯示該點經緯度 + MGRS。
+  if (coordQuery.value) {
+    queryPoint.value = { lng: e.lng, lat: e.lat }
+    try {
+      queryMgrs.value = mgrsForward([e.lng, e.lat], 5)
+    } catch {
+      queryMgrs.value = '—'
     }
     return
   }
@@ -459,12 +481,35 @@ onMounted(() => {
     if (Array.isArray(p.layerOrder) && p.layerOrder.length) layerOrder.value = p.layerOrder
     if (typeof p.contourMajor === 'number') contourMajor.value = p.contourMajor
     if (typeof p.contourMinor === 'number') contourMinor.value = p.contourMinor
+    if (typeof p.latlngGrid === 'boolean') latlngGrid.value = p.latlngGrid
+    if (typeof p.mgrsGrid === 'boolean') mgrsGrid.value = p.mgrsGrid
+    if (typeof p.gridStepDeg === 'number') gridStepDeg.value = p.gridStepDeg
+    if (typeof p.hexMaxRes === 'number') hexMaxRes.value = p.hexMaxRes
+    if (typeof p.hexLimitKm === 'number') hexLimitKm.value = p.hexLimitKm
+    if (typeof p.dayNight === 'boolean') dayNight.value = p.dayNight
+    if (typeof p.timeOfDay === 'number') timeOfDay.value = p.timeOfDay
   } catch {
     /* 壞資料忽略，用預設 */
   }
 })
 watch(
-  [hex, hillshade, contour, basemap, layerOpacity, layerOrder, contourMajor, contourMinor],
+  [
+    hex,
+    hillshade,
+    contour,
+    basemap,
+    layerOpacity,
+    layerOrder,
+    contourMajor,
+    contourMinor,
+    latlngGrid,
+    mgrsGrid,
+    gridStepDeg,
+    hexMaxRes,
+    hexLimitKm,
+    dayNight,
+    timeOfDay,
+  ],
   () => {
     if (!import.meta.client) return
     try {
@@ -479,6 +524,13 @@ watch(
           layerOrder: layerOrder.value,
           contourMajor: contourMajor.value,
           contourMinor: contourMinor.value,
+          latlngGrid: latlngGrid.value,
+          mgrsGrid: mgrsGrid.value,
+          gridStepDeg: gridStepDeg.value,
+          hexMaxRes: hexMaxRes.value,
+          hexLimitKm: hexLimitKm.value,
+          dayNight: dayNight.value,
+          timeOfDay: timeOfDay.value,
         }),
       )
     } catch {
@@ -511,6 +563,13 @@ watch(
           @click="mapEditorOpen = !mapEditorOpen"
         >
           🗺 地圖編輯
+        </button>
+        <button
+          data-testid="nav-coord-query"
+          :class="{ on: coordQuery }"
+          @click="coordQuery = !coordQuery"
+        >
+          🎯 座標查詢
         </button>
         <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)">📊 AAR</button>
         <a class="help" href="/help" target="_blank">操作教學</a>
@@ -637,6 +696,14 @@ watch(
             :draft-fc="draftFc"
             :selected-feature-id="selectedFeatureId"
             :draw-active="drawActive"
+            :latlng-grid="latlngGrid"
+            :mgrs-grid="mgrsGrid"
+            :grid-step-deg="gridStepDeg"
+            :query-point="queryPoint"
+            :hex-max-res="hexMaxRes"
+            :hex-limit-km="hexLimitKm"
+            :day-night="dayNight"
+            :time-of-day="timeOfDay"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @feature-click="onFeatureClick"
@@ -655,6 +722,13 @@ watch(
           v-model:layer-order="layerOrder"
           v-model:contour-major="contourMajor"
           v-model:contour-minor="contourMinor"
+          v-model:latlng-grid="latlngGrid"
+          v-model:mgrs-grid="mgrsGrid"
+          v-model:grid-step-deg="gridStepDeg"
+          v-model:hex-max-res="hexMaxRes"
+          v-model:hex-limit-km="hexLimitKm"
+          v-model:day-night="dayNight"
+          v-model:time-of-day="timeOfDay"
           :hillshade-enabled="hasTiles"
           :contour-enabled="hasTiles"
           :basemaps="basemapSources"
@@ -717,6 +791,17 @@ watch(
               <li v-if="!mapFeatures.length" class="empty">（尚無標註）</li>
             </ul>
           </div>
+        </div>
+
+        <!-- 座標查詢讀值（#10）：點地圖任一點顯示經緯度 + MGRS。 -->
+        <div v-if="coordQuery" class="coord-readout" data-testid="coord-readout">
+          <div class="cr-hd">座標查詢 · 點地圖任一點</div>
+          <template v-if="queryPoint">
+            <div class="cr-row"><span>緯度</span><code>{{ queryPoint.lat.toFixed(5) }}</code></div>
+            <div class="cr-row"><span>經度</span><code>{{ queryPoint.lng.toFixed(5) }}</code></div>
+            <div class="cr-row"><span>MGRS</span><code data-testid="coord-mgrs">{{ queryMgrs }}</code></div>
+          </template>
+          <div v-else class="cr-hint">尚未點選</div>
         </div>
 
         <!-- 單位詳細資訊圖卡（#5）：點單位顯示血量/狀態/座標/武器；點空白取消（#6）。 -->
@@ -961,6 +1046,42 @@ watch(
   position: relative;
   flex: 1;
 }
+/* 座標查詢讀值（#10）——浮在地圖上緣中央。 */
+.coord-readout {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid #6b2a52;
+  background: rgba(15, 23, 42, 0.95);
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  min-width: 12rem;
+}
+.coord-readout .cr-hd {
+  color: #f472b6;
+  font-size: 0.72rem;
+  margin-bottom: 0.3rem;
+}
+.coord-readout .cr-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.coord-readout .cr-row span {
+  color: #94a3b8;
+}
+.coord-readout code {
+  font-family: ui-monospace, monospace;
+  color: #e2e8f0;
+}
+.coord-readout .cr-hint {
+  color: #64748b;
+}
+
 /* 地圖編輯器面板（stage ③b）——浮在地圖左上。 */
 .map-editor {
   position: absolute;
