@@ -25,6 +25,7 @@ from app.api import (
     orders_router,
     scenarios_router,
     units_router,
+    users_router,
     ws_router,
 )
 from app.config import Settings
@@ -90,6 +91,7 @@ app.include_router(movement_router)
 app.include_router(orders_router)
 app.include_router(scenarios_router)
 app.include_router(units_router)
+app.include_router(users_router)
 app.include_router(intel_router)
 app.include_router(inject_router)
 app.include_router(control_router)

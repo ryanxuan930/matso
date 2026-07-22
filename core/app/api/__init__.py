@@ -14,6 +14,7 @@ from app.api.orbat import router as orbat_router
 from app.api.orders import router as orders_router
 from app.api.scenarios import router as scenarios_router
 from app.api.units import router as units_router
+from app.api.users import router as users_router
 from app.api.ws import router as ws_router
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "orders_router",
     "scenarios_router",
     "units_router",
+    "users_router",
     "ws_router",
 ]

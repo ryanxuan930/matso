@@ -97,6 +97,8 @@ components:
                 - FACTION_INVALID
                 - AI_DISABLED
                 - AI_OUTPUT_REJECTED
+                - USER_CONFLICT
+                - USER_NOT_FOUND
             message: { type: string }
             details: { type: object }
     UserRole:
@@ -140,6 +142,29 @@ components:
         id: { type: string }
         username: { type: string }
         role: { $ref: "#/components/schemas/UserRole" }
+    UserView:
+      type: object
+      description: 帳號管理列表項（#32）
+      required: [id, username, role]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        role: { $ref: "#/components/schemas/UserRole" }
+        created_at: { type: [string, "null"], description: 建立時間 ISO8601 }
+    CreateUserRequest:
+      type: object
+      description: 建立帳號（#32；白軍/管理設定角色與初始密碼）
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        role: { $ref: "#/components/schemas/UserRole" }
+    UpdateUserRequest:
+      type: object
+      description: 更新帳號角色（權限）或重設密碼（#32；None＝不動）
+      properties:
+        role: { $ref: "#/components/schemas/UserRole" }
+        password: { type: [string, "null"], minLength: 8, maxLength: 128 }
     SessionSummary:
       type: object
       description: lobby 列表項（faction/角色過濾後）
@@ -437,6 +462,62 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CurrentUser" }
         "401": { description: Unauthenticated, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /users:
+    get:
+      operationId: listUsers
+      security: [{ bearerAuth: [] }]
+      description: 帳號列表（#32）——限白軍/統裁/管理
+      responses:
+        "200":
+          description: All accounts
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/UserView" } }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      operationId: createUser
+      security: [{ bearerAuth: [] }]
+      description: 建立帳號（#32）——設定角色與初始密碼；限白軍/統裁/管理
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateUserRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserView" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Username exists, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /users/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    patch:
+      operationId: updateUser
+      security: [{ bearerAuth: [] }]
+      description: 更新帳號角色（權限）/ 重設密碼（#32）——限白軍/統裁/管理
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateUserRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserView" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Conflict, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteUser
+      security: [{ bearerAuth: [] }]
+      description: 刪除帳號（#32）——限白軍/統裁/管理；不可刪自己/最後管理員
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Conflict, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions:
     get:
       operationId: listSessions
