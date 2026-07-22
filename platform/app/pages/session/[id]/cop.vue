@@ -235,6 +235,10 @@ const editFeatSidc = ref('')
 const editFeatRange = ref<number | null>(null)
 const editFeatDir = ref(0)
 const editFeatArc = ref(360)
+// 選取當下的射程/方向/張角（供儲存時判斷是否真的改動 → 才失效地形裁切環）。
+const origRange = ref<number | null>(null)
+const origDir = ref(0)
+const origArc = ref(360)
 // 地形裁切（#11）：feature id → viewshed 環（後端逐方位 LOS）；套用中旗標。
 const terrainClips = ref<Record<string, number[][]>>({})
 const clipBusy = ref(false)
@@ -372,8 +376,8 @@ function onSelectScreenPos(p: { x: number; y: number } | null) {
 const unitCardStyle = computed(() => {
   const p = unitCardPos.value
   if (!p) return { display: 'none' }
-  const CW = 240
-  const CH = 300
+  const CW = 304 // ≈ 19rem
+  const CH = 320
   const vw = import.meta.client ? window.innerWidth : 1280
   const vh = import.meta.client ? window.innerHeight : 800
   let left = p.x + 18 // 圖標右側
@@ -646,6 +650,9 @@ function onFeatureClick(e: { id: string }) {
   editFeatRange.value = typeof f?.influence_radius_m === 'number' ? f.influence_radius_m : null
   editFeatDir.value = typeof a.direction_deg === 'number' ? a.direction_deg : 0
   editFeatArc.value = typeof a.arc_deg === 'number' ? a.arc_deg : 360
+  origRange.value = editFeatRange.value
+  origDir.value = editFeatDir.value
+  origArc.value = editFeatArc.value
 }
 const selectedFeature = computed(
   () => mapFeatures.value.find((f) => f.id === selectedFeatureId.value) ?? null,
@@ -741,7 +748,15 @@ async function saveFeatureEdit() {
       influence_radius_m: editFeatRange.value,
       attributes: attrs,
     })
-    clearTerrainClip(fid) // 射程/方向/張角變動 → 舊裁切環失效，需重新套用
+    // 只有射程/方向/張角真的變動才失效地形裁切環；否則（改名/顏色/備註）保留已套用的裁切。
+    const arcChanged =
+      editFeatRange.value !== origRange.value ||
+      editFeatDir.value !== origDir.value ||
+      editFeatArc.value !== origArc.value
+    if (arcChanged) clearTerrainClip(fid)
+    origRange.value = editFeatRange.value
+    origDir.value = editFeatDir.value
+    origArc.value = editFeatArc.value
     await loadFeatures()
     toasts.push({ severity: 'success', title: '已更新標註', timeoutMs: 2000 })
   } catch (e) {
@@ -1512,7 +1527,14 @@ watch(
             <template v-if="selectedFeature.kind === 'WEAPON_EMPLACEMENT' || editFeatRange != null">
               <div class="me-sub">射程 / 射向扇區</div>
               <div class="me-row2">
-                <label class="me-h">射程<input v-model.number="editFeatRange" type="number" min="0" step="50"> m</label>
+                <label class="me-h">射程<input
+                  v-model.number="editFeatRange"
+                  type="number"
+                  min="0"
+                  max="100000"
+                  step="50"
+                  style="width: 5.5rem"
+                > m</label>
                 <label class="me-h">方向<input v-model.number="editFeatDir" type="number" min="0" max="359"> °</label>
               </div>
               <label class="me-h" data-testid="edit-feat-arc">
@@ -2407,7 +2429,7 @@ watch(
 .unit-card {
   position: fixed;
   z-index: 45;
-  width: 15rem;
+  width: 19rem;
   max-height: calc(100vh - 64px);
   overflow-y: auto;
   padding: 0.75rem 0.875rem;

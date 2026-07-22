@@ -168,7 +168,7 @@ async function saveAmmo(inst: EquipmentInstance, ev: Event) {
   align-items: center;
 }
 .eq-ammo input {
-  width: 2.6rem;
+  width: 3.8rem;
   background: #0f172a;
   color: #e2e8f0;
   border: 1px solid #334155;
@@ -191,15 +191,31 @@ async function saveAmmo(inst: EquipmentInstance, ev: Event) {
 .eq-add {
   display: flex;
   gap: 0.3rem;
+  align-items: center;
 }
 .eq-add select {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0; /* 可縮，讓「加入」鈕不被擠出 */
   background: #0f172a;
   color: #e2e8f0;
   border: 1px solid #334155;
   border-radius: 0.25rem;
   padding: 0.2rem 0.3rem;
   font-size: 0.74rem;
+}
+.eq-add button {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+.eq-add button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .eq-add button {
   border: 1px solid #334155;
