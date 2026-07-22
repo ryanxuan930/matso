@@ -134,6 +134,7 @@ class SimManager:
                     DeterministicRNG(seed, "adjudication"),
                     resolver.weapon_for,
                     make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
+                    quantity_for=resolver.quantity_for,  # #30 squad 齊射
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,

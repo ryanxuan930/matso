@@ -76,6 +76,21 @@ async function saveAmmo(inst: EquipmentInstance, ev: Event) {
     busy.value = false
   }
 }
+// #30 建制數量：一件 instance 代表 N 件同型武器（如班內 7 支步槍）→ 驅動 squad 齊射火力。
+async function saveQty(inst: EquipmentInstance, ev: Event) {
+  const v = Math.max(1, Math.round(Number((ev.target as HTMLInputElement).value)))
+  if (!Number.isFinite(v)) return
+  busy.value = true
+  err.value = ''
+  try {
+    await editUnitEquipment(props.sessionId, props.unitId, inst.id, {}, v)
+    await load()
+  } catch (e) {
+    err.value = (e as { message?: string }).message ?? '更新失敗'
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -85,6 +100,19 @@ async function saveAmmo(inst: EquipmentInstance, ev: Event) {
         <span class="eq-name">{{ inst.name }}</span>
         <span class="eq-cat">{{ inst.category }}</span>
         <span v-if="rangeKm(inst.base_stats)" class="eq-dim">{{ rangeKm(inst.base_stats) }} km</span>
+        <label class="eq-qty" title="建制數量（班內同型武器件數，驅動 squad 齊射火力）">
+          ×
+          <input
+            v-if="canEdit"
+            type="number"
+            min="1"
+            step="1"
+            :value="inst.quantity ?? 1"
+            data-testid="eq-quantity"
+            @change="saveQty(inst, $event)"
+          >
+          <span v-else>{{ inst.quantity ?? 1 }}</span>
+        </label>
         <label v-if="ammoOf(inst) != null" class="eq-ammo">
           彈
           <input
@@ -160,20 +188,28 @@ async function saveAmmo(inst: EquipmentInstance, ev: Event) {
   flex: none;
   white-space: nowrap;
 }
-.eq-ammo {
+.eq-ammo,
+.eq-qty {
   flex: none;
   color: #94a3b8;
   display: inline-flex;
   gap: 0.15rem;
   align-items: center;
 }
-.eq-ammo input {
+.eq-qty {
+  color: #fbbf24;
+}
+.eq-ammo input,
+.eq-qty input {
   width: 3.8rem;
   background: #0f172a;
   color: #e2e8f0;
   border: 1px solid #334155;
   border-radius: 0.2rem;
   padding: 0.05rem 0.2rem;
+}
+.eq-qty input {
+  width: 3rem;
 }
 .eq-rm {
   flex: none;

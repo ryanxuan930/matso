@@ -125,6 +125,8 @@ class EquipmentInstance(Base):
         "ownerId", String(191), ForeignKey("TacticalUnit.id", ondelete="CASCADE")
     )
     current_state: Mapped[dict] = mapped_column("currentState", JSON, default=dict)  # type: ignore[type-arg]
+    # #30 建制數量：一個 instance 代表 N 件同型裝備（如班內 7 支步槍）；驅動 squad 火力容量。
+    quantity: Mapped[int] = mapped_column("quantity", Integer, default=1)
 
 
 class MapFeature(Base):

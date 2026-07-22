@@ -62,6 +62,9 @@ class WeaponResolver:
         self._by_weapon: dict[str, WeaponProfile] = {}
         self._primary: dict[str, WeaponProfile] = {}
         self._primary_ammo: dict[str, int] = {}
+        # #30 squad 火力容量：weapon 範本/實例 id → 建制數量；unit → 主武器建制數量。
+        self._qty_by_weapon: dict[str, int] = {}
+        self._primary_qty: dict[str, int] = {}
         self._build(db, session_id)
 
     def _build(self, db: Session, session_id: str) -> None:
@@ -72,6 +75,7 @@ class WeaponResolver:
             ).all()
             best: WeaponProfile | None = None
             best_ammo = 0
+            best_qty = 1
             for inst in instances:
                 tmpl = db.get(EquipmentTemplate, inst.template_id)
                 if tmpl is None or tmpl.category != "KINETIC":
@@ -82,13 +86,21 @@ class WeaponResolver:
                     continue  # baseStats 壞 → 略過
                 self._by_weapon[inst.template_id] = profile
                 self._by_weapon[inst.id] = profile  # COP weapon_id = 實例 id
+                qty = (
+                    int(inst.quantity)
+                    if isinstance(inst.quantity, int) and inst.quantity >= 1
+                    else 1
+                )
+                self._qty_by_weapon[inst.template_id] = qty
+                self._qty_by_weapon[inst.id] = qty
                 ammo = _ammo_of(inst)
                 # 主武器＝射程最遠者（活執行期最小版；未指定選武器時的預設）。
                 if best is None or profile.max_range_m > best.max_range_m:
-                    best, best_ammo = profile, ammo
+                    best, best_ammo, best_qty = profile, ammo, qty
             if best is not None:
                 self._primary[unit.id] = best
                 self._primary_ammo[unit.id] = best_ammo
+                self._primary_qty[unit.id] = best_qty
 
     def weapon_for(self, cmd: EngageCommand) -> WeaponProfile:
         if cmd.weapon_template_id and cmd.weapon_template_id in self._by_weapon:
@@ -98,6 +110,12 @@ class WeaponResolver:
     def primary_ammo(self, unit_id: str) -> int:
         """單位主武器初始彈藥（供熱狀態 seed；活執行期以單一 ammo 純量近似）。"""
         return self._primary_ammo.get(unit_id, 0)
+
+    def quantity_for(self, cmd: EngageCommand) -> int:
+        """射手選定武器的建制數量（#30）：honor 選武器，否則主武器；缺則 1（單體）。"""
+        if cmd.weapon_template_id and cmd.weapon_template_id in self._qty_by_weapon:
+            return self._qty_by_weapon[cmd.weapon_template_id]
+        return self._primary_qty.get(cmd.shooter_id, 1)
 
 
 def _ammo_of(inst: EquipmentInstance) -> int:

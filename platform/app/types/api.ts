@@ -702,9 +702,19 @@ export interface components {
             /** @description 即時狀態（如 {ammo:100}） */
             current_state: Record<string, never>;
             base_stats: Record<string, never>;
+            /**
+             * @description 建制數量（#30；班內同型武器件數，驅動 squad 齊射）
+             * @default 1
+             */
+            quantity: number;
         };
         AddEquipmentRequest: {
             template_id: string;
+            /**
+             * @description 配發件數（#30）
+             * @default 1
+             */
+            quantity: number;
         };
         /** @description 建立/更新裝備範本（武器屬性/功能）——base_stats 依 weaponeering.schema.json 驗證 */
         EquipmentTemplateEdit: {
@@ -818,6 +828,8 @@ export interface components {
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
             current_state: Record<string, never>;
+            /** @description 調整建制數量（#30；null＝不動） */
+            quantity?: number | null;
         };
         CreateSessionRequest: {
             name: string;

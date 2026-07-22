@@ -137,10 +137,10 @@ class UnitMovementSystem:
 
     def _targets(
         self,
-        payload: dict,
+        payload: dict[str, object],
         *,
         dest_h3: object,
-        h3mod: object,  # type: ignore[type-arg]
+        h3mod: object,
     ) -> list[tuple[float, float]]:
         """回傳依序前進的目標點 [(lng,lat), …]（不含起點）。waypoints 優先；否則單一目的地。"""
         wps = _waypoints_of(payload)

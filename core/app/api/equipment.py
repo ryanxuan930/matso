@@ -78,10 +78,12 @@ class EquipmentInstanceView(BaseModel):
     category: str
     current_state: dict[str, Any]
     base_stats: dict[str, Any]
+    quantity: int = 1  # #30 建制數量（班內同型武器件數；驅動 squad 齊射火力）
 
 
 class AddEquipmentRequest(BaseModel):
     template_id: str
+    quantity: int = 1  # #30 配發件數
 
 
 class EquipmentTemplateEdit(BaseModel):
@@ -92,6 +94,7 @@ class EquipmentTemplateEdit(BaseModel):
 
 class EquipmentStateEdit(BaseModel):
     current_state: dict[str, Any]
+    quantity: int | None = None  # #30 調整建制數量（None＝不動）
 
 
 def _view(inst: EquipmentInstance, tmpl: EquipmentTemplate) -> EquipmentInstanceView:
@@ -102,6 +105,7 @@ def _view(inst: EquipmentInstance, tmpl: EquipmentTemplate) -> EquipmentInstance
         category=tmpl.category,
         current_state=dict(inst.current_state or {}),
         base_stats=dict(tmpl.base_stats or {}),
+        quantity=int(inst.quantity or 1),
     )
 
 
@@ -255,7 +259,10 @@ def add_unit_equipment(
         )
     # KINETIC 武器配發時給初始彈藥，其餘裝備空狀態（後續可 PATCH）。
     state: dict[str, Any] = {"ammo": 100} if tmpl.category == "KINETIC" else {}
-    inst = EquipmentInstance(template_id=tmpl.id, owner_id=unit.id, current_state=state)
+    qty = max(1, int(req.quantity))
+    inst = EquipmentInstance(
+        template_id=tmpl.id, owner_id=unit.id, current_state=state, quantity=qty
+    )
     db.add(inst)
     db.commit()
     return _view(inst, tmpl)
@@ -278,6 +285,8 @@ def edit_unit_equipment(
     _require_edit(db, user, session, unit)
     inst = _instance_or_404(db, unit, eid)
     inst.current_state = {**(inst.current_state or {}), **edit.current_state}
+    if edit.quantity is not None:
+        inst.quantity = max(1, int(edit.quantity))
     db.commit()
     tmpl = db.get(EquipmentTemplate, inst.template_id)
     if tmpl is None:

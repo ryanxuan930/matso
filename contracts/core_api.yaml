@@ -209,11 +209,13 @@ components:
         category: { type: string }
         current_state: { type: object, description: "即時狀態（如 {ammo:100}）" }
         base_stats: { type: object }
+        quantity: { type: integer, default: 1, description: "建制數量（#30；班內同型武器件數，驅動 squad 齊射）" }
     AddEquipmentRequest:
       type: object
       required: [template_id]
       properties:
         template_id: { type: string }
+        quantity: { type: integer, default: 1, description: "配發件數（#30）" }
     EquipmentTemplateEdit:
       type: object
       description: 建立/更新裝備範本（武器屬性/功能）——base_stats 依 weaponeering.schema.json 驗證
@@ -315,6 +317,7 @@ components:
       required: [current_state]
       properties:
         current_state: { type: object, description: "覆寫此實例的即時狀態（如 {ammo:60}）" }
+        quantity: { type: [integer, "null"], description: "調整建制數量（#30；null＝不動）" }
     CreateSessionRequest:
       type: object
       required: [name]

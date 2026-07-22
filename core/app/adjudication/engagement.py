@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import enum
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,6 +34,11 @@ class Resolution(enum.StrEnum):
 class Shooter:
     unit_id: str
     ammo_count: int
+    # squad 火力容量（#30）：quantity＝同型武器/平台件數（如班內 7 支步槍）；effectiveness＝
+    # 射手單位當前效能（0..1，戰力比經效能曲線）。有效射手＝quantity×effectiveness。
+    # quantity==1 時走既有單發路徑（golden replay 不變）；>1 時走齊射（volume of fire）。
+    quantity: int = 1
+    effectiveness: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +79,8 @@ class EngagementResult:
     reason: str | None  # REJECTED 原因 code（NO_AMMO / OUT_OF_RANGE / NO_LOS）
     # 真實化交戰：走 strength 路徑時的命中後當前戰力（供 _apply 寫回 + AAR）；flat 路徑為 None。
     target_strength_after: float | None = None
+    # 本次消耗彈藥數（單發＝1；squad 齊射＝實際發射數，受彈藥封頂）。REJECTED＝0。
+    ammo_spent: int = 1
     events: list[LedgerEvent] = field(default_factory=list)
 
 
@@ -106,6 +114,15 @@ def resolve_engagement(
         * env.shooter_suppression_modifier
         * env.target_posture_modifier
     )
+
+    # squad 齊射（#30）：quantity>1 且目標有 strength 三欄 → 走「全員射擊」火力容量路徑。
+    can_volley = (
+        target.current_strength is not None
+        and target.authorized_strength is not None
+        and target.authorized_strength > 0.0
+    )
+    if shooter.quantity > 1 and can_volley:
+        return _resolve_volley(weapon, shooter, target, env, p_hit, coefficients, rng, tick)
 
     # [c] 擲骰
     roll = rng.random()
@@ -162,6 +179,92 @@ def resolve_engagement(
         coefficients=coefficients,
         reason=None,
         target_strength_after=strength_after,
+        ammo_spent=1,
+        events=[event],
+    )
+
+
+# squad 齊射的火力離散因子區間（單一 rng 抽樣）——代表交戰隨機性，期望≈1。
+_VOLLEY_DISPERSION = (0.8, 1.2)
+
+
+def _resolve_volley(
+    weapon: WeaponProfile,
+    shooter: Shooter,
+    target: Target,
+    env: EnvSnapshot,
+    p_hit: float,
+    coefficients: dict[str, float],
+    rng: DeterministicRNG,
+    tick: int,
+) -> EngagementResult:
+    """squad「全員射擊」火力容量路徑（#30）。
+
+    有效射手＝quantity×effectiveness；發射數＝有效射手×射速（受彈藥封頂）；期望命中＝發射數×p_hit；
+    期望毀傷＝期望命中×pk(裝甲)（平台當量）→ 乘每平台戰力＝戰力損失。以單一 rng 抽一個離散因子
+    （代表交戰隨機性），確保決定性且可重播。彈藥依實際發射數消耗。
+    """
+    authorized = target.authorized_strength or 100.0
+    platform_count = max(1, target.platform_count)
+    current = target.current_strength if target.current_strength is not None else authorized
+
+    eff_shooters = max(0.0, shooter.quantity * _clamp01(shooter.effectiveness))
+    rate = weapon.rate_per_tick if weapon.rate_per_tick > 0 else 1.0
+    intended_shots = eff_shooters * rate
+    shots_fired = min(intended_shots, float(shooter.ammo_count))
+    ammo_spent = math.ceil(shots_fired) if shots_fired > 0 else 0
+
+    dispersion = rng.uniform(*_VOLLEY_DISPERSION)  # 唯一隨機來源
+    expected_hits = shots_fired * p_hit * dispersion
+    pk = weapon.expected_casualties(target.armor_class)  # P(kill|hit) 0..1
+    expected_casualties = expected_hits * pk  # 平台當量
+    cp_per_platform = authorized / platform_count
+    raw_loss = expected_casualties * cp_per_platform
+    loss = min(raw_loss, current)  # 不可扣成負值
+    strength_after = max(0.0, current - loss)
+    health_after = effectiveness_pct(strength_after / authorized)
+    hit = loss > 0.0
+    status = Resolution.HIT if hit else Resolution.MISS
+
+    vol_coeffs = {
+        **coefficients,
+        "eff_shooters": round(eff_shooters, 3),
+        "shots_fired": round(shots_fired, 2),
+        "expected_hits": round(expected_hits, 3),
+        "pk": pk,
+        "dispersion": round(dispersion, 3),
+        "cp_per_platform": round(cp_per_platform, 3),
+        "strength_loss": round(loss, 3),
+        "strength_after": round(strength_after, 3),
+    }
+    ai_decision: dict[str, Any] = {
+        "status": status.value,
+        "p_hit": p_hit,
+        "mode": "VOLLEY",
+        "coefficients": vol_coeffs,
+        "target_health_after": health_after,
+        "target_strength_after": strength_after,
+        "ammo_spent": ammo_spent,
+    }
+    event = LedgerEvent(
+        event_type="ENGAGEMENT_RESOLVED",
+        tick=tick,
+        initiator_id=shooter.unit_id,
+        target_id=target.unit_id,
+        terrain_modifier=env.terrain_cover_modifier,
+        damage_calc=round(loss, 3),
+        ai_decision=ai_decision,
+    )
+    return EngagementResult(
+        status=status,
+        p_hit=p_hit,
+        roll=None,  # 齊射走期望值 + 離散因子，非單次 roll
+        damage=round(loss, 3),
+        target_health_after=health_after,
+        coefficients=vol_coeffs,
+        reason=None,
+        target_strength_after=strength_after,
+        ammo_spent=ammo_spent,
         events=[event],
     )
 
@@ -193,6 +296,7 @@ def _rejected(shooter: Shooter, target: Target, reason: str, tick: int) -> Engag
         target_health_after=target.health,
         coefficients={},
         reason=reason,
+        ammo_spent=0,  # 合法性未過 → 不消耗
         events=[event],
     )
 

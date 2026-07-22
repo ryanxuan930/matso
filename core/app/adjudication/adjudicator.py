@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.adjudication.effectiveness import interp_effectiveness
 from app.adjudication.engagement import (
     EngagementResult,
     EnvSnapshot,
@@ -49,6 +50,8 @@ class EngageCommand:
 
 # 武器查表：由整筆交戰命令解析（可依 weapon_template_id honor 操作員選武器，或退回單位主武器）。
 WeaponLookup = Callable[[EngageCommand], WeaponProfile]
+# squad 火力容量（#30）：由交戰命令解析射手選定武器的建制數量（>1 → 齊射）。
+QuantityLookup = Callable[[EngageCommand], int]
 
 
 class EngageOrderSource:
@@ -95,12 +98,15 @@ class EngagementAdjudicator:
         rng: DeterministicRNG,
         weapon_for: WeaponLookup,
         env_for: EngageEnvLookup,
+        quantity_for: QuantityLookup | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
         self._rng = rng
         self._weapon_for = weapon_for
         self._env_for = env_for
+        # #30 建制數量查表（None → 一律 1，走既有單發路徑；golden replay 不變）。
+        self._quantity_for = quantity_for
 
     def resolve(self, order: EngageCommand, now: SimTime) -> list[LedgerEvent]:
         shooter_state = self._hot.get_unit(order.shooter_id)
@@ -111,9 +117,19 @@ class EngagementAdjudicator:
 
         weapon = self._weapon_for(order)
         env = self._env_for(order.shooter_id, order.target_id, weapon.indirect_fire)
+        # #30 射手建制數量 + 效能：quantity>1 → 齊射（全員射擊）；effectiveness 由射手戰力比導出。
+        quantity = self._quantity_for(order) if self._quantity_for is not None else 1
+        s_auth = float(shooter_state.get("authorized_strength") or 100.0)
+        s_cur = float(shooter_state.get("strength") or shooter_state.get("health") or s_auth)
+        effectiveness = interp_effectiveness(s_cur / s_auth) if s_auth > 0 else 1.0
         result = resolve_engagement(
             weapon,
-            Shooter(unit_id=order.shooter_id, ammo_count=int(shooter_state.get("ammo", 0))),
+            Shooter(
+                unit_id=order.shooter_id,
+                ammo_count=int(shooter_state.get("ammo", 0)),
+                quantity=quantity,
+                effectiveness=effectiveness,
+            ),
             Target(
                 unit_id=order.target_id,
                 armor_class=str(target_state.get("armor_class", "INFANTRY")),
@@ -136,7 +152,8 @@ class EngagementAdjudicator:
         if result.status is Resolution.REJECTED:
             return  # 合法性未過（彈藥/射程/LOS）→ 不消耗、不變更
         ammo = int(self._hot.get_unit(order.shooter_id).get("ammo", 0))  # type: ignore[union-attr]
-        self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - 1)})
+        # 消耗實際發射彈藥（單發＝1；squad 齊射＝發射數）。
+        self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - result.ammo_spent)})
         if result.status is Resolution.HIT:
             patch: dict[str, float] = {"health": result.target_health_after}
             if result.target_strength_after is not None:

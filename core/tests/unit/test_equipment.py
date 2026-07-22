@@ -98,6 +98,31 @@ def test_white_add_list_patch_delete(session_factory: sessionmaker[Session]) -> 
     assert all(i["id"] != iid for i in r.json())
 
 
+def test_equipment_quantity_roundtrip(session_factory: sessionmaker[Session]) -> None:
+    # #30：配發時帶 quantity + PATCH 調整建制數量（squad 火力容量來源）。
+    world = seed_world(session_factory)
+    tids = _seed_templates(session_factory)
+    client = _client(session_factory)
+    base = _base(world, world.blue_unit_id)
+
+    r = client.post(
+        base, json={"template_id": tids["RIFLE_556"], "quantity": 7}, headers=_white(world)
+    )
+    assert r.status_code == 201, r.text
+    inst = r.json()
+    assert inst["quantity"] == 7
+    iid = inst["id"]
+
+    r = client.patch(
+        f"{base}/{iid}", json={"current_state": {}, "quantity": 9}, headers=_white(world)
+    )
+    assert r.status_code == 200 and r.json()["quantity"] == 9
+
+    # 預設不帶 quantity → 1。
+    r = client.post(base, json={"template_id": tids["RIFLE_556"]}, headers=_white(world))
+    assert r.json()["quantity"] == 1
+
+
 def test_commander_needs_orbat_permission(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     tids = _seed_templates(session_factory)
