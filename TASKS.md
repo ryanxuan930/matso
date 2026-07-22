@@ -200,6 +200,20 @@
 | O9.2 | Ingest P2：OCR fallback（本機 tesseract/PaddleOCR，模型檔 env 注入 + 缺失降級「僅文字層」）+ 節級信心分級 | 掃描頁 fixture → 產出含 confidence；低信心節進報告；斷網可跑（air-gapped） |
 | O9.3 | Ingest P3：表格轉換 + 告警註記、`report` 彙總、與 O6.3 入庫串接端到端 | inbox→staging→promote→ingest→檢索命中 全鏈路測試 |
 
+## O10 部署接線（M0–M9 功能已完成；本群組為「接真實執行期」；權威清單見 **docs/DEPLOYMENT.md**）
+
+> 全部接點皆為**注入式介面（程式碼已備）**——部署即接線，不改核心邏輯。依 A→B→E→D→C→F→G 順序。
+> 先做 O10.1 即可跑 **AI_OFF 傳統兵推**（不需 AI 節點）。
+
+| 任務 | 內容 | 驗收重點 |
+|------|------|----------|
+| O10.1 | Kernel 真實裝配（event_sink=LedgerWriter、hot_state=RedisHotState、broadcaster=RedisBroadcaster、tick_source=SimClock、wall_clock=PerfCounterClock；terrain/weather/comms gRPC client；聚合分流接 resolve_multiway_tick；DB 走 to_thread）+ 想定開局（lobby create_session→create_session_from_scenario） | 真 compose 跑一場 AI_OFF 傳統兵推：開局→移動→偵測→交戰→戰損入 Ledger→AAR 可讀；tick p99 達標 |
+| O10.2 | AI 節點部署（vLLM `OPENAI_BASE_URL`、bge-m3、Qdrant 服務；RecordingClient 錄 fixtures→CI ReplayClient；真模型 eval 手動 workflow 跑 §19.4 四門檻） | AI_FULL 下 OPFOR 產令經護欄；eval 四門檻達標；air-gapped 內網可跑 |
+| O10.3 | AI 迴路↔kernel（run_opfor_turn 接活：事件驅動→護欄→物理預檢→pending；intervention→Ledger）+ `WargameSession.aiMode` 欄位 migration + resolve/require_ai_enabled 接端點 | O3.6 想定 AI_BARE 下紅軍自主應對；AI_OFF 迴路不啟動（傳統兵推回歸）；護欄不可 bypass |
+| O10.4 | 想定/白軍執行期（relations 熱狀態 + set_relation→Ledger；MSEL 掛 kernel check_triggers；victory 判勝負；SESSION_CONTROL 消費→rollback recover；ENGAGE 目標改真 intel contacts；前端 faction 顏色由 scenario 注入） | White Cell 宣戰/停火即時生效並可重播；MSEL 條件觸發注入；rollback 復原正確；移除 STUB units affordance |
+| O10.5 | 安全補完（refresh token 撤銷/rotation + migration [C5]；建局角色 gate [C8]；管理 audit log） | refresh 撤銷後不可換發；非授權角色不可開演習；每角色×端點矩陣仍綠 |
+| O10.6 | OCR/資產 & 觀測性（tesseract/PaddleOCR 模型檔 env 注入；GRASS r.viewshed release 對照 ≥98%；Prometheus/Grafana §20.3 指標 + 告警；CI node24 升級 + 覆蓋率工具） | 掃描 PDF OCR 進 staging；Grafana 推演健康儀表板；TICK_OVERRUN/plugin DOWN/AI 逾時率告警 |
+
 ---
 
 ## 附錄：任務中斷與續作（額度用完時的保命機制）
