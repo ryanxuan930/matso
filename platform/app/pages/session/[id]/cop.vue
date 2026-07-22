@@ -107,6 +107,13 @@ function defaultWidgets(): Record<WidgetId, WStat> {
 const widgets = ref<Record<WidgetId, WStat>>(defaultWidgets())
 const widgetZTop = ref(20)
 const widgetMenuOpen = ref(false)
+const DOCK_W = 320 // 停靠側欄寬（含邊距）——供地圖控制項讓位
+const hasLeftDock = computed(() =>
+  WIDGET_DEFS.some((d) => widgets.value[d.id].open && widgets.value[d.id].dock === 'left'),
+)
+const hasRightDock = computed(() =>
+  WIDGET_DEFS.some((d) => widgets.value[d.id].open && widgets.value[d.id].dock === 'right'),
+)
 function focusWidget(id: WidgetId) {
   widgetZTop.value += 1
   widgets.value[id].z = widgetZTop.value
@@ -356,8 +363,29 @@ async function refresh() {
 }
 
 // 清空選取與下令子狀態（#6 點空白取消選取 / 選新單位前重置）。
+// Unit 資訊卡懸浮位置（#Fix C）：MapCanvas 投影選取單位螢幕座標 → 卡片浮於圖標旁。
+const unitCardPos = ref<{ x: number; y: number } | null>(null)
+function onSelectScreenPos(p: { x: number; y: number } | null) {
+  unitCardPos.value = p
+}
+// 卡片實際定位：圖標右上方偏移，並夾在視窗內（避免超出邊界；卡片約 240×300）。
+const unitCardStyle = computed(() => {
+  const p = unitCardPos.value
+  if (!p) return { display: 'none' }
+  const CW = 240
+  const CH = 300
+  const vw = import.meta.client ? window.innerWidth : 1280
+  const vh = import.meta.client ? window.innerHeight : 800
+  let left = p.x + 18 // 圖標右側
+  let top = p.y - 10
+  if (left + CW > vw - 8) left = p.x - CW - 18 // 右側放不下 → 移到圖標左側
+  if (left < 8) left = 8
+  top = Math.min(Math.max(56, top), vh - CH - 8)
+  return { left: `${left}px`, top: `${top}px` }
+})
 function clearSelection() {
   selectedId.value = null
+  unitCardPos.value = null
   precheck.value = null
   message.value = ''
   destH3.value = null
@@ -1037,7 +1065,7 @@ watch(
       <div id="dock-right-col" class="dock-col right" />
       <ClientOnly>
       <Teleport
-        to="#dock-right-col"
+        :to="widgets.units.dock === 'left' ? '#dock-left-col' : '#dock-right-col'"
         :disabled="widgets.units.dock === 'float'"
       >
       <FloatingWidget
@@ -1135,7 +1163,10 @@ watch(
       </FloatingWidget>
       </Teleport>
 
-      <Teleport to="#dock-right-col" :disabled="widgets.events.dock === 'float'">
+      <Teleport
+        :to="widgets.events.dock === 'left' ? '#dock-left-col' : '#dock-right-col'"
+        :disabled="widgets.events.dock === 'float'"
+      >
       <FloatingWidget
         v-if="widgets.events.open"
         title="戰況事件"
@@ -1158,7 +1189,10 @@ watch(
       </FloatingWidget>
       </Teleport>
 
-      <Teleport to="#dock-right-col" :disabled="widgets.orders.dock === 'float'">
+      <Teleport
+        :to="widgets.orders.dock === 'left' ? '#dock-left-col' : '#dock-right-col'"
+        :disabled="widgets.orders.dock === 'float'"
+      >
       <FloatingWidget
         v-if="widgets.orders.open"
         title="指令"
@@ -1199,7 +1233,13 @@ watch(
       </Teleport>
       </ClientOnly>
 
-      <div class="map-wrap">
+      <div
+        class="map-wrap"
+        :style="{
+          '--ldock': hasLeftDock ? `${DOCK_W}px` : '0px',
+          '--rdock': hasRightDock ? `${DOCK_W}px` : '0px',
+        }"
+      >
         <ClientOnly>
           <MapCanvas
             :hex-visible="hex"
@@ -1238,6 +1278,7 @@ watch(
             :targeting="targeting"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
+            @select-screen-pos="onSelectScreenPos"
             @feature-click="onFeatureClick"
             @feature-move="onFeatureMove"
             @basemap-error="onBasemapError"
@@ -1537,8 +1578,14 @@ watch(
         </Teleport>
         </ClientOnly>
 
-        <!-- 單位詳細資訊圖卡（#5）：點單位顯示血量/狀態/座標/武器；點空白取消（#6）。 -->
-        <div v-if="selectedUnit" class="unit-card" data-testid="unit-detail-card">
+        <!-- 單位詳細資訊圖卡（#5）：懸浮於選取圖標旁（#Fix C），非固定左下。 -->
+        <div
+          v-if="selectedUnit"
+          class="unit-card"
+          :class="{ 'card-anchored': !!unitCardPos }"
+          :style="unitCardStyle"
+          data-testid="unit-detail-card"
+        >
           <button class="card-close" data-testid="card-close" title="關閉（取消選取）" @click="clearSelection">
             ✕
           </button>
@@ -1747,7 +1794,7 @@ watch(
 }
 .map-notice {
   position: absolute;
-  left: 1rem;
+  left: calc(1rem + var(--ldock, 0));
   bottom: 1rem;
   z-index: 10;
   max-width: 22rem;
@@ -1769,10 +1816,10 @@ watch(
   color: #7dd3fc;
   font-size: 0.7rem;
 }
-/* 線寬設定觸發鈕（#5）——地圖右下角浮動。 */
+/* 線寬設定觸發鈕（#5）——地圖右下角浮動（停靠側欄存在時右移讓位）。 */
 .linewidth-btn {
   position: absolute;
-  right: 1rem;
+  right: calc(1rem + var(--rdock, 0));
   bottom: 3.4rem;
   z-index: 11;
   padding: 0.3rem 0.55rem;
@@ -2103,6 +2150,17 @@ watch(
   position: relative;
   flex: 1;
 }
+/* 停靠側欄存在時，地圖控制項/比例尺/線寬鈕自動讓位到未被遮蔽處（--ldock / --rdock）。 */
+.map-wrap :deep(.maplibregl-ctrl-top-left),
+.map-wrap :deep(.maplibregl-ctrl-bottom-left) {
+  margin-left: var(--ldock, 0);
+  transition: margin 0.12s ease;
+}
+.map-wrap :deep(.maplibregl-ctrl-top-right),
+.map-wrap :deep(.maplibregl-ctrl-bottom-right) {
+  margin-right: var(--rdock, 0);
+  transition: margin 0.12s ease;
+}
 /* 座標查詢讀值（#10）——浮在地圖上緣中央。 */
 .coord-readout {
   position: absolute;
@@ -2345,19 +2403,33 @@ watch(
 }
 
 /* 單位詳細資訊圖卡（#5）——浮在地圖左下。 */
+/* Unit 資訊卡：懸浮於選取圖標旁（#Fix C；定位由 inline unitCardStyle 提供 fixed left/top）。 */
 .unit-card {
-  position: absolute;
-  left: 1rem;
-  bottom: 1rem;
-  z-index: 11;
-  width: 16.5rem;
+  position: fixed;
+  z-index: 45;
+  width: 15rem;
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
   padding: 0.75rem 0.875rem;
   border-radius: 0.5rem;
   border: 1px solid #1e3a5f;
-  background: rgba(15, 23, 42, 0.95);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   font-size: 0.78rem;
   color: #e2e8f0;
+}
+/* 錨定時附一條指向圖標的小尾巴（左側）。 */
+.unit-card.card-anchored::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 14px;
+  width: 10px;
+  height: 10px;
+  background: rgba(15, 23, 42, 0.96);
+  border-left: 1px solid #1e3a5f;
+  border-bottom: 1px solid #1e3a5f;
+  transform: rotate(45deg);
 }
 .unit-card .card-close {
   position: absolute;

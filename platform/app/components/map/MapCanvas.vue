@@ -27,6 +27,8 @@ const emit = defineEmits<{
     { x: number; y: number; lng: number; lat: number; unitId?: string; faction?: string; kind?: string },
   ]
   featureMove: [{ id: string; lng: number; lat: number }] // 拖放移動點特徵（#11 B2）
+  // 選取單位的螢幕座標（供 Unit 資訊卡懸浮於圖標旁；地圖平移/縮放即時更新；無選取→null）。
+  selectScreenPos: [{ x: number; y: number } | null]
 }>()
 
 type Fc = { type: 'FeatureCollection'; features: unknown[] }
@@ -814,6 +816,8 @@ onMounted(async () => {
   // 滑過單位符號時游標變手指（可點示意）；設定目標中則維持十字準星（#3）。
   map.on('mouseenter', 'units', () => { if (map && !props.targeting) map.getCanvas().style.cursor = 'pointer' })
   map.on('mouseleave', 'units', () => { if (map && !props.targeting) map.getCanvas().style.cursor = '' })
+  // Unit 資訊卡懸浮：地圖移動/縮放時即時更新選取單位的螢幕座標（#Fix C）。
+  map.on('move', emitSelectPos)
   // 拖放移動點特徵（#11 B2）：在選取的點特徵上按下 → 拖曳 → 放開，emit 新座標由上層 PATCH。
   const featLayers = () =>
     ['mapfeat-point', 'mapfeat-symbol'].filter((l) => map?.getLayer(l))
@@ -918,6 +922,22 @@ watch(
   [() => props.hexLineWidth, () => props.contourMajorWidth, () => props.contourMinorWidth],
   applyLineWidths,
 ) // #5 線條粗細
+// 選取單位的螢幕座標 → emit（供 Unit 資訊卡懸浮於圖標旁）。地圖平移/縮放時亦即時重算。
+function emitSelectPos() {
+  const v = props.selectedId
+  if (!v || !map) {
+    emit('selectScreenPos', null)
+    return
+  }
+  const u =
+    props.ownUnits.find((o) => o.id === v) ?? props.contacts.find((c) => c.contactId === v)
+  if (!u) {
+    emit('selectScreenPos', null)
+    return
+  }
+  const p = map.project([u.lng, u.lat])
+  emit('selectScreenPos', { x: p.x, y: p.y })
+}
 watch(
   () => props.selectedId,
   (v) => {
@@ -930,6 +950,7 @@ watch(
         props.contacts.find((c) => c.contactId === v)
       if (u) map.flyTo({ center: [u.lng, u.lat], zoom: Math.max(map.getZoom(), 11), duration: 600 })
     }
+    emitSelectPos()
   },
 )
 watch(
