@@ -102,10 +102,10 @@ function move(key: string, dir: -1 | 1) {
     </div>
     <div v-if="contour && contourEnabled" class="intervals">
       <label>主等高線（粗）
-        <input v-model.number="contourMajor" type="number" min="10" step="10" data-testid="contour-major"> m
+        <input v-model.number="contourMajor" type="number" min="25" step="25" data-testid="contour-major"> m
       </label>
       <label>次等高線（細）
-        <input v-model.number="contourMinor" type="number" min="10" step="10" data-testid="contour-minor"> m
+        <input v-model.number="contourMinor" type="number" min="25" step="25" data-testid="contour-minor"> m
       </label>
     </div>
 
