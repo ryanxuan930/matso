@@ -170,7 +170,37 @@ export function genCircle(lng: number, lat: number, radiusM: number, steps = 48)
   return ring
 }
 
-/** 影響範圍圓（點/線的第一點為中心）→ GeoJSON 多邊形集。 */
+/** 由中心 + 半徑 + 方向 + 張角生成扇形環（武器射向/雷達扇區，#11）。方向：0=正北、順時針度數。 */
+export function genSector(
+  lng: number,
+  lat: number,
+  radiusM: number,
+  dirDeg: number,
+  arcDeg: number,
+  steps = 32,
+): number[][] {
+  const latR = (radiusM / 6378137) * (180 / Math.PI)
+  const lngR = latR / Math.cos((lat * Math.PI) / 180)
+  const start = dirDeg - arcDeg / 2
+  const ring: number[][] = [[lng, lat]]
+  for (let i = 0; i <= steps; i++) {
+    const b = ((start + (arcDeg * i) / steps) * Math.PI) / 180 // 方位角（北為 0、順時針）
+    ring.push([lng + lngR * Math.sin(b), lat + latR * Math.cos(b)])
+  }
+  ring.push([lng, lat])
+  return ring
+}
+
+/** 特徵的方向/張角（attributes；武器射向扇區、雷達扇區）。無張角或 ≥360 → 全圓。 */
+function sectorParams(f: MapFeature): { dir: number; arc: number } | null {
+  const a = f.attributes as Record<string, unknown> | undefined
+  const arc = typeof a?.arc_deg === 'number' ? a.arc_deg : NaN
+  if (!Number.isFinite(arc) || arc <= 0 || arc >= 360) return null
+  const dir = typeof a?.direction_deg === 'number' ? a.direction_deg : 0
+  return { dir, arc }
+}
+
+/** 影響/射程範圍（武器扇區/射程圓、雷達探測圓/扇區）——點/線第一點為中心 → GeoJSON 多邊形集。 */
 export function influenceToFc(features: MapFeature[]): FC {
   const out: unknown[] = []
   for (const f of features) {
@@ -179,10 +209,14 @@ export function influenceToFc(features: MapFeature[]): FC {
     const center =
       f.geometry_type === 'POINT' ? (g as number[]) : ((g as number[][])?.[0] ?? null)
     if (!center) continue
+    const sec = sectorParams(f)
+    const ring = sec
+      ? genSector(center[0]!, center[1]!, f.influence_radius_m, sec.dir, sec.arc)
+      : genCircle(center[0]!, center[1]!, f.influence_radius_m)
     out.push({
       type: 'Feature',
-      properties: { id: f.id, color: featureColor(f.kind) },
-      geometry: { type: 'Polygon', coordinates: [genCircle(center[0]!, center[1]!, f.influence_radius_m)] },
+      properties: { id: f.id, color: featureDisplayColor(f) },
+      geometry: { type: 'Polygon', coordinates: [ring] },
     })
   }
   return { type: 'FeatureCollection', features: out }

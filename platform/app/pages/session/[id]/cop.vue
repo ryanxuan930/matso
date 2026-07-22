@@ -137,6 +137,10 @@ const editFeatColor = ref('')
 const editFeatNotes = ref('')
 const editFeatHeight = ref<number | null>(null)
 const editFeatSidc = ref('')
+// 武器射向/雷達扇區（#11 Chunk C）：射程(m) + 方向(度) + 張角(度，360=全向)。
+const editFeatRange = ref<number | null>(null)
+const editFeatDir = ref(0)
+const editFeatArc = ref(360)
 const weaponTemplates = ref<EquipmentTemplate[]>([])
 const orders = ref<OrderResponse[]>([])
 const selectedId = ref<string | null>(null)
@@ -517,10 +521,29 @@ function onFeatureClick(e: { id: string }) {
   editFeatNotes.value = typeof a.notes === 'string' ? a.notes : ''
   editFeatHeight.value = typeof a.height_m === 'number' ? a.height_m : null
   editFeatSidc.value = typeof a.sidc === 'string' ? a.sidc : ''
+  editFeatRange.value = typeof f?.influence_radius_m === 'number' ? f.influence_radius_m : null
+  editFeatDir.value = typeof a.direction_deg === 'number' ? a.direction_deg : 0
+  editFeatArc.value = typeof a.arc_deg === 'number' ? a.arc_deg : 360
 }
 const selectedFeature = computed(
   () => mapFeatures.value.find((f) => f.id === selectedFeatureId.value) ?? null,
 )
+// 拖放移動點特徵（#11 B2）：MapCanvas emit 新座標 → PATCH 幾何 → 重載。
+async function onFeatureMove(e: { id: string; lng: number; lat: number }) {
+  const f = mapFeatures.value.find((x) => x.id === e.id)
+  if (!f || f.geometry_type !== 'POINT') return
+  try {
+    await editMapFeature(sessionId.value, e.id, { geometry: [e.lng, e.lat] })
+    await loadFeatures()
+  } catch (err) {
+    toasts.push({
+      severity: 'error',
+      title: '移動失敗',
+      detail: (err as { message?: string }).message,
+      timeoutMs: 0,
+    })
+  }
+}
 async function saveFeatureEdit() {
   const fid = selectedFeatureId.value
   if (!fid) return
@@ -534,9 +557,18 @@ async function saveFeatureEdit() {
   else delete attrs.height_m
   if (editFeatSidc.value) attrs.sidc = editFeatSidc.value
   else delete attrs.sidc
+  // 武器射向/雷達扇區（#11 C）：張角 <360 才存方向/張角（否則全向圓）。
+  if (editFeatArc.value > 0 && editFeatArc.value < 360) {
+    attrs.direction_deg = editFeatDir.value
+    attrs.arc_deg = editFeatArc.value
+  } else {
+    delete attrs.direction_deg
+    delete attrs.arc_deg
+  }
   try {
     await editMapFeature(sessionId.value, fid, {
       label: editFeatLabel.value.trim() || null,
+      influence_radius_m: editFeatRange.value,
       attributes: attrs,
     })
     await loadFeatures()
@@ -965,6 +997,7 @@ watch(
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @feature-click="onFeatureClick"
+            @feature-move="onFeatureMove"
             @basemap-error="onBasemapError"
             @context-menu="onContextMenu"
           />
@@ -1153,6 +1186,18 @@ watch(
             >
               <option v-for="s in NATO_SYMBOLS" :key="s.sidc" :value="s.sidc">🎖 {{ s.label }}</option>
             </select>
+            <!-- 武器射向/雷達扇區（#11 C）：射程 + 方向 + 張角（360=全向圓）。 -->
+            <template v-if="selectedFeature.kind === 'WEAPON_EMPLACEMENT' || editFeatRange != null">
+              <div class="me-sub">射程 / 射向扇區</div>
+              <div class="me-row2">
+                <label class="me-h">射程<input v-model.number="editFeatRange" type="number" min="0" step="50"> m</label>
+                <label class="me-h">方向<input v-model.number="editFeatDir" type="number" min="0" max="359"> °</label>
+              </div>
+              <label class="me-h" data-testid="edit-feat-arc">
+                張角 {{ editFeatArc }}°（360＝全向）
+                <input v-model.number="editFeatArc" type="range" min="10" max="360" step="5" style="width: 100%">
+              </label>
+            </template>
             <input v-model="editFeatNotes" class="me-in" data-testid="edit-feat-notes" placeholder="備註">
             <button class="me-save" data-testid="save-feat-edit" @click="saveFeatureEdit">儲存屬性</button>
           </div>
