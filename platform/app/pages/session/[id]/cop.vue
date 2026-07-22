@@ -5,7 +5,15 @@ import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrder
 import type { ApiError } from '~/composables/useApi'
 import { apiFetch } from '~/composables/useApi'
 import { buildBasemapSources } from '~/composables/useMapStyle'
-import { cancelOrder, fetchOrders, fetchUnits, fetchWeapons, submitOrder } from '~/composables/useOrders'
+import {
+  cancelOrder,
+  fetchOrders,
+  fetchUnits,
+  fetchWeapons,
+  orderStatusLabel,
+  orderTypeLabel,
+  submitOrder,
+} from '~/composables/useOrders'
 
 // COP（SPEC §13.1/§13.4）：地圖基座（O4.2）+ 單位/fog of war（O4.4）+ 下令 UX（O4.5）。
 const route = useRoute()
@@ -286,11 +294,19 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => stream.disconnect())
 
-// 圖層偏好持久化（#9）：載入 → 存檔（跨重整保留操作員的 COP 設定）。
+// 圖層/底圖偏好持久化（#3/#9）：載入 → 存檔（跨換頁/重整保留操作員的 COP 設定：
+// 開啟的圖層、底圖、透明度、套疊順序、等高線間距）。
 onMounted(() => {
   if (!import.meta.client) return
   try {
     const p = JSON.parse(localStorage.getItem(LAYER_PREFS_KEY) ?? '{}')
+    if (typeof p.hex === 'boolean') hex.value = p.hex
+    if (typeof p.hillshade === 'boolean') hillshade.value = p.hillshade
+    if (typeof p.contour === 'boolean') contour.value = p.contour
+    // 底圖：僅在該來源仍存在時還原（線上底圖可能已關閉 → 回退預設）。
+    if (typeof p.basemap === 'string' && basemapSources.some((s) => s.id === p.basemap)) {
+      basemap.value = p.basemap
+    }
     if (p.layerOpacity) layerOpacity.value = { ...layerOpacity.value, ...p.layerOpacity }
     if (Array.isArray(p.layerOrder) && p.layerOrder.length) layerOrder.value = p.layerOrder
     if (typeof p.contourMajor === 'number') contourMajor.value = p.contourMajor
@@ -300,13 +316,17 @@ onMounted(() => {
   }
 })
 watch(
-  [layerOpacity, layerOrder, contourMajor, contourMinor],
+  [hex, hillshade, contour, basemap, layerOpacity, layerOrder, contourMajor, contourMinor],
   () => {
     if (!import.meta.client) return
     try {
       localStorage.setItem(
         LAYER_PREFS_KEY,
         JSON.stringify({
+          hex: hex.value,
+          hillshade: hillshade.value,
+          contour: contour.value,
+          basemap: basemap.value,
           layerOpacity: layerOpacity.value,
           layerOrder: layerOrder.value,
           contourMajor: contourMajor.value,
@@ -324,7 +344,7 @@ watch(
 <template>
   <div class="cop">
     <header class="cop-bar">
-      <button data-testid="back-lobby" @click="back">← 大廳</button>
+      <button data-testid="back-lobby" @click="back">← 系統首頁</button>
       <span class="sid" data-testid="cop-session">Session {{ sessionId }}</span>
       <span class="count" data-testid="unit-count">單位 {{ ownUnits.length }}</span>
       <nav class="cop-nav">
@@ -358,8 +378,8 @@ watch(
         <div v-if="selectedId" class="order" data-testid="order-panel">
           <h3>下令 · <span class="selunit" data-testid="selected-unit">{{ selectedUnit?.designation ?? selectedId }}</span></h3>
           <select v-model="orderType" data-testid="order-type">
-            <option value="MOVE">移動 MOVE</option>
-            <option value="ENGAGE">攻擊 ENGAGE</option>
+            <option value="MOVE">移動</option>
+            <option value="ENGAGE">交戰</option>
           </select>
           <template v-if="orderType === 'MOVE'">
             <button data-testid="pick-dest" :class="{ armed: targeting }" @click="targeting = true">
@@ -397,7 +417,7 @@ watch(
             :disabled="orderType === 'MOVE' ? !destH3 : !targetUnitId"
             @click="submit"
           >
-            {{ orderType === 'MOVE' ? '送出移動' : '送出攻擊' }}
+            {{ orderType === 'MOVE' ? '送出移動' : '送出交戰' }}
           </button>
           <p v-if="message" data-testid="order-message">{{ message }}</p>
           <div v-if="precheck" class="precheck" data-testid="precheck">
@@ -417,15 +437,15 @@ watch(
           <li v-for="(e, i) in streamEvents" :key="i" data-testid="event-row">
             {{ (e.payload as Record<string, unknown>)?.event_type }}
             <span v-if="(e.payload as Record<string, unknown>)?.order_type">
-              · {{ (e.payload as Record<string, unknown>).order_type }}</span>
+              · {{ orderTypeLabel(String((e.payload as Record<string, unknown>).order_type)) }}</span>
           </li>
           <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
         </ul>
 
-        <h3>指令（pending / 歷史）</h3>
+        <h3>指令（等待中 / 歷史）</h3>
         <ul class="orders" data-testid="order-list">
           <li v-for="o in orders" :key="o.id" data-testid="order-row">
-            {{ o.order_type }} · {{ o.status }}
+            {{ orderTypeLabel(o.order_type) }} · {{ orderStatusLabel(o.status) }}
             <button
               v-if="o.status === 'VALIDATED' || o.status === 'PENDING'"
               data-testid="cancel-order"

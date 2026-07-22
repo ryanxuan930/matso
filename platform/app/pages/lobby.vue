@@ -51,7 +51,7 @@ async function createFromScenario() {
   try {
     await apiFetch<SessionSummary>('/sessions', {
       method: 'POST',
-      body: { name: '想定局', scenario_id: selectedScenarioId.value },
+      body: { name: '劇本局', scenario_id: selectedScenarioId.value },
     })
     selectedScenarioId.value = ''
     await refresh()
@@ -74,14 +74,14 @@ onMounted(async () => {
 <template>
   <main class="lobby">
     <header>
-      <h1>推演大廳</h1>
+      <h1>系統首頁</h1>
       <div class="who">
         <a
           v-if="canEditScenario"
           class="help"
           href="/scenario-editor"
           data-testid="nav-scenario-editor"
-        >想定編輯器</a>
+        >劇本編輯器</a>
         <a class="help" href="/help">操作教學</a>
         <span v-if="auth.user" data-testid="current-user">{{ auth.user.username }}（{{ auth.user.role }}）</span>
         <button data-testid="logout" @click="onLogout">登出</button>
@@ -95,7 +95,7 @@ onMounted(async () => {
 
     <section v-if="canEditScenario && scenarios.length" class="create" data-testid="scenario-create">
       <select v-model="selectedScenarioId" data-testid="scenario-select" class="sc-select">
-        <option value="">選想定開局…</option>
+        <option value="">選劇本開局…</option>
         <option v-for="s in scenarios" :key="s.id" :value="s.id">{{ s.name }} · v{{ s.version }}</option>
       </select>
       <button
@@ -103,7 +103,7 @@ onMounted(async () => {
         :disabled="creating || !selectedScenarioId"
         @click="createFromScenario"
       >
-        從想定建立
+        從劇本建立
       </button>
     </section>
 

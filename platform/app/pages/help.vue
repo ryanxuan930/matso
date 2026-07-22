@@ -7,7 +7,7 @@ definePageMeta({ public: true })
   <main class="help">
     <header>
       <h1>MATSO 操作教學</h1>
-      <a class="back" href="/lobby">← 返回大廳</a>
+      <a class="back" href="/lobby">← 返回系統首頁</a>
     </header>
 
     <section>

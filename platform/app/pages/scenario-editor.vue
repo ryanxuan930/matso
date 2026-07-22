@@ -136,8 +136,8 @@ async function saveToServer() {
 <template>
   <div class="editor" data-testid="scenario-editor">
     <header class="sc-bar">
-      <Button data-testid="sc-back-lobby" size="small" text @click="navigateTo('/lobby')">← 大廳</Button>
-      <h1>想定編輯器</h1>
+      <Button data-testid="sc-back-lobby" size="small" text @click="navigateTo('/lobby')">← 系統首頁</Button>
+      <h1>劇本編輯器</h1>
       <Button data-testid="sc-save" class="sc-save-btn" size="small" :disabled="saving" @click="saveToServer">
         {{ saving ? '存檔中…' : '存到伺服器' }}
       </Button>

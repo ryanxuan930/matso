@@ -29,7 +29,7 @@ async function loadUnits() {
 }
 
 async function control(action: ControlAction) {
-  const target = action === 'ROLLBACK' ? Number(prompt('回滾到哪個 tick？') ?? 0) : undefined
+  const target = action === 'ROLLBACK' ? Number(prompt('回放到哪個 tick？') ?? 0) : undefined
   try {
     await sessionControl(sessionId, action, target)
     status.value = `已送出 ${action}`
@@ -132,7 +132,7 @@ watch(viewpoint, loadUnits)
       <div>
         <h2>視角</h2>
         <select v-model="viewpoint" data-testid="viewpoint">
-          <option value="">全知（God View）</option>
+          <option value="">總覽</option>
           <option v-for="f in factions" :key="f" :value="f">{{ f }} 視角</option>
         </select>
         <span data-testid="unit-count">{{ units.length }} 單位</span>
@@ -141,7 +141,7 @@ watch(viewpoint, loadUnits)
         <h2>時間控制</h2>
         <button data-testid="pause" @click="control('PAUSE')">⏸ 暫停</button>
         <button data-testid="resume" @click="control('RESUME')">▶ 續行</button>
-        <button data-testid="rollback" @click="control('ROLLBACK')">⏪ 回滾</button>
+        <button data-testid="rollback" @click="control('ROLLBACK')">回放</button>
       </div>
       <div class="inject-box">
         <h2>注入事件</h2>
@@ -167,7 +167,7 @@ watch(viewpoint, loadUnits)
     </section>
 
     <section>
-      <h2>單位（{{ viewpoint || '全知' }}）— 點選編輯</h2>
+      <h2>單位（{{ viewpoint || '總覽' }}）— 點選編輯</h2>
       <ul data-testid="wc-unit-list" class="units">
         <li
           v-for="u in units"
