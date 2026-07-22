@@ -85,6 +85,9 @@ def test_engage_blocked_los_infeasible(session_factory: sessionmaker[Session]) -
         )
     assert not result.feasible
     assert precheck_error_code(result) == "ORDER_NO_LOS"
+    # 可解釋：說明含「地形遮蔽」+ 遮蔽點座標 + 高出視線的公尺數（#2 使用者回報「看不出原因」）。
+    detail = result.checks[0].detail or ""
+    assert "地形遮蔽" in detail and "23.7000" in detail and "5 m" in detail
 
 
 def test_engage_unknown_target_infeasible(session_factory: sessionmaker[Session]) -> None:

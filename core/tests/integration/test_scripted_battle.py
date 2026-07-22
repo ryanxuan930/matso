@@ -42,6 +42,7 @@ from app.models.enums import IntelFidelity, UnitLevel, UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, User, WargameSession
 from app.movement.db_store import DbOrderStore
 from app.movement.system import MovementSystem
+from app.orders.precheck import LosOutcome
 from app.orders.schemas import OrderRequest, OrderType
 from app.orders.service import OrderService
 from app.state.hot_state import InMemoryHotState
@@ -137,8 +138,8 @@ class _FakeGateway:  # PhysicsGateway（precheck 用）：路徑可達、有視�
 
     def has_los(
         self, observer: tuple[float, float, float], target: tuple[float, float, float]
-    ) -> tuple[bool, float]:
-        return True, 100.0
+    ) -> LosOutcome:
+        return LosOutcome(True, 100.0)
 
 
 class _FixedPlanner:
