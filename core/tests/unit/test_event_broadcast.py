@@ -4,8 +4,20 @@ from __future__ import annotations
 
 import pytest
 
-from app.state.broadcaster import CollectingBroadcaster, build_event_envelope
+from app.state.broadcaster import (
+    CollectingBroadcaster,
+    build_clock_envelope,
+    build_event_envelope,
+)
 from app.state.ledger import LedgerEvent
+
+
+def test_clock_envelope_carries_top_level_tick() -> None:
+    # 牆鐘心跳：頂層 tick（前端據此更新牆鐘，閒置不凍結）。
+    env = build_clock_envelope(7, 354)
+    assert env["type"] == "CLOCK"
+    assert env["tick"] == 354  # 頂層 tick（非埋在 payload）
+    assert env["seq"] == 7
 
 
 def test_event_envelope_shape_for_engagement() -> None:

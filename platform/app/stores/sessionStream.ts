@@ -90,6 +90,12 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
         await apiFetch(`/sessions/${sessionId}/state`).catch(() => undefined)
         lastSeq.value = null
         break
+      case 'CLOCK':
+        // 閒置心跳：頂層 tick 已於上方更新牆鐘；seq 取單調最大，不塞入事件列。
+        if (typeof env.seq === 'number') {
+          lastSeq.value = lastSeq.value === null ? env.seq : Math.max(lastSeq.value, env.seq)
+        }
+        break
       case 'STATE_DIFF': {
         if (typeof env.seq === 'number') {
           lastSeq.value = lastSeq.value === null ? env.seq : Math.max(lastSeq.value, env.seq)

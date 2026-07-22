@@ -53,6 +53,15 @@ def build_state_diff_envelope(seq: int, tick: int, diff: SessionDiff) -> dict[st
     }
 
 
+def build_clock_envelope(seq: int, tick: int) -> dict[str, Any]:
+    """CLOCK 心跳 envelope（頂層 tick）——閒置（無 STATE_DIFF）時仍讓前端牆鐘不凍結。"""
+    return {"v": 1, "seq": seq, "tick": tick, "type": "CLOCK", "payload": {}}
+
+
+# CLOCK 心跳節流：閒置時每 N tick 送一次（避免灌爆 ring；有活動時 STATE_DIFF 已逐 tick 更新）。
+_CLOCK_EVERY_TICKS = 5
+
+
 class RedisBroadcaster:
     """把 STATE_DIFF 寫入 Redis ring buffer 並 publish。滿足 Kernel 的 Broadcaster 介面。
 
@@ -78,8 +87,21 @@ class RedisBroadcaster:
 
     async def publish(self, tick: int, diff: SessionDiff) -> None:
         if not diff:
-            return  # 無變動不送 STATE_DIFF（CLOCK 心跳為獨立訊息，O4.3）
+            # 閒置無變動：節流送 CLOCK 心跳，讓前端牆鐘不凍結（否則 idle session tick 停在 T—）。
+            if tick % _CLOCK_EVERY_TICKS == 0:
+                await asyncio.to_thread(self._publish_clock_sync, tick)
+            return
         await asyncio.to_thread(self._publish_sync, tick, diff)
+
+    def _publish_clock_sync(self, tick: int) -> None:
+        publish_to_stream(
+            self._redis,
+            seq_key=self._seq_key(),
+            ring_key=self._ring_key(),
+            channel=self._channel(),
+            envelope=build_clock_envelope(0, tick),  # seq 佔位，由 publish_to_stream 指派
+            ring_capacity=RING_CAPACITY,
+        )
 
     async def publish_events(self, events: Sequence[LedgerEvent]) -> None:
         """把裁決事件推到 WS 事件流（戰況 feed）。與 STATE_DIFF 共用 seq/ring/channel（原子）。"""
