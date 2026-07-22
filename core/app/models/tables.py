@@ -5,6 +5,7 @@
 """
 
 import uuid
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -116,6 +117,27 @@ class EquipmentInstance(Base):
         "ownerId", String(191), ForeignKey("TacticalUnit.id", ondelete="CASCADE")
     )
     current_state: Mapped[dict] = mapped_column("currentState", JSON, default=dict)  # type: ignore[type-arg]
+
+
+class MapFeature(Base):
+    """地圖標註/工事：武器據點、障礙、建築、控制措施（點/線/面 + 影響範圍 + 屬性）。"""
+
+    __tablename__ = "MapFeature"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(
+        "sessionId", String(191), ForeignKey("WargameSession.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column("kind", String(191))
+    geometry_type: Mapped[str] = mapped_column("geometryType", String(191))
+    # GeoJSON coordinates（依 geometryType：Point/Line/Polygon）
+    geometry: Mapped[Any] = mapped_column("geometry", JSON)
+    owner_faction: Mapped[str] = mapped_column("ownerFaction", String(191))
+    label: Mapped[str | None] = mapped_column("label", String(191), nullable=True)
+    influence_radius_m: Mapped[float | None] = mapped_column("influenceRadiusM", Double)
+    weapon_template_id: Mapped[str | None] = mapped_column("weaponTemplateId", String(191))
+    attributes: Mapped[dict] = mapped_column("attributes", JSON, default=dict)  # type: ignore[type-arg]
+    created_at: Mapped[str] = mapped_column("createdAt", DateTime, server_default=func.now())
 
 
 class TacticalEventLog(Base):

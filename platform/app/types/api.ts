@@ -243,6 +243,47 @@ export interface paths {
         patch: operations["editUnitEquipment"];
         trace?: never;
     };
+    "/sessions/{id}/map-features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍） */
+        get: operations["listMapFeatures"];
+        put?: never;
+        /** @description 新增地圖標註/工事（全知可指定 owner_faction；否則本軍） */
+        post: operations["createMapFeature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/map-features/{fid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                fid: components["parameters"]["FeatureId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 移除標註（全知任一；否則僅本軍標註） */
+        delete: operations["deleteMapFeature"];
+        options?: never;
+        head?: never;
+        /** @description 編輯標註（全知任一；否則僅本軍標註） */
+        patch: operations["editMapFeature"];
+        trace?: never;
+    };
     "/sessions/{id}/inject": {
         parameters: {
             query?: never;
@@ -578,6 +619,42 @@ export interface components {
             category: string;
             base_stats: Record<string, never>;
         };
+        /** @description 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面） */
+        MapFeatureView: {
+            id: string;
+            /** @description OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION */
+            kind: string;
+            /** @description POINT / LINE / POLYGON */
+            geometry_type: string;
+            /** @description GeoJSON coordinates（依 geometry_type） */
+            geometry: unknown;
+            /** @description 擁有陣營（WHITE_CELL＝共同） */
+            owner_faction: string;
+            label?: string | null;
+            influence_radius_m?: number | null;
+            weapon_template_id?: string | null;
+            attributes: Record<string, never>;
+        };
+        MapFeatureCreate: {
+            kind: string;
+            geometry_type: string;
+            geometry: unknown;
+            /** @description 全知可指定（含 WHITE_CELL）；否則本軍 */
+            owner_faction?: string | null;
+            label?: string | null;
+            influence_radius_m?: number | null;
+            weapon_template_id?: string | null;
+            attributes?: Record<string, never>;
+        };
+        MapFeatureEdit: {
+            kind?: string | null;
+            geometry_type?: string | null;
+            geometry?: unknown;
+            label?: string | null;
+            influence_radius_m?: number | null;
+            weapon_template_id?: string | null;
+            attributes?: Record<string, never> | null;
+        };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
             current_state: Record<string, never>;
@@ -642,6 +719,7 @@ export interface components {
         UnitId: string;
         EquipmentId: string;
         TemplateId: string;
+        FeatureId: string;
         TaskId: string;
         PluginName: string;
     };
@@ -1164,6 +1242,129 @@ export interface operations {
                 };
             };
             /** @description No orbat-edit permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listMapFeatures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Features */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapFeatureView"][];
+                };
+            };
+        };
+    };
+    createMapFeature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MapFeatureCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapFeatureView"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteMapFeature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                fid: components["parameters"]["FeatureId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editMapFeature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                fid: components["parameters"]["FeatureId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MapFeatureEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapFeatureView"];
+                };
+            };
+            /** @description Not permitted */
             403: {
                 headers: {
                     [name: string]: unknown;

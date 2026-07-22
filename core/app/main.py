@@ -19,6 +19,7 @@ from app.api import (
     install_error_handlers,
     intel_router,
     lobby_router,
+    map_features_router,
     orbat_router,
     orders_router,
     scenarios_router,
@@ -83,6 +84,7 @@ app.include_router(auth_router)
 app.include_router(lobby_router)
 app.include_router(orbat_router)
 app.include_router(equipment_router)
+app.include_router(map_features_router)
 app.include_router(orders_router)
 app.include_router(scenarios_router)
 app.include_router(units_router)

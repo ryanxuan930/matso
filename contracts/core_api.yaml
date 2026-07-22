@@ -39,6 +39,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    FeatureId:
+      name: fid
+      in: path
+      required: true
+      schema: { type: string }
     TaskId:
       name: tid
       in: path
@@ -201,6 +206,42 @@ components:
         name: { type: string, minLength: 1 }
         category: { type: string, description: KINETIC / SENSOR / COMMS / LOGISTICS / DRONE }
         base_stats: { type: object }
+    MapFeatureView:
+      type: object
+      description: 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面）
+      required: [id, kind, geometry_type, geometry, owner_faction, attributes]
+      properties:
+        id: { type: string }
+        kind: { type: string, description: OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION }
+        geometry_type: { type: string, description: POINT / LINE / POLYGON }
+        geometry: { description: GeoJSON coordinates（依 geometry_type） }
+        owner_faction: { type: string, description: 擁有陣營（WHITE_CELL＝共同） }
+        label: { type: [string, "null"] }
+        influence_radius_m: { type: [number, "null"] }
+        weapon_template_id: { type: [string, "null"] }
+        attributes: { type: object }
+    MapFeatureCreate:
+      type: object
+      required: [kind, geometry_type, geometry]
+      properties:
+        kind: { type: string }
+        geometry_type: { type: string }
+        geometry: {}
+        owner_faction: { type: [string, "null"], description: 全知可指定（含 WHITE_CELL）；否則本軍 }
+        label: { type: [string, "null"] }
+        influence_radius_m: { type: [number, "null"] }
+        weapon_template_id: { type: [string, "null"] }
+        attributes: { type: object }
+    MapFeatureEdit:
+      type: object
+      properties:
+        kind: { type: [string, "null"] }
+        geometry_type: { type: [string, "null"] }
+        geometry: {}
+        label: { type: [string, "null"] }
+        influence_radius_m: { type: [number, "null"] }
+        weapon_template_id: { type: [string, "null"] }
+        attributes: { type: [object, "null"] }
     EquipmentStateEdit:
       type: object
       required: [current_state]
@@ -497,6 +538,61 @@ paths:
       responses:
         "204": { description: Removed }
         "403": { description: No orbat-edit permission, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/map-features:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listMapFeatures
+      security: [{ bearerAuth: [] }]
+      description: 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍）
+      responses:
+        "200":
+          description: Features
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MapFeatureView" } }
+    post:
+      operationId: createMapFeature
+      security: [{ bearerAuth: [] }]
+      description: 新增地圖標註/工事（全知可指定 owner_faction；否則本軍）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MapFeatureCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MapFeatureView" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/map-features/{fid}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { $ref: "#/components/parameters/FeatureId" }
+    patch:
+      operationId: editMapFeature
+      security: [{ bearerAuth: [] }]
+      description: 編輯標註（全知任一；否則僅本軍標註）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MapFeatureEdit" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MapFeatureView" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteMapFeature
+      security: [{ bearerAuth: [] }]
+      description: 移除標註（全知任一；否則僅本軍標註）
+      responses:
+        "204": { description: Removed }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/inject:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

@@ -37,8 +37,26 @@ model WargameSession {
   // #6：允許「自行編輯本軍編裝（ORBAT）」的陣營清單（White Cell 設定）。null/[] = 僅白軍可編。
   orbatEditFactions Json?
 
-  units     TacticalUnit[]
-  eventLogs TacticalEventLog[]
+  units       TacticalUnit[]
+  eventLogs   TacticalEventLog[]
+  mapFeatures MapFeature[]
+}
+
+// 地圖標註/工事：武器據點、障礙、建築、控制措施等（點/線/面 + 影響範圍 + 屬性）。
+// ownerFaction=WHITE_CELL → 共同/ground truth（全體可見）；其餘＝該陣營標注（fog of war，後端過濾）。
+model MapFeature {
+  id           String         @id @default(uuid())
+  sessionId    String
+  session      WargameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind         String // OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION
+  geometryType String // POINT / LINE / POLYGON
+  geometry     Json // GeoJSON coordinates（依 geometryType：Point=[lng,lat]、Line=[[lng,lat]…]、Polygon=[[[lng,lat]…]]）
+  ownerFaction String // 擁有陣營（WHITE_CELL＝共同）
+  label        String?
+  influenceRadiusM Float? // 影響範圍（公尺；點/線常用）
+  weaponTemplateId String? // WEAPON_EMPLACEMENT 連結的武器範本（EquipmentTemplate.id）
+  attributes   Json     @default("{}") // 額外屬性（passable/damage/color…）
+  createdAt    DateTime @default(now())
 }
 
 enum SessionMode {
