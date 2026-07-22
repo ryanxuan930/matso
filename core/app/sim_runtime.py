@@ -15,17 +15,19 @@ import contextlib
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSource
 from app.cache import make_redis
 from app.db import default_session_factory
 from app.engine.clock import SimClock
+from app.engine.engage_wiring import WeaponResolver, make_engage_env, seed_combat_state
 from app.engine.kernel import Kernel
 from app.engine.movement import UnitMovementSystem
+from app.engine.rng import DeterministicRNG
 from app.engine.subsystems import (
-    NoOpAdjudicator,
     NoOpCommsSystem,
     NoOpLogisticsSystem,
-    NoOpOrderSource,
     NoOpSensorSystem,
     NoOpTriggerChecker,
 )
@@ -76,14 +78,26 @@ class SimManager:
         self._tasks[session_id] = asyncio.create_task(self._run_session(session_id))
 
     async def _run_session(self, session_id: str) -> None:
+        # 交戰裁決需一條長生命期 DB session（O3.6 接線層讀寫 Order + 每 tick commit 以刷新快照）。
+        engage_db = self._factory()
         try:
             client = make_redis(self._redis_url)
             hot = RedisHotState(client, session_id)
+            # 交戰接線（新 #1）：建武器解析器 + 播戰鬥狀態（血量/裝甲/彈藥/座標）入熱狀態。
+            resolver, seed = await asyncio.to_thread(
+                self._prepare_engage, engage_db, session_id, hot
+            )
             kernel = Kernel(
                 session_id=session_id,
                 clock=SimClock(tick_rate_ms=_TICK_RATE_MS),
-                order_source=NoOpOrderSource(),
-                adjudicator=NoOpAdjudicator(),
+                order_source=EngageOrderSource(engage_db, session_id),
+                adjudicator=EngagementAdjudicator(
+                    engage_db,
+                    hot,
+                    DeterministicRNG(seed, "adjudication"),
+                    resolver.weapon_for,
+                    make_engage_env(hot),
+                ),
                 movement=UnitMovementSystem(
                     session_id=session_id,
                     session_factory=self._factory,
@@ -106,6 +120,17 @@ class SimManager:
             raise
         except Exception:
             _LOG.exception("session %s Kernel 迴圈崩潰", session_id)
+        finally:
+            engage_db.close()
+
+    def _prepare_engage(
+        self, db: Session, session_id: str, hot: RedisHotState
+    ) -> tuple[WeaponResolver, int]:
+        """（執行緒中）建武器解析器 + 播戰鬥狀態；回 (resolver, master_seed)。皆區域值並行安全。"""
+        resolver = WeaponResolver(db, session_id)
+        seed_combat_state(db, hot, session_id, resolver)
+        row = db.get(WargameSession, session_id)
+        return resolver, (int(row.master_seed) if row is not None else 0)
 
     async def stop(self) -> None:
         self._stop.set()

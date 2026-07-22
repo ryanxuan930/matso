@@ -34,7 +34,6 @@ from app.orders.state_machine import next_status
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
-WeaponLookup = Callable[[str], WeaponProfile]
 EngageEnvLookup = Callable[[str, str], EnvSnapshot]  # (shooter_id, target_id) → EnvSnapshot
 
 
@@ -43,6 +42,12 @@ class EngageCommand:
     order_id: str
     shooter_id: str
     target_id: str
+    # 下令時選定的武器範本（payload.weapon_id）；None＝由 weapon_for 取單位主武器（#11）。
+    weapon_template_id: str | None = None
+
+
+# 武器查表：由整筆交戰命令解析（可依 weapon_template_id honor 操作員選武器，或退回單位主武器）。
+WeaponLookup = Callable[[EngageCommand], WeaponProfile]
 
 
 class EngageOrderSource:
@@ -65,11 +70,14 @@ class EngageOrderSource:
         commands: list[EngageCommand] = []
         for order in orders:
             order.status = next_status(order.status, OrderStatus.EXECUTING)
+            payload = order.payload or {}
+            wid = payload.get("weapon_id")
             commands.append(
                 EngageCommand(
                     order_id=order.id,
                     shooter_id=order.unit_id,
-                    target_id=str(order.payload["target_unit_id"]),
+                    target_id=str(payload["target_unit_id"]),
+                    weapon_template_id=str(wid) if wid else None,
                 )
             )
         self._db.commit()
@@ -100,7 +108,7 @@ class EngagementAdjudicator:
             self._complete(order.order_id, now.tick)
             return []
 
-        weapon = self._weapon_for(order.shooter_id)
+        weapon = self._weapon_for(order)
         env = self._env_for(order.shooter_id, order.target_id)
         result = resolve_engagement(
             weapon,

@@ -184,7 +184,7 @@ async def test_scripted_battle_full_flow() -> None:
         clock=SimClock(),
         order_source=EngageOrderSource(db, session_id),
         adjudicator=EngagementAdjudicator(
-            db, hot, DeterministicRNG(7, "adjudication"), lambda _u: _WEAPON, engage_env
+            db, hot, DeterministicRNG(7, "adjudication"), lambda _cmd: _WEAPON, engage_env
         ),
         movement=MovementSystem(session_id, hot, DbOrderStore(db), _FixedPlanner(), speed_hexes=1),
         sensors=SensorSweepSystem(
