@@ -4,6 +4,21 @@
   "title": "EquipmentBaseStats",
   "description": "EquipmentTemplate.baseStats 的驗證 schema（SPEC_FULL §7.1）。裁決引擎為資料驅動：公式讀這裡，不寫死參數。依 category 選用對應 $defs。",
   "$defs": {
+    "armor_class": {
+      "description": "裝甲級別標準詞彙（damage_by_armor_class 的鍵建議取自此集，供不同武器一致對照）。此為建議詞彙，非封閉限制——damage_by_armor_class 仍允許自訂鍵以保留可擴充性。",
+      "type": "string",
+      "enum": [
+        "INFANTRY",
+        "LIGHT_VEHICLE",
+        "ARMOR",
+        "FORTIFICATION",
+        "STRUCTURE",
+        "AIRCRAFT",
+        "ROTARY_WING",
+        "NAVAL_SURFACE",
+        "UAS"
+      ]
+    },
     "kinetic": {
       "type": "object",
       "required": ["max_range_m", "ph_by_range_band", "damage_by_armor_class", "ammo_types"],
@@ -13,13 +28,18 @@
         "indirect_fire": { "type": "boolean", "default": false },
         "ph_by_range_band": {
           "type": "array",
-          "description": "由近到遠的 [range_max_m, base_ph] 對；區間內線性插值",
+          "description": "由近到遠的 [range_max_m, base_ph] 對；區間內依 ph_interp 插值",
           "items": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number", "minimum": 0, "maximum": 1 }] },
           "minItems": 1
         },
+        "ph_interp": {
+          "description": "命中率對射程的插值法：linear＝控制點間線性；polynomial＝拉格朗日多項式穿過全部控制點（曲線平滑，需 ≥3 點才有意義）。",
+          "enum": ["linear", "polynomial"],
+          "default": "linear"
+        },
         "damage_by_armor_class": {
           "type": "object",
-          "description": "armor_class → damage（healthStatus 扣點）",
+          "description": "armor_class → damage（healthStatus 扣點）。鍵建議取自 $defs.armor_class 詞彙，但允許自訂鍵（可擴充）。",
           "additionalProperties": { "type": "number", "minimum": 0 }
         },
         "ammo_types": { "type": "array", "items": { "type": "string" } },

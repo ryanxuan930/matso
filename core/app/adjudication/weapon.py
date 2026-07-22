@@ -10,6 +10,26 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
+# 命中率對射程的插值法（baseStats.ph_interp）。linear＝控制點間線性；polynomial＝
+# 拉格朗日多項式穿過全部控制點（曲線平滑，#4）。未知值退回 linear。
+_PH_INTERP_MODES = ("linear", "polynomial")
+
+
+def _clamp01(x: float) -> float:
+    return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
+
+
+def _lagrange_eval(points: tuple[tuple[float, float], ...], x: float) -> float:
+    """拉格朗日插值：回傳穿過 `points` 的多項式在 x 的值。points 的 x 需相異（已保證嚴格遞增）。"""
+    total = 0.0
+    for i, (xi, yi) in enumerate(points):
+        term = yi
+        for j, (xj, _) in enumerate(points):
+            if i != j:
+                term *= (x - xj) / (xi - xj)
+        total += term
+    return total
+
 
 @dataclass(frozen=True, slots=True)
 class WeaponProfile:
@@ -18,11 +38,13 @@ class WeaponProfile:
     max_range_m: float
     min_range_m: float
     indirect_fire: bool
-    # 由近到遠的 (range_max_m, base_ph) 控制點；區間內線性插值
+    # 由近到遠的 (range_max_m, base_ph) 控制點；區間內依 ph_interp 插值
     ph_by_range_band: tuple[tuple[float, float], ...]
     damage_by_armor_class: dict[str, float]
     ammo_types: tuple[str, ...]
     rate_per_tick: float
+    # 命中率插值法："linear"（預設）或 "polynomial"（拉格朗日多項式，#4）
+    ph_interp: str = "linear"
 
     @classmethod
     def from_base_stats(cls, stats: dict[str, Any]) -> WeaponProfile:
@@ -36,6 +58,9 @@ class WeaponProfile:
         # 控制點需依 range 遞增，供插值與單調性
         if any(a[0] >= b[0] for a, b in pairwise(bands)):
             raise ValueError("ph_by_range_band 的 range 必須嚴格遞增")
+        interp = str(stats.get("ph_interp", "linear"))
+        if interp not in _PH_INTERP_MODES:
+            interp = "linear"
         return cls(
             max_range_m=float(stats["max_range_m"]),
             min_range_m=float(stats.get("min_range_m", 0.0)),
@@ -46,18 +71,23 @@ class WeaponProfile:
             },
             ammo_types=tuple(str(a) for a in stats["ammo_types"]),
             rate_per_tick=float(stats.get("rate_per_tick", 1.0)),
+            ph_interp=interp,
         )
 
     def base_ph(self, range_m: float) -> float:
-        """射程 range_m 的基礎命中率（控制點間線性插值，端點外夾住）。
+        """射程 range_m 的基礎命中率（控制點間插值，端點外夾住，結果夾於 [0,1]）。
 
-        控制點 base_ph 非遞增時，本函數對 range 亦非遞增（供單調性 property）。
+        - linear（預設）：相鄰控制點線性插值；base_ph 非遞增時對 range 亦非遞增（單調性 property）。
+        - polynomial（#4）：拉格朗日多項式穿過全部控制點，曲線更平滑；≥3 點才有意義（2 點＝直線，
+          等同 linear）。多項式不保證單調，故結果夾於 [0,1]。
         """
         bands = self.ph_by_range_band
         if range_m <= bands[0][0]:
             return bands[0][1]
         if range_m >= bands[-1][0]:
             return bands[-1][1]
+        if self.ph_interp == "polynomial" and len(bands) >= 3:
+            return _clamp01(_lagrange_eval(bands, range_m))
         for (r0, p0), (r1, p1) in pairwise(bands):
             if r0 <= range_m <= r1:
                 t = (range_m - r0) / (r1 - r0)

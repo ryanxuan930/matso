@@ -7,9 +7,16 @@ import {
   updateEquipmentTemplate,
   type EquipmentTemplate,
 } from '~/composables/useEquipment'
+import {
+  ARMOR_CLASSES,
+  ARMOR_CLASS_LABELS,
+  CATEGORIES,
+  categoryLabel,
+  PH_INTERP_LABELS,
+  PH_INTERP_MODES,
+} from '~/composables/useWeaponVocab'
 
 const toasts = useToasts()
-const CATEGORIES = ['KINETIC', 'SENSOR', 'COMMS', 'LOGISTICS', 'DRONE']
 
 const templates = ref<EquipmentTemplate[]>([])
 const selectedId = ref<string | null>(null) // null = 新增中
@@ -23,6 +30,7 @@ const minRange = ref(0)
 const indirectFire = ref(false)
 const ratePerTick = ref(1)
 const ammoTypes = ref('') // 逗號分隔
+const phInterp = ref('linear') // 命中率插值法（#4）：linear | polynomial
 const phBands = ref<{ range: number; ph: number }[]>([{ range: 300, ph: 0.5 }])
 const dmgRows = ref<{ ac: string; dmg: number }[]>([{ ac: 'INFANTRY', dmg: 30 }])
 // 非 KINETIC：raw JSON
@@ -42,6 +50,7 @@ function resetForm() {
   indirectFire.value = false
   ratePerTick.value = 1
   ammoTypes.value = 'AMMO_GENERIC'
+  phInterp.value = 'linear'
   phBands.value = [{ range: 300, ph: 0.5 }]
   dmgRows.value = [{ ac: 'INFANTRY', dmg: 30 }]
   jsonText.value = '{}'
@@ -57,6 +66,7 @@ function pick(t: EquipmentTemplate) {
     minRange.value = Number(bs.min_range_m ?? 0)
     indirectFire.value = Boolean(bs.indirect_fire)
     ratePerTick.value = Number(bs.rate_per_tick ?? 1)
+    phInterp.value = (bs.ph_interp as string) === 'polynomial' ? 'polynomial' : 'linear'
     ammoTypes.value = ((bs.ammo_types as string[]) ?? []).join(', ')
     phBands.value = ((bs.ph_by_range_band as [number, number][]) ?? []).map(([range, ph]) => ({
       range,
@@ -81,9 +91,12 @@ function buildBaseStats(): Record<string, unknown> {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
+      ph_interp: phInterp.value,
       ph_by_range_band: phBands.value.map((b) => [b.range, b.ph]),
       damage_by_armor_class: Object.fromEntries(
-        dmgRows.value.filter((r) => r.ac.trim()).map((r) => [r.ac.trim(), r.dmg]),
+        dmgRows.value
+          .filter((r) => r.ac.trim() && r.ac !== '__custom__')
+          .map((r) => [r.ac.trim(), r.dmg]),
       ),
     }
   }
@@ -156,7 +169,7 @@ async function save() {
           <label>名稱 <input v-model="name" data-testid="armory-name"></label>
           <label>類別
             <select v-model="category" data-testid="armory-category">
-              <option v-for="c in CATEGORIES" :key="c" :value="c">{{ c }}</option>
+              <option v-for="c in CATEGORIES" :key="c" :value="c">{{ categoryLabel(c) }}</option>
             </select>
           </label>
         </div>
@@ -172,21 +185,44 @@ async function save() {
             <input v-model="ammoTypes" data-testid="armory-ammo" placeholder="AMMO_556, AMMO_AP">
           </label>
 
-          <div class="sub">命中率 Ph（依射程分帶：range_max_m → base_ph，區間內線性插值）</div>
+          <label class="wide">命中率插值法
+            <select v-model="phInterp" data-testid="armory-ph-interp">
+              <option v-for="m in PH_INTERP_MODES" :key="m" :value="m">{{ PH_INTERP_LABELS[m] }}</option>
+            </select>
+          </label>
+          <div class="sub">
+            命中率 Ph（依射程控制點：range_max_m → base_ph）——
+            {{ phInterp === 'polynomial' ? '多項式（拉格朗日）曲線穿過全部控制點' : '控制點間線性插值' }}
+          </div>
           <div v-for="(b, i) in phBands" :key="`ph${i}`" class="pair">
             <input v-model.number="b.range" type="number" placeholder="range m">
             <input v-model.number="b.ph" type="number" step="0.05" min="0" max="1" placeholder="Ph 0–1">
             <button class="rm" @click="phBands.splice(i, 1)">✕</button>
           </div>
-          <button class="add" @click="phBands.push({ range: 0, ph: 0.5 })">＋ Ph 分帶</button>
+          <button class="add" @click="phBands.push({ range: 0, ph: 0.5 })">＋ Ph 控制點</button>
+          <p v-if="phInterp === 'polynomial' && phBands.length < 3" class="warn" data-testid="ph-poly-warn">
+            多項式插值需 ≥3 個控制點才有意義（少於 3 點時等同線性）。
+          </p>
 
           <div class="sub">傷害（依裝甲級別：armor_class → 扣血點）</div>
           <div v-for="(r, i) in dmgRows" :key="`dmg${i}`" class="pair">
-            <input v-model="r.ac" placeholder="INFANTRY / LIGHT_VEHICLE / ARMOR">
+            <select v-model="r.ac" class="ac-sel" data-testid="armory-armor-class">
+              <option v-for="ac in ARMOR_CLASSES" :key="ac" :value="ac">
+                {{ ARMOR_CLASS_LABELS[ac] }}（{{ ac }}）
+              </option>
+              <option v-if="r.ac && !ARMOR_CLASS_LABELS[r.ac]" :value="r.ac">{{ r.ac }}（自訂）</option>
+              <option value="__custom__">＋ 自訂級別…</option>
+            </select>
+            <input
+              v-if="r.ac === '__custom__' || (r.ac && !ARMOR_CLASS_LABELS[r.ac])"
+              :value="r.ac === '__custom__' ? '' : r.ac"
+              placeholder="自訂 armor_class"
+              @input="r.ac = ($event.target as HTMLInputElement).value.toUpperCase()"
+            >
             <input v-model.number="r.dmg" type="number" placeholder="damage">
             <button class="rm" @click="dmgRows.splice(i, 1)">✕</button>
           </div>
-          <button class="add" @click="dmgRows.push({ ac: '', dmg: 0 })">＋ 傷害級別</button>
+          <button class="add" @click="dmgRows.push({ ac: 'INFANTRY', dmg: 0 })">＋ 傷害級別</button>
         </template>
 
         <template v-else>
@@ -342,6 +378,15 @@ textarea {
 }
 .pair input {
   flex: 1;
+}
+.pair .ac-sel {
+  flex: 1;
+  min-width: 8rem;
+}
+.warn {
+  margin: 0.2rem 0 0.4rem;
+  font-size: 0.72rem;
+  color: #fbbf24;
 }
 .rm {
   border: none;
