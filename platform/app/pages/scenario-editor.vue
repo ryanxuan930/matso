@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // 想定編輯器（O7.3，SPEC §11.2）——factions/relations/units/victory 編輯 + 匯出/匯入 roundtrip。
+// UI 以 PrimeVue（Aura 主題）+ zh-TW 標籤重製；關係改為對稱矩陣，單位可編輯初始經緯度（#5.5）。
 import { apiFetch } from '~/composables/useApi'
 import type { ApiError } from '~/composables/useApi'
 import {
   emptyScenario,
   exportScenario,
   importScenario,
+  type EditorUnit,
   type RelationValue,
   type ScenarioModel,
   type UnitLevel,
@@ -16,6 +18,21 @@ const LEVELS: UnitLevel[] = [
   'COMPANY', 'PLATOON', 'SQUAD', 'FIRETEAM', 'INDIVIDUAL',
 ]
 const RELATIONS: RelationValue[] = ['ALLIED', 'NEUTRAL', 'HOSTILE']
+
+// zh-TW 對照表 -------------------------------------------------------------
+const MODE_OPTIONS = [
+  { label: '即時', value: 'REALTIME' },
+  { label: '同步回合', value: 'WEGO' },
+  { label: '輪流回合', value: 'IGO_UGO' },
+]
+const LEVEL_LABELS: Record<UnitLevel, string> = {
+  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', PLATOON: '排', COMPANY: '連',
+  BATTALION: '營', BRIGADE: '旅', DIVISION: '師', CORPS: '軍', THEATER: '戰區',
+}
+const LEVEL_OPTIONS = LEVELS.map((l) => ({ label: LEVEL_LABELS[l], value: l }))
+const RELATION_LABELS: Record<RelationValue, string> = {
+  ALLIED: '同盟', NEUTRAL: '中立', HOSTILE: '敵對',
+}
 
 const model = ref<ScenarioModel>(emptyScenario())
 const importText = ref('')
@@ -29,10 +46,6 @@ function addUnit() {
   const f = model.value.factions[0]?.id ?? 'BLUE'
   model.value.units.push({ faction: f, designation: 'U', unitLevel: 'PLATOON' })
 }
-function addRelation() {
-  const ids = model.value.factions
-  model.value.relations.push({ a: ids[0]?.id ?? '', b: ids[1]?.id ?? '', relation: 'NEUTRAL' })
-}
 function remove<T>(arr: T[], i: number) {
   arr.splice(i, 1)
 }
@@ -45,8 +58,50 @@ function doImport() {
   }
 }
 
+// 關係矩陣（對稱）---------------------------------------------------------
+// model.relations 是唯一結構（匯出為三元組 [a,b,relation]）；矩陣僅是其視圖，讀寫皆順序無關。
+function relationOf(a: string, b: string): RelationValue {
+  const r = model.value.relations.find(
+    (x) => (x.a === a && x.b === b) || (x.a === b && x.b === a),
+  )
+  return r?.relation ?? 'HOSTILE' // 未宣告配對預設敵對（§12.1）
+}
+function cycleRelation(a: string, b: string) {
+  const cur = relationOf(a, b)
+  const next = RELATIONS[(RELATIONS.indexOf(cur) + 1) % RELATIONS.length]!
+  const existing = model.value.relations.find(
+    (x) => (x.a === a && x.b === b) || (x.a === b && x.b === a),
+  )
+  if (existing) existing.relation = next
+  else model.value.relations.push({ a, b, relation: next })
+}
+function relSeverity(r: RelationValue): string {
+  return r === 'ALLIED' ? 'success' : r === 'HOSTILE' ? 'danger' : 'secondary'
+}
+
+// 單位（ORBAT）-----------------------------------------------------------
+function parentOptions(u: EditorUnit) {
+  return [
+    { label: '（無）', value: '' },
+    ...model.value.units
+      .filter((x) => x.faction === u.faction && x !== u)
+      .map((x) => ({ label: x.designation, value: x.designation })),
+  ]
+}
+function numStr(n?: number): string {
+  return n === undefined ? '' : String(n)
+}
+// 空 → undefined（絕不寫入 ''/NaN/null），使 exportScenario 的 `u.lat !== undefined` 守則能省略空值。
+function setNum(u: EditorUnit, key: 'lat' | 'lng', v: string | undefined) {
+  const t = (v ?? '').trim()
+  if (t === '') { u[key] = undefined; return }
+  const n = Number(t)
+  u[key] = Number.isFinite(n) ? n : undefined
+}
+
 const saveStatus = ref('')
 const saving = ref(false)
+const saveSeverity = computed(() => (saveStatus.value.startsWith('已存') ? 'success' : 'error'))
 async function saveToServer() {
   saving.value = true
   saveStatus.value = ''
@@ -69,64 +124,117 @@ async function saveToServer() {
 <template>
   <div class="editor" data-testid="scenario-editor">
     <header class="sc-bar">
-      <button data-testid="sc-back-lobby" @click="navigateTo('/lobby')">← 大廳</button>
+      <Button data-testid="sc-back-lobby" size="small" text @click="navigateTo('/lobby')">← 大廳</Button>
       <h1>想定編輯器</h1>
-      <button data-testid="sc-save" :disabled="saving" @click="saveToServer">
+      <Button data-testid="sc-save" class="sc-save-btn" size="small" :disabled="saving" @click="saveToServer">
         {{ saving ? '存檔中…' : '存到伺服器' }}
-      </button>
+      </Button>
     </header>
-    <p v-if="saveStatus" class="sc-status" data-testid="sc-save-status">{{ saveStatus }}</p>
+    <Message v-if="saveStatus" :severity="saveSeverity" size="small" class="sc-status" data-testid="sc-save-status">
+      {{ saveStatus }}
+    </Message>
 
     <section class="meta">
-      <label>名稱 <input v-model="model.name" data-testid="sc-name"></label>
-      <label>版本 <input v-model="model.version"></label>
+      <label>名稱 <InputText v-model="model.name" size="small" data-testid="sc-name" /></label>
+      <label>版本 <InputText v-model="model.version" size="small" /></label>
       <label>模式
-        <select v-model="model.mode">
-          <option>REALTIME</option><option>WEGO</option><option>IGO_UGO</option>
-        </select>
+        <Select
+          v-model="model.mode"
+          :options="MODE_OPTIONS"
+          option-label="label"
+          option-value="value"
+          size="small"
+        />
       </label>
     </section>
 
     <section>
-      <h2>陣營 <button data-testid="add-faction" @click="addFaction">＋</button></h2>
+      <h2>陣營 <Button data-testid="add-faction" size="small" text @click="addFaction">＋</Button></h2>
       <div v-for="(f, i) in model.factions" :key="i" class="row" data-testid="faction-row">
-        <input v-model="f.id" placeholder="ID">
-        <input v-model="f.color" type="color">
-        <button @click="remove(model.factions, i)">✕</button>
+        <InputText v-model="f.id" size="small" placeholder="ID" />
+        <input v-model="f.color" type="color" class="color-input">
+        <Button size="small" text severity="danger" @click="remove(model.factions, i)">✕</Button>
       </div>
     </section>
 
     <section>
-      <h2>關係 <button data-testid="add-relation" @click="addRelation">＋</button></h2>
-      <div v-for="(r, i) in model.relations" :key="i" class="row" data-testid="relation-row">
-        <input v-model="r.a"><input v-model="r.b">
-        <select v-model="r.relation"><option v-for="rel in RELATIONS" :key="rel">{{ rel }}</option></select>
-        <button @click="remove(model.relations, i)">✕</button>
-      </div>
-      <p class="hint">未宣告配對預設 HOSTILE（§12.1）。</p>
+      <h2>關係</h2>
+      <table class="rel-matrix" data-testid="relations-matrix">
+        <thead>
+          <tr>
+            <th />
+            <th v-for="(c, ci) in model.factions" :key="ci">{{ c.id }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(a, ai) in model.factions" :key="ai">
+            <th>{{ a.id }}</th>
+            <td v-for="(b, bi) in model.factions" :key="bi">
+              <span v-if="ai === bi" class="rel-diag">—</span>
+              <Button
+                v-else
+                size="small"
+                text
+                :severity="relSeverity(relationOf(a.id, b.id))"
+                @click="cycleRelation(a.id, b.id)"
+              >
+                {{ RELATION_LABELS[relationOf(a.id, b.id)] }}
+              </Button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint">點格切換：同盟 → 中立 → 敵對（對稱寫入）。未宣告配對預設敵對（§12.1）。</p>
     </section>
 
     <section>
-      <h2>單位（ORBAT） <button data-testid="add-unit" @click="addUnit">＋</button></h2>
+      <h2>單位（ORBAT） <Button data-testid="add-unit" size="small" text @click="addUnit">＋</Button></h2>
       <div v-for="(u, i) in model.units" :key="i" class="row" data-testid="unit-row">
-        <select v-model="u.faction"><option v-for="f in model.factions" :key="f.id">{{ f.id }}</option></select>
-        <input v-model="u.designation" placeholder="番號">
-        <select v-model="u.unitLevel"><option v-for="l in LEVELS" :key="l">{{ l }}</option></select>
-        <input v-model="u.parent" placeholder="上級">
-        <button @click="remove(model.units, i)">✕</button>
+        <Select v-model="u.faction" :options="model.factions" option-label="id" option-value="id" size="small" />
+        <InputText v-model="u.designation" size="small" placeholder="番號" />
+        <Select
+          v-model="u.unitLevel"
+          :options="LEVEL_OPTIONS"
+          option-label="label"
+          option-value="value"
+          size="small"
+        />
+        <Select
+          v-model="u.parent"
+          :options="parentOptions(u)"
+          option-label="label"
+          option-value="value"
+          size="small"
+          placeholder="上級"
+        />
+        <InputText
+          :model-value="numStr(u.lat)"
+          size="small"
+          placeholder="緯度"
+          class="coord"
+          @update:model-value="(v: string | undefined) => setNum(u, 'lat', v)"
+        />
+        <InputText
+          :model-value="numStr(u.lng)"
+          size="small"
+          placeholder="經度"
+          class="coord"
+          @update:model-value="(v: string | undefined) => setNum(u, 'lng', v)"
+        />
+        <Button size="small" text severity="danger" @click="remove(model.units, i)">✕</Button>
       </div>
     </section>
 
     <section class="io">
       <div>
         <h2>匯出</h2>
-        <textarea :value="exportText" readonly rows="8" data-testid="export-text" />
+        <Textarea :model-value="exportText" readonly rows="8" data-testid="export-text" class="mono" />
       </div>
       <div>
         <h2>匯入</h2>
-        <textarea v-model="importText" rows="8" placeholder="貼上匯出的 JSON" data-testid="import-text" />
-        <button data-testid="do-import" @click="doImport">載入</button>
-        <p v-if="importError" class="err" data-testid="import-error">{{ importError }}</p>
+        <Textarea v-model="importText" rows="8" placeholder="貼上匯出的 JSON" data-testid="import-text" class="mono" />
+        <Button data-testid="do-import" size="small" @click="doImport">載入</Button>
+        <Message v-if="importError" severity="error" size="small" data-testid="import-error">{{ importError }}</Message>
       </div>
     </section>
   </div>
@@ -136,18 +244,24 @@ async function saveToServer() {
 .editor { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
 .sc-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
 .sc-bar h1 { font-size: 1.25rem; margin: 0; }
-.sc-bar > button:last-child { margin-left: auto; background: #2563eb; }
-.sc-status { color: #4ade80; font-size: 0.85rem; margin: 0 0 0.75rem; }
+.sc-save-btn { margin-left: auto; }
+.sc-status { margin: 0 0 0.75rem; }
 section { margin: 1rem 0; border-top: 1px solid #1e293b; padding-top: 0.75rem; }
-h2 { font-size: 0.9375rem; color: #94a3b8; }
-.row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; }
-.meta { display: flex; gap: 1rem; flex-wrap: wrap; }
+h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; gap: 0.5rem; }
+.row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; flex-wrap: wrap; }
+.meta { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+.meta label { display: inline-flex; align-items: center; gap: 0.4rem; }
 .io { display: flex; gap: 1rem; }
 .io > div { flex: 1; }
-input, textarea {
-  background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.25rem; padding: 0.375rem 0.5rem;
+.mono { width: 100%; font-family: monospace; font-size: 0.75rem; }
+.coord { width: 6rem; }
+.color-input {
+  width: 2.25rem; height: 2rem; padding: 0; border: 1px solid #334155;
+  border-radius: 0.25rem; background: #0f172a; cursor: pointer;
 }
-textarea { width: 100%; font-family: monospace; font-size: 0.75rem; }
-button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 0.25rem; padding: 0.375rem 0.75rem; cursor: pointer; }
 .hint { color: #94a3b8; font-size: 0.8rem; }
+.rel-matrix { border-collapse: collapse; margin: 0.25rem 0; }
+.rel-matrix th, .rel-matrix td { border: 1px solid #1e293b; padding: 0.1rem 0.25rem; text-align: center; min-width: 4.75rem; }
+.rel-matrix th { color: #94a3b8; font-weight: 600; font-size: 0.8rem; }
+.rel-diag { color: #475569; }
 </style>
