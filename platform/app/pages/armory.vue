@@ -142,7 +142,7 @@ async function save() {
   <main class="armory">
     <header>
       <button class="back" data-testid="armory-back" @click="navigateTo('/lobby')">← 系統首頁</button>
-      <h1>武器庫（裝備範本）</h1>
+      <h1>武器庫</h1>
     </header>
 
     <div class="body">
