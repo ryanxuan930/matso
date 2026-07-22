@@ -4,11 +4,12 @@ import type { BasemapSource } from '~/composables/useMapStyle'
 
 const hex = defineModel<boolean>('hex', { default: false })
 const hillshade = defineModel<boolean>('hillshade', { default: false })
+const contour = defineModel<boolean>('contour', { default: false })
 const basemap = defineModel<string>('basemap', { default: 'offline' })
-// 地形陰影需 tileserver 提供 hillshade 瓦片；無 tileUrl 時停用並註記（避免 no-op 勾選誤導）。
+// 地形陰影/等高線需 tileserver 提供瓦片；無 tileUrl 時停用並註記（避免 no-op 勾選誤導）。
 withDefaults(
-  defineProps<{ hillshadeEnabled?: boolean; basemaps?: BasemapSource[] }>(),
-  { hillshadeEnabled: true, basemaps: () => [] },
+  defineProps<{ hillshadeEnabled?: boolean; contourEnabled?: boolean; basemaps?: BasemapSource[] }>(),
+  { hillshadeEnabled: true, contourEnabled: true, basemaps: () => [] },
 )
 </script>
 
@@ -33,6 +34,15 @@ withDefaults(
         :disabled="!hillshadeEnabled"
       >
       <span>地形陰影<em v-if="!hillshadeEnabled"> · 需底圖</em></span>
+    </label>
+    <label :class="{ disabled: !contourEnabled }">
+      <input
+        v-model="contour"
+        data-testid="toggle-contour"
+        type="checkbox"
+        :disabled="!contourEnabled"
+      >
+      <span>等高線<em v-if="!contourEnabled"> · 需底圖</em></span>
     </label>
   </div>
 </template>

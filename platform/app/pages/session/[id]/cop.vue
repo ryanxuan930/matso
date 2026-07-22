@@ -18,6 +18,7 @@ const canControl = computed(() =>
 
 const hex = ref(false)
 const hillshade = ref(false)
+const contour = ref(false)
 const currentTick = ref(100)
 
 // 底圖來源（可抽換，#2）：離線 / 街道 / 衛星 / 軍用…由 runtimeConfig 注入。
@@ -343,6 +344,7 @@ onBeforeUnmount(() => stream.disconnect())
           <MapCanvas
             :hex-visible="hex"
             :hillshade-visible="hillshade"
+            :contour-visible="contour"
             :own-units="ownUnits"
             :contacts="contacts"
             :current-tick="currentTick"
@@ -360,8 +362,10 @@ onBeforeUnmount(() => stream.disconnect())
         <LayerToggles
           v-model:hex="hex"
           v-model:hillshade="hillshade"
+          v-model:contour="contour"
           v-model:basemap="basemap"
           :hillshade-enabled="hasTiles"
+          :contour-enabled="hasTiles"
           :basemaps="basemapSources"
         />
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">

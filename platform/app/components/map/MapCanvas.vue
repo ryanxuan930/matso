@@ -25,6 +25,7 @@ const props = withDefaults(
   defineProps<{
     hexVisible?: boolean
     hillshadeVisible?: boolean
+    contourVisible?: boolean
     ownUnits?: OwnUnit[]
     contacts?: Contact[]
     currentTick?: number
@@ -35,6 +36,7 @@ const props = withDefaults(
   {
     hexVisible: false,
     hillshadeVisible: false,
+    contourVisible: false,
     ownUnits: () => [],
     contacts: () => [],
     currentTick: 0,
@@ -102,6 +104,7 @@ let map: MapLibreMap | null = null
 const HEX_SRC = 'hexgrid'
 const GRAT_SRC = 'graticule'
 const HILLSHADE_SRC = 'hillshade'
+const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
 
 function refreshHex() {
@@ -185,6 +188,21 @@ onMounted(async () => {
         source: HILLSHADE_SRC,
         layout: { visibility: props.hillshadeVisible ? 'visible' : 'none' },
         paint: { 'raster-opacity': 0.5 },
+      })
+      // 等高線（#3）——tileserver 服務 gdal_contour 產的向量瓦片（source-layer=contour）。
+      map.addSource(CONTOUR_SRC, {
+        type: 'vector',
+        tiles: [`${tileUrl}/data/contours/{z}/{x}/{y}.pbf`],
+        minzoom: 0,
+        maxzoom: 14,
+      })
+      map.addLayer({
+        id: 'contours-line',
+        type: 'line',
+        source: CONTOUR_SRC,
+        'source-layer': 'contour',
+        layout: { visibility: props.contourVisible ? 'visible' : 'none' },
+        paint: { 'line-color': '#a98b57', 'line-width': 0.6, 'line-opacity': 0.55 },
       })
     }
     map.addSource(HEX_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
@@ -275,6 +293,7 @@ watch(
   },
 )
 watch(() => props.hillshadeVisible, (v) => setLayerVisibility('hillshade', v))
+watch(() => props.contourVisible, (v) => setLayerVisibility('contours-line', v))
 watch(() => props.basemapId, (v) => applyBasemap(v))
 watch(
   () => props.selectedId,
