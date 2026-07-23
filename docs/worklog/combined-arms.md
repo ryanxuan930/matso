@@ -1,6 +1,6 @@
 ---
 task: "#44–#48 (SPEC_EXTEND P1–P5)"
-status: IN_PROGRESS
+status: DONE   # P1–P4 完成；P5 依 SPEC 為後續（僅記設計方向），列 #48 追蹤
 started: 2026-07-23T00:00+08:00
 updated: 2026-07-23T04:00+08:00
 agent: Opus 4.8
