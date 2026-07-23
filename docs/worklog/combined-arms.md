@@ -20,6 +20,7 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 - [x] **P3 (#46)** fire_policy 契約 + 接線 + AI decider 欄 ✅
 - [x] **P4 (#47)** COP 武器組合 UI + fire_policy 下拉 + 戰況 feed 聯合火力標示 ✅（AAR 頁逐武器表列為 follow-up）
 - [x] **P4.5 (#49)** precheck 聯合兵種可達性：未指定武器時對武器組合逐件判可達，任一可打即 feasible + 0 彈武器不算可打 ✅（實測發現：舊 precheck 只判主武器 LOS 擋死聯合令）
+- [x] **#51 失敗原因報告修正**：全數不可打時舊碼 max(passed) 挑到 cheap-first 空彈武器→誤導成 NO_AMMO(Javelin)。改為**逐武器**列出各自失敗原因、**有彈者優先當代表**（決定錯誤碼與標題）→ B1→R1 由「ORDER_NO_AMMO/Javelin 無彈藥」正名為「ORDER_NO_LOS/ATGM 地形遮蔽」+ 4 武器逐列 breakdown。**釐清：引擎本來就逐武器獨立評估、空彈武器從不擋其餘武器；問題只在訊息挑錯代表**。✅
 - [ ] **P5 (#48)** 目標編成組成 + 多目標分配（後續，先記設計）
 
 ## 執行紀錄（附時間，由上而下追加）

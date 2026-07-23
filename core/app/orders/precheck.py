@@ -211,25 +211,26 @@ def _precheck_engage_any(
     """聯合兵種可達性：任一武器可打（可達 + 射程 + 彈藥）即 feasible。
 
     先評估**免 terrain**的武器（可變軌飛彈/間瞄），能命中即短路回傳——省 LOS 呼叫、對 terrain
-    延遲更穩健。全數不可打 → 回「最接近可打」武器的失敗檢查（供錯誤碼 + 說明）。
+    延遲更穩健。全數不可打 → **逐武器**列出各自失敗原因（有彈的武器排前決定錯誤碼）——不讓「單一
+    武器沒彈」誤導成整組不能打（其餘有彈武器其實是被地形/射程擋，才是真正原因）。
     """
 
     def _cheap_first(item: tuple[EquipmentInstance, WeaponProfile, EquipmentTemplate]) -> int:
         p = item[1]
         return 0 if (p.missile and p.maneuverable) or p.indirect_fire else 1
 
-    per_weapon: list[tuple[str, list[PrecheckCheck]]] = []
+    # 每件武器評估後留一筆 (has_ammo, passed_count, 帶武器名的失敗 check)。
+    evals: list[tuple[bool, int, PrecheckCheck]] = []
     for inst, profile, tmpl in sorted(weapons, key=_cheap_first):
-        # 彈藥數為 0 的武器不算可打（precheck 只看 DB current_state；活彈藥由裁決把關）——
-        # 先擋掉可省 terrain 呼叫，也避免「precheck 說可打、裁決卻 NO_AMMO」的不一致。
-        if _inst_ammo(inst) <= 0:
-            no_ammo = PrecheckCheck(name="ammo", passed=False, detail=f"{tmpl.name} 無彈藥")
-            per_weapon.append((tmpl.name, [no_ammo]))
-            continue
-        reach = _reachability_check(db, unit, target, profile, gateway)
-        checks = [reach]
-        if reach.passed:
-            checks += _range_ammo_checks(unit, target, profile, tmpl, payload)
+        has_ammo = _inst_ammo(inst) > 0
+        # 彈藥數為 0 的武器不算可打（precheck 只看 DB current_state；活彈藥由裁決把關）。
+        if not has_ammo:
+            checks = [PrecheckCheck(name="ammo", passed=False, detail=f"{tmpl.name} 無彈藥")]
+        else:
+            reach = _reachability_check(db, unit, target, profile, gateway)
+            checks = [reach]
+            if reach.passed:
+                checks += _range_ammo_checks(unit, target, profile, tmpl, payload)
         if all(c.passed for c in checks):
             return [
                 PrecheckCheck(
@@ -238,16 +239,15 @@ def _precheck_engage_any(
                     detail=f"聯合火力：可由 {tmpl.name} 交戰（其餘武器於裁決時逐件判定）",
                 )
             ]
-        per_weapon.append((tmpl.name, checks))
-    # 無任一武器可打 → 回通過項最多者（最接近可打）的具體失敗檢查（排在前，讓 precheck_error_code
-    # 取到具體物理原因如 NO_LOS/OUT_OF_RANGE），末尾附聯合摘要。
-    best_name, best_checks = max(per_weapon, key=lambda r: sum(c.passed for c in r[1]))
-    summary = PrecheckCheck(
-        name="combined_fires",
-        passed=False,
-        detail=f"武器組合無任一可交戰（最接近：{best_name}）",
-    )
-    return [*best_checks, summary]
+        # 該武器的代表失敗原因（第一個未過的 check），命名沿用失敗類型 → precheck_error_code 可取到
+        # 具體物理碼（NO_LOS/OUT_OF_RANGE/NO_AMMO）；detail 前綴武器名，供面板逐列顯示全貌。
+        fail = next((c for c in checks if not c.passed), checks[-1])
+        line = PrecheckCheck(name=fail.name, passed=False, detail=f"{tmpl.name}：{fail.detail}")
+        evals.append((has_ammo, sum(c.passed for c in checks), line))
+    # 排序：**有彈**優先、通過項多優先 → 代表（第一列）決定錯誤碼與標題原因。這樣「某武器沒彈」不會
+    # 蓋過「其餘有彈武器被地形/射程擋」這個真正原因。全部列出讓使用者看到各武器各自狀態。
+    evals.sort(key=lambda e: (e[0], e[1]), reverse=True)
+    return [e[2] for e in evals]
 
 
 def _resolve_weapon(

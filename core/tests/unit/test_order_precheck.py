@@ -219,7 +219,56 @@ def test_combined_all_direct_los_blocked_infeasible(
         )
     assert not result.feasible
     assert precheck_error_code(result) == "ORDER_NO_LOS"  # 具體物理原因
-    assert result.checks[-1].name == "combined_fires"  # 末尾附聯合摘要
+    # 逐武器列出各自失敗原因（每件武器一列，detail 前綴武器名）。
+    assert len(result.checks) == 2
+    assert all(not c.passed for c in result.checks)
+    assert any("RIFLE" in (c.detail or "") for c in result.checks)
+
+
+def test_combined_empty_weapon_does_not_dictate_reason(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # 關鍵：一把免視線武器（可變軌飛彈）空彈 + 有彈直瞄武器被 LOS 擋 → 標題原因應為 NO_LOS
+    # （有彈武器被地形擋才是真原因），**不是** NO_AMMO（別讓單一空彈武器誤導）。
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_direct_weapon(db, world.blue_unit_id, "AUTOCANNON")  # 有彈、被 LOS 擋
+        tmpl = EquipmentTemplate(
+            name="Javelin",
+            category="MISSILE",
+            base_stats={
+                "max_range_m": 10000,
+                "ph_by_range_band": [[500, 0.9], [10000, 0.85]],
+                "damage_by_armor_class": {"ARMOR": 100},
+                "ammo_types": ["X"],
+                "missile_kind": "ATGM",
+                "maneuverable": True,
+            },
+        )
+        db.add(tmpl)
+        db.flush()
+        db.add(
+            EquipmentInstance(
+                template_id=tmpl.id, owner_id=world.blue_unit_id, current_state={"ammo": 0}
+            )
+        )
+        db.commit()
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert not result.feasible
+    assert precheck_error_code(result) == "ORDER_NO_LOS"  # 有彈武器被地形擋，非 NO_AMMO
+    # 面板仍逐武器列出：有彈的 AUTOCANNON 排前（決定原因）、空彈 Javelin 在後。
+    assert result.checks[0].name == "line_of_sight" and "AUTOCANNON" in (
+        result.checks[0].detail or ""
+    )
+    assert any(
+        "Javelin" in (c.detail or "") and "無彈藥" in (c.detail or "") for c in result.checks
+    )
 
 
 def test_combined_zero_ammo_weapon_not_counted(
