@@ -123,6 +123,13 @@ def _precheck_move(
         return [PrecheckCheck(name="position", passed=False, detail="單位無座標，無法規劃移動")]
     from_h3 = h3.latlng_to_cell(unit.current_lat, unit.current_lng, _HEX_RES)
     reachable, detail = gateway.path_reachable(from_h3, payload.to_h3, payload.mobility_profile)
+    if not reachable:
+        # 不可達最常見主因：起訖不在已建置地形快取範圍（terrain A* 於預算 hex grid 外不規劃），
+        # 或沿途地形不可通行。給使用者可行動的原因，而非只回「不可達」（與前端直線預覽落差來源）。
+        detail = (
+            f"{detail}——目標或路徑可能超出已建置地形範圍，或沿途地形不可通行；"
+            "請縮短距離或改選已涵蓋區域內的目標（長距離道路/地形路由為後續強化）"
+        )
     return [PrecheckCheck(name="reachability", passed=reachable, detail=detail)]
 
 

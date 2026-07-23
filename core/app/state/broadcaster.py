@@ -88,6 +88,14 @@ class RedisBroadcaster:
     def _channel(self) -> str:
         return f"session:{self._session_id}:stream"
 
+    def _tick_key(self) -> str:
+        return f"session:{self._session_id}:tick"
+
+    def _write_tick(self, tick: int) -> None:
+        # 供 API 下令端讀「當前 sim tick」以戳記 issued_at_tick（否則永遠 0 → 指令無法依時排序、
+        # 前端顯示 T0）。單一寫者＝本廣播器（Kernel 執行緒）；API 唯讀，不違反 single-writer。
+        self._redis.set(self._tick_key(), tick)
+
     async def publish(self, tick: int, diff: SessionDiff) -> None:
         if not diff:
             # 閒置無變動：節流送 CLOCK 心跳，讓前端牆鐘不凍結（否則 idle session tick 停在 T—）。
@@ -97,6 +105,7 @@ class RedisBroadcaster:
         await asyncio.to_thread(self._publish_sync, tick, diff)
 
     def _publish_clock_sync(self, tick: int) -> None:
+        self._write_tick(tick)
         publish_to_stream(
             self._redis,
             seq_key=self._seq_key(),
@@ -126,6 +135,7 @@ class RedisBroadcaster:
     def _publish_sync(self, tick: int, diff: SessionDiff) -> None:
         # 原子指派 seq + 寫 ring + publish（CODE_REVIEW C3）——與 API 端 publish_event 共用同一
         # 原子路徑，避免兩個寫入者交錯造成 ring 順序與 seq 不一致。
+        self._write_tick(tick)  # 下令端讀此戳記 issued_at_tick（活動 tick 每次刷新）
         envelope = build_state_diff_envelope(0, tick, diff)  # seq 佔位，由 publish_to_stream 指派
         publish_to_stream(
             self._redis,

@@ -139,13 +139,17 @@ onMounted(async () => {
           <h2>AI 設定</h2>
 
           <label class="field">
-            <span class="lbl">AI 模式</span>
+            <span class="lbl">AI 模式（目前生效）</span>
             <select v-model="aiMode" data-testid="ai-mode">
               <option v-for="m in cfg.ai.ai_modes" :key="m" :value="m">
                 {{ AI_MODE_LABEL[m] ?? m }}（{{ m }}）
               </option>
             </select>
           </label>
+          <p class="hint">
+            這是<strong>目前生效</strong>的 AI 模式（存於資料庫、全系統適用）。下方「系統資訊」的
+            <em>AI 模式環境預設</em> 只是環境變數 fallback——<strong>未在此設定時</strong>才會採用，兩者不同屬正常。
+          </p>
 
           <div class="subhd">LLM 後端（OpenAI 相容，如 Ollama / vLLM）</div>
           <label class="field">
@@ -209,7 +213,10 @@ onMounted(async () => {
           <p class="hint">下列由容器啟動 ENV / 掛載決定，於此僅檢視；變更需改部署設定並重啟對應服務。</p>
           <dl class="ro">
             <div><dt>部署環境</dt><dd>{{ cfg.readonly.env }}</dd></div>
-            <div><dt>AI 模式（ENV 預設）</dt><dd>{{ cfg.readonly.ai_mode_env_default }}</dd></div>
+            <div>
+              <dt>AI 模式環境預設（fallback）</dt>
+              <dd>{{ cfg.readonly.ai_mode_env_default }}<span class="ro-note">← 僅未於上方設定時採用</span></dd>
+            </div>
             <div><dt>Terrain gRPC</dt><dd>{{ cfg.readonly.terrain_grpc_target }}</dd></div>
             <div><dt>Weather gRPC</dt><dd>{{ cfg.readonly.weather_grpc_target }}</dd></div>
             <div><dt>Redis</dt><dd>{{ cfg.readonly.redis_url }}</dd></div>
@@ -373,5 +380,10 @@ h1 {
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
   word-break: break-all;
+}
+.ro-note {
+  color: #64748b;
+  font-size: 0.7rem;
+  margin-left: 0.4rem;
 }
 </style>

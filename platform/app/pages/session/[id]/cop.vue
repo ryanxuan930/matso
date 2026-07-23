@@ -1480,7 +1480,9 @@ watch(
                 <span>約 <b>{{ movePreview.duration_ticks }}</b> tick</span>
                 <span>油耗 <b>{{ movePreview.fuel_cost.toFixed(1) }}</b></span>
               </div>
-              <div v-if="movePreview.feasible" class="mv-ok">✓ 路徑暢通</div>
+              <div v-if="movePreview.feasible" class="mv-ok" title="此預覽僅檢查直線路徑上的已知障礙；地形可達性（是否在已建置地形範圍內）於送出時驗證">
+                ✓ 無障礙阻擋（地形可達性於送出時驗證）
+              </div>
               <div v-else class="mv-forced" data-testid="move-forced">
                 ⚠ 需強穿 {{ movePreview.crossings.length }} 處阻礙（隨機額外耗損）
                 <ul>

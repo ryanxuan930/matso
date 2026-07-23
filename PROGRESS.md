@@ -110,6 +110,22 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## Backlog / 發現的問題
 
+### 🚚 移動真實化（2026-07-24，使用者回報；大塊，需自成任務）
+**現況＝三套不一致的移動模型**（使用者親測發現）：
+1. **預覽** `api/movement.preview` → `estimate_route`：直線 + 手繪障礙穿越（幾何）→ 常顯「路徑暢通」。
+2. **預檢閘門** `_precheck_move` → `gateway.path_reachable` → terrain A*（`modules/terrain/pathfind.py`）：
+   在**已建置 hex grid 快取範圍外**（`cache.get_cell` 回 None）即回 unreachable → 長距離/跨區移動被拒。
+3. **執行** `engine/movement.py`：**直線內插固定速度**，完全不看地形；且**正常移動不扣 strength**
+   （只有 `_apply_forced_attrition` 強穿障礙才扣）。
+→ 使用者症狀全部源於此：預覽暢通但執行不可行（模型 1 vs 2）、超乎常理直線高速（模型 3）、無耗損（模型 3）。
+**本次已做的контained 修補**：預檢不可達原因說明化（precheck.py）、前端預覽標籤正名「無障礙阻擋（地形可達性於送出時驗證）」。
+**待辦（分階段，需 SPEC + 可能動 golden 需重錄）**：
+- P1 統一模型：執行改走 terrain A* 路徑（沿 hex 路徑前進，非直線）；預覽/閘門/執行共用同一路由。
+- P2 速度真實化：速度由地形類別 + **坡度（爬升/下降）** + 是否沿道路（`taiwan_drive.graphml`，config 標「尚未使用」）調變；單位若含**運輸載具**（編裝）→ 機動 profile 提升。
+- P3 耗損：正常移動依距離/地形/坡度扣 strength（燃料/磨耗），非僅強穿。
+- P4 地形覆蓋：擴大預建 hex grid 範圍（或 on-demand 建格），避免長距離「超出範圍」誤拒。
+- 紅線：移動裁決用 `DeterministicRNG(seed,"movement")`；改動後 golden replay 需重錄（`ops/tools/rerecord_golden.py`）。
+
 ### O6 → O7 交接項（2026-07-21，M6 + 多陣營完成後）
 
 **部署層接線（介面皆已備注入點，接線即可）**：
