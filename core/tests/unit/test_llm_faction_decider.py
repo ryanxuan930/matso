@@ -6,13 +6,21 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+import pytest
+
 from app.ai_loop import run_faction_turn
 from app.ai_loop.context import build_faction_context
-from app.ai_loop.decider import LlmFactionDecider, _extract_json
+from app.ai_loop.decider import LlmFactionDecider, _extract_json, build_llm_client
 from app.factions.relations import FactionRelations, Relation
 from app.guardrails import GuardrailGateway
 from app.models.enums import AiMode
-from matso_ai.inference.client import ChatMessage, LLMResponse
+from matso_ai.inference.client import (
+    ChatMessage,
+    LLMResponse,
+    OpenAICompatibleClient,
+    RecordingClient,
+    ReplayClient,
+)
 
 # 一份合法 opfor_decision（reasoning_chain 3 個行首編號步驟 + ≥80 字；cited 空＝AI_BARE 相容）。
 _VALID = {
@@ -145,3 +153,42 @@ def test_run_faction_turn_falls_back_on_garbage() -> None:
     assert result.accepted is False
     assert result.orders == []
     assert result.fallback_used is True  # G1 擋下 → 重試耗盡 → doctrine fallback（HOLD）
+
+
+# ---- O11.6 決定性重播 ----
+
+
+@pytest.fixture(autouse=True)
+def _clear_replay_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MATSO_LLM_REPLAY_DIR", raising=False)
+    monkeypatch.delenv("MATSO_LLM_RECORD_DIR", raising=False)
+
+
+def test_build_client_selects_replay(tmp_path: Any) -> None:
+    c = build_llm_client(base_url="http://x", api_key="", model="m", replay_dir=str(tmp_path))
+    assert isinstance(c, ReplayClient)
+
+
+def test_build_client_selects_recording(tmp_path: Any) -> None:
+    c = build_llm_client(base_url="http://x", api_key="", model="m", record_dir=str(tmp_path))
+    assert isinstance(c, RecordingClient)
+
+
+def test_build_client_defaults_real() -> None:
+    c = build_llm_client(base_url="http://x", api_key="", model="m")
+    assert isinstance(c, OpenAICompatibleClient)
+
+
+def test_record_then_replay_is_deterministic(tmp_path: Any) -> None:
+    ctx = _ctx()
+    # 錄：RecordingClient 包一個假「真」client，把回應寫成 fixture。
+    fake_real = _FakeClient(json.dumps(_VALID, ensure_ascii=False))
+    rec = LlmFactionDecider(
+        RecordingClient(inner=fake_real, out_dir=tmp_path), model="gemma", mode=AiMode.AI_BARE
+    )
+    out1 = rec.decide(ctx)
+    # 放：ReplayClient 只讀 fixture，不碰任何真 client（air-gapped/CI）。
+    rep = LlmFactionDecider(ReplayClient.from_dir(tmp_path), model="gemma", mode=AiMode.AI_BARE)
+    out2 = rep.decide(ctx)
+    assert out1 == out2
+    assert out2["orders"][0]["unit_id"] == "b1"  # 同 context → 同決策（決定性）

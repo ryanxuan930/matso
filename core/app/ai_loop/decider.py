@@ -14,11 +14,19 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 from app.ai_loop.context import render_context_prompt
 from app.models.enums import AiMode
-from matso_ai.inference.client import ChatMessage, LLMClient, OpenAICompatibleClient
+from matso_ai.inference.client import (
+    ChatMessage,
+    LLMClient,
+    OpenAICompatibleClient,
+    RecordingClient,
+    ReplayClient,
+)
 from matso_ai.prompts import build_system_prompt
 from matso_ai.roles import Role
 
@@ -103,9 +111,47 @@ class LlmFactionDecider:
         return _extract_json(response.text)
 
 
+def build_llm_client(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    replay_dir: str | None = None,
+    record_dir: str | None = None,
+) -> LLMClient:
+    """依決定性策略挑 client（O11.6，SPEC_AUTONOMY §6）：
+
+    - `replay_dir`（或 env `MATSO_LLM_REPLAY_DIR`）：`ReplayClient`——按 prompt 雜湊重播已錄回應，
+      **零網路/零 GPU**（air-gapped / CI / golden 自主場次）。
+    - `record_dir`（或 env `MATSO_LLM_RECORD_DIR`）：`RecordingClient` 包真 client，回應寫成 fixture
+      （使用者本機 Ollama 錄一次）。
+    - 皆無：真 `OpenAICompatibleClient`。
+    """
+    replay = replay_dir or os.environ.get("MATSO_LLM_REPLAY_DIR") or ""
+    record = record_dir or os.environ.get("MATSO_LLM_RECORD_DIR") or ""
+    if replay:
+        return ReplayClient.from_dir(replay)
+    real = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
+    if record:
+        return RecordingClient(inner=real, out_dir=Path(record))
+    return real
+
+
 def make_llm_faction_decider(
-    *, base_url: str, model: str, api_key: str = "", mode: AiMode | str = AiMode.AI_BARE
+    *,
+    base_url: str,
+    model: str,
+    api_key: str = "",
+    mode: AiMode | str = AiMode.AI_BARE,
+    replay_dir: str | None = None,
+    record_dir: str | None = None,
 ) -> LlmFactionDecider:
-    """由 #54 系統設定（base_url/model/api_key/mode）建 decider（OpenAI 相容後端，如 Ollama）。"""
-    client = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
+    """由 #54 系統設定建 decider（OpenAI 相容後端）；record/replay 決定性見 build_llm_client。"""
+    client = build_llm_client(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        replay_dir=replay_dir,
+        record_dir=record_dir,
+    )
     return LlmFactionDecider(client, model=model, mode=mode)
