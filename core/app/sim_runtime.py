@@ -43,6 +43,7 @@ from app.sim_control import session_pause_key
 from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerWriter
+from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
 from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
@@ -178,11 +179,20 @@ class SimManager:
             # White Cell 暫停旗標（新 #6）：control 端點 PAUSE 設 Redis 鍵、RESUME 清除；
             # 迴圈輪詢此鍵 → 暫停時凍結活模擬。
             pause_key = session_pause_key(session_id)
+
+            async def _apply_live_edits() -> None:
+                # 編裝彈藥即時調整（#52）：drain API 排入的命令，以本迴圈自己的 hot 實例套用
+                # （同實例→mirror 一致；同行程→不違反 single-writer；tick 之間→不與 tick 內競態）。
+                cmds = await asyncio.to_thread(drain_ammo_cmds, client, session_id)
+                if cmds:
+                    apply_ammo_cmds(hot, cmds)
+
             await run_paced(
                 kernel,
                 pacer,
                 should_stop=self._stop.is_set,
                 should_pause=lambda: bool(client.exists(pause_key)),
+                pre_tick=_apply_live_edits,
             )
         except asyncio.CancelledError:
             raise

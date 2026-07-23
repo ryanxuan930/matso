@@ -252,6 +252,25 @@ def test_policy_free_is_default_all_fire() -> None:
     assert "w-atgm" in r.ammo_spent_by_weapon  # FREE 下 ATGM 仍發射耗彈
 
 
+def test_rejected_event_has_per_weapon_reason_detail() -> None:
+    # 全數不可打 → 事件帶 reason_detail 逐武器原因彙總（供戰況 feed 顯示為何整組不能打）。
+    weapons = [
+        CombinedWeapon("w-rifle", _RIFLE, quantity=7, ammo=100),  # 在射程但無 LOS → 無視線
+        CombinedWeapon("w-atgm", _ATGM, quantity=2, ammo=8),  # 超射程
+        CombinedWeapon("w-empty", _RIFLE, quantity=1, ammo=0),  # 無彈藥
+    ]
+
+    def env(profile: WeaponProfile) -> EnvSnapshot:
+        if profile.max_range_m <= 600:  # rifle：在射程、無視線
+            return EnvSnapshot(range_m=400, los_clear=False)
+        return EnvSnapshot(range_m=9000, los_clear=True)  # atgm：超射程（max 4000）
+
+    r = resolve_combined_engagement(weapons, "s", 1.0, _target("ARMOR"), env, _rng(), tick=1)
+    assert r.status is Resolution.REJECTED
+    detail = r.events[0].ai_decision["reason_detail"]
+    assert "無視線" in detail and "超射程" in detail and "無彈藥" in detail
+
+
 def test_weapon_order_is_deterministic_dispersion() -> None:
     # 每合格武器恰一次 dispersion 抽樣（順序＝清單序）：per_weapon 明細帶各自 dispersion。
     r = resolve_combined_engagement(

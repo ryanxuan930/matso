@@ -252,6 +252,10 @@ const terrainClips = ref<Record<string, number[][]>>({})
 const clipBusy = ref(false)
 const weaponTemplates = ref<EquipmentTemplate[]>([])
 const orders = ref<OrderResponse[]>([])
+// 指令列表：以下令 tick（≈真實時間）新到舊排序，剛下的令排最上（穩定排序，同 tick 保原序）。
+const sortedOrders = computed(() =>
+  [...orders.value].sort((a, b) => (b.issued_at_tick ?? 0) - (a.issued_at_tick ?? 0)),
+)
 const selectedId = ref<string | null>(null)
 const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
 const destH3 = ref<string | null>(null)
@@ -1165,7 +1169,11 @@ function formatEvent(payload: Record<string, unknown>): string {
       return `交戰命中${cx} ${ini} → ${tgt}${dmg}${after}${ko}`
     }
     if (status === 'MISS') return `交戰未命中${cx} ${ini} → ${tgt}`
-    if (status === 'REJECTED') return `交戰不可行 ${ini} → ${tgt}（${payload?.reason ?? ''}）`
+    if (status === 'REJECTED') {
+      // 聯合兵種：優先顯示逐武器原因彙總（如「無視線×2、超射程×1、無彈藥×1」），比單一 code 清楚。
+      const why = payload?.reason_detail || payload?.reason || ''
+      return `交戰不可行 ${ini} → ${tgt}（${why}）`
+    }
     return `交戰 ${ini} → ${tgt}`
   }
   if (type === 'UNIT_ARRIVED') return `${ini} 已抵達目標`
@@ -1582,7 +1590,7 @@ watch(
       >
         <div class="wsec-hd">指令（{{ orders.length }}）</div>
         <ul class="orders" data-testid="order-list">
-          <li v-for="o in orders" :key="o.id" data-testid="order-row">
+          <li v-for="o in sortedOrders" :key="o.id" data-testid="order-row">
             <div class="ord-main">
               <span class="ord-unit">{{ unitName(o.unit_id) || '單位' }}</span>
               <span class="ord-type">{{ orderTypeLabel(o.order_type) }}</span>

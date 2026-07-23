@@ -38,6 +38,24 @@ _DISPERSION = (0.8, 1.2)
 
 # 合格集為空時回報原因的優先序（越前越「可行動」）：在射程但被遮蔽/彈道阻，比全出界更有資訊。
 _REJECT_PRIORITY = ("NO_LOS", "TRAJECTORY_BLOCKED", "OUT_OF_RANGE", "NO_AMMO")
+# 逐武器原因 → 中文標籤（供戰況 feed 的 reason_detail「無視線×2、超射程×1、無彈×1」）。
+_REASON_LABELS = {
+    "NO_LOS": "無視線",
+    "TRAJECTORY_BLOCKED": "彈道受阻",
+    "OUT_OF_RANGE": "超射程",
+    "NO_AMMO": "無彈藥",
+}
+
+
+def _reason_summary(per_weapon: list[dict[str, Any]]) -> str:
+    """把逐武器的 REJECTED 原因彙總成一句（依原因分類計數），供戰況 feed 顯示為何整組不能打。"""
+    counts: dict[str, int] = {}
+    for pw in per_weapon:
+        if pw.get("status") == "REJECTED":
+            r = str(pw.get("reason", ""))
+            counts[r] = counts.get(r, 0) + 1
+    return "、".join(f"{_REASON_LABELS.get(r, r)}×{n}" for r, n in counts.items())
+
 
 # 火力政策（SPEC_EXTEND P3）：FREE 全打；SMALL_ARMS_ONLY 僅輕兵器；ANTI_ARMOR_HOLD 反裝甲僅對
 # 有效目標。未知政策→當 FREE。「指定 weapon_id 僅該武器」由 adjudicator gating 走既有單武器路徑。
@@ -193,6 +211,7 @@ def resolve_combined_engagement(
             ai_decision={
                 "status": Resolution.REJECTED.value,
                 "reason": reason,
+                "reason_detail": _reason_summary(per_weapon),  # 逐武器原因彙總（戰況 feed）
                 "mode": "COMBINED",
                 "per_weapon": per_weapon,
             },
