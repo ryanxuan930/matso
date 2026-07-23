@@ -79,6 +79,9 @@ class _StubGateway:
     ) -> LosOutcome:
         return LosOutcome(True, 15.0)
 
+    def elevation(self, lat: float, lng: float) -> float:
+        return 0.0  # 平坦地形（stub）：彈道飛彈拋物線不被地形阻擋（僅障礙判定）
+
 
 def get_gateway() -> PhysicsGateway:
     """物理 gateway。STUB_GATEWAY=1 → 許可式 stub（E2E）；否則真 terrain gRPC（未起 → 503）。"""

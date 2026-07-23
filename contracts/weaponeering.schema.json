@@ -96,6 +96,8 @@
           "default": "HEAT"
         },
         "flight_speed_ms": { "type": "number", "exclusiveMinimum": 0, "description": "飛行速度 m/s（供飛行時間/攔截窗）。" },
+        "maneuverable": { "type": "boolean", "default": true, "description": "可變軌（巡弋/遊蕩/ATGM…末端機動繞過障礙，僅判射程）；false＝彈道飛彈走固定拋物線，接戰須判地形/障礙淨空。" },
+        "apex_ratio": { "type": "number", "minimum": 0, "default": 0.25, "description": "拋物線頂高比＝頂高/地面射程（45°發射≈0.25；低伸彈道用較小值，障礙較易阻隔）。" },
         "top_attack": { "type": "boolean", "default": false, "description": "頂攻模式（打擊裝甲薄弱頂面）。" },
         "min_engage_range_m": { "type": "number", "minimum": 0, "default": 0, "description": "最小接戰距離（保險解除/尋標鎖定所需）。" },
         "countermeasure_resistance": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "抗反制能力 0..1（對誘餌/干擾/主動防護的韌性）。" }

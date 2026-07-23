@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from app.adjudication.trajectory import ArcObstacle
 
 import h3
 from sqlalchemy import select
@@ -59,6 +62,7 @@ _CHECK_ERROR_CODES = {
     "reachability": "ORDER_UNREACHABLE",
     "target_exists": "ORDER_TARGET_NOT_FOUND",
     "line_of_sight": "ORDER_NO_LOS",
+    "trajectory": "ORDER_NO_LOS",  # 彈道飛彈拋物線被地形/障礙阻隔（沿用 NO_LOS 語義：無法命中）
     "roe": "ORDER_ROE_VIOLATION",
     "weapon": "ORDER_INVALID_PAYLOAD",
     "range": "ORDER_OUT_OF_RANGE",
@@ -76,6 +80,9 @@ class PhysicsGateway(Protocol):
     def has_los(
         self, observer: tuple[float, float, float], target: tuple[float, float, float]
     ) -> LosOutcome: ...
+
+    # 彈道飛彈拋物線淨空所需的地形高程取樣（可選；缺此方法的 gateway 退回僅障礙判定）。
+    def elevation(self, lat: float, lng: float) -> float: ...
 
 
 def run_precheck(
@@ -143,11 +150,79 @@ def _precheck_engage(
         or target.current_lng is None
     ):
         return [PrecheckCheck(name="position", passed=False, detail="射手或目標無座標")]
+
+    # 解析武器（決定可達性檢查型別：直瞄 LOS / 間瞄免視線 / 飛彈射程或拋物線淨空）。
+    profile, tmpl, weapon_fail = _resolve_weapon(db, unit, payload)
+    if weapon_fail is not None:
+        return [weapon_fail]
+
+    reach = _reachability_check(db, unit, target, profile, gateway)
+    if not reach.passed:
+        return [reach]
+    if profile is None or tmpl is None:
+        return [reach]  # 無裝備 → 僅 LOS（維持既有測試綠）
+    return [reach, *_range_ammo_checks(unit, target, profile, tmpl, payload)]
+
+
+def _resolve_weapon(
+    db: Session, unit: TacticalUnit, payload: EngagePayload
+) -> tuple[WeaponProfile | None, EquipmentTemplate | None, PrecheckCheck | None]:
+    """解析單位（或選定）武器 → (profile, tmpl, 失敗檢查)。無裝備 → (None, None, None)。"""
+    instances = (
+        db.execute(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id))
+        .scalars()
+        .all()
+    )
+    if not instances:
+        return None, None, None
+    if payload.weapon_id is not None:
+        inst = next((i for i in instances if i.id == payload.weapon_id), None)
+        if inst is None:
+            fail = PrecheckCheck(
+                name="weapon", passed=False, detail=f"指定武器不屬於此單位：{payload.weapon_id}"
+            )
+            return None, None, fail
+    else:
+        inst = instances[0]
+    tmpl = db.get(EquipmentTemplate, inst.template_id)
+    if tmpl is None:
+        return None, None, PrecheckCheck(name="weapon", passed=False, detail="武器模板遺失")
+    try:
+        profile = WeaponProfile.from_base_stats(tmpl.base_stats)
+    except ValueError as exc:
+        return None, None, PrecheckCheck(name="weapon", passed=False, detail=f"武器參數無效：{exc}")
+    return profile, tmpl, None
+
+
+def _reachability_check(
+    db: Session,
+    unit: TacticalUnit,
+    target: TacticalUnit,
+    profile: WeaponProfile | None,
+    gateway: PhysicsGateway,
+) -> PrecheckCheck:
+    """依飛行剖面判可達性（#飛彈）：直瞄→LOS；間瞄→免視線；巡弋→僅射程；彈道→拋物線淨空。"""
+    assert unit.current_lat is not None and unit.current_lng is not None
+    assert target.current_lat is not None and target.current_lng is not None
+    dist = _haversine_km(unit.current_lat, unit.current_lng, target.current_lat, target.current_lng)
+
+    if profile is not None and profile.missile:
+        if profile.maneuverable:
+            return PrecheckCheck(
+                name="trajectory",
+                passed=True,
+                detail=f"可變軌飛彈，末端機動繞過，僅判射程（{dist:.1f} km）",
+            )
+        return _ballistic_trajectory_check(db, unit, target, profile, gateway, dist)
+    if profile is not None and profile.indirect_fire:
+        return PrecheckCheck(
+            name="line_of_sight", passed=True, detail=f"間瞄彈道越過地形，免視線（{dist:.1f} km）"
+        )
+    # 直瞄（或無裝備）→ LOS。
     out = gateway.has_los(
         (unit.current_lat, unit.current_lng, _ENGAGE_OBS_M),
         (target.current_lat, target.current_lng, _ENGAGE_OBS_M),
     )
-    dist = _haversine_km(unit.current_lat, unit.current_lng, target.current_lat, target.current_lng)
     if out.visible:
         clr = "" if not math.isfinite(out.clearance_m) else f"，最小餘隙 {out.clearance_m:.0f}m"
         detail = f"視線通暢（直線 {dist:.1f} km）{clr}"
@@ -162,50 +237,132 @@ def _precheck_engage(
             f"地形遮蔽：{dist:.1f} km 直線視線於{loc}附近被地形擋住，"
             f"最低點高出視線約 {deficit:.0f} m（觀測/目標離地各 {_ENGAGE_OBS_M:.0f} m）"
         )
-    los = PrecheckCheck(name="line_of_sight", passed=out.visible, detail=detail)
-    # 無視線 → 直接不可行（間接火力例外於後續卡）；有視線才續查武器射程/彈種。
-    if not out.visible:
-        return [los]
-    return [los, *_weapon_checks(db, unit, target, payload)]
+    return PrecheckCheck(name="line_of_sight", passed=out.visible, detail=detail)
 
 
-def _weapon_checks(
+def _ballistic_trajectory_check(
     db: Session,
     unit: TacticalUnit,
     target: TacticalUnit,
+    profile: WeaponProfile,
+    gateway: PhysicsGateway,
+    dist_km: float,
+) -> PrecheckCheck:
+    """彈道飛彈拋物線淨空：地圖障礙（含高度）+ 地形高程是否阻擋拋物線（#飛彈）。"""
+    from app.adjudication.trajectory import obstacle_blocks_arc, terrain_blocks_arc
+
+    assert unit.current_lat is not None and unit.current_lng is not None
+    assert target.current_lat is not None and target.current_lng is not None
+    shooter = (unit.current_lng, unit.current_lat)
+    tgt = (target.current_lng, target.current_lat)
+    ground_range_m = dist_km * 1000.0
+
+    # 1) 地圖障礙（地圖編輯器建立、含高度）。
+    obstacles = _load_arc_obstacles(db, unit.session_id)
+    ob = obstacle_blocks_arc(shooter, tgt, obstacles, apex_ratio=profile.apex_ratio)
+    if ob.blocked:
+        return PrecheckCheck(
+            name="trajectory", passed=False, detail=f"拋物線被障礙阻隔：{ob.detail}"
+        )
+
+    # 2) 地形高程（沿弧線取樣；gateway 無 elevation 或失敗則跳過，僅障礙判定）。
+    samples = _sample_terrain(gateway, shooter, tgt, steps=10)
+    if samples is not None:
+        s_elev = _elev(gateway, unit.current_lat, unit.current_lng) or 0.0
+        t_elev = _elev(gateway, target.current_lat, target.current_lng) or 0.0
+        tb = terrain_blocks_arc(
+            samples, s_elev, t_elev, ground_range_m, apex_ratio=profile.apex_ratio
+        )
+        if tb.blocked:
+            return PrecheckCheck(
+                name="trajectory", passed=False, detail=f"拋物線被地形阻隔：{tb.detail}"
+            )
+    return PrecheckCheck(
+        name="trajectory", passed=True, detail=f"彈道飛彈拋物線淨空（{dist_km:.1f} km）"
+    )
+
+
+def _load_arc_obstacles(db: Session, session_id: str) -> list[ArcObstacle]:
+    """載入本 session 可阻擋拋物線的障礙（障礙/建築/地形，含 attributes.height_m）。"""
+    from app.adjudication.trajectory import ArcObstacle
+    from app.models.tables import MapFeature
+
+    rows = db.execute(select(MapFeature).where(MapFeature.session_id == session_id)).scalars().all()
+    out: list[ArcObstacle] = []
+    for f in rows:
+        if f.kind not in ("OBSTACLE", "BUILDING", "TERRAIN"):
+            continue
+        attrs = f.attributes or {}
+        h = attrs.get("height_m")
+        height = float(h) if isinstance(h, (int, float)) else (2.0 if f.kind != "TERRAIN" else 0.0)
+        if height <= 0.0:
+            continue
+        coords = _coerce_coords(f.geometry_type, f.geometry)
+        if not coords:
+            continue
+        radius = f.influence_radius_m
+        out.append(
+            ArcObstacle(
+                feature_id=f.id,
+                kind=f.kind,
+                geometry_type=str(f.geometry_type).upper(),
+                coords=coords,
+                height_m=height,
+                radius_m=float(radius) if isinstance(radius, (int, float)) else 0.0,
+            )
+        )
+    return out
+
+
+def _coerce_coords(gtype: str, geom: Any) -> tuple[tuple[float, float], ...]:
+    try:
+        gt = str(gtype).upper()
+        if gt == "POINT":
+            return ((float(geom[0]), float(geom[1])),)
+        if gt in ("LINE", "POLYGON"):
+            pts = tuple((float(p[0]), float(p[1])) for p in geom if len(p) >= 2)
+            return pts if len(pts) >= 2 else ()
+    except (TypeError, ValueError, IndexError, KeyError):
+        return ()
+    return ()
+
+
+def _elev(gateway: PhysicsGateway, lat: float, lng: float) -> float | None:
+    fn = getattr(gateway, "elevation", None)
+    if not callable(fn):
+        return None
+    try:
+        return float(fn(lat, lng))
+    except Exception:
+        return None
+
+
+def _sample_terrain(
+    gateway: PhysicsGateway, s: tuple[float, float], t: tuple[float, float], *, steps: int
+) -> list[tuple[float, float]] | None:
+    """沿 s→t 取 steps 個中間點的地形高程；gateway 無 elevation → None（跳過地形判定）。"""
+    if not callable(getattr(gateway, "elevation", None)):
+        return None
+    samples: list[tuple[float, float]] = []
+    for i in range(1, steps):
+        frac = i / steps
+        lng = s[0] + (t[0] - s[0]) * frac
+        lat = s[1] + (t[1] - s[1]) * frac
+        e = _elev(gateway, lat, lng)
+        if e is None:
+            return None
+        samples.append((frac, e))
+    return samples
+
+
+def _range_ammo_checks(
+    unit: TacticalUnit,
+    target: TacticalUnit,
+    profile: WeaponProfile,
+    tmpl: EquipmentTemplate,
     payload: EngagePayload,
 ) -> list[PrecheckCheck]:
-    """武器/射程/彈種檢查（資料驅動 baseStats）。單位無裝備 → 回 []（優雅降級，維持既有測試綠）。
-
-    weapon_id 指定時須為此單位所屬的 EquipmentInstance（否則 weapon 失敗→ORDER_INVALID_PAYLOAD）；
-    未指定則自動選第一件。射程用大圓距離對 WeaponProfile.in_envelope；彈種須在武器 ammo_types 內。
-    武器 baseStats 無法解析（ValueError）→ weapon 失敗，不冒 500。
-    """
-    instances = (
-        db.execute(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id))
-        .scalars()
-        .all()
-    )
-    if not instances:
-        return []  # 無裝備 → 略過武器檢查（維持既有 ENGAGE 測試綠）
-
-    if payload.weapon_id is not None:
-        inst = next((i for i in instances if i.id == payload.weapon_id), None)
-        if inst is None:
-            detail = f"指定武器不屬於此單位：{payload.weapon_id}"
-            return [PrecheckCheck(name="weapon", passed=False, detail=detail)]
-    else:
-        inst = instances[0]
-
-    tmpl = db.get(EquipmentTemplate, inst.template_id)
-    if tmpl is None:
-        return [PrecheckCheck(name="weapon", passed=False, detail="武器模板遺失")]
-    try:
-        profile = WeaponProfile.from_base_stats(tmpl.base_stats)
-    except ValueError as exc:
-        return [PrecheckCheck(name="weapon", passed=False, detail=f"武器參數無效：{exc}")]
-
-    # 到此 LOS 已過，射手/目標座標必為非 None（上游 position 檢查已保證）。
+    """射程 + 彈種檢查（資料驅動 baseStats）。"""
     assert unit.current_lat is not None and unit.current_lng is not None
     assert target.current_lat is not None and target.current_lng is not None
     dist_m = (
@@ -257,3 +414,8 @@ class TerrainGatewayAdapter:
             return LosOutcome(True, resp.fresnel_clearance)
         op = resp.obstruction_point
         return LosOutcome(False, resp.fresnel_clearance, op.lat, op.lng)
+
+    def elevation(self, lat: float, lng: float) -> float:
+        """地形高程（公尺）——供彈道飛彈拋物線淨空取樣（#飛彈）。"""
+        resp = self._client.get_elevation(lat, lng)  # type: ignore[attr-defined]
+        return float(resp.elevation)

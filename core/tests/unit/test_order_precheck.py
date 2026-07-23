@@ -90,6 +90,78 @@ def test_engage_blocked_los_infeasible(session_factory: sessionmaker[Session]) -
     assert "地形遮蔽" in detail and "23.7000" in detail and "5 m" in detail
 
 
+def _give_missile(
+    db: Session, unit_id: str, *, maneuverable: bool, apex_ratio: float = 0.03
+) -> None:
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    tmpl = EquipmentTemplate(
+        name="MSL",
+        category="MISSILE",
+        base_stats={
+            "max_range_m": 10000,
+            "ph_by_range_band": [[500, 0.9], [10000, 0.85]],
+            "damage_by_armor_class": {"ARMOR": 100},
+            "ammo_types": ["X"],
+            "missile_kind": "CRUISE" if maneuverable else "BALLISTIC",
+            "maneuverable": maneuverable,
+            "apex_ratio": apex_ratio,
+        },
+    )
+    db.add(tmpl)
+    db.flush()
+    db.add(EquipmentInstance(template_id=tmpl.id, owner_id=unit_id, current_state={"ammo": 4}))
+    db.commit()
+
+
+def _add_tall_building(db: Session, session_id: str) -> None:
+    from app.models.tables import MapFeature
+
+    # 藍(23.75,121.25)→紅(23.76,121.26) 中點附近的 400m 高建築。
+    db.add(
+        MapFeature(
+            session_id=session_id,
+            kind="BUILDING",
+            geometry_type="POLYGON",
+            geometry=[[121.253, 23.753], [121.257, 23.753], [121.257, 23.757], [121.253, 23.757]],
+            owner_faction="WHITE_CELL",
+            attributes={"height_m": 400.0},
+        )
+    )
+    db.commit()
+
+
+def test_ballistic_missile_blocked_by_tall_obstacle(session_factory: sessionmaker[Session]) -> None:
+    # 彈道飛彈（低伸拋物線）+ 高建築擋在路徑上 → 拋物線被障礙阻隔（即使無 LOS 也走軌跡判定）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_missile(db, world.blue_unit_id, maneuverable=False, apex_ratio=0.02)
+        _add_tall_building(db, world.session_id)
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert not result.feasible
+    assert result.checks[0].name == "trajectory"
+    assert "障礙" in (result.checks[0].detail or "")
+
+
+def test_cruise_missile_ignores_obstacle_and_los(session_factory: sessionmaker[Session]) -> None:
+    # 巡弋飛彈（可變軌）：即使無 LOS + 有高建築，仍只判射程 → 可行。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_missile(db, world.blue_unit_id, maneuverable=True)
+        _add_tall_building(db, world.session_id)
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert result.feasible
+    assert result.checks[0].name == "trajectory" and result.checks[0].passed
+
+
 def test_engage_unknown_target_infeasible(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db:

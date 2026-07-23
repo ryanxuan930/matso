@@ -66,6 +66,9 @@ class EnvSnapshot:
     weather_modifier: float = 1.0
     shooter_suppression_modifier: float = 1.0
     target_posture_modifier: float = 1.0
+    # 彈道飛彈拋物線是否淨空（地形/障礙未阻隔）；由 wiring 查 terrain + 障礙得出（#飛彈）。
+    # 僅不可變軌飛彈（weapon.ballistic）會檢查此欄；其餘武器忽略。
+    trajectory_clear: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,8 +277,17 @@ def _legality_reason(weapon: WeaponProfile, shooter: Shooter, env: EnvSnapshot) 
         return "NO_AMMO"
     if not weapon.in_envelope(env.range_m):
         return "OUT_OF_RANGE"
-    if not env.los_clear and not weapon.indirect_fire:
-        return "NO_LOS"  # 直瞄需 LOS；間瞄（indirect_fire）不需
+    # 可達性依飛行剖面（#飛彈）：
+    if weapon.missile:
+        # 可變軌飛彈（巡弋/遊蕩/ATGM…）：末端機動繞過，僅判射程（上方已過）。
+        if weapon.maneuverable:
+            return None
+        # 不可變軌飛彈（彈道）：走固定拋物線，需地形/障礙淨空。
+        return None if env.trajectory_clear else "TRAJECTORY_BLOCKED"
+    if weapon.indirect_fire:
+        return None  # 火砲間瞄：彈道越過地形，不需 LOS
+    if not env.los_clear:
+        return "NO_LOS"  # 直瞄需 LOS
     return None
 
 

@@ -88,6 +88,8 @@ const flightSpeed = ref(280)
 const topAttack = ref(false)
 const minEngageRange = ref(65)
 const cmResistance = ref(0.5)
+const missileManeuverable = ref(true) // 可變軌（巡弋僅判射程）；false＝彈道飛彈走拋物線
+const apexRatio = ref(0.25) // 拋物線頂高比（彈道飛彈的地形/障礙淨空判定用）
 // SENSOR 專屬
 const sensorKind = ref('OPTICAL')
 const sensorMaxRange = ref(5000)
@@ -184,6 +186,8 @@ function resetForm() {
   topAttack.value = false
   minEngageRange.value = 65
   cmResistance.value = 0.5
+  missileManeuverable.value = true
+  apexRatio.value = 0.25
   sensorKind.value = 'OPTICAL'
   sensorMaxRange.value = 5000
   detectCurve.value = [{ range: 2000, p: 0.9 }]
@@ -265,6 +269,8 @@ function populateForm(bs: Record<string, unknown>): void {
       topAttack.value = Boolean(bs.top_attack ?? false)
       minEngageRange.value = Number(bs.min_engage_range_m ?? 0)
       cmResistance.value = Number(bs.countermeasure_resistance ?? 0.5)
+      missileManeuverable.value = bs.maneuverable !== false
+      apexRatio.value = Number(bs.apex_ratio ?? 0.25)
     }
   } else if (category.value === 'VEHICLE') {
     crew.value = Number(bs.crew ?? 3)
@@ -391,6 +397,8 @@ function formToBaseStats(): Record<string, unknown> {
       base.top_attack = topAttack.value
       base.min_engage_range_m = minEngageRange.value
       base.countermeasure_resistance = cmResistance.value
+      base.maneuverable = missileManeuverable.value
+      base.apex_ratio = apexRatio.value
     }
     return base
   }
@@ -693,6 +701,18 @@ async function save() {
               <label>抗反制 0–1 <input v-model.number="cmResistance" type="number" step="0.05" min="0" max="1"></label>
               <label class="chk"><input v-model="topAttack" type="checkbox"> 頂攻模式</label>
             </div>
+            <div class="row">
+              <label class="chk">
+                <input v-model="missileManeuverable" type="checkbox" data-testid="armory-maneuverable">
+                可變軌（巡弋/末端機動 → 僅判射程）
+              </label>
+              <label v-if="!missileManeuverable">拋物線頂高比
+                <input v-model.number="apexRatio" type="number" step="0.01" min="0" style="width: 4rem">
+              </label>
+            </div>
+            <p v-if="!missileManeuverable" class="sub" style="color:#94a3b8">
+              彈道飛彈：接戰須判射程 + 拋物線是否被地形/障礙（含高度）阻隔（低頂高比＝低伸彈道，較易被擋）。
+            </p>
           </template>
         </template>
 
