@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,11 @@ from matso_ai.inference.client import (
 )
 from matso_ai.prompts import build_system_prompt
 from matso_ai.roles import Role
+
+# 序列化對「單一本機模型」的呼叫：多陣營 worker 共用同一 decider/後端，若同時打一顆 12B 模型，
+# 兩個大請求互搶 GPU → 每個都爆逾時。用行程級鎖讓 worker 執行緒輪流呼叫（各自拿滿算力）。
+# vLLM/雲端有自身併發時，此鎖只是輕微序列化，不影響正確性。
+_LLM_CALL_LOCK = threading.Lock()
 
 # LLM 必須輸出的 opfor_decision 結構（對齊 contracts/ai_output.schema.json；G1/G2 據此驗）。
 OUTPUT_INSTRUCTION = (
@@ -107,7 +113,8 @@ class LlmFactionDecider:
         if feedback:
             user += _FEEDBACK_PREFIX + feedback
         messages = [ChatMessage("system", system), ChatMessage("user", user)]
-        response = self._client.complete(messages, model=self._model, adapter=self._adapter)
+        with _LLM_CALL_LOCK:  # 序列化：單一本機模型時，多陣營 worker 輪流呼叫（不互搶算力）
+            response = self._client.complete(messages, model=self._model, adapter=self._adapter)
         return _extract_json(response.text)
 
 

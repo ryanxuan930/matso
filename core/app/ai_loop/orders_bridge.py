@@ -111,7 +111,13 @@ class PrecheckFeasibility:
         if payload is None:
             return False, "指令 payload 格式錯誤"
         validated = ValidatedOrder(unit=unit, order_type=req.order_type, payload=payload)
-        result = run_precheck(self._db, validated, self._gateway, self._relations)
+        try:
+            result = run_precheck(self._db, validated, self._gateway, self._relations)
+        except Exception as exc:
+            # 與交戰 env「terrain 服務中斷不凍結戰鬥」一致：物理閘門暫不可用時暫予放行，
+            # 由 submit 端的權威 precheck 再驗（仍不繞過物理，只是不讓 AI 迴圈因 infra 抖動崩潰）。
+            _LOG.warning("G3 物理檢查暫時失敗（%s），暫予放行", type(exc).__name__)
+            return True, f"物理閘門暫時不可用（{type(exc).__name__}）"
         return result.feasible, result.reason or ""
 
 
@@ -164,4 +170,7 @@ def submit_faction_orders(
             result.submitted.append(resp.id)
         except MatsoError as exc:
             result.rejected.append({"order": order, "reason": str(exc)})
+        except Exception as exc:
+            _LOG.warning("AI 落單非預期失敗（%s），歸為 rejected 續跑", type(exc).__name__)
+            result.rejected.append({"order": order, "reason": f"落單失敗：{type(exc).__name__}"})
     return result
