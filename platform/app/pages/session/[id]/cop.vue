@@ -1148,6 +1148,17 @@ async function cancel(id: string) {
 const streamEvents = computed(() =>
   stream.events.filter((e) => e.type === 'EVENT').slice(-20).reverse(),
 )
+// 勝負底定橫幅（O11.5/O11.7）：串流出現 SESSION_CONCLUDED 即顯示勝方。
+const victory = computed(() => {
+  const ev = stream.events.find(
+    (e) =>
+      e.type === 'EVENT'
+      && (e.payload as Record<string, unknown>)?.event_type === 'SESSION_CONCLUDED',
+  )
+  if (!ev) return null
+  const p = ev.payload as Record<string, unknown>
+  return { winners: (p.winners as string[]) ?? [], tick: Number(p.tick ?? 0) }
+})
 // 事件 → 可讀文字（ID→番號、交戰命中/未命中/戰損）。供戰況 feed 即時回饋（含多機同步）。
 function unitName(id?: unknown): string {
   const s = typeof id === 'string' ? id : ''
@@ -1380,9 +1391,23 @@ watch(
             </div>
           </template>
         </div>
+        <button
+          v-if="canControl"
+          data-testid="nav-autonomy"
+          title="自主推演：指派 AI 控制陣營"
+          @click="navigateTo(`/session/${sessionId}/autonomy`)"
+        >
+          <i class="pi pi-bolt" /> 自主推演
+        </button>
         <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)"><i class="pi pi-chart-bar" /> AAR</button>
       </nav>
     </header>
+    <div v-if="victory" class="victory-banner" data-testid="victory-banner">
+      🏁 推演結束 —
+      <strong>{{ victory.winners.length ? `${victory.winners.join('、')} 獲勝` : '平手' }}</strong>
+      （tick {{ victory.tick }}）
+      <button class="vb-aar" @click="navigateTo(`/session/${sessionId}/aar`)">看 AAR →</button>
+    </div>
     <div class="body">
       <!-- #12 停靠側欄容器（拖到最左/右緣的視窗落於此；空則以 :empty 隱藏）。 -->
       <div id="dock-left-col" class="dock-col left" />
@@ -2054,6 +2079,26 @@ watch(
   height: 100vh;
   background: #0a1626;
   color: #e2e8f0;
+}
+.victory-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 1rem;
+  background: linear-gradient(90deg, rgba(29, 78, 216, 0.35), rgba(16, 185, 129, 0.25));
+  border-bottom: 1px solid #334155;
+  color: #f1f5f9;
+  font-size: 0.95rem;
+}
+.victory-banner .vb-aar {
+  margin-left: auto;
+  background: #1d4ed8;
+  border: none;
+  color: #fff;
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.82rem;
 }
 .cop-bar {
   display: flex;
