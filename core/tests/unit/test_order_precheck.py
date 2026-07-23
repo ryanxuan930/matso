@@ -90,6 +90,245 @@ def test_engage_blocked_los_infeasible(session_factory: sessionmaker[Session]) -
     assert "地形遮蔽" in detail and "23.7000" in detail and "5 m" in detail
 
 
+def _give_missile(
+    db: Session, unit_id: str, *, maneuverable: bool, apex_ratio: float = 0.03
+) -> None:
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    tmpl = EquipmentTemplate(
+        name="MSL",
+        category="MISSILE",
+        base_stats={
+            "max_range_m": 10000,
+            "ph_by_range_band": [[500, 0.9], [10000, 0.85]],
+            "damage_by_armor_class": {"ARMOR": 100},
+            "ammo_types": ["X"],
+            "missile_kind": "CRUISE" if maneuverable else "BALLISTIC",
+            "maneuverable": maneuverable,
+            "apex_ratio": apex_ratio,
+        },
+    )
+    db.add(tmpl)
+    db.flush()
+    db.add(EquipmentInstance(template_id=tmpl.id, owner_id=unit_id, current_state={"ammo": 4}))
+    db.commit()
+
+
+def _add_tall_building(db: Session, session_id: str) -> None:
+    from app.models.tables import MapFeature
+
+    # 藍(23.75,121.25)→紅(23.76,121.26) 中點附近的 400m 高建築。
+    db.add(
+        MapFeature(
+            session_id=session_id,
+            kind="BUILDING",
+            geometry_type="POLYGON",
+            geometry=[[121.253, 23.753], [121.257, 23.753], [121.257, 23.757], [121.253, 23.757]],
+            owner_faction="WHITE_CELL",
+            attributes={"height_m": 400.0},
+        )
+    )
+    db.commit()
+
+
+def test_ballistic_missile_blocked_by_tall_obstacle(session_factory: sessionmaker[Session]) -> None:
+    # 彈道飛彈（低伸拋物線）+ 高建築擋在路徑上 → 拋物線被障礙阻隔（即使無 LOS 也走軌跡判定）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_missile(db, world.blue_unit_id, maneuverable=False, apex_ratio=0.02)
+        _add_tall_building(db, world.session_id)
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert not result.feasible
+    assert result.checks[0].name == "trajectory"
+    assert "障礙" in (result.checks[0].detail or "")
+
+
+def test_cruise_missile_ignores_obstacle_and_los(session_factory: sessionmaker[Session]) -> None:
+    # 巡弋飛彈（可變軌）：即使無 LOS + 有高建築，仍只判射程 → 可行。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_missile(db, world.blue_unit_id, maneuverable=True)
+        _add_tall_building(db, world.session_id)
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert result.feasible
+    assert result.checks[0].name == "trajectory" and result.checks[0].passed
+
+
+# ── SPEC_EXTEND P4.5：聯合兵種可達性（任一武器可打即放行）─────────────────
+
+
+def _give_direct_weapon(db: Session, unit_id: str, name: str, max_range_m: float = 5000.0) -> str:
+    """加一件直瞄動能武器（需 LOS）；回 EquipmentInstance.id。"""
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    tmpl = EquipmentTemplate(
+        name=name,
+        category="KINETIC",
+        base_stats={
+            "max_range_m": max_range_m,
+            "ph_by_range_band": [[100, 0.8], [max_range_m, 0.3]],
+            "damage_by_armor_class": {"INFANTRY": 40},
+            "ammo_types": ["X"],
+        },
+    )
+    db.add(tmpl)
+    db.flush()
+    inst = EquipmentInstance(template_id=tmpl.id, owner_id=unit_id, current_state={"ammo": 100})
+    db.add(inst)
+    db.commit()
+    return inst.id
+
+
+def test_combined_direct_blocked_but_missile_reaches_feasible(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # 聯合兵種關鍵修正：直瞄武器被稜線擋（無 LOS），但頂攻/可變軌飛彈免視線仍可交戰 → feasible。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_direct_weapon(db, world.blue_unit_id, "RIFLE")
+        _give_missile(db, world.blue_unit_id, maneuverable=True)  # 頂攻/可變軌，免 LOS
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),  # 直瞄被地形擋
+        )
+    assert result.feasible  # 主武器無 LOS 不再擋死整張令
+    assert result.checks[0].name == "combined_fires" and result.checks[0].passed
+
+
+def test_combined_all_direct_los_blocked_infeasible(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # 全為直瞄武器且 LOS 被擋 → 無任一可打 → infeasible，錯誤碼取具體 NO_LOS（非泛用）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_direct_weapon(db, world.blue_unit_id, "RIFLE")
+        _give_direct_weapon(db, world.blue_unit_id, "MG")
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert not result.feasible
+    assert precheck_error_code(result) == "ORDER_NO_LOS"  # 具體物理原因
+    # 逐武器列出各自失敗原因（每件武器一列，detail 前綴武器名）。
+    assert len(result.checks) == 2
+    assert all(not c.passed for c in result.checks)
+    assert any("RIFLE" in (c.detail or "") for c in result.checks)
+
+
+def test_combined_empty_weapon_does_not_dictate_reason(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # 關鍵：一把免視線武器（可變軌飛彈）空彈 + 有彈直瞄武器被 LOS 擋 → 標題原因應為 NO_LOS
+    # （有彈武器被地形擋才是真原因），**不是** NO_AMMO（別讓單一空彈武器誤導）。
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_direct_weapon(db, world.blue_unit_id, "AUTOCANNON")  # 有彈、被 LOS 擋
+        tmpl = EquipmentTemplate(
+            name="Javelin",
+            category="MISSILE",
+            base_stats={
+                "max_range_m": 10000,
+                "ph_by_range_band": [[500, 0.9], [10000, 0.85]],
+                "damage_by_armor_class": {"ARMOR": 100},
+                "ammo_types": ["X"],
+                "missile_kind": "ATGM",
+                "maneuverable": True,
+            },
+        )
+        db.add(tmpl)
+        db.flush()
+        db.add(
+            EquipmentInstance(
+                template_id=tmpl.id, owner_id=world.blue_unit_id, current_state={"ammo": 0}
+            )
+        )
+        db.commit()
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert not result.feasible
+    assert precheck_error_code(result) == "ORDER_NO_LOS"  # 有彈武器被地形擋，非 NO_AMMO
+    # 面板仍逐武器列出：有彈的 AUTOCANNON 排前（決定原因）、空彈 Javelin 在後。
+    assert result.checks[0].name == "line_of_sight" and "AUTOCANNON" in (
+        result.checks[0].detail or ""
+    )
+    assert any(
+        "Javelin" in (c.detail or "") and "無彈藥" in (c.detail or "") for c in result.checks
+    )
+
+
+def test_combined_zero_ammo_weapon_not_counted(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # 唯一免視線武器（可變軌飛彈）彈藥為 0 → 不算可打；直瞄又被 LOS 擋 → infeasible。
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _give_direct_weapon(db, world.blue_unit_id, "RIFLE")  # 有彈但 LOS 擋
+        tmpl = EquipmentTemplate(
+            name="MSL0",
+            category="MISSILE",
+            base_stats={
+                "max_range_m": 10000,
+                "ph_by_range_band": [[500, 0.9], [10000, 0.85]],
+                "damage_by_armor_class": {"ARMOR": 100},
+                "ammo_types": ["X"],
+                "missile_kind": "CRUISE",
+                "maneuverable": True,
+            },
+        )
+        db.add(tmpl)
+        db.flush()
+        db.add(
+            EquipmentInstance(
+                template_id=tmpl.id, owner_id=world.blue_unit_id, current_state={"ammo": 0}
+            )
+        )
+        db.commit()
+        result = run_precheck(
+            db,
+            _validated_engage(db, world.blue_unit_id, world.red_unit_id),
+            FakeGateway(visible=False),
+        )
+    assert not result.feasible  # 0 彈飛彈不放行，直瞄又無 LOS
+
+
+def test_combined_explicit_weapon_uses_single_path(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # 指定 weapon_id（操作員選單一武器）→ 走單武器路徑：選了直瞄武器且 LOS 擋 → infeasible，
+    # 即使單位另有可變軌飛彈也不放行（尊重操作員選擇）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        rifle_id = _give_direct_weapon(db, world.blue_unit_id, "RIFLE")
+        _give_missile(db, world.blue_unit_id, maneuverable=True)
+        unit = db.get(TacticalUnit, world.blue_unit_id)
+        assert unit is not None
+        validated = ValidatedOrder(
+            unit=unit,
+            order_type=OrderType.ENGAGE,
+            payload=EngagePayload(target_unit_id=world.red_unit_id, weapon_id=rifle_id),
+        )
+        result = run_precheck(db, validated, FakeGateway(visible=False))
+    assert not result.feasible
+    assert result.checks[0].name == "line_of_sight"  # 單武器路徑
+
+
 def test_engage_unknown_target_infeasible(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db:

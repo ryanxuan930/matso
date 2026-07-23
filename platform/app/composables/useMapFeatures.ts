@@ -55,6 +55,25 @@ export function fetchTerrainFootprint(
   })
 }
 
+// 移動路徑預覽（#28）：下令前試算距離/tick/油耗/可行性/強穿阻礙。
+export type MovementPreview = components['schemas']['MovementPreviewView']
+export interface MovementPreviewBody {
+  unit_id: string
+  waypoints?: number[][] | null // [[lng,lat],…] 自訂路徑
+  to_h3?: string | null
+  to_lat?: number | null
+  to_lng?: number | null
+}
+export function fetchMovementPreview(
+  sessionId: string,
+  body: MovementPreviewBody,
+): Promise<MovementPreview> {
+  return apiFetch<MovementPreview>(`/sessions/${sessionId}/movement/preview`, {
+    method: 'POST',
+    body,
+  })
+}
+
 // ---- 顯示 ----
 export const FEATURE_KINDS = [
   { value: 'OBSTACLE', label: '障礙', color: '#ef4444' },

@@ -15,12 +15,29 @@ import {
   ARTILLERY_KINDS,
   CATEGORIES,
   categoryLabel,
+  COMMS_BAND_LABELS,
+  COMMS_BANDS,
+  DRONE_KIND_LABELS,
+  DRONE_KINDS,
+  GUIDANCE_LABELS,
+  GUIDANCE_MODES,
   KINETIC_KIND_LABELS,
   KINETIC_KINDS,
+  MISSILE_KIND_LABELS,
+  MISSILE_KINDS,
   MOBILITY_CLASS_LABELS,
   MOBILITY_CLASSES,
   PH_INTERP_LABELS,
   PH_INTERP_MODES,
+  SEEKER_LABELS,
+  SEEKER_TYPES,
+  SENSOR_KIND_LABELS,
+  SENSOR_KINDS,
+  SENSOR_PAYLOAD_LABELS,
+  SENSOR_PAYLOADS,
+  SUPPLY_CLASS_LABELS,
+  WARHEAD_LABELS,
+  WARHEAD_TYPES,
 } from '~/composables/useWeaponVocab'
 
 const toasts = useToasts()
@@ -57,45 +74,73 @@ const armorFront = ref(200)
 const armorSide = ref(80)
 const armorRear = ref(40)
 const armorTop = ref(20)
-// 共用機動性（ARTILLERY/VEHICLE）
+// 共用機動性（ARTILLERY/VEHICLE/LOGISTICS）
 const canSelfMove = ref(true)
 const mobilityClass = ref('TRACKED')
 const roadSpeed = ref(60)
 const ccSpeed = ref(35)
-// 無結構化表單類別：JSON scaffold（先建立好預設欄位，比照一般兵推系統）
+// MISSILE 專屬（飛彈諸元）
+const missileKind = ref('ATGM')
+const guidance = ref('SACLOS')
+const seeker = ref('NONE')
+const warhead = ref('HEAT')
+const flightSpeed = ref(280)
+const topAttack = ref(false)
+const minEngageRange = ref(65)
+const cmResistance = ref(0.5)
+const missileManeuverable = ref(true) // 可變軌（巡弋僅判射程）；false＝彈道飛彈走拋物線
+const apexRatio = ref(0.25) // 拋物線頂高比（彈道飛彈的地形/障礙淨空判定用）
+// SENSOR 專屬
+const sensorKind = ref('OPTICAL')
+const sensorMaxRange = ref(5000)
+const detectCurve = ref<{ range: number; p: number }[]>([{ range: 2000, p: 0.9 }])
+const identifyRange = ref(2500)
+const fovDeg = ref(60)
+const scanPeriod = ref(1)
+const sensorPassive = ref(true)
+const minRcs = ref(1)
+// COMMS 專屬
+const commsBand = ref('VHF')
+const txPower = ref(37)
+const rxSens = ref(-100)
+const antGain = ref(2)
+const meshCapable = ref(false)
+const freqMhz = ref(50)
+const dataRate = ref(9.6)
+const encrypted = ref(false)
+const leoSatcom = ref(false)
+// LOGISTICS 專屬
+const capRows = ref<{ cls: string; amt: number }[]>([
+  { cls: 'AMMO', amt: 100 },
+  { cls: 'FUEL', amt: 200 },
+])
+const troopCap = ref(0)
+const vehicleSlots = ref(0)
+const canTow = ref(false)
+const loadUnloadTicks = ref(1)
+const resupplyRate = ref(20)
+const logCrew = ref(2)
+// DRONE 專屬
+const droneKind = ref('RECON')
+const enduranceTicks = ref(120)
+const cruiseSpeed = ref(25)
+const serviceCeiling = ref(3000)
+const dataLinkRange = ref(15000)
+const payloadKg = ref(3)
+const sensorPayload = ref('EO_IR')
+const isExpendable = ref(false)
+const maxWind = ref(12)
+const minVis = ref(1000)
+// JSON 編輯（任何類別皆可切換檢視/編修原始 JSON）
 const jsonText = ref('{}')
 
-const FORM_CATEGORIES = ['KINETIC', 'ARTILLERY', 'VEHICLE']
+// 所有類別皆有結構化表單（可一鍵切 JSON）。
+const FORM_CATEGORIES = ['KINETIC', 'MISSILE', 'ARTILLERY', 'VEHICLE', 'SENSOR', 'COMMS', 'LOGISTICS', 'DRONE']
 const hasForm = computed(() => FORM_CATEGORIES.includes(category.value))
-const isKineticLike = computed(() => category.value === 'KINETIC' || category.value === 'ARTILLERY')
-
-// 非表單類別的預設欄位 scaffold（比照一般兵推系統的常見諸元）。
-const SCAFFOLDS: Record<string, Record<string, unknown>> = {
-  SENSOR: {
-    sensor_kind: 'OPTICAL',
-    max_range_m: 5000,
-    detect_curve: [
-      [2000, 0.9],
-      [5000, 0.5],
-    ],
-  },
-  COMMS: {
-    band: 'VHF',
-    tx_power_dbm: 37,
-    rx_sensitivity_dbm: -100,
-    antenna_gain_dbi: 2,
-    mesh_capable: false,
-  },
-  LOGISTICS: {
-    capacity: { AMMO: 100, FUEL: 200, WATER_FOOD: 50, BATTERY: 20 },
-    transport: { troop_capacity: 0, vehicle_slots: 0, can_tow: false, load_unload_ticks: 1 },
-  },
-  DRONE: {
-    endurance_ticks: 120,
-    cruise_speed_ms: 25,
-    weather_limits: { max_wind_ms: 12, min_visibility_m: 1000 },
-  },
-}
+// 火力型（走 kinetic 火力欄位 + 傷害/pk）：直射動能 / 火砲 / 飛彈皆 allOf kinetic。
+const isKineticLike = computed(
+  () => category.value === 'KINETIC' || category.value === 'ARTILLERY' || category.value === 'MISSILE',
+)
 
 async function load() {
   templates.value = await fetchEquipmentTemplates().catch(() => [])
@@ -133,18 +178,60 @@ function resetForm() {
   mobilityClass.value = 'TRACKED'
   roadSpeed.value = 60
   ccSpeed.value = 35
+  missileKind.value = 'ATGM'
+  guidance.value = 'SACLOS'
+  seeker.value = 'NONE'
+  warhead.value = 'HEAT'
+  flightSpeed.value = 280
+  topAttack.value = false
+  minEngageRange.value = 65
+  cmResistance.value = 0.5
+  missileManeuverable.value = true
+  apexRatio.value = 0.25
+  sensorKind.value = 'OPTICAL'
+  sensorMaxRange.value = 5000
+  detectCurve.value = [{ range: 2000, p: 0.9 }]
+  identifyRange.value = 2500
+  fovDeg.value = 60
+  scanPeriod.value = 1
+  sensorPassive.value = true
+  minRcs.value = 1
+  commsBand.value = 'VHF'
+  txPower.value = 37
+  rxSens.value = -100
+  antGain.value = 2
+  meshCapable.value = false
+  freqMhz.value = 50
+  dataRate.value = 9.6
+  encrypted.value = false
+  leoSatcom.value = false
+  capRows.value = [
+    { cls: 'AMMO', amt: 100 },
+    { cls: 'FUEL', amt: 200 },
+  ]
+  troopCap.value = 0
+  vehicleSlots.value = 0
+  canTow.value = false
+  loadUnloadTicks.value = 1
+  resupplyRate.value = 20
+  logCrew.value = 2
+  droneKind.value = 'RECON'
+  enduranceTicks.value = 120
+  cruiseSpeed.value = 25
+  serviceCeiling.value = 3000
+  dataLinkRange.value = 15000
+  payloadKg.value = 3
+  sensorPayload.value = 'EO_IR'
+  isExpendable.value = false
+  maxWind.value = 12
+  minVis.value = 1000
   jsonText.value = '{}'
 }
 
-// 使用者改類別（新範本）：套用該類別的預設 scaffold / 表單預設，切到合適模式。
+// 使用者改類別（新範本）：清擴充鍵，切回結構化表單（各類別皆有表單，欄位取自 ref 預設）。
 function onCategoryChange() {
   originalBaseStats.value = {}
-  if (hasForm.value) {
-    editMode.value = 'form'
-  } else {
-    editMode.value = 'json'
-    jsonText.value = JSON.stringify(SCAFFOLDS[category.value] ?? {}, null, 2)
-  }
+  editMode.value = 'form' // 各類別皆有結構化表單；欄位取自各 ref 的預設值
 }
 
 function populateForm(bs: Record<string, unknown>): void {
@@ -173,6 +260,18 @@ function populateForm(bs: Record<string, unknown>): void {
       roundsPerMission.value = Number(bs.rounds_per_mission ?? 6)
       readMobility((bs.mobility as Record<string, unknown>) ?? {})
     }
+    if (category.value === 'MISSILE') {
+      missileKind.value = String(bs.missile_kind ?? 'ATGM')
+      guidance.value = String(bs.guidance ?? 'SACLOS')
+      seeker.value = String(bs.seeker ?? 'NONE')
+      warhead.value = String(bs.warhead ?? 'HEAT')
+      flightSpeed.value = Number(bs.flight_speed_ms ?? 280)
+      topAttack.value = Boolean(bs.top_attack ?? false)
+      minEngageRange.value = Number(bs.min_engage_range_m ?? 0)
+      cmResistance.value = Number(bs.countermeasure_resistance ?? 0.5)
+      missileManeuverable.value = bs.maneuverable !== false
+      apexRatio.value = Number(bs.apex_ratio ?? 0.25)
+    }
   } else if (category.value === 'VEHICLE') {
     crew.value = Number(bs.crew ?? 3)
     passengerCap.value = Number(bs.passenger_capacity ?? 0)
@@ -183,6 +282,54 @@ function populateForm(bs: Record<string, unknown>): void {
     armorRear.value = Number(a.rear ?? 40)
     armorTop.value = Number(a.top ?? 20)
     readMobility((bs.mobility as Record<string, unknown>) ?? {})
+  } else if (category.value === 'SENSOR') {
+    sensorKind.value = String(bs.sensor_kind ?? 'OPTICAL')
+    sensorMaxRange.value = Number(bs.max_range_m ?? 5000)
+    detectCurve.value = ((bs.detect_curve as [number, number][]) ?? []).map(([range, p]) => ({
+      range,
+      p,
+    }))
+    if (!detectCurve.value.length) detectCurve.value = [{ range: 2000, p: 0.9 }]
+    identifyRange.value = Number(bs.identify_range_m ?? 2500)
+    fovDeg.value = Number(bs.fov_deg ?? 60)
+    scanPeriod.value = Number(bs.scan_period_ticks ?? 1)
+    sensorPassive.value = bs.passive !== false
+    minRcs.value = Number(bs.min_target_rcs_m2 ?? 1)
+  } else if (category.value === 'COMMS') {
+    commsBand.value = String(bs.band ?? 'VHF')
+    txPower.value = Number(bs.tx_power_dbm ?? 37)
+    rxSens.value = Number(bs.rx_sensitivity_dbm ?? -100)
+    antGain.value = Number(bs.antenna_gain_dbi ?? 2)
+    meshCapable.value = Boolean(bs.mesh_capable ?? false)
+    freqMhz.value = Number(bs.freq_mhz ?? 50)
+    dataRate.value = Number(bs.data_rate_kbps ?? 9.6)
+    encrypted.value = Boolean(bs.encrypted ?? false)
+    leoSatcom.value = Boolean(bs.leo_satcom ?? false)
+  } else if (category.value === 'LOGISTICS') {
+    capRows.value = Object.entries((bs.capacity as Record<string, number>) ?? {}).map(
+      ([cls, amt]) => ({ cls, amt }),
+    )
+    if (!capRows.value.length) capRows.value = [{ cls: 'AMMO', amt: 100 }]
+    const tr = (bs.transport as Record<string, unknown>) ?? {}
+    troopCap.value = Number(tr.troop_capacity ?? 0)
+    vehicleSlots.value = Number(tr.vehicle_slots ?? 0)
+    canTow.value = Boolean(tr.can_tow ?? false)
+    loadUnloadTicks.value = Number(tr.load_unload_ticks ?? 1)
+    resupplyRate.value = Number(bs.resupply_rate_per_tick ?? 20)
+    logCrew.value = Number(bs.crew ?? 2)
+    readMobility((bs.mobility as Record<string, unknown>) ?? {})
+  } else if (category.value === 'DRONE') {
+    droneKind.value = String(bs.drone_kind ?? 'RECON')
+    enduranceTicks.value = Number(bs.endurance_ticks ?? 120)
+    cruiseSpeed.value = Number(bs.cruise_speed_ms ?? 25)
+    serviceCeiling.value = Number(bs.service_ceiling_m ?? 3000)
+    dataLinkRange.value = Number(bs.data_link_range_m ?? 15000)
+    payloadKg.value = Number(bs.payload_kg ?? 3)
+    sensorPayload.value = String(bs.sensor_payload ?? 'EO_IR')
+    isExpendable.value = Boolean(bs.is_expendable ?? false)
+    const wl = (bs.weather_limits as Record<string, number>) ?? {}
+    maxWind.value = Number(wl.max_wind_ms ?? 12)
+    minVis.value = Number(wl.min_visibility_m ?? 1000)
   }
 }
 
@@ -241,20 +388,86 @@ function formToBaseStats(): Record<string, unknown> {
       base.rounds_per_mission = roundsPerMission.value
       base.mobility = mobilityStats()
     }
+    if (category.value === 'MISSILE') {
+      base.missile_kind = missileKind.value
+      base.guidance = guidance.value
+      base.seeker = seeker.value
+      base.warhead = warhead.value
+      base.flight_speed_ms = flightSpeed.value
+      base.top_attack = topAttack.value
+      base.min_engage_range_m = minEngageRange.value
+      base.countermeasure_resistance = cmResistance.value
+      base.maneuverable = missileManeuverable.value
+      base.apex_ratio = apexRatio.value
+    }
     return base
   }
-  // VEHICLE
+  if (category.value === 'VEHICLE') {
+    return {
+      crew: crew.value,
+      passenger_capacity: passengerCap.value,
+      armor_class: vehArmorClass.value,
+      armor_by_aspect_mm: {
+        front: armorFront.value,
+        side: armorSide.value,
+        rear: armorRear.value,
+        top: armorTop.value,
+      },
+      mobility: mobilityStats(),
+    }
+  }
+  if (category.value === 'SENSOR') {
+    return {
+      sensor_kind: sensorKind.value,
+      max_range_m: sensorMaxRange.value,
+      detect_curve: detectCurve.value.map((d) => [d.range, d.p]),
+      identify_range_m: identifyRange.value,
+      fov_deg: fovDeg.value,
+      scan_period_ticks: scanPeriod.value,
+      passive: sensorPassive.value,
+      min_target_rcs_m2: minRcs.value,
+    }
+  }
+  if (category.value === 'COMMS') {
+    return {
+      band: commsBand.value,
+      tx_power_dbm: txPower.value,
+      rx_sensitivity_dbm: rxSens.value,
+      antenna_gain_dbi: antGain.value,
+      mesh_capable: meshCapable.value,
+      freq_mhz: freqMhz.value,
+      data_rate_kbps: dataRate.value,
+      encrypted: encrypted.value,
+      leo_satcom: leoSatcom.value,
+    }
+  }
+  if (category.value === 'LOGISTICS') {
+    return {
+      capacity: Object.fromEntries(
+        capRows.value.filter((r) => r.cls.trim()).map((r) => [r.cls.trim(), r.amt]),
+      ),
+      transport: {
+        troop_capacity: troopCap.value,
+        vehicle_slots: vehicleSlots.value,
+        can_tow: canTow.value,
+        load_unload_ticks: loadUnloadTicks.value,
+      },
+      resupply_rate_per_tick: resupplyRate.value,
+      crew: logCrew.value,
+      mobility: mobilityStats(),
+    }
+  }
+  // DRONE
   return {
-    crew: crew.value,
-    passenger_capacity: passengerCap.value,
-    armor_class: vehArmorClass.value,
-    armor_by_aspect_mm: {
-      front: armorFront.value,
-      side: armorSide.value,
-      rear: armorRear.value,
-      top: armorTop.value,
-    },
-    mobility: mobilityStats(),
+    drone_kind: droneKind.value,
+    endurance_ticks: enduranceTicks.value,
+    cruise_speed_ms: cruiseSpeed.value,
+    service_ceiling_m: serviceCeiling.value,
+    data_link_range_m: dataLinkRange.value,
+    payload_kg: payloadKg.value,
+    sensor_payload: sensorPayload.value,
+    is_expendable: isExpendable.value,
+    weather_limits: { max_wind_ms: maxWind.value, min_visibility_m: minVis.value },
   }
 }
 
@@ -359,7 +572,8 @@ async function save() {
             :title="editMode === 'form' ? '切換為 JSON 編輯' : '切換回表單編輯'"
             @click="toggleMode"
           >
-            {{ editMode === 'form' ? '⤳ JSON' : '⤳ 表單' }}
+            <i :class="editMode === 'form' ? 'pi pi-code' : 'pi pi-list'" />
+            {{ editMode === 'form' ? ' JSON' : ' 表單' }}
           </button>
         </div>
 
@@ -370,7 +584,7 @@ async function save() {
             <label>射速/tick <input v-model.number="ratePerTick" type="number" step="0.1"></label>
             <label class="chk"><input v-model="indirectFire" type="checkbox"> 間接射擊</label>
           </div>
-          <div class="row">
+          <div v-if="category !== 'MISSILE'" class="row">
             <label>{{ category === 'ARTILLERY' ? '火砲類型' : '武器細分' }}
               <select v-if="category === 'ARTILLERY'" v-model="artilleryKind" data-testid="armory-artillery-kind">
                 <option v-for="k in ARTILLERY_KINDS" :key="k" :value="k">{{ ARTILLERY_KIND_LABELS[k] }}</option>
@@ -455,6 +669,52 @@ async function save() {
               <label>越野速度 (km/h) <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
             </div>
           </div>
+
+          <template v-if="category === 'MISSILE'">
+            <div class="sub">飛彈諸元（導引武器）</div>
+            <div class="row">
+              <label>飛彈類型
+                <select v-model="missileKind" data-testid="armory-missile-kind">
+                  <option v-for="k in MISSILE_KINDS" :key="k" :value="k">{{ MISSILE_KIND_LABELS[k] }}</option>
+                </select>
+              </label>
+              <label>導引方式
+                <select v-model="guidance" data-testid="armory-guidance">
+                  <option v-for="g in GUIDANCE_MODES" :key="g" :value="g">{{ GUIDANCE_LABELS[g] }}</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label>尋標器
+                <select v-model="seeker">
+                  <option v-for="s in SEEKER_TYPES" :key="s" :value="s">{{ SEEKER_LABELS[s] }}</option>
+                </select>
+              </label>
+              <label>戰鬥部
+                <select v-model="warhead" data-testid="armory-warhead">
+                  <option v-for="w in WARHEAD_TYPES" :key="w" :value="w">{{ WARHEAD_LABELS[w] }}</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label>飛行速度 (m/s) <input v-model.number="flightSpeed" type="number"></label>
+              <label>最小接戰距離 (m) <input v-model.number="minEngageRange" type="number"></label>
+              <label>抗反制 0–1 <input v-model.number="cmResistance" type="number" step="0.05" min="0" max="1"></label>
+              <label class="chk"><input v-model="topAttack" type="checkbox"> 頂攻模式</label>
+            </div>
+            <div class="row">
+              <label class="chk">
+                <input v-model="missileManeuverable" type="checkbox" data-testid="armory-maneuverable">
+                可變軌（巡弋/末端機動 → 僅判射程）
+              </label>
+              <label v-if="!missileManeuverable">拋物線頂高比
+                <input v-model.number="apexRatio" type="number" step="0.01" min="0" style="width: 4rem">
+              </label>
+            </div>
+            <p v-if="!missileManeuverable" class="sub" style="color:#94a3b8">
+              彈道飛彈：接戰須判射程 + 拋物線是否被地形/障礙（含高度）阻隔（低頂高比＝低伸彈道，較易被擋）。
+            </p>
+          </template>
         </template>
 
         <template v-else-if="category === 'VEHICLE' && editMode === 'form'">
@@ -489,10 +749,131 @@ async function save() {
           </div>
         </template>
 
+        <!-- 感測器 -->
+        <template v-else-if="category === 'SENSOR' && editMode === 'form'">
+          <div class="row">
+            <label>感測器類型
+              <select v-model="sensorKind" data-testid="armory-sensor-kind">
+                <option v-for="k in SENSOR_KINDS" :key="k" :value="k">{{ SENSOR_KIND_LABELS[k] }}</option>
+              </select>
+            </label>
+            <label>最大偵測 (m) <input v-model.number="sensorMaxRange" type="number"></label>
+            <label>可辨識距離 (m) <input v-model.number="identifyRange" type="number"></label>
+          </div>
+          <div class="row">
+            <label>視野/掃描扇角 (°) <input v-model.number="fovDeg" type="number" min="0" max="360"></label>
+            <label>掃描週期 (tick) <input v-model.number="scanPeriod" type="number" min="0"></label>
+            <label>最小可測 RCS (m²) <input v-model.number="minRcs" type="number" step="0.1"></label>
+            <label class="chk"><input v-model="sensorPassive" type="checkbox"> 被動（不發射）</label>
+          </div>
+          <div class="sub">偵測機率曲線（依距離：range_max_m → p_detect 0–1）</div>
+          <div v-for="(d, i) in detectCurve" :key="`dc${i}`" class="pair">
+            <input v-model.number="d.range" type="number" placeholder="range m">
+            <input v-model.number="d.p" type="number" step="0.05" min="0" max="1" placeholder="p 0–1">
+            <button class="rm" @click="detectCurve.splice(i, 1)">✕</button>
+          </div>
+          <button class="add" @click="detectCurve.push({ range: 0, p: 0.5 })">＋ 偵測控制點</button>
+        </template>
+
+        <!-- 通信 -->
+        <template v-else-if="category === 'COMMS' && editMode === 'form'">
+          <div class="row">
+            <label>頻段
+              <select v-model="commsBand" data-testid="armory-comms-band">
+                <option v-for="b in COMMS_BANDS" :key="b" :value="b">{{ COMMS_BAND_LABELS[b] }}</option>
+              </select>
+            </label>
+            <label>頻率 (MHz) <input v-model.number="freqMhz" type="number"></label>
+            <label>資料速率 (kbps) <input v-model.number="dataRate" type="number" step="0.1"></label>
+          </div>
+          <div class="row">
+            <label>發射功率 (dBm) <input v-model.number="txPower" type="number"></label>
+            <label>接收靈敏度 (dBm) <input v-model.number="rxSens" type="number"></label>
+            <label>天線增益 (dBi) <input v-model.number="antGain" type="number" step="0.5"></label>
+          </div>
+          <div class="row">
+            <label class="chk"><input v-model="meshCapable" type="checkbox"> 網狀中繼</label>
+            <label class="chk"><input v-model="encrypted" type="checkbox"> 加密</label>
+            <label class="chk"><input v-model="leoSatcom" type="checkbox"> 低軌衛星</label>
+          </div>
+        </template>
+
+        <!-- 後勤 -->
+        <template v-else-if="category === 'LOGISTICS' && editMode === 'form'">
+          <div class="sub">攜行量（補給類別 → 數量）</div>
+          <div v-for="(r, i) in capRows" :key="`cap${i}`" class="pair">
+            <select v-model="r.cls" class="ac-sel">
+              <option v-for="c in Object.keys(SUPPLY_CLASS_LABELS)" :key="c" :value="c">
+                {{ SUPPLY_CLASS_LABELS[c] }}（{{ c }}）
+              </option>
+              <option v-if="r.cls && !SUPPLY_CLASS_LABELS[r.cls]" :value="r.cls">{{ r.cls }}（自訂）</option>
+            </select>
+            <input v-model.number="r.amt" type="number" placeholder="數量">
+            <button class="rm" @click="capRows.splice(i, 1)">✕</button>
+          </div>
+          <button class="add" @click="capRows.push({ cls: 'WATER_FOOD', amt: 0 })">＋ 補給類別</button>
+          <div class="sub">運輸能力</div>
+          <div class="row">
+            <label>載員 <input v-model.number="troopCap" type="number" min="0"></label>
+            <label>載具槽位 <input v-model.number="vehicleSlots" type="number" min="0"></label>
+            <label>裝卸 (tick) <input v-model.number="loadUnloadTicks" type="number" min="0"></label>
+            <label class="chk"><input v-model="canTow" type="checkbox"> 可拖曳</label>
+          </div>
+          <div class="row">
+            <label>補給速率/tick <input v-model.number="resupplyRate" type="number" min="0"></label>
+            <label>勤務組員 <input v-model.number="logCrew" type="number" min="0"></label>
+          </div>
+          <div class="mobility-block">
+            <div class="sub">機動性</div>
+            <div class="row">
+              <label class="chk"><input v-model="canSelfMove" type="checkbox"> 可自走</label>
+              <label>機動類型
+                <select v-model="mobilityClass">
+                  <option v-for="m in MOBILITY_CLASSES" :key="m" :value="m">{{ MOBILITY_CLASS_LABELS[m] }}</option>
+                </select>
+              </label>
+              <label>道路速度 (km/h) <input v-model.number="roadSpeed" type="number" :disabled="!canSelfMove"></label>
+              <label>越野速度 (km/h) <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
+            </div>
+          </div>
+        </template>
+
+        <!-- 無人機 -->
+        <template v-else-if="category === 'DRONE' && editMode === 'form'">
+          <div class="row">
+            <label>無人機類型
+              <select v-model="droneKind" data-testid="armory-drone-kind">
+                <option v-for="k in DRONE_KINDS" :key="k" :value="k">{{ DRONE_KIND_LABELS[k] }}</option>
+              </select>
+            </label>
+            <label>感測酬載
+              <select v-model="sensorPayload">
+                <option v-for="p in SENSOR_PAYLOADS" :key="p" :value="p">{{ SENSOR_PAYLOAD_LABELS[p] }}</option>
+              </select>
+            </label>
+            <label class="chk"><input v-model="isExpendable" type="checkbox"> 消耗性（遊蕩彈藥）</label>
+          </div>
+          <div class="row">
+            <label>續航 (tick) <input v-model.number="enduranceTicks" type="number"></label>
+            <label>巡航 (m/s) <input v-model.number="cruiseSpeed" type="number"></label>
+            <label>升限 (m) <input v-model.number="serviceCeiling" type="number"></label>
+          </div>
+          <div class="row">
+            <label>資料鏈距離 (m) <input v-model.number="dataLinkRange" type="number"></label>
+            <label>酬載 (kg) <input v-model.number="payloadKg" type="number" step="0.1"></label>
+          </div>
+          <div class="sub">氣象限制</div>
+          <div class="row">
+            <label>最大風速 (m/s) <input v-model.number="maxWind" type="number"></label>
+            <label>最低能見度 (m) <input v-model.number="minVis" type="number"></label>
+          </div>
+        </template>
+
+        <!-- JSON 檢視/編修（任何類別皆可，如「火力 直射動能」的 JSON 鈕） -->
         <template v-else>
           <label class="wide">
-            屬性 JSON（依 weaponeering.schema.json 之 {{ category.toLowerCase() }} 規格；已預填常見欄位）
-            <textarea v-model="jsonText" rows="12" data-testid="armory-json" spellcheck="false" />
+            屬性 JSON（依 weaponeering.schema.json 之 {{ category.toLowerCase() }} 規格）
+            <textarea v-model="jsonText" rows="14" data-testid="armory-json" spellcheck="false" />
           </label>
         </template>
 

@@ -58,6 +58,9 @@ const props = withDefaults(
     basemapId?: string // 當前底圖來源 id（offline / street / satellite / 軍用…）
     destH3?: string | null // MOVE 目的格（res 8）——畫出吸附後的格與格心，讓「點哪→到哪」透明（#4b）
     destPoint?: { lng: number; lat: number } | null // 精確移動落點（#2）——有值時只畫精確點、不畫吸附格
+    movePath?: number[][] | null // #28 移動路徑預覽（[[lng,lat],…] 含起點）——畫出規劃路線
+    moveForced?: boolean // #28 路徑是否需強穿阻礙（true→琥珀虛線警示）
+    moveCrossings?: number[][] | null // #28 穿越阻礙的標記點（[[lng,lat],…]）
     layerOpacity?: Record<string, number> // 各圖層群透明度乘數（#9；basemap/hillshade/contour/hex）
     layerOrder?: string[] // 疊加層套疊順序（上→下，#9）
     contourMajor?: number // 主等高線間距 m（較粗，#8；預設 100）
@@ -100,6 +103,9 @@ const props = withDefaults(
     basemapId: 'offline',
     destH3: null,
     destPoint: null,
+    movePath: null,
+    moveForced: false,
+    moveCrossings: null,
     layerOpacity: () => ({}),
     layerOrder: () => [...DEFAULT_OVERLAY_ORDER],
     contourMajor: 100,
@@ -229,6 +235,7 @@ const HILLSHADE_SRC = 'hillshade'
 const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
 const DEST_SRC = 'move-dest'
+const MOVE_PATH_SRC = 'move-path' // #28 移動路徑預覽（線 + 強穿標記）
 const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
 const FEAT_SYM_SRC = 'mapfeatsym' // 帶北約符號的點特徵（#11）
 const FEAT_DRAG_SRC = 'mapfeatdrag' // 拖放移動預覽（#11 B2）
@@ -316,6 +323,35 @@ function destFeatures(
 function syncDest() {
   const src = map?.getSource(DEST_SRC) as GeoJSONSource | undefined
   src?.setData(destFeatures(props.destH3, props.destPoint ?? null) as never)
+}
+
+/** #28 移動路徑預覽：畫規劃路線（forced→琥珀虛線）+ 強穿標記點。 */
+function syncMovePath() {
+  if (!map) return
+  const src = map.getSource(MOVE_PATH_SRC) as GeoJSONSource | undefined
+  if (!src) return
+  const path = props.movePath ?? []
+  const feats: unknown[] = []
+  if (path.length >= 2) {
+    feats.push({
+      type: 'Feature',
+      properties: { forced: !!props.moveForced },
+      geometry: { type: 'LineString', coordinates: path },
+    })
+  }
+  for (const c of props.moveCrossings ?? []) {
+    feats.push({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: c } })
+  }
+  src.setData({ type: 'FeatureCollection', features: feats } as never)
+  // 強穿→琥珀虛線警示；可行→青實線。
+  if (map.getLayer('move-path-line')) {
+    map.setPaintProperty('move-path-line', 'line-color', props.moveForced ? '#f59e0b' : '#38bdf8')
+    map.setPaintProperty(
+      'move-path-line',
+      'line-dasharray',
+      props.moveForced ? [2, 1.4] : [1, 0],
+    )
+  }
 }
 
 // ---- 圖層透明度 + 套疊順序（#9）----
@@ -751,6 +787,33 @@ onMounted(async () => {
         'circle-stroke-width': 1.5,
       },
     })
+    // #28 移動路徑預覽：規劃路線（可行＝青、強穿＝琥珀虛線）+ 強穿標記。
+    map.addSource(MOVE_PATH_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'move-path-line',
+      type: 'line',
+      source: MOVE_PATH_SRC,
+      filter: ['==', ['geometry-type'], 'LineString'],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#38bdf8',
+        'line-width': 2.4,
+        'line-opacity': 0.9,
+      },
+    })
+    map.addLayer({
+      id: 'move-path-cross',
+      type: 'circle',
+      source: MOVE_PATH_SRC,
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#ef4444',
+        'circle-stroke-color': '#fef2f2',
+        'circle-stroke-width': 1.6,
+        'circle-opacity': 0.95,
+      },
+    })
     // 單位 symbol 層（milsymbol icon；資料驅動 icon-image + icon-opacity）
     map.addSource(UNITS_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     // 高亮環（選取＝藍、目標＝紅）——置於 symbol 層下方，繞在單位符號外圈；以 filter 依 id 只顯示一個。
@@ -810,6 +873,7 @@ onMounted(async () => {
     refreshHex()
     syncUnits()
     syncDest()
+    syncMovePath() // #28 移動路徑預覽
     syncFeatures() // stage ③b 標註/工事
     refreshGrid() // #9 座標網格
     syncQuery() // #10 查詢點
@@ -925,6 +989,11 @@ watch(() => props.contourVisible, (v) => {
 })
 watch(() => props.basemapId, (v) => applyBasemap(v))
 watch([() => props.destH3, () => props.destPoint], syncDest)
+watch(
+  [() => props.movePath, () => props.moveForced, () => props.moveCrossings],
+  syncMovePath,
+  { deep: true },
+)
 watch(
   [
     () => props.featureFc,

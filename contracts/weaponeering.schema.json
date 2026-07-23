@@ -70,17 +70,55 @@
         "rate_per_tick": { "type": "number", "exclusiveMinimum": 0, "default": 1 }
       }
     },
+    "missile": {
+      "type": "object",
+      "description": "飛彈/導引武器（ATGM/SAM/MANPADS/巡弋/彈道/遊蕩彈藥/反艦）：allOf 併入 kinetic 火力欄位（供資料驅動裁決產生 WeaponProfile：命中/傷害/pk），再加飛彈專屬諸元（導引/尋標/戰鬥部/彈速/頂攻/反反制）。",
+      "allOf": [{ "$ref": "#/$defs/kinetic" }],
+      "properties": {
+        "missile_kind": {
+          "description": "飛彈類型（現代軍事分類）。",
+          "enum": ["ATGM", "SAM", "MANPADS", "CRUISE", "BALLISTIC", "LOITERING", "ANTI_SHIP", "AAM"],
+          "default": "ATGM"
+        },
+        "guidance": {
+          "description": "導引方式：導線/SACLOS/雷射駕束/雷射半主動/紅外/雷達半主動/雷達主動/GPS+慣性/指令/射後不理。",
+          "enum": ["WIRE", "SACLOS", "LASER_BEAM_RIDING", "LASER_SAL", "IR", "RADAR_SARH", "RADAR_ARH", "GPS_INS", "COMMAND", "FIRE_AND_FORGET"],
+          "default": "SACLOS"
+        },
+        "seeker": {
+          "description": "尋標器：無/紅外/雷達/雷射/光學/毫米波/雙模。",
+          "enum": ["NONE", "IR", "RADAR", "LASER", "OPTICAL", "MMW", "DUAL_MODE"],
+          "default": "NONE"
+        },
+        "warhead": {
+          "description": "戰鬥部：成形裝藥/串聯成形裝藥/高爆破片/穿甲/溫壓/爆震破片。",
+          "enum": ["HEAT", "TANDEM_HEAT", "HE_FRAG", "PENETRATOR", "THERMOBARIC", "BLAST_FRAG"],
+          "default": "HEAT"
+        },
+        "flight_speed_ms": { "type": "number", "exclusiveMinimum": 0, "description": "飛行速度 m/s（供飛行時間/攔截窗）。" },
+        "maneuverable": { "type": "boolean", "default": true, "description": "可變軌（巡弋/遊蕩/ATGM…末端機動繞過障礙，僅判射程）；false＝彈道飛彈走固定拋物線，接戰須判地形/障礙淨空。" },
+        "apex_ratio": { "type": "number", "minimum": 0, "default": 0.25, "description": "拋物線頂高比＝頂高/地面射程（45°發射≈0.25；低伸彈道用較小值，障礙較易阻隔）。" },
+        "top_attack": { "type": "boolean", "default": false, "description": "頂攻模式（打擊裝甲薄弱頂面）。" },
+        "min_engage_range_m": { "type": "number", "minimum": 0, "default": 0, "description": "最小接戰距離（保險解除/尋標鎖定所需）。" },
+        "countermeasure_resistance": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "抗反制能力 0..1（對誘餌/干擾/主動防護的韌性）。" }
+      }
+    },
     "sensor": {
       "type": "object",
       "required": ["sensor_kind", "max_range_m", "detect_curve"],
       "properties": {
         "sensor_kind": { "enum": ["OPTICAL", "IR", "RADAR", "ACOUSTIC", "SIGINT"] },
-        "max_range_m": { "type": "number", "exclusiveMinimum": 0 },
+        "max_range_m": { "type": "number", "exclusiveMinimum": 0, "description": "最大偵測距離 m。" },
         "detect_curve": {
           "type": "array",
           "description": "[range_max_m, p_detect] 對；DETECTED→CLASSIFIED→IDENTIFIED 升級門檻由引擎係數推導",
           "items": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number", "minimum": 0, "maximum": 1 }] }
-        }
+        },
+        "identify_range_m": { "type": "number", "minimum": 0, "description": "可辨識（IDENTIFIED）距離 m（通常 < max_range）。" },
+        "fov_deg": { "type": "number", "minimum": 0, "maximum": 360, "description": "視野/掃描扇角（度）；360＝全向。" },
+        "scan_period_ticks": { "type": "integer", "minimum": 0, "default": 1, "description": "完成一次掃描的 tick 數（掃描式感測器）。" },
+        "passive": { "type": "boolean", "default": true, "description": "被動（不發射）；false＝主動（如雷達會被電偵偵獲）。" },
+        "min_target_rcs_m2": { "type": "number", "minimum": 0, "description": "可偵測的最小目標雷達截面 m²（雷達）。" }
       }
     },
     "comms": {
@@ -88,10 +126,14 @@
       "required": ["band", "tx_power_dbm", "rx_sensitivity_dbm"],
       "properties": {
         "band": { "enum": ["LORA", "MESHTASTIC", "VHF", "UHF", "SATCOM"] },
-        "tx_power_dbm": { "type": "number" },
-        "rx_sensitivity_dbm": { "type": "number" },
-        "antenna_gain_dbi": { "type": "number", "default": 0 },
-        "mesh_capable": { "type": "boolean", "default": false }
+        "tx_power_dbm": { "type": "number", "description": "發射功率 dBm。" },
+        "rx_sensitivity_dbm": { "type": "number", "description": "接收靈敏度 dBm（門檻）。" },
+        "antenna_gain_dbi": { "type": "number", "default": 0, "description": "天線增益 dBi。" },
+        "mesh_capable": { "type": "boolean", "default": false, "description": "支援網狀中繼（multi-hop）。" },
+        "freq_mhz": { "type": "number", "exclusiveMinimum": 0, "description": "載波頻率 MHz（驅動路徑損耗計算）。" },
+        "data_rate_kbps": { "type": "number", "minimum": 0, "description": "資料速率 kbps。" },
+        "encrypted": { "type": "boolean", "default": false, "description": "加密鏈路（抗截收）。" },
+        "leo_satcom": { "type": "boolean", "default": false, "description": "低軌衛星通信（超地平線）。" }
       }
     },
     "logistics": {
@@ -114,6 +156,8 @@
             "load_unload_ticks": { "type": "integer", "minimum": 0, "default": 0 }
           }
         },
+        "resupply_rate_per_tick": { "type": "number", "minimum": 0, "description": "每 tick 補給速率（撥交量/tick）。" },
+        "crew": { "type": "integer", "minimum": 0, "description": "勤務組員數。" },
         "mobility": { "$ref": "#/$defs/mobility" }
       }
     },
@@ -167,15 +211,30 @@
     },
     "drone": {
       "type": "object",
+      "description": "無人機/無人載具（偵察/打擊/電戰/遊蕩彈藥/垂直起降運補）：續航/巡航/升限/資料鏈/酬載/感測。",
       "required": ["endurance_ticks", "cruise_speed_ms", "weather_limits"],
       "properties": {
-        "endurance_ticks": { "type": "integer", "exclusiveMinimum": 0 },
-        "cruise_speed_ms": { "type": "number", "exclusiveMinimum": 0 },
+        "drone_kind": {
+          "description": "無人機類型。",
+          "enum": ["RECON", "STRIKE", "EW", "LOITERING_MUNITION", "VTOL_CARGO", "TARGET_ACQ"],
+          "default": "RECON"
+        },
+        "endurance_ticks": { "type": "integer", "exclusiveMinimum": 0, "description": "續航（tick 數）。" },
+        "cruise_speed_ms": { "type": "number", "exclusiveMinimum": 0, "description": "巡航速度 m/s。" },
+        "service_ceiling_m": { "type": "number", "minimum": 0, "description": "實用升限 m。" },
+        "data_link_range_m": { "type": "number", "minimum": 0, "description": "資料鏈/控制距離 m（超出即失聯）。" },
+        "payload_kg": { "type": "number", "minimum": 0, "description": "酬載重量 kg。" },
+        "sensor_payload": {
+          "description": "搭載感測酬載：光電紅外/合成孔徑雷達/電子偵蒐/無。",
+          "enum": ["EO_IR", "SAR", "SIGINT", "NONE"],
+          "default": "EO_IR"
+        },
+        "is_expendable": { "type": "boolean", "default": false, "description": "消耗性（遊蕩彈藥/自殺無人機）。" },
         "weather_limits": {
           "type": "object",
           "properties": {
-            "max_wind_ms": { "type": "number" },
-            "min_visibility_m": { "type": "number" }
+            "max_wind_ms": { "type": "number", "description": "可操作最大風速 m/s。" },
+            "min_visibility_m": { "type": "number", "description": "最低能見度 m。" }
           }
         }
       }

@@ -36,7 +36,10 @@ def build_event_envelope(event: LedgerEvent) -> dict[str, Any]:
         payload["target_id"] = event.target_id
     if event.damage_calc is not None:
         payload["damage"] = event.damage_calc
-    for k in ("status", "reason", "target_health_after"):
+    # #33 comms 狀態轉移的 from/to 也帶出（供戰況 feed 顯示「通聯 X→Y」）。
+    # mode＝COMBINED/VOLLEY/AGGREGATE（供 feed 標示交戰型態，SPEC_EXTEND P4）。
+    # reason_detail＝聯合兵種被拒時逐武器原因彙總（供 feed 顯示為何整組不能打）。
+    for k in ("status", "reason", "reason_detail", "target_health_after", "from", "to", "mode"):
         if isinstance(event.ai_decision, dict) and k in event.ai_decision:
             payload[k] = event.ai_decision[k]
     return {"v": 1, "seq": 0, "type": "EVENT", "payload": payload}

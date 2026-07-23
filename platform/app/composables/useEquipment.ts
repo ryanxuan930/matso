@@ -38,10 +38,11 @@ export function editUnitEquipment(
   unitId: string,
   eid: string,
   currentState: Record<string, unknown>,
+  quantity?: number, // #30 建制數量（可選）
 ): Promise<EquipmentInstance> {
   return apiFetch<EquipmentInstance>(`/sessions/${sessionId}/units/${unitId}/equipment/${eid}`, {
     method: 'PATCH',
-    body: { current_state: currentState },
+    body: { current_state: currentState, ...(quantity != null ? { quantity } : {}) },
   })
 }
 export async function removeUnitEquipment(

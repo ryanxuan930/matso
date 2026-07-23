@@ -138,9 +138,20 @@ class LobbyService:
             name=session.name,
             scenario_id=session.scenario_id,
             mode=session.mode.value,
-            status="ENDED" if session.end_time is not None else "ACTIVE",
+            status=(
+                "ARCHIVED"
+                if session.archived_at is not None
+                else "ENDED"
+                if session.end_time is not None
+                else "ACTIVE"
+            ),
             my_faction=my_faction,
             orbat_edit=orbat_edit,
+            archived_at=(
+                session.archived_at.isoformat()
+                if session.archived_at is not None and hasattr(session.archived_at, "isoformat")
+                else (str(session.archived_at) if session.archived_at else None)
+            ),
             start_time=(
                 session.start_time.isoformat()
                 if hasattr(session.start_time, "isoformat")
@@ -192,6 +203,78 @@ class LobbyService:
         self._db.commit()
         my_faction = self._participant_factions(user.id).get(session_id)
         return self._summary(session, my_faction, orbat_edit=True)
+
+    # ---------------- #31 封存 / 還原 / 刪除 ----------------
+
+    def _require_director(self, user: CurrentUser, session_id: str) -> WargameSession:
+        """限統裁/管理（全知），否則須為本 session 統裁/白軍參與者。回傳 session（不存在→404）。"""
+        from app.errors import AuthForbiddenError, SessionNotFoundError
+
+        if user.role not in _OMNISCIENT_ROLES:
+            part = self._db.execute(
+                select(SessionParticipant).where(
+                    SessionParticipant.user_id == user.id,
+                    SessionParticipant.session_id == session_id,
+                )
+            ).scalar_one_or_none()
+            if part is None or part.role not in (
+                UserRole.EXERCISE_DIRECTOR,
+                UserRole.WHITE_CELL_STAFF,
+            ):
+                raise AuthForbiddenError("僅統裁/管理可封存或刪除推演")
+        session = self._db.get(WargameSession, session_id)
+        if session is None:
+            raise SessionNotFoundError(f"session 不存在：{session_id}")
+        return session
+
+    def set_archived(self, user: CurrentUser, session_id: str, archived: bool) -> SessionSummary:
+        """封存（archived=True）或還原（False）一局。封存＝活模擬凍結、移入歷史頁。"""
+        from datetime import datetime
+
+        session = self._require_director(user, session_id)
+        # 封存時間為真實世界 metadata（非模擬邏輯，不受 SimClock 紅線約束）。
+        session.archived_at = datetime.now() if archived else None  # type: ignore[assignment]
+        self._db.commit()
+        my_faction = self._participant_factions(user.id).get(session_id)
+        return self._summary(session, my_faction, orbat_edit=True)
+
+    def delete_session(self, user: CurrentUser, session_id: str) -> None:
+        """永久刪除一局（連同所有子表）。限統裁/管理，前端須二次確認。
+
+        多數子表（單位/事件/指令/參與者/檢查點/情報/AI 記錄/AAR）未設 DB 級 onDelete cascade，
+        直接刪 session 會觸發 FK 違反 → 500。故此依 FK 安全順序先清子表再刪 session；
+        EquipmentInstance / 單位階層由 TacticalUnit 的 ondelete=CASCADE 一併帶走。
+        """
+        from sqlalchemy import delete as sa_delete
+
+        from app.models import (
+            AARReport,
+            AIInvocationLog,
+            IntelContact,
+            MapFeature,
+            Order,
+            SessionParticipant,
+            SimCheckpoint,
+            TacticalEventLog,
+            TacticalUnit,
+        )
+
+        session = self._require_director(user, session_id)
+        # 先清 referencing units 的表（Order/IntelContact），再清單位，最後刪 session。
+        for model in (
+            AARReport,
+            AIInvocationLog,
+            SimCheckpoint,
+            IntelContact,
+            Order,
+            TacticalEventLog,
+            SessionParticipant,
+            MapFeature,
+            TacticalUnit,
+        ):
+            self._db.execute(sa_delete(model).where(model.session_id == session_id))
+        self._db.delete(session)
+        self._db.commit()
 
 
 def _derive_seed(name: str, user_id: str, session_id: str) -> int:

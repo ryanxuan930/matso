@@ -87,6 +87,37 @@ async function saveEdit() {
   }
 }
 
+// #31 封存 / 歷史 / 刪除——限統裁/管理。
+const activeSessions = computed(() => sessions.value.filter((s) => !s.archived_at))
+const historySessions = computed(() => sessions.value.filter((s) => s.archived_at))
+const showHistory = ref(false)
+const confirmDelete = ref<SessionSummary | null>(null)
+const busyId = ref<string | null>(null)
+
+async function archiveSession(s: SessionSummary, archive: boolean) {
+  busyId.value = s.id
+  try {
+    const verb = archive ? 'archive' : 'unarchive'
+    await apiFetch<SessionSummary>(`/sessions/${s.id}/${verb}`, { method: 'POST' })
+    await refresh()
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function doDelete() {
+  const s = confirmDelete.value
+  if (!s) return
+  busyId.value = s.id
+  try {
+    await apiFetch<unknown>(`/sessions/${s.id}`, { method: 'DELETE' })
+    confirmDelete.value = null
+    await refresh()
+  } finally {
+    busyId.value = null
+  }
+}
+
 async function onLogout() {
   auth.logout()
   await navigateTo('/login')
@@ -103,12 +134,7 @@ onMounted(async () => {
     <header>
       <h1>系統首頁</h1>
       <div class="who">
-        <a
-          v-if="canEditScenario"
-          class="help"
-          href="/scenario-editor"
-          data-testid="nav-scenario-editor"
-        >劇本編輯器</a>
+        <!-- 劇本編輯器入口移至「劇本管理」頁（新劇本／編輯按鈕）；首頁不再重複。 -->
         <a
           v-if="canEditScenario"
           class="help"
@@ -121,6 +147,12 @@ onMounted(async () => {
           href="/armory"
           data-testid="nav-armory"
         >武器庫</a>
+        <a
+          v-if="canEditScenario"
+          class="help"
+          href="/accounts"
+          data-testid="nav-accounts"
+        >帳號管理</a>
         <span v-if="auth.user" data-testid="current-user">{{ auth.user.username }}（{{ auth.user.role }}）</span>
         <button data-testid="logout" @click="onLogout">登出</button>
       </div>
@@ -147,10 +179,10 @@ onMounted(async () => {
 
     <section>
       <p v-if="loading" data-testid="lobby-loading">載入中…</p>
-      <p v-else-if="sessions.length === 0" data-testid="lobby-empty">目前沒有推演，建立一個開始。</p>
+      <p v-else-if="activeSessions.length === 0" data-testid="lobby-empty">目前沒有進行中的推演，建立一個開始。</p>
       <ul v-else data-testid="session-list">
         <li
-          v-for="s in sessions"
+          v-for="s in activeSessions"
           :key="s.id"
           class="session"
           data-testid="session-item"
@@ -165,9 +197,50 @@ onMounted(async () => {
             data-testid="edit-session"
             title="編輯設定"
             @click.stop="openEdit(s)"
-          >⚙</button>
+          ><i class="pi pi-cog" /></button>
+          <button
+            v-if="canEditScenario"
+            class="edit-btn"
+            data-testid="archive-session"
+            title="封存（移入歷史）"
+            :disabled="busyId === s.id"
+            @click.stop="archiveSession(s, true)"
+          ><i class="pi pi-inbox" /></button>
         </li>
       </ul>
+    </section>
+
+    <!-- #31 歷史（已封存）——限統裁/管理 -->
+    <section v-if="canEditScenario" class="history">
+      <button class="hist-toggle" data-testid="toggle-history" @click="showHistory = !showHistory">
+        {{ showHistory ? '▾' : '▸' }} 歷史推演（{{ historySessions.length }}）
+      </button>
+      <ul v-if="showHistory && historySessions.length" data-testid="history-list">
+        <li
+          v-for="s in historySessions"
+          :key="s.id"
+          class="session archived"
+          data-testid="history-item"
+        >
+          <span class="name" @click="navigateTo(`/session/${s.id}/cop`)">{{ s.name }}</span>
+          <span class="meta">{{ s.mode }} · 已封存</span>
+          <button
+            class="edit-btn"
+            data-testid="unarchive-session"
+            title="還原（移回進行中）"
+            :disabled="busyId === s.id"
+            @click.stop="archiveSession(s, false)"
+          ><i class="pi pi-replay" /></button>
+          <button
+            class="edit-btn danger"
+            data-testid="delete-session"
+            title="永久刪除"
+            :disabled="busyId === s.id"
+            @click.stop="confirmDelete = s"
+          ><i class="pi pi-trash" /></button>
+        </li>
+      </ul>
+      <p v-else-if="showHistory" class="hist-empty" data-testid="history-empty">（無封存推演）</p>
     </section>
 
     <!-- 編輯已開推演設定（#16） -->
@@ -183,6 +256,25 @@ onMounted(async () => {
         <div class="modal-btns">
           <button class="ghost" @click="editing = null">取消</button>
           <button data-testid="save-session-edit" @click="saveEdit">儲存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- #31 刪除二次確認 -->
+    <div
+      v-if="confirmDelete"
+      class="modal-overlay"
+      data-testid="delete-confirm-modal"
+      @click.self="confirmDelete = null"
+    >
+      <div class="modal">
+        <h3>永久刪除推演？</h3>
+        <p class="modal-hint">
+          將永久刪除「<b>{{ confirmDelete.name }}</b>」及其所有單位、事件、標註。此動作無法復原。
+        </p>
+        <div class="modal-btns">
+          <button class="ghost" @click="confirmDelete = null">取消</button>
+          <button class="danger-btn" data-testid="confirm-delete" @click="doDelete">確認刪除</button>
         </div>
       </div>
     </div>
@@ -291,6 +383,54 @@ ul {
 .edit-btn:hover {
   border-color: #2563eb;
   color: #e2e8f0;
+}
+.edit-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.edit-btn.danger:hover {
+  border-color: #dc2626;
+  color: #fca5a5;
+}
+/* #31 歷史區 */
+.history {
+  margin-top: 1.25rem;
+  border-top: 1px solid #1e293b;
+  padding-top: 0.75rem;
+}
+.hist-toggle {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+}
+.hist-toggle:hover {
+  color: #e2e8f0;
+}
+.session.archived {
+  opacity: 0.72;
+  cursor: default;
+}
+.session.archived .name {
+  cursor: pointer;
+}
+.hist-empty {
+  color: #64748b;
+  font-size: 0.8rem;
+  padding-left: 0.5rem;
+}
+.danger-btn {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 0.25rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+}
+.danger-btn:hover {
+  background: #b91c1c;
 }
 .modal-overlay {
   position: fixed;

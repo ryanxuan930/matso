@@ -9,10 +9,12 @@ from app.api.inject import router as inject_router
 from app.api.intel import router as intel_router
 from app.api.lobby import router as lobby_router
 from app.api.map_features import router as map_features_router
+from app.api.movement import router as movement_router
 from app.api.orbat import router as orbat_router
 from app.api.orders import router as orders_router
 from app.api.scenarios import router as scenarios_router
 from app.api.units import router as units_router
+from app.api.users import router as users_router
 from app.api.ws import router as ws_router
 
 __all__ = [
@@ -25,9 +27,11 @@ __all__ = [
     "intel_router",
     "lobby_router",
     "map_features_router",
+    "movement_router",
     "orbat_router",
     "orders_router",
     "scenarios_router",
     "units_router",
+    "users_router",
     "ws_router",
 ]

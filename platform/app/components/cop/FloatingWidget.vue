@@ -127,10 +127,10 @@ onBeforeUnmount(removeMoveListeners)
     @mousedown="emit('focus')"
   >
     <div class="fw-hd" @mousedown="beginHeader" @touchstart="beginHeader">
-      <span class="fw-grip">⠿</span>
+      <span class="fw-grip"><i class="pi pi-bars" /></span>
       <span class="fw-title">{{ title }}</span>
       <span class="fw-actions"><slot name="actions" /></span>
-      <button class="fw-close" title="關閉" @click="emit('close')">✕</button>
+      <button class="fw-close" title="關閉" @click="emit('close')"><i class="pi pi-times" /></button>
     </div>
     <div class="fw-body"><slot /></div>
     <div

@@ -13,21 +13,27 @@ DELETE /api/v1/sessions/{id}/units/{uid}/equipment/{eid}      移除一件裝備
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
+import redis
 from fastapi import APIRouter, Depends, Response, status
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
+from app.config import Settings
 from app.errors import AuthForbiddenError, OrderValidationError, SessionNotFoundError
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit, WargameSession
+from app.state.live_ammo import push_ammo_cmd
 from app.stream.faction_filter import is_omniscient
+
+_LOG = logging.getLogger("app.equipment")
 
 router = APIRouter(prefix="/api/v1", tags=["equipment"])
 
@@ -42,12 +48,14 @@ _WEAPONEERING_SCHEMA = json.loads(
 def _validate_base_stats(category: str, base_stats: dict[str, Any]) -> None:
     """依 category 對 weaponeering.schema.json 的對應 $def 驗證 base_stats。"""
     defs = _WEAPONEERING_SCHEMA.get("$defs", {})
-    subschema = defs.get(category.lower())
-    if subschema is None:
+    if category.lower() not in defs:
         raise OrderValidationError(
             f"未知裝備類別：{category}", error_code="EQUIPMENT_CATEGORY_UNKNOWN"
         )
-    validator = Draft202012Validator(subschema)
+    # 以「$ref 目標 def + 內嵌 $defs」為驗證 schema，讓 allOf $ref（如 missile/artillery→kinetic）
+    # 能於同一文件內解析（否則裸 subschema 的 #/$defs/kinetic 無處可尋）。
+    schema = {"$ref": f"#/$defs/{category.lower()}", "$defs": defs}
+    validator = Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(base_stats), key=lambda e: list(e.path))
     if errors:
         detail = "; ".join(
@@ -78,10 +86,12 @@ class EquipmentInstanceView(BaseModel):
     category: str
     current_state: dict[str, Any]
     base_stats: dict[str, Any]
+    quantity: int = 1  # #30 建制數量（班內同型武器件數；驅動 squad 齊射火力）
 
 
 class AddEquipmentRequest(BaseModel):
     template_id: str
+    quantity: int = 1  # #30 配發件數
 
 
 class EquipmentTemplateEdit(BaseModel):
@@ -92,6 +102,7 @@ class EquipmentTemplateEdit(BaseModel):
 
 class EquipmentStateEdit(BaseModel):
     current_state: dict[str, Any]
+    quantity: int | None = None  # #30 調整建制數量（None＝不動）
 
 
 def _view(inst: EquipmentInstance, tmpl: EquipmentTemplate) -> EquipmentInstanceView:
@@ -102,6 +113,7 @@ def _view(inst: EquipmentInstance, tmpl: EquipmentTemplate) -> EquipmentInstance
         category=tmpl.category,
         current_state=dict(inst.current_state or {}),
         base_stats=dict(tmpl.base_stats or {}),
+        quantity=int(inst.quantity or 1),
     )
 
 
@@ -255,7 +267,10 @@ def add_unit_equipment(
         )
     # KINETIC 武器配發時給初始彈藥，其餘裝備空狀態（後續可 PATCH）。
     state: dict[str, Any] = {"ammo": 100} if tmpl.category == "KINETIC" else {}
-    inst = EquipmentInstance(template_id=tmpl.id, owner_id=unit.id, current_state=state)
+    qty = max(1, int(req.quantity))
+    inst = EquipmentInstance(
+        template_id=tmpl.id, owner_id=unit.id, current_state=state, quantity=qty
+    )
     db.add(inst)
     db.commit()
     return _view(inst, tmpl)
@@ -272,17 +287,40 @@ def edit_unit_equipment(
     edit: EquipmentStateEdit,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> EquipmentInstanceView:
     session = _session_or_404(db, session_id)
     unit = _unit_or_403(db, session_id, unit_id)
     _require_edit(db, user, session, unit)
     inst = _instance_or_404(db, unit, eid)
     inst.current_state = {**(inst.current_state or {}), **edit.current_state}
+    if edit.quantity is not None:
+        inst.quantity = max(1, int(edit.quantity))
     db.commit()
+    # 改彈藥 → 排入活模擬命令通道，由 sim 迴圈（單一寫入者）套進熱狀態 ammo_by_weapon。否則活模擬
+    # 讀 sim 啟動時舊值（RedisHotState 有 mirror cache，外部直寫被忽略）→ 出現「precheck 讀 DB 新值
+    # ＝可行、裁決讀熱狀態舊值＝NO_AMMO」的不一致 + 無戰損。無活 sim → 命令留 list，下次 seed 帶入。
+    new_ammo = inst.current_state.get("ammo")
+    if "ammo" in edit.current_state and isinstance(new_ammo, (int, float)):
+        _push_live_ammo(settings, session_id, unit_id, eid, int(new_ammo))
     tmpl = db.get(EquipmentTemplate, inst.template_id)
     if tmpl is None:
         raise AuthForbiddenError("查無此裝備範本")
     return _view(inst, tmpl)
+
+
+def _push_live_ammo(
+    settings: Settings, session_id: str, unit_id: str, weapon_id: str, ammo: int
+) -> None:
+    """把彈藥調整排入活模擬命令通道（Redis 不可達 → 記警告不擋 DB 更新）。"""
+    try:
+        client = redis.from_url(settings.redis_url, decode_responses=True)
+        try:
+            push_ammo_cmd(client, session_id, unit_id, weapon_id, ammo)
+        finally:
+            client.close()
+    except redis.RedisError as exc:
+        _LOG.warning("session %s: 彈藥命令排入失敗（僅 DB 更新）：%s", session_id, exc)
 
 
 @router.delete(

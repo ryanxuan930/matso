@@ -97,6 +97,8 @@ components:
                 - FACTION_INVALID
                 - AI_DISABLED
                 - AI_OUTPUT_REJECTED
+                - USER_CONFLICT
+                - USER_NOT_FOUND
             message: { type: string }
             details: { type: object }
     UserRole:
@@ -140,6 +142,29 @@ components:
         id: { type: string }
         username: { type: string }
         role: { $ref: "#/components/schemas/UserRole" }
+    UserView:
+      type: object
+      description: 帳號管理列表項（#32）
+      required: [id, username, role]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        role: { $ref: "#/components/schemas/UserRole" }
+        created_at: { type: [string, "null"], description: 建立時間 ISO8601 }
+    CreateUserRequest:
+      type: object
+      description: 建立帳號（#32；白軍/管理設定角色與初始密碼）
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        role: { $ref: "#/components/schemas/UserRole" }
+    UpdateUserRequest:
+      type: object
+      description: 更新帳號角色（權限）或重設密碼（#32；None＝不動）
+      properties:
+        role: { $ref: "#/components/schemas/UserRole" }
+        password: { type: [string, "null"], minLength: 8, maxLength: 128 }
     SessionSummary:
       type: object
       description: lobby 列表項（faction/角色過濾後）
@@ -153,6 +178,7 @@ components:
         my_faction: { type: [string, "null"], description: 呼叫者在此 session 的陣營（非參與者為 null） }
         start_time: { type: [string, "null"], description: 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 }
         world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（#16/#6 日照） }
+        archived_at: { type: [string, "null"], description: 封存時間 ISO8601（#31；有值＝已封存） }
         orbat_edit: { type: boolean, default: false, description: 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編） }
     EditSessionRequest:
       type: object
@@ -209,11 +235,13 @@ components:
         category: { type: string }
         current_state: { type: object, description: "即時狀態（如 {ammo:100}）" }
         base_stats: { type: object }
+        quantity: { type: integer, default: 1, description: "建制數量（#30；班內同型武器件數，驅動 squad 齊射）" }
     AddEquipmentRequest:
       type: object
       required: [template_id]
       properties:
         template_id: { type: string }
+        quantity: { type: integer, default: 1, description: "配發件數（#30）" }
     EquipmentTemplateEdit:
       type: object
       description: 建立/更新裝備範本（武器屬性/功能）——base_stats 依 weaponeering.schema.json 驗證
@@ -278,11 +306,44 @@ components:
         ring: { type: array, items: { type: array, items: { type: number } }, description: "[[lng,lat],…] 閉合環" }
         clipped: { type: boolean, description: 是否有方位受地形限制 }
         max_range_m: { type: number }
+    MovementPreviewRequest:
+      type: object
+      description: 移動路徑預覽請求（#28）——waypoints 優先，否則單一目的地（起點取單位當前座標）
+      required: [unit_id]
+      properties:
+        unit_id: { type: string }
+        waypoints: { type: [array, "null"], items: { type: array, items: { type: number } }, description: "[[lng,lat],…] 自訂路徑" }
+        to_h3: { type: [string, "null"] }
+        to_lat: { type: [number, "null"] }
+        to_lng: { type: [number, "null"] }
+    MovementCrossing:
+      type: object
+      description: 路徑穿越一個不可通行標註的紀錄（#28）
+      required: [feature_id, kind, entry_frac]
+      properties:
+        feature_id: { type: string }
+        kind: { type: string, description: OBSTACLE/BUILDING/TERRAIN }
+        label: { type: [string, "null"] }
+        entry_frac: { type: number, description: "0..1 沿全程進入該阻礙的比例" }
+    MovementPreviewView:
+      type: object
+      description: 移動路徑試算結果（#28）
+      required: [path, distance_m, duration_ticks, fuel_cost, est_attrition, feasible, forced, crossings]
+      properties:
+        path: { type: array, items: { type: array, items: { type: number } }, description: "[[lng,lat],…] 含起點" }
+        distance_m: { type: number }
+        duration_ticks: { type: integer }
+        fuel_cost: { type: number }
+        est_attrition: { type: number, description: 基礎（確定性）耗損；強穿隨機加成不含在內 }
+        feasible: { type: boolean, description: 無強穿＝可行 }
+        forced: { type: boolean, description: 是否需強穿至少一個阻礙 }
+        crossings: { type: array, items: { $ref: "#/components/schemas/MovementCrossing" } }
     EquipmentStateEdit:
       type: object
       required: [current_state]
       properties:
         current_state: { type: object, description: "覆寫此實例的即時狀態（如 {ammo:60}）" }
+        quantity: { type: [integer, "null"], description: "調整建制數量（#30；null＝不動）" }
     CreateSessionRequest:
       type: object
       required: [name]
@@ -322,7 +383,15 @@ components:
         order_type: { $ref: "#/components/schemas/OrderType" }
         payload:
           type: object
-          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?}"
+          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。"
+    FirePolicy:
+      type: string
+      description: "聯合兵種火力政策（SPEC_EXTEND P3；ENGAGE payload.fire_policy，未指定＝FREE）。僅意圖/篩選，不改物理數值。指定 payload.weapon_id 等同僅該武器射擊（單武器）。"
+      default: FREE
+      enum:
+        - FREE              # 自由開火：所有在射程/有彈/可達的武器一起打
+        - SMALL_ARMS_ONLY   # 僅輕兵器（節約重火力/保持隱蔽）；反裝甲/飛彈類保留
+        - ANTI_ARMOR_HOLD   # 反裝甲/飛彈類僅在對此目標有效（pk>0）時才用，勿浪費在步兵
     PrecheckCheck:
       type: object
       required: [name, passed]
@@ -401,6 +470,62 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CurrentUser" }
         "401": { description: Unauthenticated, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /users:
+    get:
+      operationId: listUsers
+      security: [{ bearerAuth: [] }]
+      description: 帳號列表（#32）——限白軍/統裁/管理
+      responses:
+        "200":
+          description: All accounts
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/UserView" } }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      operationId: createUser
+      security: [{ bearerAuth: [] }]
+      description: 建立帳號（#32）——設定角色與初始密碼；限白軍/統裁/管理
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateUserRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserView" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Username exists, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /users/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    patch:
+      operationId: updateUser
+      security: [{ bearerAuth: [] }]
+      description: 更新帳號角色（權限）/ 重設密碼（#32）——限白軍/統裁/管理
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateUserRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserView" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Conflict, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteUser
+      security: [{ bearerAuth: [] }]
+      description: 刪除帳號（#32）——限白軍/統裁/管理；不可刪自己/最後管理員
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Conflict, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions:
     get:
       operationId: listSessions
@@ -446,6 +571,31 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SessionSummary" }
         "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteSession
+      security: [{ bearerAuth: [] }]
+      description: 永久刪除推演（#31，連同單位/事件/標註）——限統裁/管理，前端須二次確認
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/archive:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: archiveSession
+      security: [{ bearerAuth: [] }]
+      description: 封存推演（#31）——移入歷史頁、活模擬凍結。限統裁/管理
+      responses:
+        "200": { description: Archived, content: { application/json: { schema: { $ref: "#/components/schemas/SessionSummary" } } } }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/unarchive:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: unarchiveSession
+      security: [{ bearerAuth: [] }]
+      description: 還原封存推演（#31）——移回進行中。限統裁/管理
+      responses:
+        "200": { description: Restored, content: { application/json: { schema: { $ref: "#/components/schemas/SessionSummary" } } } }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/lifecycle:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:
@@ -668,6 +818,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TerrainFootprintView" }
         "503": { description: Terrain unavailable, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/movement/preview:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: previewMovement
+      security: [{ bearerAuth: [] }]
+      description: 移動路徑預覽（#28）——試算距離/tick/油耗/可行性/強穿阻礙（下令前）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MovementPreviewRequest" }
+      responses:
+        "200":
+          description: Route estimate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MovementPreviewView" }
+        "400": { description: Bad request, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/inject:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

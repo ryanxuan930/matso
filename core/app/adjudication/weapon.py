@@ -51,6 +51,17 @@ class WeaponProfile:
     # 每發對各裝甲級別的擊殺機率 P(kill|hit) ∈ [0,1]（真實化交戰 Phase 1）。有值＝命中造成
     # 期望傷亡＝pk×每平台戰力；無值則退回 damage_by_armor_class[ac]/100 以相容既有種子。
     pk_by_armor_class: dict[str, float] = field(default_factory=dict)
+    # 飛彈（導引）類：missile=True 才套用飛彈接戰可行性規則（#飛彈）。
+    # maneuverable=True（巡弋/遊蕩/ATGM…）→ 末端機動繞過，僅判射程；
+    # maneuverable=False（彈道飛彈/無導引火箭）→ 走固定拋物線，需射程 + 拋物線淨空（地形/障礙）。
+    missile: bool = False
+    maneuverable: bool = True
+    apex_ratio: float = 0.25  # 拋物線頂高比（45° 發射≈0.25；低伸彈道用較小值）
+
+    @property
+    def ballistic(self) -> bool:
+        """不可變軌飛彈（走拋物線，接戰須判地形/障礙淨空）。"""
+        return self.missile and not self.maneuverable
 
     @classmethod
     def from_base_stats(cls, stats: dict[str, Any]) -> WeaponProfile:
@@ -82,6 +93,11 @@ class WeaponProfile:
                 str(k): float(v) for k, v in (stats.get("pk_by_armor_class") or {}).items()
             },
             kinetic_kind=str(stats.get("kinetic_kind", "GENERIC")),
+            # 飛彈類：以 missile_kind 存在判定為飛彈；maneuverable 預設 True（巡弋式，僅判射程），
+            # 彈道飛彈於 baseStats 設 maneuverable=false → ballistic（走拋物線）。
+            missile="missile_kind" in stats,
+            maneuverable=bool(stats.get("maneuverable", True)),
+            apex_ratio=float(stats.get("apex_ratio", 0.25)),
         )
 
     def base_ph(self, range_m: float) -> float:

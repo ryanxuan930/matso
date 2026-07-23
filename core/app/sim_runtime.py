@@ -21,29 +21,37 @@ from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSourc
 from app.cache import make_redis
 from app.db import default_session_factory
 from app.engine.clock import SimClock
-from app.engine.engage_wiring import WeaponResolver, make_engage_env, seed_combat_state
+from app.engine.comms import CommsSystem
+from app.engine.engage_wiring import (
+    WeaponResolver,
+    make_combined_weapons_for,
+    make_engage_env,
+    seed_combat_state,
+)
 from app.engine.kernel import Kernel
 from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.subsystems import (
-    NoOpCommsSystem,
     NoOpLogisticsSystem,
     NoOpSensorSystem,
     NoOpTriggerChecker,
 )
 from app.models import WargameSession
+from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.runtime import PerfCounterClock, TickPacer, run_paced
 from app.sim_control import session_pause_key
 from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerWriter
+from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
 from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
 
-_TICK_RATE_MS = 60_000  # sim time：1 分 / tick
+# 與移動預覽端（api/movement）共用單一真相，確保估計與實跑一致。
+_TICK_RATE_MS = MOVE_TICK_RATE_MS  # sim time：1 分 / tick
 _PACE_COMPRESSION = 120.0  # 真實節奏：60000/1000/120 = 0.5s / tick
-_UNIT_SPEED_KMH = 40.0
+_UNIT_SPEED_KMH = MOVE_SPEED_KMH
 
 
 def _engage_gateway() -> object | None:
@@ -103,8 +111,16 @@ class SimManager:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._scan_interval)
 
     def _session_ids(self) -> list[str]:
+        # #31 已封存的推演凍結：不起 Kernel 迴圈（活模擬停擺，移入歷史頁）。
         with self._factory() as db:
-            return [s.id for s in db.execute(select(WargameSession)).scalars().all()]
+            return [
+                s.id
+                for s in db.execute(
+                    select(WargameSession).where(WargameSession.archived_at.is_(None))
+                )
+                .scalars()
+                .all()
+            ]
 
     def _ensure(self, session_id: str) -> None:
         task = self._tasks.get(session_id)
@@ -122,16 +138,21 @@ class SimManager:
             resolver, seed = await asyncio.to_thread(
                 self._prepare_engage, engage_db, session_id, hot
             )
+            sim_clock = SimClock(tick_rate_ms=_TICK_RATE_MS)
             kernel = Kernel(
                 session_id=session_id,
-                clock=SimClock(tick_rate_ms=_TICK_RATE_MS),
-                order_source=EngageOrderSource(engage_db, session_id),
+                clock=sim_clock,
+                # #33b 通信閘門：OFFLINE/DEGRADED 時 ENGAGE 延後送達（傳 hot + 同一 clock）。
+                order_source=EngageOrderSource(engage_db, session_id, hot, sim_clock),
                 adjudicator=EngagementAdjudicator(
                     engage_db,
                     hot,
                     DeterministicRNG(seed, "adjudication"),
                     resolver.weapon_for,
                     make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
+                    quantity_for=resolver.quantity_for,  # #30 squad 齊射
+                    # SPEC_EXTEND P2 聯合兵種：≥2 武器系統 → 武器組合加總（帶熱狀態活彈藥）。
+                    combined_weapons_for=make_combined_weapons_for(resolver, hot),
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,
@@ -139,9 +160,14 @@ class SimManager:
                     hot_state=hot,
                     tick_rate_ms=_TICK_RATE_MS,
                     speed_kmh=_UNIT_SPEED_KMH,
+                    rng=DeterministicRNG(seed, "movement"),  # #28 強穿隨機耗損
                 ),
                 sensors=NoOpSensorSystem(),
-                comms=NoOpCommsSystem(),
+                comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 5 tick 重算鏈路狀態
+                    session_id=session_id,
+                    session_factory=self._factory,
+                    hot_state=hot,
+                ),
                 logistics=NoOpLogisticsSystem(),
                 trigger_checker=NoOpTriggerChecker(),
                 broadcaster=RedisBroadcaster(client, session_id),
@@ -153,11 +179,20 @@ class SimManager:
             # White Cell 暫停旗標（新 #6）：control 端點 PAUSE 設 Redis 鍵、RESUME 清除；
             # 迴圈輪詢此鍵 → 暫停時凍結活模擬。
             pause_key = session_pause_key(session_id)
+
+            async def _apply_live_edits() -> None:
+                # 編裝彈藥即時調整（#52）：drain API 排入的命令，以本迴圈自己的 hot 實例套用
+                # （同實例→mirror 一致；同行程→不違反 single-writer；tick 之間→不與 tick 內競態）。
+                cmds = await asyncio.to_thread(drain_ammo_cmds, client, session_id)
+                if cmds:
+                    apply_ammo_cmds(hot, cmds)
+
             await run_paced(
                 kernel,
                 pacer,
                 should_stop=self._stop.is_set,
                 should_pause=lambda: bool(client.exists(pause_key)),
+                pre_tick=_apply_live_edits,
             )
         except asyncio.CancelledError:
             raise
