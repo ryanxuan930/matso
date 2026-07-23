@@ -214,6 +214,21 @@
 | O10.5 | 安全補完（refresh token 撤銷/rotation + migration [C5]；建局角色 gate [C8]；管理 audit log） | refresh 撤銷後不可換發；非授權角色不可開演習；每角色×端點矩陣仍綠 |
 | O10.6 | OCR/資產 & 觀測性（tesseract/PaddleOCR 模型檔 env 注入；GRASS r.viewshed release 對照 ≥98%；Prometheus/Grafana §20.3 指標 + 告警；CI node24 升級 + 覆蓋率工具） | 掃描 PDF OCR 進 staging；Grafana 推演健康儀表板；TICK_OVERRUN/plugin DOWN/AI 逾時率告警 |
 
+## O11 自主推演（規格：**SPEC_AUTONOMY.md**；落實並延伸 O10.3 AI 迴路↔kernel + O10.4 victory；多陣營 AI 自主對抗）
+
+> 給定想定 + 各陣營目標 → 每個 AI 陣營一條 async 決策 worker（固定心跳），讀霧化 COP → LLM 產令 → 護欄 G1–G6 → 落 VALIDATED → 確定性引擎執行 → 每週期判勝負 → 自動收場 + AAR。**N 陣營**（示範雙陣營，架構支援多陣營）；單模型角色/人格切換。紅線：AI 只產令不裁決物理、不寫熱狀態、護欄無 bypass、霧化只在後端、決定性走 ReplayClient。
+
+| 任務 | 內容 | 驗收重點 |
+|------|------|----------|
+| O11.1 | Faction COP context builder（`core/app/ai_loop/context.py`；霧化快照→prompt） | A 陣營 context 不含未偵測敵；可序列化餵 prompt |
+| O11.2 | 陣營泛化 + `LlmFactionDecider`（接 #54 Ollama；core 容器裝 matso_ai+httpx） | 藍/紅各得結構正確 orders；AI_BARE 引用空；單模型 adapter 切換=0 |
+| O11.3 | 護欄 G3 feasibility（包 run_precheck）+ 指令橋接 VALIDATED（OrderService.submit） | 不可行/越權令被 G3 剔除記 GUARDRAIL_INTERVENTION；合法令成 VALIDATED |
+| O11.4 | Kernel 決策排程器（每 AI 陣營 async 固定心跳 worker；非 pre_tick） | 多 AI session tick 不被 LLM 拖慢；AI 令非同步到位並執行（**第一個可展示里程碑**） |
+| O11.5 | 勝負引擎綁定 + 自動收場 + AAR（triggers.py DSL 評估 victory_conditions） | 達成條件自動終局出 AAR；時限判平/守方勝；結果入 Ledger |
+| O11.6 | 決定性重播（RecordingClient 錄／ReplayClient 重播接線） | 同想定+同錄音→同結局；現有 golden 6 綠不變 |
+| O11.7 | 前端自主主控台（設定：陣營指派/人格/目標/AI 模式；觀戰：COP+事件+AI 軌跡+護欄+目標進度；結果：勝負橫幅+AAR） | 一鍵起多 AI 自主推演並觀戰到收場；Playwright smoke |
+| O11.8 | 韌性收尾（LLM 逾時 fallback HOLD、指令速率上限、runaway 守衛、per-worker 觀測） | LLM 斷線時 sim 續跑；不產生無界指令 |
+
 ---
 
 ## 附錄：任務中斷與續作（額度用完時的保命機制）

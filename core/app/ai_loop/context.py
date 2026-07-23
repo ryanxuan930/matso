@@ -1,0 +1,175 @@
+"""Faction-scoped COP context builder — O11.1（SPEC_AUTONOMY §3.2）。
+
+把**單一陣營**的戰場視角組成緊湊、可序列化的 dict + 文字 briefing，供 LLM 指揮官 prompt。
+純讀、零 I/O：呼叫端傳入快照（熱狀態拷貝、單位靜態身分、已霧化的敵情、關係矩陣、目標、
+近期事件），本模組只投影與塑形。
+
+紅線（fog of war，SPEC_AUTONOMY §1.4）：霧化在 `known_enemies` 的**注入端**強制——呼叫端 MUST
+已依陣營過濾（真偵測走 IntelService；感測 NoOp 期間走 ground-truth HOSTILE）。本模組**永不**放寬
+可見性，也不從己方視角推導未給定的敵情。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import h3
+
+from app.factions.relations import FactionRelations
+from app.state.hot_state import UnitState
+
+# 目標/hex 匹配解析度（與交戰天氣同級 res 8）。座標→h3 供 SEIZE_HEX 等目標比對。
+_OBJECTIVE_H3_RES = 8
+_DEGRADED_HEALTH = 50.0  # health（效能%）低於此判 DEGRADED
+
+
+@dataclass(frozen=True, slots=True)
+class UnitMeta:
+    """單位靜態身分（來自 DB TacticalUnit；熱狀態不存這些）。"""
+
+    faction: str
+    designation: str
+    unit_type: str
+
+
+def _num(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) else None
+
+
+def unit_status(state: UnitState) -> str:
+    """由熱狀態導出簡易戰備狀態（無獨立 status 欄，以 strength/health 導出）。"""
+    strength = _num(state.get("strength"))
+    if strength is not None and strength <= 0:
+        return "DESTROYED"
+    health = _num(state.get("health"))
+    if health is not None and health < _DEGRADED_HEALTH:
+        return "DEGRADED"
+    return "OPERATIONAL"
+
+
+def _own_unit_view(unit_id: str, state: UnitState, meta: UnitMeta) -> dict[str, Any]:
+    """己方單位視圖：完整揭露（自己的部隊）。"""
+    view: dict[str, Any] = {
+        "unit_id": unit_id,
+        "designation": meta.designation,
+        "type": meta.unit_type,
+        "status": unit_status(state),
+    }
+    lat, lng = _num(state.get("lat")), _num(state.get("lng"))
+    if lat is not None and lng is not None:
+        view["lat"] = round(lat, 6)
+        view["lng"] = round(lng, 6)
+        view["h3"] = h3.latlng_to_cell(lat, lng, _OBJECTIVE_H3_RES)
+    for key in ("strength", "health"):
+        num = _num(state.get(key))
+        if num is not None:
+            view[key] = round(num, 1)
+    ammo = state.get("ammo_by_weapon")
+    if isinstance(ammo, dict):
+        view["ammo_by_weapon"] = {
+            str(k): int(v) for k, v in ammo.items() if isinstance(v, int | float)
+        }
+    return view
+
+
+def build_faction_context(
+    *,
+    faction: str,
+    tick: int,
+    hot_snapshot: dict[str, UnitState],
+    unit_meta: dict[str, UnitMeta],
+    known_enemies: list[dict[str, Any]],
+    relations: FactionRelations,
+    objectives: list[dict[str, Any]] | None = None,
+    recent_events: list[dict[str, Any]] | None = None,
+    mission: str = "",
+) -> dict[str, Any]:
+    """組出 `faction` 視角的 COP context dict。
+
+    - `hot_snapshot`：hot.get_all() 的拷貝（uid→state）。只投影 `unit_meta` 認得的單位。
+    - `unit_meta`：uid→UnitMeta（DB 靜態身分）；決定 faction 分流（熱狀態無 faction）。
+    - `known_enemies`：**已霧化**的敵情清單（呼叫端保證只含本陣營可見者）。原樣帶入。
+    - `relations`：對稱關係矩陣；輸出本陣營對各宣告陣營的關係。
+    - `objectives` / `recent_events` / `mission`：態勢與意圖，原樣帶入（可序列化）。
+
+    紅線：本函式不讀 DB/Redis、不放寬可見性；敵情只來自 `known_enemies`。
+    """
+    own: list[dict[str, Any]] = []
+    for uid, state in hot_snapshot.items():
+        meta = unit_meta.get(uid)
+        if meta is None or meta.faction != faction:
+            continue
+        own.append(_own_unit_view(uid, state, meta))
+    own.sort(key=lambda u: u["unit_id"])
+
+    # 關係由**宣告陣營**（unit_meta，劇本層知識）導出，非由存活單位——避免洩漏敵方存活情形。
+    other_factions = sorted({m.faction for m in unit_meta.values() if m.faction != faction})
+    rel = {f: relations.relation(faction, f).value for f in other_factions}
+
+    return {
+        "faction": faction,
+        "tick": tick,
+        "mission": mission,
+        "own_units": own,
+        "known_enemies": list(known_enemies),
+        "relations": rel,
+        "objectives": list(objectives or []),
+        "recent_events": list(recent_events or []),
+    }
+
+
+def _fmt_own(u: dict[str, Any]) -> str:
+    pos = f"({u['lat']:.4f},{u['lng']:.4f})" if "lat" in u else "位置未知"
+    ammo = u.get("ammo_by_weapon") or {}
+    ammo_s = "、".join(f"{k}×{v}" for k, v in ammo.items()) or "—"
+    return (
+        f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('type', '?')}）"
+        f" {u.get('status', '?')} 戰力{u.get('strength', '?')} @ {pos}｜彈藥：{ammo_s}"
+    )
+
+
+def _fmt_enemy(e: dict[str, Any]) -> str:
+    ident = e.get("contact_id") or e.get("unit_id") or "未知接觸"
+    lat, lng = _num(e.get("lat")), _num(e.get("lng"))
+    pos = f"({lat:.4f},{lng:.4f})" if lat is not None and lng is not None else "位置不明"
+    extras = [str(e[k]) for k in ("faction", "unit_type", "type", "fidelity") if e.get(k)]
+    tail = f"｜{' '.join(extras)}" if extras else ""
+    return f"- {ident} @ {pos}{tail}"
+
+
+def render_context_prompt(ctx: dict[str, Any]) -> str:
+    """把 context dict 渲染為緊湊中文 briefing（LLM user prompt 的態勢部分）。
+
+    僅渲染態勢；輸出格式指示（要 LLM 回什麼 schema）由 decider 的 system prompt 負責（P-B）。
+    """
+    lines = [f"# 戰場態勢（模擬 tick {ctx.get('tick', 0)}）｜你指揮陣營：{ctx.get('faction', '?')}"]
+    if ctx.get("mission"):
+        lines.append(f"## 本陣營任務目標\n{ctx['mission']}")
+
+    rel = ctx.get("relations") or {}
+    if rel:
+        lines.append("## 陣營關係\n" + "、".join(f"{f}：{r}" for f, r in rel.items()))
+
+    own = ctx.get("own_units") or []
+    lines.append(f"## 我方部隊（{len(own)}）")
+    lines.extend(_fmt_own(u) for u in own) if own else lines.append("- （無存活單位）")
+
+    enemies = ctx.get("known_enemies") or []
+    lines.append(f"## 已知敵情（{len(enemies)}；僅列偵測所及，未偵測者不在此）")
+    if enemies:
+        lines.extend(_fmt_enemy(e) for e in enemies)
+    else:
+        lines.append("- （目前無敵情接觸）")
+
+    objectives = ctx.get("objectives") or []
+    if objectives:
+        lines.append("## 目標/勝負條件")
+        lines.extend(f"- {o}" for o in objectives)
+
+    events = ctx.get("recent_events") or []
+    if events:
+        lines.append("## 近期關鍵事件")
+        lines.extend(f"- {ev}" for ev in events)
+
+    return "\n".join(lines)
