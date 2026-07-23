@@ -10,8 +10,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from app.adjudication.aggregate import (
     resolve_aggregate_tick,
     should_aggregate,
 )
+from app.adjudication.combined import CombinedWeapon, resolve_combined_engagement
 from app.adjudication.effectiveness import effectiveness_pct, interp_effectiveness
 from app.adjudication.engagement import (
     EngagementResult,
@@ -60,6 +62,8 @@ class EngageCommand:
 WeaponLookup = Callable[[EngageCommand], WeaponProfile]
 # squad 火力容量（#30）：由交戰命令解析射手選定武器的建制數量（>1 → 齊射）。
 QuantityLookup = Callable[[EngageCommand], int]
+# 聯合兵種（SPEC_EXTEND P2）：由 shooter_id 取單位當前武器組合（帶活彈藥）；≥2 → combined 加總。
+CombinedWeaponsLookup = Callable[[str], Sequence[CombinedWeapon]]
 
 # 聚合裁決（#33a）攻擊係數：射手 lethality＝武器 pk × 尺度（每 tick 對敵戰力的殺傷率）；
 # 目標返火用固定小係數；變異度給隨機化。皆為 v0 校準值，可由想定/平衡調整。
@@ -140,6 +144,7 @@ class EngagementAdjudicator:
         weapon_for: WeaponLookup,
         env_for: EngageEnvLookup,
         quantity_for: QuantityLookup | None = None,
+        combined_weapons_for: CombinedWeaponsLookup | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -148,6 +153,8 @@ class EngagementAdjudicator:
         self._env_for = env_for
         # #30 建制數量查表（None → 一律 1，走既有單發路徑；golden replay 不變）。
         self._quantity_for = quantity_for
+        # SPEC_EXTEND P2 聯合兵種：武器組合查表（None 或 <2 武器 → 走既有單/齊射；golden 不變）。
+        self._combined_weapons_for = combined_weapons_for
 
     def resolve(self, order: EngageCommand, now: SimTime) -> list[LedgerEvent]:
         shooter_state = self._hot.get_unit(order.shooter_id)
@@ -164,6 +171,13 @@ class EngagementAdjudicator:
         shooter_unit = self._db.get(TacticalUnit, order.shooter_id)
         if shooter_unit is not None and should_aggregate(shooter_unit.unit_level):
             return self._resolve_aggregate(order, weapon, env, shooter_state, target_state, now)
+
+        # SPEC_EXTEND P2 聯合兵種：射手持 ≥2 種武器系統 → 武器組合加總（Σ per-weapon volley）。
+        # 單武器單位（<2）落回下方既有單/齊射路徑 → golden replay 不變。
+        if self._combined_weapons_for is not None:
+            cweapons = self._combined_weapons_for(order.shooter_id)
+            if len(cweapons) >= 2:
+                return self._resolve_combined(order, cweapons, shooter_state, target_state, now)
 
         # #30 射手建制數量 + 效能：quantity>1 → 齊射（全員射擊）；effectiveness 由射手戰力比導出。
         quantity = self._quantity_for(order) if self._quantity_for is not None else 1
@@ -246,6 +260,40 @@ class EngagementAdjudicator:
         self._complete(order.order_id, now.tick)
         return result.events
 
+    def _resolve_combined(
+        self,
+        order: EngageCommand,
+        cweapons: Sequence[CombinedWeapon],
+        shooter_state: dict[str, Any],
+        target_state: dict[str, Any],
+        now: SimTime,
+    ) -> list[LedgerEvent]:
+        """聯合兵種加總裁決（SPEC_EXTEND P2）：單位武器組合逐件 volley 加總。"""
+        s_auth = float(shooter_state.get("authorized_strength") or 100.0)
+        s_cur = float(shooter_state.get("strength") or shooter_state.get("health") or s_auth)
+        effectiveness = interp_effectiveness(s_cur / s_auth) if s_auth > 0 else 1.0
+        target = Target(
+            unit_id=order.target_id,
+            armor_class=str(target_state.get("armor_class", "INFANTRY")),
+            health=float(target_state.get("health", 100.0)),
+            current_strength=float(
+                target_state.get("strength") or target_state.get("health") or 100.0
+            ),
+            authorized_strength=float(target_state.get("authorized_strength") or 100.0),
+            platform_count=int(target_state.get("platform_count") or 1),
+        )
+
+        # 每武器環境依飛行剖面（直/間瞄）——同一射手/目標座標，僅天氣/LOS 判定方式因武器而異。
+        def env_for(profile: WeaponProfile) -> EnvSnapshot:
+            return self._env_for(order.shooter_id, order.target_id, profile.indirect_fire)
+
+        result = resolve_combined_engagement(
+            cweapons, order.shooter_id, effectiveness, target, env_for, self._rng, now.tick
+        )
+        self._apply(order, result)
+        self._complete(order.order_id, now.tick)
+        return result.events
+
     def _apply_agg_force(
         self, unit: TacticalUnit, strength_after: float, authorized: float
     ) -> None:
@@ -258,9 +306,21 @@ class EngagementAdjudicator:
     def _apply(self, order: EngageCommand, result: EngagementResult) -> None:
         if result.status is Resolution.REJECTED:
             return  # 合法性未過（彈藥/射程/LOS）→ 不消耗、不變更
-        ammo = int(self._hot.get_unit(order.shooter_id).get("ammo", 0))  # type: ignore[union-attr]
-        # 消耗實際發射彈藥（單發＝1；squad 齊射＝發射數）。
-        self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - result.ammo_spent)})
+        shooter = self._hot.get_unit(order.shooter_id) or {}
+        if result.ammo_spent_by_weapon is not None:
+            # 聯合兵種（P2）：逐武器扣熱狀態 ammo_by_weapon；純量 ammo 同步扣總量（供 COP 概覽）。
+            abw = dict(shooter.get("ammo_by_weapon") or {})
+            for wid, spent in result.ammo_spent_by_weapon.items():
+                abw[wid] = max(0, int(abw.get(wid, 0)) - spent)
+            ammo = int(shooter.get("ammo", 0))
+            self._hot.update_unit(
+                order.shooter_id,
+                {"ammo_by_weapon": abw, "ammo": max(0, ammo - result.ammo_spent)},
+            )
+        else:
+            ammo = int(shooter.get("ammo", 0))
+            # 消耗實際發射彈藥（單發＝1；squad 齊射＝發射數）。
+            self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - result.ammo_spent)})
         if result.status is Resolution.HIT:
             patch: dict[str, float] = {"health": result.target_health_after}
             if result.target_strength_after is not None:

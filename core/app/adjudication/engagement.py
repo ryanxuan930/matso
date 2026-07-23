@@ -84,6 +84,9 @@ class EngagementResult:
     target_strength_after: float | None = None
     # 本次消耗彈藥數（單發＝1；squad 齊射＝實際發射數，受彈藥封頂）。REJECTED＝0。
     ammo_spent: int = 1
+    # 聯合兵種加總（SPEC_EXTEND P2）：逐武器消耗彈藥 {weapon_id: spent}；非 combined 路徑為 None
+    # （由 adjudicator._apply 判斷：非 None → 扣熱狀態 ammo_by_weapon，否則扣純量 ammo）。
+    ammo_spent_by_weapon: dict[str, int] | None = None
     events: list[LedgerEvent] = field(default_factory=list)
 
 

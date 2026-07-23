@@ -14,6 +14,7 @@ O3.6 已有純函數裁決引擎（adjudication/）與接線層（EngageOrderSou
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import h3
@@ -21,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication.adjudicator import EngageCommand
+from app.adjudication.combined import CombinedWeapon
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
 from app.adjudication.weapon import WeaponProfile
@@ -153,6 +155,36 @@ class WeaponResolver:
         if cmd.weapon_template_id and cmd.weapon_template_id in self._qty_by_weapon:
             return self._qty_by_weapon[cmd.weapon_template_id]
         return self._primary_qty.get(cmd.shooter_id, 1)
+
+
+def make_combined_weapons_for(
+    resolver: WeaponResolver, hot: HotStateStore
+) -> Callable[[str], list[CombinedWeapon]]:
+    """SPEC_EXTEND P2：回 `shooter_id → 武器組合`（帶**熱狀態活彈藥**）供聯合兵種加總裁決。
+
+    彈藥取自熱狀態 `ammo_by_weapon`（執行期已扣量，非 DB 初值）；缺鍵退回 WeaponEntry.ammo
+    （seed 前的保險）。武器順序沿用 WeaponResolver 的穩定序（決定性抽樣）。
+    """
+
+    def combined_weapons_for(shooter_id: str) -> list[CombinedWeapon]:
+        entries = resolver.weapons_for(shooter_id)
+        if not entries:
+            return []
+        state = hot.get_unit(shooter_id) or {}
+        live = state.get("ammo_by_weapon")
+        live_map = live if isinstance(live, dict) else {}
+        out: list[CombinedWeapon] = []
+        for e in entries:
+            raw = live_map.get(e.weapon_id, e.ammo)
+            ammo = int(raw) if isinstance(raw, (int, float)) else e.ammo
+            out.append(
+                CombinedWeapon(
+                    weapon_id=e.weapon_id, profile=e.profile, quantity=e.quantity, ammo=ammo
+                )
+            )
+        return out
+
+    return combined_weapons_for
 
 
 def _ammo_of(inst: EquipmentInstance) -> int:

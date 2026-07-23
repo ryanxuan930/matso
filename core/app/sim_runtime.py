@@ -22,7 +22,12 @@ from app.cache import make_redis
 from app.db import default_session_factory
 from app.engine.clock import SimClock
 from app.engine.comms import CommsSystem
-from app.engine.engage_wiring import WeaponResolver, make_engage_env, seed_combat_state
+from app.engine.engage_wiring import (
+    WeaponResolver,
+    make_combined_weapons_for,
+    make_engage_env,
+    seed_combat_state,
+)
 from app.engine.kernel import Kernel
 from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
@@ -145,6 +150,8 @@ class SimManager:
                     resolver.weapon_for,
                     make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
                     quantity_for=resolver.quantity_for,  # #30 squad 齊射
+                    # SPEC_EXTEND P2 聯合兵種：≥2 武器系統 → 武器組合加總（帶熱狀態活彈藥）。
+                    combined_weapons_for=make_combined_weapons_for(resolver, hot),
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,
