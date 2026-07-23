@@ -34,8 +34,8 @@ from matso_ai.roles import Role
 OUTPUT_INSTRUCTION = (
     "\n\n———\n"
     "請**只**輸出一個 JSON 物件（不要 markdown 圍欄、不要多餘說明文字），欄位：\n"
-    "- reasoning_chain：字串，含至少 3 個編號推理步驟"
-    "（先判情況、再定意圖、後配命令），至少 80 字。\n"
+    "- reasoning_chain：**單一字串（不是陣列）**，用換行分隔至少 3 個編號步驟"
+    '（例："1. …\\n2. …\\n3. …"），至少 80 字。\n'
     "- confidence：0~1 之間的數字。\n"
     "- cited_documents：字串陣列（無 RAG 準則時填 []）。\n"
     "- intent：一句話總意圖。\n"
@@ -111,9 +111,9 @@ class LlmFactionDecider:
         return _extract_json(response.text)
 
 
-_LLM_TIMEOUT_S = (
-    60.0  # LLM 呼叫逾時（O11.8）：超時 → 拋錯 → worker fallback HOLD，不卡 worker 執行緒。
-)
+# LLM 呼叫逾時（O11.8）：超時 → 拋錯 → worker fallback HOLD，不卡 worker 執行緒。
+# 本機 12B 級模型產完整 JSON 決策可達 ~80s+，故預設放寬到 180s，並可用 env 覆寫。
+_LLM_TIMEOUT_S = float(os.environ.get("MATSO_LLM_TIMEOUT_S", "180"))
 
 
 def build_llm_client(
