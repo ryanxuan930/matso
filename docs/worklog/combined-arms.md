@@ -19,6 +19,7 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 - [x] **P2 (#45)** adjudication/combined.py（Σ volley）+ EngagementAdjudicator gating + determinism ✅
 - [x] **P3 (#46)** fire_policy 契約 + 接線 + AI decider 欄 ✅
 - [x] **P4 (#47)** COP 武器組合 UI + fire_policy 下拉 + 戰況 feed 聯合火力標示 ✅（AAR 頁逐武器表列為 follow-up）
+- [x] **P4.5 (#49)** precheck 聯合兵種可達性：未指定武器時對武器組合逐件判可達，任一可打即 feasible + 0 彈武器不算可打 ✅（實測發現：舊 precheck 只判主武器 LOS 擋死聯合令）
 - [ ] **P5 (#48)** 目標編成組成 + 多目標分配（後續，先記設計）
 
 ## 執行紀錄（附時間，由上而下追加）
@@ -51,6 +52,8 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 | platform/app/types/api.ts | 生成（P3） | gen:api 重生（FirePolicy） |
 | platform/app/pages/session/[id]/cop.vue | 修改（P4） | ENGAGE 武器組合 UI + fire_policy 下拉 + feed 聯合火力標示 |
 | core/app/state/broadcaster.py | 修改（P4） | EVENT envelope 帶 mode（供 feed 標示交戰型態） |
+| core/app/orders/precheck.py | 修改（P4.5） | _precheck_engage_any：武器組合任一可達即 feasible（cheap-first 短路 + 0 彈不算可打） |
+| core/tests/unit/test_order_precheck.py | 修改（P4.5） | +4 測試（直瞄擋但飛彈可達/全直瞄擋/0彈不算/指定武器走單路徑） |
 
 ## 測試證據
 - P1：`test_engage_wiring.py` → **21 passed**（+7）；ruff 綠、mypy 181 clean、golden **6 passed（不受影響）**。
@@ -62,6 +65,11 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
   mypy 182 clean、golden 6 綠不受影響、engagement 區 51 passed 無回歸。
 - P4：前端 `npm run lint` + `npm run typecheck` 綠、cop 頁載入無 console error；後端 broadcaster
   ruff/mypy 綠 + broadcast/event 24 passed；golden 6 綠（envelope 非 ledger hash，不受影響）。
+- **P4 實測（session e2e-orders，B1 有 4 武器）**：ENGAGE 面板正確顯示「聯合火力（全武器一起打）」+
+  火力政策下拉 + 武器組合清單（ATGM/Javelin/RIFLE_556/AUTOCANNON_30 各射程/彈量）；單位卡拖曳可用。
+  **發現**：舊 precheck 只判主武器 LOS → B1→R1 被 ORDER_NO_LOS 擋死（其實有頂攻武器）→ 促成 P4.5。
+- P4.5：`test_order_precheck.py` **16 passed**（+4）；ruff/mypy 綠、golden 6 綠；重建 core 容器上線。
+  **實測**：P4.5 上線後同一張 B1→R1 聯合 ENGAGE **precheck feasible（201, combined_fires: 可由 Javelin，50ms 零 terrain 呼叫）**→ 活 sim COMBINED 裁決（mode=COMBINED、per_weapon 逐武器原因）→ order COMPLETED。此單位因 Javelin 無彈 + 其餘被擋/超射程 → 該次全 REJECTED（正確物理，非 bug；促成 0 彈不算可打的把關）。
 
 ## 決策與陷阱
 - 武器清單**穩定排序**（依 weapon_id）：P2 每武器一次 dispersion 抽樣的順序需決定性，才能 replay。

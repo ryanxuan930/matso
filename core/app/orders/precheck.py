@@ -151,6 +151,14 @@ def _precheck_engage(
     ):
         return [PrecheckCheck(name="position", passed=False, detail="射手或目標無座標")]
 
+    # 聯合兵種（SPEC_EXTEND P4.5）：未指定單一武器且持 ≥2 武器 → 對武器組合逐件判可達，
+    # **任一武器可打即 feasible**（例：直瞄被稜線擋，但頂攻飛彈免視線仍可交戰）。避免主武器
+    # 無 LOS 就把整張聯合 ENGAGE 令擋死。指定 weapon_id 或單武器 → 下方既有單武器路徑。
+    if payload.weapon_id is None:
+        combined = _weapon_profiles(db, unit)
+        if len(combined) >= 2:
+            return _precheck_engage_any(db, unit, target, gateway, payload, combined)
+
     # 解析武器（決定可達性檢查型別：直瞄 LOS / 間瞄免視線 / 飛彈射程或拋物線淨空）。
     profile, tmpl, weapon_fail = _resolve_weapon(db, unit, payload)
     if weapon_fail is not None:
@@ -162,6 +170,84 @@ def _precheck_engage(
     if profile is None or tmpl is None:
         return [reach]  # 無裝備 → 僅 LOS（維持既有測試綠）
     return [reach, *_range_ammo_checks(unit, target, profile, tmpl, payload)]
+
+
+def _inst_ammo(inst: EquipmentInstance) -> int:
+    """裝備實例的 DB 彈藥數（current_state.ammo）；缺/非數值 → 0。"""
+    raw = inst.current_state.get("ammo") if isinstance(inst.current_state, dict) else None
+    return int(raw) if isinstance(raw, (int, float)) else 0
+
+
+def _weapon_profiles(
+    db: Session, unit: TacticalUnit
+) -> list[tuple[EquipmentInstance, WeaponProfile, EquipmentTemplate]]:
+    """單位所有可產生 WeaponProfile 的裝備（能解析 baseStats 者＝武器）；非武器略過。"""
+    instances = (
+        db.execute(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id))
+        .scalars()
+        .all()
+    )
+    out: list[tuple[EquipmentInstance, WeaponProfile, EquipmentTemplate]] = []
+    for inst in instances:
+        tmpl = db.get(EquipmentTemplate, inst.template_id)
+        if tmpl is None:
+            continue
+        try:
+            profile = WeaponProfile.from_base_stats(tmpl.base_stats)
+        except (ValueError, KeyError, TypeError):
+            continue  # 非武器或 baseStats 壞 → 略過
+        out.append((inst, profile, tmpl))
+    return out
+
+
+def _precheck_engage_any(
+    db: Session,
+    unit: TacticalUnit,
+    target: TacticalUnit,
+    gateway: PhysicsGateway,
+    payload: EngagePayload,
+    weapons: list[tuple[EquipmentInstance, WeaponProfile, EquipmentTemplate]],
+) -> list[PrecheckCheck]:
+    """聯合兵種可達性：任一武器可打（可達 + 射程 + 彈藥）即 feasible。
+
+    先評估**免 terrain**的武器（可變軌飛彈/間瞄），能命中即短路回傳——省 LOS 呼叫、對 terrain
+    延遲更穩健。全數不可打 → 回「最接近可打」武器的失敗檢查（供錯誤碼 + 說明）。
+    """
+
+    def _cheap_first(item: tuple[EquipmentInstance, WeaponProfile, EquipmentTemplate]) -> int:
+        p = item[1]
+        return 0 if (p.missile and p.maneuverable) or p.indirect_fire else 1
+
+    per_weapon: list[tuple[str, list[PrecheckCheck]]] = []
+    for inst, profile, tmpl in sorted(weapons, key=_cheap_first):
+        # 彈藥數為 0 的武器不算可打（precheck 只看 DB current_state；活彈藥由裁決把關）——
+        # 先擋掉可省 terrain 呼叫，也避免「precheck 說可打、裁決卻 NO_AMMO」的不一致。
+        if _inst_ammo(inst) <= 0:
+            no_ammo = PrecheckCheck(name="ammo", passed=False, detail=f"{tmpl.name} 無彈藥")
+            per_weapon.append((tmpl.name, [no_ammo]))
+            continue
+        reach = _reachability_check(db, unit, target, profile, gateway)
+        checks = [reach]
+        if reach.passed:
+            checks += _range_ammo_checks(unit, target, profile, tmpl, payload)
+        if all(c.passed for c in checks):
+            return [
+                PrecheckCheck(
+                    name="combined_fires",
+                    passed=True,
+                    detail=f"聯合火力：可由 {tmpl.name} 交戰（其餘武器於裁決時逐件判定）",
+                )
+            ]
+        per_weapon.append((tmpl.name, checks))
+    # 無任一武器可打 → 回通過項最多者（最接近可打）的具體失敗檢查（排在前，讓 precheck_error_code
+    # 取到具體物理原因如 NO_LOS/OUT_OF_RANGE），末尾附聯合摘要。
+    best_name, best_checks = max(per_weapon, key=lambda r: sum(c.passed for c in r[1]))
+    summary = PrecheckCheck(
+        name="combined_fires",
+        passed=False,
+        detail=f"武器組合無任一可交戰（最接近：{best_name}）",
+    )
+    return [*best_checks, summary]
 
 
 def _resolve_weapon(
