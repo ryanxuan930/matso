@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSource
-from app.ai_loop.orchestrator import start_ai_workers
+from app.ai_loop.orchestrator import autonomy_config_key, start_ai_workers
+from app.ai_loop.victory import resolve_victory_conditions, run_victory_monitor
 from app.cache import make_redis
 from app.db import default_session_factory
 from app.engine.clock import SimClock
@@ -40,10 +42,10 @@ from app.engine.subsystems import (
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.runtime import PerfCounterClock, TickPacer, run_paced
-from app.sim_control import session_pause_key
+from app.sim_control import session_concluded_key, session_pause_key
 from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
-from app.state.ledger import LedgerWriter
+from app.state.ledger import LedgerEvent, LedgerWriter
 from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
 from app.weather import WeatherState
 
@@ -88,6 +90,15 @@ def _weather_snapshot() -> WeatherState | None:
         return None
 
 
+def _read_live_tick(client: object, session_id: str) -> int:
+    """讀 session 當前 sim tick（廣播器每 tick 寫）；供勝負事件戳記與 time 條件。無值→0。"""
+    try:
+        raw = client.get(f"session:{session_id}:tick")  # type: ignore[attr-defined]
+        return int(raw) if raw is not None else 0
+    except (ValueError, TypeError):
+        return 0
+
+
 class SimManager:
     """每 session 一條 Kernel 迴圈；scan 迴圈自動接管新 session。"""
 
@@ -97,6 +108,7 @@ class SimManager:
         self._scan_interval = scan_interval_s
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._stop = asyncio.Event()
+        self._scan_client = make_redis(redis_url)  # 掃描層唯讀（檢查收場旗標）
 
     async def run(self) -> None:
         """掃描迴圈：直到 stop() 前，定期為每個 session 確保有 runner。"""
@@ -127,7 +139,50 @@ class SimManager:
         task = self._tasks.get(session_id)
         if task is not None and not task.done():
             return
+        # 勝負已定的 session（O11.5）：不再起 runner（避免收場後又被掃描重啟）。
+        if self._scan_client is not None and self._scan_client.exists(
+            session_concluded_key(session_id)
+        ):
+            return
         self._tasks[session_id] = asyncio.create_task(self._run_session(session_id))
+
+    def _start_victory_monitor(
+        self, session_id: str, hot: RedisHotState, client: object, autonomy_raw: str | bytes
+    ) -> asyncio.Task[None]:
+        """依指派的 victory（或最後存活預設）起勝負監視器；收場時 emit 事件 + 設旗標。"""
+        try:
+            autonomy = json.loads(autonomy_raw)
+        except (ValueError, TypeError):
+            autonomy = {}
+        factions = list((autonomy.get("factions") or {}).keys())
+        vconds = resolve_victory_conditions(autonomy.get("victory"), factions)
+        ledger = LedgerWriter(self._factory)
+        concluded_key = session_concluded_key(session_id)
+
+        def _on_conclude(winners: list[str], tick: int) -> None:
+            ledger.append(
+                session_id,
+                [
+                    LedgerEvent(
+                        event_type="SESSION_CONCLUDED",
+                        tick=tick,
+                        ai_decision={"winners": winners, "source": "victory"},
+                    )
+                ],
+            )
+            client.set(concluded_key, "1")  # type: ignore[attr-defined]
+
+        return asyncio.create_task(
+            run_victory_monitor(
+                session_id=session_id,
+                hot=hot,
+                db_factory=self._factory,
+                victory_conditions=vconds,
+                on_conclude=_on_conclude,
+                should_stop=self._stop.is_set,
+                tick_source=lambda: _read_live_tick(client, session_id),
+            )
+        )
 
     async def _run_session(self, session_id: str) -> None:
         # 交戰裁決需一條長生命期 DB session（O3.6 接線層讀寫 Order + 每 tick commit 以刷新快照）。
@@ -193,7 +248,8 @@ class SimManager:
             # 未指派 → 回 []（既有 session 不受影響）。gateway 沿用交戰同源物理閘門。
             ai_tasks: list[asyncio.Task[None]] = []
             ai_gateway = _engage_gateway()
-            if ai_gateway is not None:
+            autonomy_raw = client.get(autonomy_config_key(session_id))
+            if ai_gateway is not None and autonomy_raw:
                 ai_tasks = start_ai_workers(
                     session_id=session_id,
                     hot=hot,
@@ -202,12 +258,16 @@ class SimManager:
                     gateway=ai_gateway,  # type: ignore[arg-type]
                     should_stop=self._stop.is_set,
                 )
+                # 勝負監視器（O11.5）：週期評估物理狀態（非 LLM）→ 有勝方 → SESSION_CONCLUDED
+                # + 設收場旗標（runner 停、不再重啟）。條件取自指派的 victory，否則最後存活預設。
+                ai_tasks.append(self._start_victory_monitor(session_id, hot, client, autonomy_raw))
 
+            concluded_key = session_concluded_key(session_id)
             try:
                 await run_paced(
                     kernel,
                     pacer,
-                    should_stop=self._stop.is_set,
+                    should_stop=lambda: self._stop.is_set() or bool(client.exists(concluded_key)),
                     should_pause=lambda: bool(client.exists(pause_key)),
                     pre_tick=_apply_live_edits,
                 )

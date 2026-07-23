@@ -10,3 +10,8 @@ from __future__ import annotations
 def session_pause_key(session_id: str) -> str:
     """該 session 的暫停旗標鍵；存在＝暫停中。"""
     return f"matso:sim:{session_id}:paused"
+
+
+def session_concluded_key(session_id: str) -> str:
+    """該 session 的收場旗標鍵（O11.5）；存在＝勝負已定，runner 停止且不再重啟。"""
+    return f"matso:sim:{session_id}:concluded"
