@@ -1,0 +1,248 @@
+"""每陣營 AI 決策 worker — O11.4（SPEC_AUTONOMY §3.1）。
+
+把 O11.1–O11.3 串成一條決策迴路：**取 COP 快照 → 建 faction context → run_faction_turn（LLM
+decider + 護欄 G1–G6 + PrecheckFeasibility）→ submit_faction_orders 落 VALIDATED**。
+
+時序解耦（紅線）：LLM 一次 ~15s、tick 1s，故決策 worker 為**獨立 async 任務**（非 pre_tick）；
+LLM 在 `asyncio.to_thread` 內跑，不阻塞 Kernel tick 迴圈。worker 只讀熱狀態快照、只產令（經 Order
+pipeline），**不寫熱狀態**（single-writer 仍是 Kernel）。
+
+敵情可見性（fog，SPEC_AUTONOMY §1.4）：首版用 ground-truth HOSTILE（活 sim 感測 NoOp）；真偵測
+上線後把 `enemy_visibility` 換成 IntelService 即可，worker 邏輯不變。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.ai_loop.context import UnitMeta, build_faction_context
+from app.ai_loop.opfor import AiTurnResult, OpforDecider, run_faction_turn
+from app.ai_loop.orders_bridge import BridgeResult, PrecheckFeasibility, submit_faction_orders
+from app.factions.relations import FactionRelations
+from app.guardrails import GuardrailGateway
+from app.guardrails.schemas import CitationVerifier
+from app.models.enums import AiMode
+from app.models.tables import TacticalUnit
+from app.orders.precheck import PhysicsGateway
+from app.state.hot_state import HotStateStore
+
+_LOG = logging.getLogger("app.ai_worker")
+
+_DEFAULT_HEARTBEAT_S = 45.0  # 決策心跳（牆鐘秒）：LLM ~15s，留餘裕；場景可覆寫（D2）。
+_STOP_POLL_S = 1.0  # 心跳等待期間輪詢 stop 的粒度（讓收工快速反應）。
+
+
+class EnemyVisibility(Protocol):
+    """霧化敵情來源。回傳**已依陣營過濾**的敵情清單（呼叫端保證只含本陣營可見者）。"""
+
+    def __call__(
+        self, db: Session, session_id: str, faction: str, relations: FactionRelations
+    ) -> list[dict[str, Any]]: ...  # pragma: no cover
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionOutcome:
+    """一次決策週期結果（供觀測/測試）。"""
+
+    turn: AiTurnResult
+    bridge: BridgeResult
+
+
+def load_unit_meta(db: Session, session_id: str) -> dict[str, UnitMeta]:
+    """DB → uid→UnitMeta（faction/designation/type；熱狀態不存這些）。"""
+    units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
+    return {
+        u.id: UnitMeta(faction=u.faction, designation=u.designation, unit_type=u.unit_level.value)
+        for u in units
+    }
+
+
+def ground_truth_enemies(
+    db: Session, session_id: str, faction: str, relations: FactionRelations
+) -> list[dict[str, Any]]:
+    """首版敵情可見性：所有**存活的敵對陣營**單位（ground truth；感測 NoOp 期間的權宜）。
+
+    真偵測（IntelService）上線後以其取代——worker 只依賴 EnemyVisibility 協定，不需改動。
+    """
+    units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
+    out: list[dict[str, Any]] = []
+    for u in units:
+        if u.faction == faction or not relations.is_hostile(faction, u.faction):
+            continue
+        if u.current_strength is not None and float(u.current_strength) <= 0:
+            continue  # 已殲滅不列入敵情
+        enemy: dict[str, Any] = {
+            "unit_id": u.id,
+            "faction": u.faction,
+            "designation": u.designation,
+            "unit_type": u.unit_level.value,
+        }
+        if u.current_lat is not None and u.current_lng is not None:
+            enemy["lat"] = float(u.current_lat)
+            enemy["lng"] = float(u.current_lng)
+        out.append(enemy)
+    return out
+
+
+def run_decision_cycle(
+    *,
+    session_id: str,
+    faction: str,
+    hot: HotStateStore,
+    db: Session,
+    decider: OpforDecider,
+    guardrail: GuardrailGateway,
+    phys_gateway: PhysicsGateway,
+    relations: FactionRelations,
+    mode: AiMode,
+    issuer_id: str,
+    mission: str = "",
+    objectives: list[dict[str, Any]] | None = None,
+    tick: int = 0,
+    no_strike_hexes: frozenset[str] = frozenset(),
+    enemy_visibility: EnemyVisibility = ground_truth_enemies,
+    citation_verifier: CitationVerifier | None = None,
+) -> DecisionOutcome:
+    """一個陣營的一次決策週期（同步；async worker 於 to_thread 內呼叫）。
+
+    快照 → context → run_faction_turn（護欄 + feasibility）→ 落單。回 DecisionOutcome。
+    """
+    snapshot = hot.get_all()
+    unit_meta = load_unit_meta(db, session_id)
+    enemies = enemy_visibility(db, session_id, faction, relations)
+    context = build_faction_context(
+        faction=faction,
+        tick=tick,
+        hot_snapshot=snapshot,
+        unit_meta=unit_meta,
+        known_enemies=enemies,
+        relations=relations,
+        objectives=objectives,
+        mission=mission,
+    )
+    feasibility = PrecheckFeasibility(db, session_id, phys_gateway, relations)
+    turn = run_faction_turn(
+        decider,
+        guardrail,
+        mode=mode,
+        context=context,
+        no_strike_hexes=no_strike_hexes,
+        feasibility=feasibility,
+        citation_verifier=citation_verifier,
+    )
+    bridge = BridgeResult()
+    if turn.accepted and turn.orders:
+        bridge = submit_faction_orders(
+            db,
+            session_id,
+            turn.orders,
+            issuer_id=issuer_id,
+            gateway=phys_gateway,
+            relations=relations,
+            tick_source=lambda: tick,
+        )
+    return DecisionOutcome(turn=turn, bridge=bridge)
+
+
+@dataclass
+class FactionWorkerDeps:
+    """一條陣營 worker 的注入依賴（sim_runtime 於裝配時提供）。"""
+
+    session_id: str
+    faction: str
+    issuer_id: str
+    hot: HotStateStore
+    db_factory: Callable[[], Session]
+    decider: OpforDecider
+    guardrail: GuardrailGateway
+    phys_gateway: PhysicsGateway
+    relations: FactionRelations
+    mode: AiMode
+    mission: str = ""
+    objectives: list[dict[str, Any]] = field(default_factory=list)
+    no_strike_hexes: frozenset[str] = frozenset()
+    tick_source: Callable[[], int] = lambda: 0
+    enemy_visibility: EnemyVisibility = ground_truth_enemies
+    citation_verifier: CitationVerifier | None = None
+
+
+def _cycle_with_db(deps: FactionWorkerDeps) -> DecisionOutcome:
+    """開一條短生命期 DB session 跑一次決策週期（在 to_thread 內）。"""
+    db = deps.db_factory()
+    try:
+        outcome = run_decision_cycle(
+            session_id=deps.session_id,
+            faction=deps.faction,
+            hot=deps.hot,
+            db=db,
+            decider=deps.decider,
+            guardrail=deps.guardrail,
+            phys_gateway=deps.phys_gateway,
+            relations=deps.relations,
+            mode=deps.mode,
+            issuer_id=deps.issuer_id,
+            mission=deps.mission,
+            objectives=deps.objectives,
+            tick=deps.tick_source(),
+            no_strike_hexes=deps.no_strike_hexes,
+            enemy_visibility=deps.enemy_visibility,
+            citation_verifier=deps.citation_verifier,
+        )
+        return outcome
+    finally:
+        db.close()
+
+
+async def _sleep_or_stop(seconds: float, should_stop: Callable[[], bool]) -> None:
+    """睡 `seconds`，但每 _STOP_POLL_S 檢查 should_stop → 收工時快速跳出。"""
+    waited = 0.0
+    while waited < seconds and not should_stop():
+        await asyncio.sleep(min(_STOP_POLL_S, seconds - waited))
+        waited += _STOP_POLL_S
+
+
+async def run_faction_worker(
+    deps: FactionWorkerDeps,
+    *,
+    should_stop: Callable[[], bool],
+    heartbeat_s: float = _DEFAULT_HEARTBEAT_S,
+    on_cycle: Callable[[DecisionOutcome], None] | None = None,
+) -> None:
+    """陣營 AI 決策迴路：固定心跳，每週期取快照→LLM→護欄→落單。非 pre_tick（不阻塞 tick）。"""
+    _LOG.info(
+        "AI worker 啟動：session=%s faction=%s 心跳=%.0fs",
+        deps.session_id,
+        deps.faction,
+        heartbeat_s,
+    )
+    while not should_stop():
+        try:
+            outcome = await asyncio.to_thread(_cycle_with_db, deps)
+            b = outcome.bridge
+            _LOG.info(
+                "AI %s/%s：accepted=%s fallback=%s 落單=%d 拒=%d 略=%d",
+                deps.session_id,
+                deps.faction,
+                outcome.turn.accepted,
+                outcome.turn.fallback_used,
+                len(b.submitted),
+                len(b.rejected),
+                len(b.skipped),
+            )
+            if on_cycle is not None:
+                on_cycle(outcome)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOG.exception(
+                "AI worker 週期失敗：session=%s faction=%s", deps.session_id, deps.faction
+            )
+        await _sleep_or_stop(heartbeat_s, should_stop)
+    _LOG.info("AI worker 收工：session=%s faction=%s", deps.session_id, deps.faction)

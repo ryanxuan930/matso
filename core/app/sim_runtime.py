@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSource
+from app.ai_loop.orchestrator import start_ai_workers
 from app.cache import make_redis
 from app.db import default_session_factory
 from app.engine.clock import SimClock
@@ -187,13 +188,35 @@ class SimManager:
                 if cmds:
                     apply_ammo_cmds(hot, cmds)
 
-            await run_paced(
-                kernel,
-                pacer,
-                should_stop=self._stop.is_set,
-                should_pause=lambda: bool(client.exists(pause_key)),
-                pre_tick=_apply_live_edits,
-            )
+            # 自主推演（O11.4）：本 session 有 AI 指派（Redis ai_config）且 #54 AI 非 OFF 時，
+            # 每個 AI 陣營起一條獨立 async 決策 worker（固定心跳、非 pre_tick → 不阻塞 tick）。
+            # 未指派 → 回 []（既有 session 不受影響）。gateway 沿用交戰同源物理閘門。
+            ai_tasks: list[asyncio.Task[None]] = []
+            ai_gateway = _engage_gateway()
+            if ai_gateway is not None:
+                ai_tasks = start_ai_workers(
+                    session_id=session_id,
+                    hot=hot,
+                    redis_client=client,
+                    db_factory=self._factory,
+                    gateway=ai_gateway,  # type: ignore[arg-type]
+                    should_stop=self._stop.is_set,
+                )
+
+            try:
+                await run_paced(
+                    kernel,
+                    pacer,
+                    should_stop=self._stop.is_set,
+                    should_pause=lambda: bool(client.exists(pause_key)),
+                    pre_tick=_apply_live_edits,
+                )
+            finally:
+                for t in ai_tasks:
+                    t.cancel()
+                for t in ai_tasks:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await t
         except asyncio.CancelledError:
             raise
         except Exception:

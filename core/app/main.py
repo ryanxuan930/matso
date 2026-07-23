@@ -13,6 +13,7 @@ from app import __version__
 from app.api import (
     aar_router,
     auth_router,
+    autonomy_router,
     control_router,
     equipment_router,
     inject_router,
@@ -84,6 +85,7 @@ app.add_middleware(
 
 install_error_handlers(app)
 app.include_router(auth_router)
+app.include_router(autonomy_router)
 app.include_router(lobby_router)
 app.include_router(orbat_router)
 app.include_router(equipment_router)
