@@ -192,14 +192,14 @@ onMounted(async () => {
               </td>
               <td class="created">{{ u.created_at ? String(u.created_at).slice(0, 16).replace('T', ' ') : '—' }}</td>
               <td class="ops">
-                <button data-testid="reset-pw" title="重設密碼" @click="resetting = u; resetPw = ''">🔑</button>
+                <button data-testid="reset-pw" title="重設密碼" @click="resetting = u; resetPw = ''"><i class="pi pi-key" /></button>
                 <button
                   class="danger"
                   data-testid="delete-user"
                   title="刪除帳號"
                   :disabled="u.id === auth.user?.id"
                   @click="confirmDelete = u"
-                >🗑</button>
+                ><i class="pi pi-trash" /></button>
               </td>
             </tr>
             <tr v-if="!users.length"><td colspan="4" class="empty">（無帳號）</td></tr>

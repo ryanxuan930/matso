@@ -38,4 +38,10 @@ textarea,
 button {
   color-scheme: dark;
 }
+/* PrimeIcons（#23）：按鈕/內文中的圖標略縮 + 對齊基線，避免比文字大一截。 */
+button .pi,
+.pi {
+  font-size: 0.9em;
+  vertical-align: -0.05em;
+}
 </style>

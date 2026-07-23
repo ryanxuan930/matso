@@ -1240,7 +1240,7 @@ watch(
             title="工具視窗（開啟/關閉小工具）"
             @click="widgetMenuOpen = !widgetMenuOpen"
           >
-            ⊞ 工具
+            <i class="pi pi-th-large" /> 工具
           </button>
           <template v-if="widgetMenuOpen">
             <div class="wm-backdrop" @click="widgetMenuOpen = false" />
@@ -1259,7 +1259,7 @@ watch(
             </div>
           </template>
         </div>
-        <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)">📊 AAR</button>
+        <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)"><i class="pi pi-chart-bar" /> AAR</button>
       </nav>
     </header>
     <div class="body">
@@ -1335,7 +1335,7 @@ watch(
                 title="移除最後一個路徑點"
                 @click="undoWaypoint"
               >
-                ↶ 退一點
+                <i class="pi pi-undo" /> 退一點
               </button>
               <button
                 v-if="destH3 || moveWaypoints.length"
@@ -1343,7 +1343,7 @@ watch(
                 title="清除路徑"
                 @click="clearMovePath"
               >
-                ✕ 清除
+                <i class="pi pi-times" /> 清除
               </button>
             </div>
             <div class="dest" data-testid="dest-h3">
@@ -1613,26 +1613,26 @@ watch(
           >
             <template v-if="ctxMenu?.featureId && canDraw">
               <div class="ctx-title">地圖物件</div>
-              <button data-testid="ctx-feat-edit" @click="ctxEditFeature">✎ 編輯</button>
-              <button data-testid="ctx-feat-rot-ccw" @click="ctxRotateFeature(-15)">↺ 旋轉 15°</button>
-              <button data-testid="ctx-feat-rot-cw" @click="ctxRotateFeature(15)">↻ 旋轉 15°</button>
-              <button class="ctx-danger" data-testid="ctx-feat-del" @click="ctxDeleteFeature">✕ 刪除</button>
+              <button data-testid="ctx-feat-edit" @click="ctxEditFeature"><i class="pi pi-pencil" /> 編輯</button>
+              <button data-testid="ctx-feat-rot-ccw" @click="ctxRotateFeature(-15)"><i class="pi pi-undo" /> 旋轉 15°</button>
+              <button data-testid="ctx-feat-rot-cw" @click="ctxRotateFeature(15)"><i class="pi pi-refresh" /> 旋轉 15°</button>
+              <button class="ctx-danger" data-testid="ctx-feat-del" @click="ctxDeleteFeature"><i class="pi pi-trash" /> 刪除</button>
             </template>
             <template v-else-if="ctxIsMine">
               <div class="ctx-title">{{ ctxUnitName }}</div>
-              <button data-testid="ctx-move" @click="ctxArmMove">🡒 移動</button>
-              <button data-testid="ctx-attack" @click="ctxArmAttack">🎯 攻擊</button>
+              <button data-testid="ctx-move" @click="ctxArmMove"><i class="pi pi-arrow-right" /> 移動</button>
+              <button data-testid="ctx-attack" @click="ctxArmAttack"><i class="pi pi-bullseye" /> 攻擊</button>
             </template>
             <template v-else-if="ctxIsEnemy && selectedId">
               <div class="ctx-title">目標：{{ ctxUnitName }}</div>
               <button data-testid="ctx-lock-target" @click="ctxLockTarget">
-                🎯 以「{{ selectedUnit?.designation ?? selectedId }}」攻擊
+                <i class="pi pi-bullseye" /> 以「{{ selectedUnit?.designation ?? selectedId }}」攻擊
               </button>
             </template>
             <template v-else-if="selectedId">
               <div class="ctx-title">{{ selectedUnit?.designation ?? selectedId }}</div>
-              <button data-testid="ctx-move-here" @click="ctxMoveHere">🡒 移動至此</button>
-              <button data-testid="ctx-attack" @click="ctxArmAttack">🎯 攻擊…</button>
+              <button data-testid="ctx-move-here" @click="ctxMoveHere"><i class="pi pi-arrow-right" /> 移動至此</button>
+              <button data-testid="ctx-attack" @click="ctxArmAttack"><i class="pi pi-bullseye" /> 攻擊…</button>
             </template>
             <template v-else>
               <div class="ctx-empty">先選取我方單位</div>
@@ -1693,7 +1693,7 @@ watch(
                 <option v-for="t in weaponTemplates" :key="t.id" :value="t.id">{{ t.name }}</option>
               </select>
               <button data-testid="draw-weapon" :disabled="!drawWeaponTemplate" @click="startWeaponDraw">
-                🎯 武器據點
+                <i class="pi pi-bullseye" /> 武器據點
               </button>
             </div>
           </div>
@@ -1728,7 +1728,7 @@ watch(
                   :title="hiddenFeatureIds.includes(f.id) ? '顯示' : '隱藏'"
                   @click.stop="toggleFeatureHidden(f.id)"
                 >{{ hiddenFeatureIds.includes(f.id) ? '🚫' : '👁' }}</button>
-                <button class="frm" data-testid="feature-delete" @click.stop="removeFeature(f.id)">✕</button>
+                <button class="frm" data-testid="feature-delete" @click.stop="removeFeature(f.id)"><i class="pi pi-times" /></button>
               </li>
               <li v-if="!mapFeatures.length" class="empty">（尚無標註）</li>
             </ul>
@@ -1751,8 +1751,8 @@ watch(
             <!-- #26 旋轉：面/線繞質心旋轉；武器點旋轉射向。 -->
             <div class="me-row2 me-rot-row">
               <span class="me-rot-lbl">旋轉</span>
-              <button class="me-rot" data-testid="feat-rotate-ccw" @click="rotateFeature(-15)">↺ 15°</button>
-              <button class="me-rot" data-testid="feat-rotate-cw" @click="rotateFeature(15)">↻ 15°</button>
+              <button class="me-rot" data-testid="feat-rotate-ccw" @click="rotateFeature(-15)"><i class="pi pi-undo" /> 15°</button>
+              <button class="me-rot" data-testid="feat-rotate-cw" @click="rotateFeature(15)"><i class="pi pi-refresh" /> 15°</button>
             </div>
             <!-- 武器射向/雷達扇區（#11 C）：射程 + 方向 + 張角（360=全向圓）。 -->
             <template v-if="selectedFeature.kind === 'WEAPON_EMPLACEMENT' || editFeatRange != null">
@@ -1840,7 +1840,7 @@ watch(
           data-testid="unit-detail-card"
         >
           <button class="card-close" data-testid="card-close" title="關閉（取消選取）" @click="clearSelection">
-            ✕
+            <i class="pi pi-times" />
           </button>
           <div class="card-hd">
             <span class="fdot" :style="{ background: factionColor(selectedUnit.faction) }" />

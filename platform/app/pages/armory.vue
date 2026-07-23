@@ -572,7 +572,8 @@ async function save() {
             :title="editMode === 'form' ? '切換為 JSON 編輯' : '切換回表單編輯'"
             @click="toggleMode"
           >
-            {{ editMode === 'form' ? '⤳ JSON' : '⤳ 表單' }}
+            <i :class="editMode === 'form' ? 'pi pi-code' : 'pi pi-list'" />
+            {{ editMode === 'form' ? ' JSON' : ' 表單' }}
           </button>
         </div>
 

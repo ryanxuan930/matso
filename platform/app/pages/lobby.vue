@@ -202,7 +202,7 @@ onMounted(async () => {
             data-testid="edit-session"
             title="編輯設定"
             @click.stop="openEdit(s)"
-          >⚙</button>
+          ><i class="pi pi-cog" /></button>
           <button
             v-if="canEditScenario"
             class="edit-btn"
@@ -210,7 +210,7 @@ onMounted(async () => {
             title="封存（移入歷史）"
             :disabled="busyId === s.id"
             @click.stop="archiveSession(s, true)"
-          >📥</button>
+          ><i class="pi pi-inbox" /></button>
         </li>
       </ul>
     </section>
@@ -235,14 +235,14 @@ onMounted(async () => {
             title="還原（移回進行中）"
             :disabled="busyId === s.id"
             @click.stop="archiveSession(s, false)"
-          >♻</button>
+          ><i class="pi pi-replay" /></button>
           <button
             class="edit-btn danger"
             data-testid="delete-session"
             title="永久刪除"
             :disabled="busyId === s.id"
             @click.stop="confirmDelete = s"
-          >🗑</button>
+          ><i class="pi pi-trash" /></button>
         </li>
       </ul>
       <p v-else-if="showHistory" class="hist-empty" data-testid="history-empty">（無封存推演）</p>

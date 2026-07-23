@@ -38,8 +38,8 @@ export default defineNuxtConfig({
       },
     },
   },
-  // MapLibre GL 樣式表本地打包（不引外部 CDN，air-gapped）
-  css: ['maplibre-gl/dist/maplibre-gl.css'],
+  // MapLibre GL 樣式表 + PrimeIcons 圖標字型（皆本地打包，不引外部 CDN，air-gapped）。
+  css: ['maplibre-gl/dist/maplibre-gl.css', 'primeicons/primeicons.css'],
   // 元件依區域分目錄（components/<區域>/）但以檔名自動匯入（不加路徑前綴），HOW_TO §3.2
   components: [{ path: '~/components', pathPrefix: false }],
   runtimeConfig: {
