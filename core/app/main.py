@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -45,10 +46,14 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     E2E/測試（STUB_GATEWAY=1）不啟動——避免與「送出後取消 VALIDATED 指令」等流程相衝，
     且測試不需真 Redis。正式/開發（無 stub）啟動 SimManager 掃描迴圈。
+
+    `MATSO_DISABLE_SIM=1`（pytest 專用）：即使非 stub 也不啟動 SimManager——讓 pytest 不因
+    lifespan 背景活模擬（真 MySQL 迴圈）與端點測試併發競態/拖慢，又不動 STUB_GATEWAY 的其他語意。
     """
     manager: SimManager | None = None
     task: asyncio.Task[None] | None = None
-    if not _settings.stub_gateway:
+    _sim_disabled = os.environ.get("MATSO_DISABLE_SIM") == "1"
+    if not _settings.stub_gateway and not _sim_disabled:
         manager = SimManager(redis_url=_settings.redis_url)
         task = asyncio.create_task(manager.run())
         logging.getLogger("app").info("Sim runtime 已啟動（活模擬 O10.1）")

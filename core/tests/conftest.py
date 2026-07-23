@@ -16,10 +16,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-# 在載入任何 app 模組前強制 stub：pytest 不啟活模擬 loop——FastAPI lifespan 的 SimManager 會以真
-# MySQL 背景跑，與端點契約 fuzz（schemathesis）併發造成 pymysql packet 序列競態。活 sim 由
-# E2E/compose 驗證，不在 pytest 內跑。（頂層 conftest 先於任何測試模組載入 → app.main 匯入前生效。）
-os.environ.setdefault("STUB_GATEWAY", "1")
+# pytest 不啟 lifespan 的活模擬 loop：FastAPI lifespan 的 SimManager 以真 MySQL 背景跑，與端點
+# 測試併發造成 pymysql packet 競態、且拖慢整個 suite（1200s→10s）。用**專用**旗標而非 STUB_GATEWAY
+# ——後者還會翻動 units API 的「E2E 全單位」affordance 與 get_gateway 預設，破壞 faction-scope 測試。
+# 活 sim 由 E2E/compose 驗證。（頂層 conftest 先於任何測試模組載入 → app.main 匯入前生效。）
+os.environ.setdefault("MATSO_DISABLE_SIM", "1")
 
 from app.engine.clock import SimClock
 from app.engine.kernel import Kernel
