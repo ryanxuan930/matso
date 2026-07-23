@@ -2,7 +2,7 @@
 task: "#44–#48 (SPEC_EXTEND P1–P5)"
 status: IN_PROGRESS
 started: 2026-07-23T00:00+08:00
-updated: 2026-07-23T03:00+08:00
+updated: 2026-07-23T04:00+08:00
 agent: Opus 4.8
 ---
 
@@ -18,7 +18,7 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 - [x] **P1 (#44)** WeaponResolver.weapons_for + 熱狀態 ammo_by_weapon（純資料，不接裁決）✅
 - [x] **P2 (#45)** adjudication/combined.py（Σ volley）+ EngagementAdjudicator gating + determinism ✅
 - [x] **P3 (#46)** fire_policy 契約 + 接線 + AI decider 欄 ✅
-- [ ] **P4 (#47)** COP 武器組合 UI + AAR 逐武器
+- [x] **P4 (#47)** COP 武器組合 UI + fire_policy 下拉 + 戰況 feed 聯合火力標示 ✅（AAR 頁逐武器表列為 follow-up）
 - [ ] **P5 (#48)** 目標編成組成 + 多目標分配（後續，先記設計）
 
 ## 執行紀錄（附時間，由上而下追加）
@@ -31,6 +31,8 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 - **決策：FREE 政策下零效武器仍發射耗彈**（ATGM 打步兵：合格→發射→0 毀傷但扣彈）。「不浪費重火力」是**戰術決策非物理**→ 交由 P3 fire policy（ANTI_ARMOR_HOLD）處理，引擎不硬編（守 neuro-symbolic 線）。
 - **P3 完成**：契約先行——`core_api.yaml` 加 `FirePolicy` enum（FREE/SMALL_ARMS_ONLY/ANTI_ARMOR_HOLD）+ ENGAGE payload 文件 `fire_policy?`；`ai_output.schema.json` tactical_order 加選填 fire_policy；前端 `npm run gen:api` 重生 types（FirePolicy enum）。`combined.py` 加 `fire_policy` 參數 + `_policy_allows`（SMALL_ARMS_ONLY 排除反裝甲/重火力[missile 或 kinetic_kind∈{ATGM,TANK_MAIN_GUN,RECOILLESS,ROCKET,AUTOCANNON}]；ANTI_ARMOR_HOLD 反裝甲僅在 pk>0 才用），HELD 武器不發射/不耗彈/不抽 dispersion；全被保留→REJECTED HOLD_FIRE。`EngageCommand.fire_policy` + drain 讀 payload。**gating 改**：`weapon_template_id is None`（未指定單一武器）才走 combined——**指定 weapon_id＝操作員選單武器＝走既有單武器路徑**（SINGLE 即此，無需獨立 enum 值）。
 - **決策：SINGLE 政策 ≡ 指定 payload.weapon_id**（走既有單/齊射路徑），故 FirePolicy enum 只留 3 值，未加 SINGLE。
+- **P4 完成**：`cop.vue` ENGAGE 面板——武器 select 預設項改為「聯合火力（全武器一起打）」（≥2 武器時）；未選單一武器且 ≥2 武器＝聯合模式（`combinedMode`）→ 顯示 **fire_policy 下拉**（FREE/僅輕兵器/反裝甲留給裝甲，型別 `components['schemas']['FirePolicy']`）+ **武器組合清單**（各武器 名稱/射程/彈量）；指定單一武器→單武器路徑（彈種選擇）。下令 payload：未選武器且政策非 FREE → 夾 `fire_policy`。`clearSelection` 重置 firePolicy。戰況 feed（`formatEvent`）：`payload.mode==='COMBINED'` → 標「（聯合火力）」；後端 `broadcaster.build_event_envelope` 把 `mode` 帶進 EVENT envelope（非 ledger hash，golden 不受影響）。前端 lint/typecheck 綠、載入無 console error。
+- **P4 掛帳（follow-up）**：AAR 頁的逐武器明細表列（`ai_decision.per_weapon[]` 已存進 ledger，AAR 讀得到；但 AAR 儀表板頁的表格渲染未做）。live feed 已標聯合火力。demo session 單位多為單武器 → 聯合 UI 的完整視覺 demo 待有 ≥2 武器單位的想定。
 
 ## 檔案異動
 | 檔案 | 動作 | 說明 |
@@ -43,7 +45,12 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 | core/app/adjudication/adjudicator.py | 修改（P2） | combined_weapons_for gating + _resolve_combined + _apply 逐武器扣彈 |
 | core/app/sim_runtime.py | 修改（P2） | 接線 make_combined_weapons_for |
 | core/tests/unit/test_combined_engagement.py | 新增（P2） | 9 純函數測試 |
-| core/tests/unit/test_adjudicator.py | 修改（P2） | +2 gating 測試（combined vs 單武器落回） |
+| core/tests/unit/test_adjudicator.py | 修改（P2/P3） | +2 gating + 2 drain/explicit-weapon 測試 |
+| contracts/core_api.yaml | 修改（P3） | FirePolicy enum + ENGAGE payload fire_policy? 文件 |
+| contracts/ai_output.schema.json | 修改（P3） | tactical_order 加選填 fire_policy |
+| platform/app/types/api.ts | 生成（P3） | gen:api 重生（FirePolicy） |
+| platform/app/pages/session/[id]/cop.vue | 修改（P4） | ENGAGE 武器組合 UI + fire_policy 下拉 + feed 聯合火力標示 |
+| core/app/state/broadcaster.py | 修改（P4） | EVENT envelope 帶 mode（供 feed 標示交戰型態） |
 
 ## 測試證據
 - P1：`test_engage_wiring.py` → **21 passed**（+7）；ruff 綠、mypy 181 clean、golden **6 passed（不受影響）**。
@@ -53,6 +60,8 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 - P3：`test_combined_engagement.py` **14 passed**（+5 政策）+ `test_adjudicator.py` **9 passed**（+2 drain/gating）；
   契約 YAML/JSON 合法、schema_sync OK（16 tables/139 columns）、前端 gen:api + typecheck 綠；
   mypy 182 clean、golden 6 綠不受影響、engagement 區 51 passed 無回歸。
+- P4：前端 `npm run lint` + `npm run typecheck` 綠、cop 頁載入無 console error；後端 broadcaster
+  ruff/mypy 綠 + broadcast/event 24 passed；golden 6 綠（envelope 非 ledger hash，不受影響）。
 
 ## 決策與陷阱
 - 武器清單**穩定排序**（依 weapon_id）：P2 每武器一次 dispersion 抽樣的順序需決定性，才能 replay。
@@ -60,7 +69,8 @@ fire policy 保留玩家/AI 能動性；維持 neuro-symbolic 紅線與 golden r
 - WeaponEntry.ammo = DB 初始彈藥（供 seed）；執行期活彈藥在熱狀態 ammo_by_weapon（P2 讀）。
 
 ## 中斷續作指引（⚠ 停筆前更新）
-- **下一步第一件事**：**P4 前端**。`platform/app/pages/session/[id]/cop.vue` 的 ENGAGE 面板：由「單選武器」升級為**顯示武器組合**——列出單位武器清單（`GET /units/{id}/weapons` 已回全部武器；標示各自 in-range/彈量/是否被政策排除），加 **fire_policy 下拉**（FREE/SMALL_ARMS_ONLY/ANTI_ARMOR_HOLD，型別 `components['schemas']['FirePolicy']` 已生成）；保留「指定單一武器」＝送 payload.weapon_id（走單武器路徑）。下令送出時把 fire_policy 放進 ENGAGE payload。AAR：`ENGAGEMENT_RESOLVED.ai_decision.per_weapon[]` → 逐武器命中/毀傷/彈藥明細呈現。
-- **P4 注意**：現有 ENGAGE UI 用 `weaponId`（EquipmentInstance.id）單選 + `ammoType`。新流程「不選武器＝聯合兵種、選武器＝單武器」。fire_policy 只在「不選武器」時有意義（選了武器就是單武器，政策無用）。
+- **現況**：**P1–P4 全部完成並各自 commit**（分支 feat/combined-arms-fires，未 push）。單位以武器組合聯合兵種交戰全鏈路上線：資料層武器清單 + per-weapon 彈藥 → combined 加總裁決（射程帶/裝甲類自動匹配、gating 保 golden）→ fire_policy 火力政策（契約 + 篩選）→ COP 武器組合 UI + feed 標示。
+- **P5（#48）依 SPEC_EXTEND 為「後續/較大、本階段只記設計方向」→ 不在本輪實作**（目標編成組成逐平台消耗 + 多目標火力分配；需 model/contract 擴充 + 可能 golden 重錄）。
+- **兩個較小 follow-up**：(1) AAR 儀表板頁渲染 `per_weapon[]` 逐武器明細表（資料已進 ledger）；(2) 聚合 Lanchester（#33a）攻擊係數改用武器組合加總（目前仍用主武器 pk）。
+- **驗證聯合 UI 需 ≥2 武器單位的想定**：demo session 單位多單武器，完整視覺 demo 待建對應想定或用 ORBAT 編輯器加第二種武器。
 - **目前卡點**：無。
-- **尚未驗證的假設**：cop.vue ENGAGE 面板目前的 weaponId/ammoType 綁定與送單 payload 結構——P4 開工先讀該區塊。P4 需要重啟 dev server 或靠 HMR（nuxt.config 未改，應 HMR 即可）。

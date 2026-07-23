@@ -2,6 +2,7 @@
 import type { Contact, OwnUnit } from '~/composables/useUnits'
 import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composables/useUnits'
 import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
+import type { components } from '~/types/api'
 import type { ApiError } from '~/composables/useApi'
 import { apiFetch } from '~/composables/useApi'
 import { buildBasemapSources } from '~/composables/useMapStyle'
@@ -276,6 +277,16 @@ const ammoOptions = computed(() => selectedWeapon.value?.ammo_types ?? [])
 watch(weaponId, () => {
   ammoType.value = null
 })
+// 聯合兵種火力政策（SPEC_EXTEND P4）：未選單一武器時＝以武器組合聯合開火，政策精修。
+type FirePolicy = components['schemas']['FirePolicy']
+const firePolicy = ref<FirePolicy>('FREE')
+const FIRE_POLICY_OPTS: { value: FirePolicy; label: string }[] = [
+  { value: 'FREE', label: '自由開火（全武器）' },
+  { value: 'SMALL_ARMS_ONLY', label: '僅輕兵器（節約重火力）' },
+  { value: 'ANTI_ARMOR_HOLD', label: '反裝甲留給裝甲目標' },
+]
+// 聯合火力模式＝未指定單一武器（≥2 武器才有意義）；指定武器＝單武器射擊。
+const combinedMode = computed(() => weaponId.value === null && weapons.value.length >= 2)
 const precheck = ref<OrderResponse['precheck'] | null>(null)
 const message = ref('')
 
@@ -465,6 +476,7 @@ function clearSelection() {
   targetUnitId.value = null
   weaponId.value = null
   ammoType.value = null
+  firePolicy.value = 'FREE'
   weapons.value = []
   showOrbat.value = false
 }
@@ -1076,6 +1088,10 @@ async function submit() {
           target_unit_id: targetUnitId.value,
           ...(weaponId.value ? { weapon_id: weaponId.value } : {}),
           ...(ammoType.value ? { ammo_type: ammoType.value } : {}),
+          // 聯合火力（未指定單一武器）且政策非 FREE → 夾帶 fire_policy（SPEC_EXTEND P4）。
+          ...(!weaponId.value && firePolicy.value !== 'FREE'
+            ? { fire_policy: firePolicy.value }
+            : {}),
         }
   try {
     const resp = await submitOrder(sessionId.value, {
@@ -1139,14 +1155,16 @@ function formatEvent(payload: Record<string, unknown>): string {
   const tgt = unitName(payload?.target_id)
   if (type === 'ENGAGEMENT_RESOLVED') {
     const status = String(payload?.status ?? '')
+    // 聯合兵種加總（P4）：標示「聯合火力」，讓戰況 feed 區分單武器 vs 武器組合交戰。
+    const cx = payload?.mode === 'COMBINED' ? '（聯合火力）' : ''
     if (status === 'HIT') {
       const dmg = payload?.damage != null ? ` −${Math.round(Number(payload.damage))}` : ''
       const hp = Number(payload?.target_health_after)
       const after = Number.isFinite(hp) ? `（剩 ${Math.round(hp)}%）` : ''
       const ko = Number.isFinite(hp) && hp <= 0 ? ' ✖摧毀' : ''
-      return `交戰命中 ${ini} → ${tgt}${dmg}${after}${ko}`
+      return `交戰命中${cx} ${ini} → ${tgt}${dmg}${after}${ko}`
     }
-    if (status === 'MISS') return `交戰未命中 ${ini} → ${tgt}`
+    if (status === 'MISS') return `交戰未命中${cx} ${ini} → ${tgt}`
     if (status === 'REJECTED') return `交戰不可行 ${ini} → ${tgt}（${payload?.reason ?? ''}）`
     return `交戰 ${ini} → ${tgt}`
   }
@@ -1467,12 +1485,32 @@ watch(
             </div>
             <template v-if="weapons.length">
               <select v-model="weaponId" data-testid="engage-weapon">
-                <option :value="null">選武器（預設第一項）</option>
+                <option :value="null">{{ weapons.length >= 2 ? '聯合火力（全武器一起打）' : '預設武器' }}</option>
                 <option v-for="w in weapons" :key="w.id" :value="w.id">
                   {{ w.name }}<span v-if="w.ammo_remaining != null"> · 彈 {{ w.ammo_remaining }}</span>
                 </option>
               </select>
-              <select v-if="ammoOptions.length" v-model="ammoType" data-testid="engage-ammo">
+              <!-- 聯合火力（未選單一武器且 ≥2 武器）：顯示將開火的武器組合 + 火力政策（P4）。 -->
+              <template v-if="combinedMode">
+                <select v-model="firePolicy" data-testid="engage-fire-policy">
+                  <option v-for="p in FIRE_POLICY_OPTS" :key="p.value" :value="p.value">
+                    {{ p.label }}
+                  </option>
+                </select>
+                <ul class="weapon-mix" data-testid="weapon-mix">
+                  <li v-for="w in weapons" :key="w.id">
+                    <i class="pi pi-bullseye" /> {{ w.name }}
+                    <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
+                    <span v-if="w.ammo_remaining != null" class="dim">· 彈 {{ w.ammo_remaining }}</span>
+                  </li>
+                </ul>
+              </template>
+              <!-- 指定單一武器：彈種選擇（單武器射擊路徑）。 -->
+              <select
+                v-if="!combinedMode && ammoOptions.length"
+                v-model="ammoType"
+                data-testid="engage-ammo"
+              >
                 <option :value="null">彈種（預設）</option>
                 <option v-for="a in ammoOptions" :key="a" :value="a">{{ a }}</option>
               </select>
@@ -2518,6 +2556,26 @@ watch(
   color: #94a3b8;
   font-size: 0.72rem;
   line-height: 1.4;
+}
+/* 聯合火力武器組合清單（P4）：顯示將一起開火的武器。 */
+.weapon-mix {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0.35rem 0.5rem;
+  background: rgba(30, 58, 95, 0.25);
+  border: 1px solid #1e3a5f;
+  border-radius: 0.35rem;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+}
+.weapon-mix li {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0;
+}
+.weapon-mix .dim {
+  color: #94a3b8;
 }
 .precheck .ok {
   color: #4ade80;
