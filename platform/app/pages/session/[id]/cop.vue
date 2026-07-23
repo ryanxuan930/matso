@@ -384,8 +384,17 @@ const unitCardPos = ref<{ x: number; y: number } | null>(null)
 function onSelectScreenPos(p: { x: number; y: number } | null) {
   unitCardPos.value = p
 }
-// 卡片實際定位：圖標右上方偏移，並夾在視窗內（避免超出邊界；卡片約 240×300）。
+// 使用者拖曳後的卡片位置（#42）：一旦拖曳即脫離圖標錨定，固定於此螢幕座標。
+const unitCardDrag = ref<{ x: number; y: number } | null>(null)
+// 選取換單位/取消選取時，讓卡片回到自動錨定（不沿用上一單位的手動位置）。
+watch(selectedId, () => {
+  unitCardDrag.value = null
+})
+// 卡片實際定位：拖曳過 → 手動座標；否則圖標右上方偏移，並夾在視窗內（卡片約 304×320）。
 const unitCardStyle = computed(() => {
+  if (unitCardDrag.value) {
+    return { left: `${unitCardDrag.value.x}px`, top: `${unitCardDrag.value.y}px` }
+  }
   const p = unitCardPos.value
   if (!p) return { display: 'none' }
   const CW = 304 // ≈ 19rem
@@ -399,6 +408,52 @@ const unitCardStyle = computed(() => {
   top = Math.min(Math.max(56, top), vh - CH - 8)
   return { left: `${left}px`, top: `${top}px` }
 })
+// 卡片拖曳（#42）：以標頭為把手，滑鼠/觸控皆可，夾在視窗內。
+let cardDragging = false
+let cardSX = 0
+let cardSY = 0
+let cardStartX = 0
+let cardStartY = 0
+function cardPoint(e: MouseEvent | TouchEvent): { x: number; y: number } {
+  const t = 'touches' in e ? e.touches[0] : null
+  return t
+    ? { x: t.clientX, y: t.clientY }
+    : { x: (e as MouseEvent).clientX, y: (e as MouseEvent).clientY }
+}
+function beginCardDrag(e: MouseEvent | TouchEvent) {
+  if ((e.target as HTMLElement).closest('.card-close')) return
+  const rect = (e.currentTarget as HTMLElement).closest('.unit-card')?.getBoundingClientRect()
+  cardStartX = rect ? rect.left : 0
+  cardStartY = rect ? rect.top : 0
+  const p = cardPoint(e)
+  cardSX = p.x
+  cardSY = p.y
+  unitCardDrag.value = { x: cardStartX, y: cardStartY }
+  cardDragging = true
+  window.addEventListener('mousemove', onCardDrag)
+  window.addEventListener('mouseup', endCardDrag)
+  window.addEventListener('touchmove', onCardDrag, { passive: false })
+  window.addEventListener('touchend', endCardDrag)
+}
+function onCardDrag(e: MouseEvent | TouchEvent) {
+  if (!cardDragging) return
+  if ('touches' in e) e.preventDefault()
+  const p = cardPoint(e)
+  const maxX = window.innerWidth - 80
+  const maxY = window.innerHeight - 40
+  unitCardDrag.value = {
+    x: Math.min(Math.max(0, cardStartX + p.x - cardSX), maxX),
+    y: Math.min(Math.max(52, cardStartY + p.y - cardSY), maxY),
+  }
+}
+function endCardDrag() {
+  cardDragging = false
+  window.removeEventListener('mousemove', onCardDrag)
+  window.removeEventListener('mouseup', endCardDrag)
+  window.removeEventListener('touchmove', onCardDrag)
+  window.removeEventListener('touchend', endCardDrag)
+}
+onBeforeUnmount(endCardDrag)
 function clearSelection() {
   selectedId.value = null
   unitCardPos.value = null
@@ -615,6 +670,13 @@ const drawableKinds = computed(() => FEATURE_KINDS.filter((k) => k.value !== 'WE
 
 async function loadFeatures() {
   mapFeatures.value = await fetchMapFeatures(sessionId.value).catch(() => [])
+  // 還原已持久化的地形裁切環（#43）：裁切射界存在 attributes.viewshed_ring，重新整理後仍在。
+  const clips: Record<string, number[][]> = {}
+  for (const f of mapFeatures.value) {
+    const ring = (f.attributes as Record<string, unknown> | undefined)?.viewshed_ring
+    if (Array.isArray(ring) && ring.length >= 3) clips[f.id] = ring as number[][]
+  }
+  terrainClips.value = clips
 }
 async function ensureWeaponTemplates() {
   if (!weaponTemplates.value.length) {
@@ -726,6 +788,12 @@ async function applyTerrainClip() {
     })
     if (fp.ring.length >= 3) {
       terrainClips.value = { ...terrainClips.value, [f.id]: fp.ring as number[][] }
+      // 持久化到 attributes.viewshed_ring（#43）：重新整理後仍保留裁切；失敗僅保留本地。
+      try {
+        await editMapFeature(sessionId.value, f.id, { attributes: { viewshed_ring: fp.ring } })
+      } catch {
+        // 持久化失敗不擋操作：本地裁切仍生效，僅無法存活重新整理。
+      }
       toasts.push({
         severity: fp.clipped ? 'success' : 'info',
         title: fp.clipped ? '已套用地形裁切（射界受稜線遮蔽）' : '地形裁切：此扇區全通視',
@@ -751,13 +819,26 @@ function clearTerrainClip(fid: string) {
   }
   terrainClips.value = next
 }
+// 使用者按「還原理想射界」（#43）：本地移除 + 持久化清除（viewshed_ring=null），才不會重新整理又跑回來。
+async function onClearTerrainClip(fid: string) {
+  clearTerrainClip(fid)
+  try {
+    await editMapFeature(sessionId.value, fid, { attributes: { viewshed_ring: null } })
+  } catch {
+    // 清除持久化失敗不擋操作；地圖已即時還原理想射界。
+  }
+}
 // 拖放移動點特徵（#11 B2）：MapCanvas emit 新座標 → PATCH 幾何 → 重載。
 async function onFeatureMove(e: { id: string; lng: number; lat: number }) {
   const f = mapFeatures.value.find((x) => x.id === e.id)
   if (!f || f.geometry_type !== 'POINT') return
   try {
-    await editMapFeature(sessionId.value, e.id, { geometry: [e.lng, e.lat] })
-    clearTerrainClip(e.id) // 幾何變動 → 舊裁切環失效
+    // 幾何變動 → 舊裁切環失效：同一 PATCH 一併清除持久化的 viewshed_ring（#43）。
+    await editMapFeature(sessionId.value, e.id, {
+      geometry: [e.lng, e.lat],
+      attributes: { viewshed_ring: null },
+    })
+    clearTerrainClip(e.id)
     await loadFeatures()
   } catch (err) {
     toasts.push({
@@ -782,7 +863,11 @@ async function rotateFeature(deg: number) {
   if (!Array.isArray(g) || g.length < 2) return
   try {
     clearTerrainClip(f.id)
-    await editMapFeature(sessionId.value, f.id, { geometry: rotatePoints(g, deg) })
+    // 旋轉幾何 → 舊裁切環失效：同 PATCH 清除持久化的 viewshed_ring（#43）。
+    await editMapFeature(sessionId.value, f.id, {
+      geometry: rotatePoints(g, deg),
+      attributes: { viewshed_ring: null },
+    })
     await loadFeatures()
   } catch (err) {
     toasts.push({ severity: 'error', title: '旋轉失敗', detail: (err as { message?: string }).message, timeoutMs: 0 })
@@ -809,17 +894,18 @@ async function saveFeatureEdit() {
     delete attrs.direction_deg
     delete attrs.arc_deg
   }
+  // 只有射程/方向/張角真的變動才失效地形裁切環；否則（改名/顏色/備註）保留已套用的裁切（#43）。
+  const arcChanged =
+    editFeatRange.value !== origRange.value ||
+    editFeatDir.value !== origDir.value ||
+    editFeatArc.value !== origArc.value
+  if (arcChanged) attrs.viewshed_ring = null // 射界參數變動 → 一併清除持久化的裁切環
   try {
     await editMapFeature(sessionId.value, fid, {
       label: editFeatLabel.value.trim() || null,
       influence_radius_m: editFeatRange.value,
       attributes: attrs,
     })
-    // 只有射程/方向/張角真的變動才失效地形裁切環；否則（改名/顏色/備註）保留已套用的裁切。
-    const arcChanged =
-      editFeatRange.value !== origRange.value ||
-      editFeatDir.value !== origDir.value ||
-      editFeatArc.value !== origArc.value
     if (arcChanged) clearTerrainClip(fid)
     origRange.value = editFeatRange.value
     origDir.value = editFeatDir.value
@@ -1780,13 +1866,13 @@ watch(
                   data-testid="apply-terrain-clip"
                   @click="applyTerrainClip"
                 >
-                  {{ clipBusy ? '裁切計算中…' : '🏔 地形裁切射界' }}
+                  <i class="pi pi-eye" /> {{ clipBusy ? '裁切計算中…' : '地形裁切射界' }}
                 </button>
                 <button
                   v-if="terrainClips[selectedFeature.id]"
                   class="me-clip me-clip-off"
                   data-testid="clear-terrain-clip"
-                  @click="clearTerrainClip(selectedFeature.id)"
+                  @click="onClearTerrainClip(selectedFeature.id)"
                 >
                   還原理想射界
                 </button>
@@ -1835,14 +1921,20 @@ watch(
         <div
           v-if="selectedUnit"
           class="unit-card"
-          :class="{ 'card-anchored': !!unitCardPos }"
+          :class="{ 'card-anchored': !!unitCardPos && !unitCardDrag, 'card-dragged': !!unitCardDrag }"
           :style="unitCardStyle"
           data-testid="unit-detail-card"
         >
           <button class="card-close" data-testid="card-close" title="關閉（取消選取）" @click="clearSelection">
             <i class="pi pi-times" />
           </button>
-          <div class="card-hd">
+          <div
+            class="card-hd"
+            title="拖曳可移動資訊卡"
+            @mousedown="beginCardDrag"
+            @touchstart="beginCardDrag"
+          >
+            <span class="card-grip"><i class="pi pi-bars" /></span>
             <span class="fdot" :style="{ background: factionColor(selectedUnit.faction) }" />
             <strong class="cname">{{ selectedUnit.designation }}</strong>
             <span class="clevel">{{ unitLevelLabel(selectedUnit.unit_level) }} · {{ selectedUnit.faction }}</span>
@@ -2769,6 +2861,19 @@ watch(
   align-items: center;
   gap: 0.4rem;
   padding-right: 1rem;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.unit-card .card-grip {
+  color: #475569;
+  font-size: 0.7rem;
+  flex: none;
+  margin-right: -0.1rem;
+}
+/* 拖曳後脫離錨定 → 不顯示指向圖標的小尾巴。 */
+.unit-card.card-dragged::before {
+  display: none;
 }
 .unit-card .fdot {
   width: 0.7rem;
