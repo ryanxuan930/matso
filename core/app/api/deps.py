@@ -17,7 +17,7 @@ from app.config import Settings
 from app.db import default_session_factory
 from app.errors import AuthInvalidTokenError
 from app.lobby.service import LobbyService
-from app.orders.precheck import PhysicsGateway, TerrainGatewayAdapter
+from app.orders.precheck import LosOutcome, PhysicsGateway, TerrainGatewayAdapter
 from app.orders.service import OrderService
 from app.plugins import TerrainClient
 
@@ -76,8 +76,11 @@ class _StubGateway:
 
     def has_los(
         self, observer: tuple[float, float, float], target: tuple[float, float, float]
-    ) -> tuple[bool, float]:
-        return True, 15.0
+    ) -> LosOutcome:
+        return LosOutcome(True, 15.0)
+
+    def elevation(self, lat: float, lng: float) -> float:
+        return 0.0  # 平坦地形（stub）：彈道飛彈拋物線不被地形阻擋（僅障礙判定）
 
 
 def get_gateway() -> PhysicsGateway:

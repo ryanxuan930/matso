@@ -11,6 +11,7 @@ from app.scenario.loader import (
     LoadedScenario,
     ScenarioError,
     create_session_from_scenario,
+    load_scenario_bundle,
     load_scenario_package,
 )
 
@@ -19,6 +20,7 @@ __all__ = [
     "ScenarioError",
     "create_session_from_scenario",
     "dump_scenario_package",
+    "load_scenario_bundle",
     "load_scenario_package",
     "scenario_to_dict",
 ]

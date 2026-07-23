@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     # Terrain 插件 gRPC 位址（O2.5）；compose 內為 terrain:50051，本機開發為 localhost:50051
     terrain_grpc_target: str = "localhost:50051"
+    # Weather 插件 gRPC 位址（O5）；compose 內為 weather:50052。供活模擬把天氣修正納入交戰判定。
+    weather_grpc_target: str = "localhost:50052"
 
     # 認證（O4.1，SPEC §12）。jwt_secret 絕不寫死於程式——env 注入（JWT_SECRET，無前綴同
     # DATABASE_URL）；未設時用開發預設並於啟動警告（同 CWA/DTED 慣例）。正式部署 MUST 覆寫。

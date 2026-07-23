@@ -47,7 +47,7 @@ test('單位與 contact 渲染於地圖', async ({ page }) => {
 })
 
 test('fog of war + N 方：contact 依情報等級與陣營產生相異符號', async ({ page }) => {
-  await gotoCop(page)
+  await gotoCop(page, '?demo=1')
   const s = await waitUnits(page)
   // DETECTED / CLASSIFIED / IDENTIFIED(RED,敵) / IDENTIFIED(YELLOW,中立) → 4 個相異 icon
   // （SIDC affiliation H vs N + faction 顏色不同 → icon key 不同，§12.1/O6.10）。
@@ -55,7 +55,7 @@ test('fog of war + N 方：contact 依情報等級與陣營產生相異符號', 
 })
 
 test('OFFLINE 己方單位為淡化虛影', async ({ page }) => {
-  await gotoCop(page)
+  await gotoCop(page, '?demo=1')
   const s = await waitUnits(page)
   expect(s.minOpacity).toBeLessThan(0.5) // OFFLINE 虛影 opacity 0.4
 })

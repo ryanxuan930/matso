@@ -108,6 +108,9 @@ class FakeBroadcaster:
         self._rec.order.append("broadcast")
         self.published.append((tick, dict(diff)))
 
+    async def publish_events(self, events: object) -> None:
+        self._rec.order.append("broadcast_events")
+
 
 class FakeEventSink:
     def __init__(self) -> None:
@@ -169,6 +172,7 @@ async def test_subsystems_called_in_spec_order() -> None:
         "comms",
         "logistics",
         "triggers",
+        "broadcast_events",
         "broadcast",
     ]
 

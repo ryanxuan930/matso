@@ -7,8 +7,9 @@ const PUBLIC_ROUTES = new Set(['/login'])
 export default defineNuxtRouteMiddleware((to) => {
   const { access } = useAuthTokens()
   const authed = !!access.value
+  const isPublic = PUBLIC_ROUTES.has(to.path) || to.meta.public === true
 
-  if (!authed && !PUBLIC_ROUTES.has(to.path)) {
+  if (!authed && !isPublic) {
     return navigateTo('/login')
   }
   if (authed && to.path === '/login') {

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSource
+from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
 from app.adjudication.weapon import WeaponProfile
 from app.engine.clock import SimClock
@@ -42,6 +43,7 @@ from app.models.enums import IntelFidelity, UnitLevel, UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, User, WargameSession
 from app.movement.db_store import DbOrderStore
 from app.movement.system import MovementSystem
+from app.orders.precheck import LosOutcome
 from app.orders.schemas import OrderRequest, OrderType
 from app.orders.service import OrderService
 from app.state.hot_state import InMemoryHotState
@@ -137,8 +139,8 @@ class _FakeGateway:  # PhysicsGateway（precheck 用）：路徑可達、有視�
 
     def has_los(
         self, observer: tuple[float, float, float], target: tuple[float, float, float]
-    ) -> tuple[bool, float]:
-        return True, 100.0
+    ) -> LosOutcome:
+        return LosOutcome(True, 100.0)
 
 
 class _FixedPlanner:
@@ -164,13 +166,16 @@ async def test_scripted_battle_full_flow() -> None:
             "lat": _RED_LL[0],
             "lng": _RED_LL[1],
             "health": 100.0,
+            "strength": 100.0,
+            "authorized_strength": 100.0,
+            "platform_count": 1,
             "armor_class": "INFANTRY",
         },
     )
 
     faction = {blue_id: "BLUE", red_id: "RED"}
 
-    def engage_env(shooter_id: str, target_id: str) -> EnvSnapshot:
+    def engage_env(shooter_id: str, target_id: str, indirect_fire: bool = False) -> EnvSnapshot:
         s, t = hot.get_unit(shooter_id), hot.get_unit(target_id)
         assert s is not None and t is not None
         return EnvSnapshot(
@@ -183,7 +188,7 @@ async def test_scripted_battle_full_flow() -> None:
         clock=SimClock(),
         order_source=EngageOrderSource(db, session_id),
         adjudicator=EngagementAdjudicator(
-            db, hot, DeterministicRNG(7, "adjudication"), lambda _u: _WEAPON, engage_env
+            db, hot, DeterministicRNG(7, "adjudication"), lambda _cmd: _WEAPON, engage_env
         ),
         movement=MovementSystem(session_id, hot, DbOrderStore(db), _FixedPlanner(), speed_hexes=1),
         sensors=SensorSweepSystem(
@@ -245,8 +250,13 @@ async def test_scripted_battle_full_flow() -> None:
     for _ in range(2):
         await kernel.run_tick()
 
-    # 戰損入帳：紅軍血量下降 + ENGAGEMENT_RESOLVED 事件寫入 Ledger
-    assert hot.get_unit(red_id)["health"] == pytest.approx(60.0)  # 100 − 40
+    # 戰損入帳（真實化交戰）：紅軍當前戰力下降 + ENGAGEMENT_RESOLVED 事件寫入 Ledger。
+    # 無 pk → 期望傷亡 40/100=0.4，單體 cp=100 → loss 40 → strength 100->60。
+    assert hot.get_unit(red_id)["strength"] == pytest.approx(60.0)
+    # 戰損持久化到 DB currentStrength（權威）；healthStatus 為導出效能%。
+    red_row = db.get(TacticalUnit, red_id)
+    assert red_row.current_strength == pytest.approx(60.0)  # type: ignore[union-attr]
+    assert red_row.health_status == pytest.approx(effectiveness_pct(0.60))  # type: ignore[union-attr]
     resolved = [e for e in sink.events if e.event_type == "ENGAGEMENT_RESOLVED"]
     assert resolved and resolved[0].damage_calc == pytest.approx(40.0)
     assert resolved[0].target_id == red_id

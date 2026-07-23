@@ -1,13 +1,18 @@
 <script setup lang="ts">
 // 想定編輯器（O7.3，SPEC §11.2）——factions/relations/units/victory 編輯 + 匯出/匯入 roundtrip。
+// UI 以 PrimeVue（Aura 主題）+ zh-TW 標籤重製；關係改為對稱矩陣，單位可編輯初始經緯度（#5.5）。
+import { apiFetch } from '~/composables/useApi'
+import type { ApiError } from '~/composables/useApi'
 import {
   emptyScenario,
   exportScenario,
   importScenario,
+  type EditorUnit,
   type RelationValue,
   type ScenarioModel,
   type UnitLevel,
 } from '~/composables/useScenarioEditor'
+import { emptyCondition } from '~/composables/useConditionDsl'
 
 const LEVELS: UnitLevel[] = [
   'THEATER', 'CORPS', 'DIVISION', 'BRIGADE', 'BATTALION',
@@ -15,10 +20,43 @@ const LEVELS: UnitLevel[] = [
 ]
 const RELATIONS: RelationValue[] = ['ALLIED', 'NEUTRAL', 'HOSTILE']
 
+// zh-TW 對照表 -------------------------------------------------------------
+const MODE_OPTIONS = [
+  { label: '即時', value: 'REALTIME' },
+  { label: '同步回合', value: 'WEGO' },
+  { label: '輪流回合', value: 'IGO_UGO' },
+]
+const LEVEL_LABELS: Record<UnitLevel, string> = {
+  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', PLATOON: '排', COMPANY: '連',
+  BATTALION: '營', BRIGADE: '旅', DIVISION: '師', CORPS: '軍', THEATER: '戰區',
+}
+const LEVEL_OPTIONS = LEVELS.map((l) => ({ label: LEVEL_LABELS[l], value: l }))
+const RELATION_LABELS: Record<RelationValue, string> = {
+  ALLIED: '同盟', NEUTRAL: '中立', HOSTILE: '敵對',
+}
+
 const model = ref<ScenarioModel>(emptyScenario())
 const importText = ref('')
 const importError = ref('')
 const exportText = computed(() => JSON.stringify(exportScenario(model.value), null, 2))
+
+// 從既有想定載入（#5）——URL ?load=<id> → GET /scenarios/{id} → importScenario。
+const loadError = ref('')
+async function loadExisting(id: string) {
+  loadError.value = ''
+  try {
+    const bundle = await apiFetch<Parameters<typeof importScenario>[0]>(`/scenarios/${encodeURIComponent(id)}`)
+    model.value = importScenario(bundle)
+  } catch (e) {
+    const err = e as ApiError
+    loadError.value = `載入想定失敗：${err.code === 'SCENARIO_NOT_FOUND' ? '找不到該想定' : (err.code ?? 'UNKNOWN')}`
+  }
+}
+onMounted(() => {
+  const q = useRoute().query.load
+  const id = Array.isArray(q) ? q[0] : q
+  if (id) loadExisting(String(id))
+})
 
 function addFaction() {
   model.value.factions.push({ id: `F${model.value.factions.length + 1}`, color: '#888888' })
@@ -27,9 +65,16 @@ function addUnit() {
   const f = model.value.factions[0]?.id ?? 'BLUE'
   model.value.units.push({ faction: f, designation: 'U', unitLevel: 'PLATOON' })
 }
-function addRelation() {
-  const ids = model.value.factions
-  model.value.relations.push({ a: ids[0]?.id ?? '', b: ids[1]?.id ?? '', relation: 'NEUTRAL' })
+// MSEL 事件（GOAL#7）——陣營清單供 trigger/inject 的下拉；空預設 BLUE。
+const factionIds = computed(() => model.value.factions.map((f) => f.id))
+function addMsel() {
+  const f = factionIds.value[0] ?? 'BLUE'
+  model.value.msel.push({
+    id: `E${model.value.msel.length + 1}`,
+    once: true,
+    trigger: emptyCondition('time', f),
+    inject: { event_type: 'INTEL_REPORT', payload: {}, faction: undefined },
+  })
 }
 function remove<T>(arr: T[], i: number) {
   arr.splice(i, 1)
@@ -42,74 +87,456 @@ function doImport() {
     importError.value = `匯入失敗：${(e as Error).message}`
   }
 }
+
+// 關係矩陣（對稱）---------------------------------------------------------
+// model.relations 是唯一結構（匯出為三元組 [a,b,relation]）；矩陣僅是其視圖，讀寫皆順序無關。
+function relationOf(a: string, b: string): RelationValue {
+  const r = model.value.relations.find(
+    (x) => (x.a === a && x.b === b) || (x.a === b && x.b === a),
+  )
+  return r?.relation ?? 'HOSTILE' // 未宣告配對預設敵對（§12.1）
+}
+function cycleRelation(a: string, b: string) {
+  const cur = relationOf(a, b)
+  const next = RELATIONS[(RELATIONS.indexOf(cur) + 1) % RELATIONS.length]!
+  const existing = model.value.relations.find(
+    (x) => (x.a === a && x.b === b) || (x.a === b && x.b === a),
+  )
+  if (existing) existing.relation = next
+  else model.value.relations.push({ a, b, relation: next })
+}
+function relSeverity(r: RelationValue): string {
+  return r === 'ALLIED' ? 'success' : r === 'HOSTILE' ? 'danger' : 'secondary'
+}
+
+// 單位（ORBAT）-----------------------------------------------------------
+function parentOptions(u: EditorUnit) {
+  return [
+    { label: '（無）', value: '' },
+    ...model.value.units
+      .filter((x) => x.faction === u.faction && x !== u)
+      .map((x) => ({ label: x.designation, value: x.designation })),
+  ]
+}
+function numStr(n?: number): string {
+  return n === undefined ? '' : String(n)
+}
+// 空 → undefined（絕不寫入 ''/NaN/null），使 exportScenario 的 `u.lat !== undefined` 守則能省略空值。
+function setNum(u: EditorUnit, key: 'lat' | 'lng', v: string | undefined) {
+  const t = (v ?? '').trim()
+  if (t === '') { u[key] = undefined; return }
+  const n = Number(t)
+  u[key] = Number.isFinite(n) ? n : undefined
+}
+
+// 地圖點選初始位置（#8）——以單位物件參照記錄哪些列展開了地圖（重排/刪除安全）。
+const openPickers = ref(new Set<EditorUnit>())
+function togglePicker(u: EditorUnit) {
+  if (openPickers.value.has(u)) openPickers.value.delete(u)
+  else openPickers.value.add(u)
+}
+// 單位經緯 ↔ MapPointPicker 的 {lng,lat}|null 轉接（保持 lat/lng 數值形狀不變）。
+function unitPoint(u: EditorUnit): { lng: number; lat: number } | null {
+  return u.lat !== undefined && u.lng !== undefined ? { lng: u.lng, lat: u.lat } : null
+}
+function setUnitPoint(u: EditorUnit, p: { lng: number; lat: number }) {
+  u.lat = p.lat
+  u.lng = p.lng
+}
+
+// #29 ORBAT 樹狀（分陣營）：依 parent（上級番號）建指揮層級樹，每個陣營一棵 TreeTable。
+interface OrbatNode {
+  key: string
+  data: EditorUnit
+  children: OrbatNode[]
+}
+function buildFactionTree(units: EditorUnit[], keyOf: (u: EditorUnit) => string): OrbatNode[] {
+  const nodeOf = new Map<EditorUnit, OrbatNode>()
+  units.forEach((u) => nodeOf.set(u, { key: keyOf(u), data: u, children: [] }))
+  const roots: OrbatNode[] = []
+  for (const u of units) {
+    const node = nodeOf.get(u)!
+    const parent = u.parent ? units.find((x) => x !== u && x.designation === u.parent) : undefined
+    if (parent && nodeOf.has(parent)) nodeOf.get(parent)!.children.push(node)
+    else roots.push(node)
+  }
+  // 環路/孤兒安全：確保每個節點皆可從 roots 觸及，否則升為 root（避免遺失單位）。
+  const seen = new Set<OrbatNode>()
+  const walk = (ns: OrbatNode[]) =>
+    ns.forEach((n) => {
+      if (!seen.has(n)) {
+        seen.add(n)
+        walk(n.children)
+      }
+    })
+  walk(roots)
+  for (const node of nodeOf.values()) {
+    if (!seen.has(node)) {
+      roots.push(node)
+      walk([node])
+    }
+  }
+  return roots
+}
+// 依單位在 model.units 的索引作為穩定 key（供 remove + expandedKeys）。
+// 每個**宣告的陣營**都建一棵樹（即使 0 單位）→ 各陣營皆可「＋加單位」；另補上「有單位但未宣告」
+// 的陣營（匯入相容，不遺失單位）。
+const orbatTrees = computed(() => {
+  const keyOf = (u: EditorUnit) => String(model.value.units.indexOf(u))
+  const declared = model.value.factions.map((f) => f.id)
+  const extra = [...new Set(model.value.units.map((u) => u.faction))].filter(
+    (f) => !declared.includes(f),
+  )
+  return [...declared, ...extra].map((fid) => {
+    const color = model.value.factions.find((f) => f.id === fid)?.color
+    const units = model.value.units.filter((u) => u.faction === fid)
+    return { id: fid, color, count: units.length, nodes: buildFactionTree(units, keyOf) }
+  })
+})
+// 展開/收合整棵陣營樹（PrimeVue TreeTable 以 expandedKeys 控制；收合下級單位用）。
+function setTreeExpanded(nodes: OrbatNode[], val: boolean): void {
+  const keys = { ...expandedKeys.value }
+  const walk = (ns: OrbatNode[]) =>
+    ns.forEach((n) => {
+      keys[n.key] = val
+      walk(n.children)
+    })
+  walk(nodes)
+  expandedKeys.value = keys
+}
+// 新增節點預設展開，保留使用者手動摺疊。
+const expandedKeys = ref<Record<string, boolean>>({})
+watch(
+  orbatTrees,
+  (trees) => {
+    const keys = { ...expandedKeys.value }
+    const add = (ns: OrbatNode[]) =>
+      ns.forEach((n) => {
+        if (!(n.key in keys)) keys[n.key] = true
+        add(n.children)
+      })
+    trees.forEach((t) => add(t.nodes))
+    expandedKeys.value = keys
+  },
+  { immediate: true, deep: true },
+)
+function addUnitTo(fid: string) {
+  model.value.units.push({ faction: fid, designation: 'U', unitLevel: 'PLATOON' })
+}
+function removeUnit(u: EditorUnit) {
+  const i = model.value.units.indexOf(u)
+  if (i >= 0) model.value.units.splice(i, 1)
+  openPickers.value.delete(u)
+}
+function openPickersOf(fid: string): EditorUnit[] {
+  return [...openPickers.value].filter((u) => u.faction === fid)
+}
+
+const saveStatus = ref('')
+const saving = ref(false)
+const saveSeverity = computed(() => (saveStatus.value.startsWith('已存') ? 'success' : 'error'))
+async function saveToServer() {
+  saving.value = true
+  saveStatus.value = ''
+  try {
+    const bundle = exportScenario(model.value)
+    const r = await apiFetch<{ id: string; name: string; version: string }>('/scenarios', {
+      method: 'POST',
+      body: bundle,
+    })
+    saveStatus.value = `已存到伺服器：${r.name} v${r.version}`
+  } catch (e) {
+    const err = e as ApiError
+    saveStatus.value = `存檔失敗：${err.code === 'SCENARIO_INVALID' ? err.message : err.code}`
+  } finally {
+    saving.value = false
+  }
+}
 </script>
 
 <template>
   <div class="editor" data-testid="scenario-editor">
-    <h1>想定編輯器</h1>
+    <header class="sc-bar">
+      <Button data-testid="sc-back-lobby" size="small" text @click="navigateTo('/lobby')">← 系統首頁</Button>
+      <h1>劇本編輯器</h1>
+      <Button data-testid="sc-save" class="sc-save-btn" size="small" :disabled="saving" @click="saveToServer">
+        {{ saving ? '存檔中…' : '存到伺服器' }}
+      </Button>
+    </header>
+    <Message v-if="saveStatus" :severity="saveSeverity" size="small" class="sc-status" data-testid="sc-save-status">
+      {{ saveStatus }}
+    </Message>
+    <Message v-if="loadError" severity="error" size="small" class="sc-status" data-testid="sc-load-error">
+      {{ loadError }}
+    </Message>
 
     <section class="meta">
-      <label>名稱 <input v-model="model.name" data-testid="sc-name"></label>
-      <label>版本 <input v-model="model.version"></label>
+      <label>名稱 <InputText v-model="model.name" size="small" data-testid="sc-name" /></label>
+      <label>版本 <InputText v-model="model.version" size="small" /></label>
       <label>模式
-        <select v-model="model.mode">
-          <option>REALTIME</option><option>WEGO</option><option>IGO_UGO</option>
-        </select>
+        <Select
+          v-model="model.mode"
+          :options="MODE_OPTIONS"
+          option-label="label"
+          option-value="value"
+          size="small"
+        />
       </label>
     </section>
 
     <section>
-      <h2>陣營 <button data-testid="add-faction" @click="addFaction">＋</button></h2>
+      <h2>陣營 <Button data-testid="add-faction" size="small" text @click="addFaction">＋</Button></h2>
       <div v-for="(f, i) in model.factions" :key="i" class="row" data-testid="faction-row">
-        <input v-model="f.id" placeholder="ID">
-        <input v-model="f.color" type="color">
-        <button @click="remove(model.factions, i)">✕</button>
+        <InputText v-model="f.id" size="small" placeholder="ID" />
+        <input v-model="f.color" type="color" class="color-input">
+        <Button size="small" text severity="danger" @click="remove(model.factions, i)">✕</Button>
       </div>
     </section>
 
     <section>
-      <h2>關係 <button data-testid="add-relation" @click="addRelation">＋</button></h2>
-      <div v-for="(r, i) in model.relations" :key="i" class="row" data-testid="relation-row">
-        <input v-model="r.a"><input v-model="r.b">
-        <select v-model="r.relation"><option v-for="rel in RELATIONS" :key="rel">{{ rel }}</option></select>
-        <button @click="remove(model.relations, i)">✕</button>
-      </div>
-      <p class="hint">未宣告配對預設 HOSTILE（§12.1）。</p>
+      <h2>關係</h2>
+      <table class="rel-matrix" data-testid="relations-matrix">
+        <thead>
+          <tr>
+            <th />
+            <th v-for="(c, ci) in model.factions" :key="ci">{{ c.id }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(a, ai) in model.factions" :key="ai">
+            <th>{{ a.id }}</th>
+            <td v-for="(b, bi) in model.factions" :key="bi">
+              <span v-if="ai === bi" class="rel-diag">—</span>
+              <Button
+                v-else
+                size="small"
+                text
+                :severity="relSeverity(relationOf(a.id, b.id))"
+                @click="cycleRelation(a.id, b.id)"
+              >
+                {{ RELATION_LABELS[relationOf(a.id, b.id)] }}
+              </Button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint">點格切換：同盟 → 中立 → 敵對（對稱寫入）。未宣告配對預設敵對（§12.1）。</p>
     </section>
 
     <section>
-      <h2>單位（ORBAT） <button data-testid="add-unit" @click="addUnit">＋</button></h2>
-      <div v-for="(u, i) in model.units" :key="i" class="row" data-testid="unit-row">
-        <select v-model="u.faction"><option v-for="f in model.factions" :key="f.id">{{ f.id }}</option></select>
-        <input v-model="u.designation" placeholder="番號">
-        <select v-model="u.unitLevel"><option v-for="l in LEVELS" :key="l">{{ l }}</option></select>
-        <input v-model="u.parent" placeholder="上級">
-        <button @click="remove(model.units, i)">✕</button>
+      <h2>單位（ORBAT） <Button data-testid="add-unit" size="small" text @click="addUnit">＋</Button></h2>
+      <p v-if="!model.units.length" class="empty-hint" data-testid="orbat-empty">
+        尚無單位，按 ＋ 新增（依「上級」欄構成指揮層級樹）。
+      </p>
+      <!-- #29 分陣營 TreeTable：每個陣營一棵樹，依上級番號構成指揮層級 -->
+      <div
+        v-for="tree in orbatTrees"
+        :key="tree.id"
+        class="orbat-faction"
+        data-testid="orbat-faction"
+      >
+        <div class="orbat-faction-head">
+          <span class="fac-dot" :style="{ background: tree.color || '#888' }" />
+          <b>{{ tree.id }}</b>
+          <span class="fac-count">· {{ tree.count }} 單位</span>
+          <Button
+            size="small"
+            text
+            data-testid="add-unit-faction"
+            @click="addUnitTo(tree.id)"
+          >＋ 加單位</Button>
+          <span v-if="tree.count > 1" class="tree-toggles">
+            <Button
+              size="small"
+              text
+              severity="secondary"
+              data-testid="expand-all"
+              @click="setTreeExpanded(tree.nodes, true)"
+            >展開全部</Button>
+            <Button
+              size="small"
+              text
+              severity="secondary"
+              data-testid="collapse-all"
+              @click="setTreeExpanded(tree.nodes, false)"
+            >收合全部</Button>
+          </span>
+        </div>
+        <p v-if="!tree.nodes.length" class="empty-hint" data-testid="orbat-faction-empty">
+          此陣營尚無單位，按「＋ 加單位」新增（設「上級」欄即構成可收合的指揮層級）。
+        </p>
+        <TreeTable
+          v-else
+          v-model:expanded-keys="expandedKeys"
+          :value="tree.nodes"
+          size="small"
+          data-testid="orbat-treetable"
+        >
+          <Column field="designation" header="番號" expander>
+            <template #body="{ node }">
+              <InputText v-model="node.data.designation" size="small" placeholder="番號" />
+            </template>
+          </Column>
+          <Column header="編制">
+            <template #body="{ node }">
+              <Select
+                v-model="node.data.unitLevel"
+                :options="LEVEL_OPTIONS"
+                option-label="label"
+                option-value="value"
+                size="small"
+              />
+            </template>
+          </Column>
+          <Column header="上級">
+            <template #body="{ node }">
+              <Select
+                v-model="node.data.parent"
+                :options="parentOptions(node.data)"
+                option-label="label"
+                option-value="value"
+                size="small"
+                placeholder="上級"
+              />
+            </template>
+          </Column>
+          <Column header="座標">
+            <template #body="{ node }">
+              <span class="coord-cell">
+                <InputText
+                  :model-value="numStr(node.data.lat)"
+                  size="small"
+                  placeholder="緯"
+                  class="coord"
+                  @update:model-value="(v: string | undefined) => setNum(node.data, 'lat', v)"
+                />
+                <InputText
+                  :model-value="numStr(node.data.lng)"
+                  size="small"
+                  placeholder="經"
+                  class="coord"
+                  @update:model-value="(v: string | undefined) => setNum(node.data, 'lng', v)"
+                />
+                <Button
+                  size="small"
+                  text
+                  :severity="openPickers.has(node.data) ? 'primary' : 'secondary'"
+                  data-testid="unit-pick-toggle"
+                  @click="togglePicker(node.data)"
+                >📍</Button>
+              </span>
+            </template>
+          </Column>
+          <Column header="">
+            <template #body="{ node }">
+              <Button
+                size="small"
+                text
+                severity="danger"
+                data-testid="remove-unit"
+                @click="removeUnit(node.data)"
+              >✕</Button>
+            </template>
+          </Column>
+        </TreeTable>
+        <!-- 地圖選取（展開者顯示於表格下方） -->
+        <ClientOnly v-for="u in openPickersOf(tree.id)" :key="`pick-${tree.id}-${u.designation}`">
+          <div class="picker-wrap" data-testid="unit-picker-wrap">
+            <span class="picker-label">📍 {{ u.designation }} 初始位置</span>
+            <MapPointPicker
+              class="unit-picker"
+              :model-value="unitPoint(u)"
+              @update:model-value="(p: { lng: number; lat: number }) => setUnitPoint(u, p)"
+            />
+          </div>
+        </ClientOnly>
+      </div>
+    </section>
+
+    <section data-testid="msel-section">
+      <h2>MSEL 事件 <Button data-testid="add-msel" size="small" text @click="addMsel">＋</Button></h2>
+      <p class="hint">觸發條件成立時注入事件；「一次」勾選為邊緣觸發（僅觸一次），取消則每個成立的 tick 都觸。</p>
+      <div v-for="(m, i) in model.msel" :key="i" class="msel-row" data-testid="msel-row">
+        <div class="msel-head">
+          <InputText v-model="m.id" size="small" placeholder="ID" class="msel-id" />
+          <label class="msel-once">
+            <Checkbox v-model="m.once" binary />一次
+          </label>
+          <Button size="small" text severity="danger" @click="remove(model.msel, i)">✕</Button>
+        </div>
+        <div class="msel-block">
+          <span class="msel-label">觸發</span>
+          <ConditionBuilder v-model="m.trigger" :factions="factionIds" />
+        </div>
+        <div class="msel-block">
+          <span class="msel-label">注入</span>
+          <InjectActionForm v-model="m.inject" :factions="factionIds" />
+        </div>
       </div>
     </section>
 
     <section class="io">
       <div>
         <h2>匯出</h2>
-        <textarea :value="exportText" readonly rows="8" data-testid="export-text" />
+        <Textarea :model-value="exportText" readonly rows="8" data-testid="export-text" class="mono" />
       </div>
       <div>
         <h2>匯入</h2>
-        <textarea v-model="importText" rows="8" placeholder="貼上匯出的 JSON" data-testid="import-text" />
-        <button data-testid="do-import" @click="doImport">載入</button>
-        <p v-if="importError" class="err" data-testid="import-error">{{ importError }}</p>
+        <Textarea v-model="importText" rows="8" placeholder="貼上匯出的 JSON" data-testid="import-text" class="mono" />
+        <Button data-testid="do-import" size="small" @click="doImport">載入</Button>
+        <Message v-if="importError" severity="error" size="small" data-testid="import-error">{{ importError }}</Message>
       </div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.editor { max-width: 900px; margin: 1rem auto; padding: 0 1rem; }
-section { margin: 1rem 0; border-top: 1px solid #ccc; padding-top: 0.5rem; }
-.row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; }
-.meta { display: flex; gap: 1rem; flex-wrap: wrap; }
+.editor { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
+.sc-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+.sc-bar h1 { font-size: 1.25rem; margin: 0; }
+.sc-save-btn { margin-left: auto; }
+.sc-status { margin: 0 0 0.75rem; }
+section { margin: 1rem 0; border-top: 1px solid #1e293b; padding-top: 0.75rem; }
+h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; gap: 0.5rem; }
+.row { display: flex; gap: 0.4rem; margin: 0.25rem 0; align-items: center; flex-wrap: wrap; }
+.unit-block { margin: 0.25rem 0; }
+.unit-picker { margin: 0.25rem 0 0.5rem; max-width: 32rem; }
+/* #29 ORBAT 分陣營 TreeTable */
+.orbat-faction { margin: 0.5rem 0 1rem; }
+.orbat-faction-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-bottom: 0.25rem; font-size: 0.9rem;
+}
+.orbat-faction-head .fac-dot {
+  width: 0.75rem; height: 0.75rem; border-radius: 50%; display: inline-block; flex: none;
+}
+.orbat-faction-head .fac-count { color: #94a3b8; font-size: 0.8rem; }
+.orbat-faction-head .tree-toggles { margin-left: auto; display: inline-flex; gap: 0.25rem; }
+.coord-cell { display: inline-flex; gap: 0.25rem; align-items: center; }
+.picker-wrap { margin: 0.25rem 0 0.5rem; }
+.picker-label { display: block; color: #94a3b8; font-size: 0.75rem; margin-bottom: 0.2rem; }
+.empty-hint { color: #94a3b8; font-size: 0.82rem; }
+:deep(.p-treetable) { font-size: 0.85rem; }
+:deep(.p-treetable td) { padding: 0.2rem 0.4rem; }
+.meta { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+.meta label { display: inline-flex; align-items: center; gap: 0.4rem; }
 .io { display: flex; gap: 1rem; }
 .io > div { flex: 1; }
-textarea { width: 100%; font-family: monospace; font-size: 0.75rem; }
-.hint { color: #888; font-size: 0.8rem; }
+.mono { width: 100%; font-family: monospace; font-size: 0.75rem; }
+.coord { width: 6rem; }
+.color-input {
+  width: 2.25rem; height: 2rem; padding: 0; border: 1px solid #334155;
+  border-radius: 0.25rem; background: #0f172a; cursor: pointer;
+}
+.hint { color: #94a3b8; font-size: 0.8rem; }
+.rel-matrix { border-collapse: collapse; margin: 0.25rem 0; }
+.rel-matrix th, .rel-matrix td { border: 1px solid #1e293b; padding: 0.1rem 0.25rem; text-align: center; min-width: 4.75rem; }
+.rel-matrix th { color: #94a3b8; font-weight: 600; font-size: 0.8rem; }
+.rel-diag { color: #475569; }
+.msel-row { border: 1px solid #1e293b; border-radius: 0.35rem; padding: 0.5rem; margin: 0.4rem 0; }
+.msel-head { display: flex; gap: 0.5rem; align-items: center; }
+.msel-id { width: 6rem; }
+.msel-once { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; color: #94a3b8; }
+.msel-block { display: flex; gap: 0.4rem; align-items: baseline; margin-top: 0.4rem; flex-wrap: wrap; }
+.msel-label { font-size: 0.8125rem; color: #64748b; min-width: 2.5rem; }
 </style>

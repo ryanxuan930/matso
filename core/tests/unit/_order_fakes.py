@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.errors import TerrainUnavailableError
 from app.models.enums import UnitLevel, UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, User, WargameSession
+from app.orders.precheck import LosOutcome
 
 
 @dataclass(frozen=True)
@@ -103,9 +104,11 @@ class FakeGateway:
 
     def has_los(
         self, observer: tuple[float, float, float], target: tuple[float, float, float]
-    ) -> tuple[bool, float]:
+    ) -> LosOutcome:
         self.los_calls.append((observer, target))
-        return self.visible, (12.3 if self.visible else -5.0)
+        if self.visible:
+            return LosOutcome(True, 12.3)
+        return LosOutcome(False, -5.0, 23.7, 121.2)
 
 
 class DownGateway:
@@ -116,5 +119,5 @@ class DownGateway:
 
     def has_los(
         self, observer: tuple[float, float, float], target: tuple[float, float, float]
-    ) -> tuple[bool, float]:
+    ) -> LosOutcome:
         raise TerrainUnavailableError("terrain down")

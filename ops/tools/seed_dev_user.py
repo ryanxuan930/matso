@@ -97,6 +97,10 @@ def _seed_session(db: Session, user: User) -> None:
             unit_scope=[],
         )
     )
+    # 配發預設武器，讓 e2e-orders 單位有可選武器/彈種（資料驅動 ENGAGE）。
+    from app.adjudication import seed_session_equipment
+
+    seed_session_equipment(db, sid)
     db.commit()
     print(f"✓ 建立 E2E session {sid}（3 藍軍單位 + {user.username} 為 BLUE COMMANDER）")
 

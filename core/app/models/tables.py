@@ -5,6 +5,7 @@
 """
 
 import uuid
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -65,7 +66,15 @@ class WargameSession(Base):
         "startTime", DateTime(timezone=False), server_default=func.now()
     )
     end_time: Mapped[str | None] = mapped_column("endTime", DateTime(timezone=False))
+    # #31 封存時間（歷史頁）：有值＝已封存（活模擬凍結、於歷史頁可還原/刪除）。
+    archived_at: Mapped[str | None] = mapped_column("archivedAt", DateTime(timezone=False))
+    # 想定世界初始日期時間（in-world t=0；供 #6 日照推算，可編輯 #16）。
+    world_start_time: Mapped[str | None] = mapped_column("worldStartTime", DateTime(timezone=False))
     current_weather: Mapped[dict] = mapped_column("currentWeather", JSON)  # type: ignore[type-arg]
+    # #6：允許自行編輯本軍編裝的陣營清單（White Cell 設定）。None = 僅白軍可編。
+    orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
+        "orbatEditFactions", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):
@@ -86,6 +95,12 @@ class TacticalUnit(Base):
     current_lat: Mapped[float | None] = mapped_column("currentLat", Double)
     current_lng: Mapped[float | None] = mapped_column("currentLng", Double)
     elevation: Mapped[float | None] = mapped_column("elevation", Double)
+    # 戰力（真實化交戰）：authorized＝滿編（分母，不遞減）；current＝當前權威戰力（交戰扣此）；
+    # health_status 改為由 current/authorized 導出的效能%（顯示用）。人員數供顯示/回報（可空）。
+    authorized_strength: Mapped[float] = mapped_column("authorizedStrength", Double, default=100.0)
+    current_strength: Mapped[float] = mapped_column("currentStrength", Double, default=100.0)
+    personnel_authorized: Mapped[int | None] = mapped_column("personnelAuthorized", Integer)
+    personnel_current: Mapped[int | None] = mapped_column("personnelCurrent", Integer)
     health_status: Mapped[float] = mapped_column("healthStatus", Double, default=100.0)
     comms_status: Mapped[CommsState] = mapped_column(
         "commsStatus", SAEnum(CommsState), default=CommsState.ONLINE
@@ -112,6 +127,29 @@ class EquipmentInstance(Base):
         "ownerId", String(191), ForeignKey("TacticalUnit.id", ondelete="CASCADE")
     )
     current_state: Mapped[dict] = mapped_column("currentState", JSON, default=dict)  # type: ignore[type-arg]
+    # #30 建制數量：一個 instance 代表 N 件同型裝備（如班內 7 支步槍）；驅動 squad 火力容量。
+    quantity: Mapped[int] = mapped_column("quantity", Integer, default=1)
+
+
+class MapFeature(Base):
+    """地圖標註/工事：武器據點、障礙、建築、控制措施（點/線/面 + 影響範圍 + 屬性）。"""
+
+    __tablename__ = "MapFeature"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(
+        "sessionId", String(191), ForeignKey("WargameSession.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column("kind", String(191))
+    geometry_type: Mapped[str] = mapped_column("geometryType", String(191))
+    # GeoJSON coordinates（依 geometryType：Point/Line/Polygon）
+    geometry: Mapped[Any] = mapped_column("geometry", JSON)
+    owner_faction: Mapped[str] = mapped_column("ownerFaction", String(191))
+    label: Mapped[str | None] = mapped_column("label", String(191), nullable=True)
+    influence_radius_m: Mapped[float | None] = mapped_column("influenceRadiusM", Double)
+    weapon_template_id: Mapped[str | None] = mapped_column("weaponTemplateId", String(191))
+    attributes: Mapped[dict] = mapped_column("attributes", JSON, default=dict)  # type: ignore[type-arg]
+    created_at: Mapped[str] = mapped_column("createdAt", DateTime, server_default=func.now())
 
 
 class TacticalEventLog(Base):

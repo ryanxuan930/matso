@@ -30,17 +30,24 @@ class OrderRequest(BaseModel):
 
 
 class MovePayload(BaseModel):
-    """MOVE 指令載荷：目標 hex + 機動側寫。"""
+    """MOVE 指令載荷：目標 hex + 機動側寫。
+
+    to_lat/to_lng＝精確移動（#2）：預檢仍以 to_h3 做可達/地形判定，但最終落點用精確座標，
+    不吸附到六角格心——供 <1km 的近距作戰規劃（校園/大樓等）。
+    """
 
     to_h3: str = Field(min_length=1)
     mobility_profile: str = Field(min_length=1)
+    to_lat: float | None = Field(default=None, ge=-90, le=90)
+    to_lng: float | None = Field(default=None, ge=-180, le=180)
 
 
 class EngagePayload(BaseModel):
-    """ENGAGE 指令載荷：目標單位（+ 選用武器實例）。"""
+    """ENGAGE 指令載荷：目標單位（+ 選用武器實例 + 彈種）。"""
 
     target_unit_id: str = Field(min_length=1)
     weapon_id: str | None = None
+    ammo_type: str | None = None
 
 
 class PrecheckCheck(BaseModel):
@@ -64,3 +71,6 @@ class OrderResponse(BaseModel):
     status: OrderStatus
     precheck: PrecheckResult | None = None
     issued_at_tick: int
+    resolved_at_tick: int | None = None
+    target_unit_id: str | None = None  # ENGAGE 目標單位（供指令列顯示對象）
+    target_h3: str | None = None  # MOVE 目的地 hex（供指令列顯示對象）

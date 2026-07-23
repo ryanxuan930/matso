@@ -69,6 +69,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 帳號列表（#32）——限白軍/統裁/管理 */
+        get: operations["listUsers"];
+        put?: never;
+        /** @description 建立帳號（#32）——設定角色與初始密碼；限白軍/統裁/管理 */
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 刪除帳號（#32）——限白軍/統裁/管理；不可刪自己/最後管理員 */
+        delete: operations["deleteUser"];
+        options?: never;
+        head?: never;
+        /** @description 更新帳號角色（權限）/ 重設密碼（#32）——限白軍/統裁/管理 */
+        patch: operations["updateUser"];
+        trace?: never;
+    };
     "/sessions": {
         parameters: {
             query?: never;
@@ -80,6 +118,64 @@ export interface paths {
         get: operations["listSessions"];
         put?: never;
         post: operations["createSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 永久刪除推演（#31，連同單位/事件/標註）——限統裁/管理，前端須二次確認 */
+        delete: operations["deleteSession"];
+        options?: never;
+        head?: never;
+        /** @description 編輯已開推演設定（名稱 / 想定世界初始日期時間）——限統裁/管理（#16） */
+        patch: operations["editSession"];
+        trace?: never;
+    };
+    "/sessions/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 封存推演（#31）——移入歷史頁、活模擬凍結。限統裁/管理 */
+        post: operations["archiveSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 還原封存推演（#31）——移回進行中。限統裁/管理 */
+        post: operations["unarchiveSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -137,6 +233,185 @@ export interface paths {
         get: operations["listUnits"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/units/{uid}/weapons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        /** @description 單位可用武器（資料驅動 baseStats）；fog of war：全知見任一，否則僅己方單位（他方→403） */
+        get: operations["listUnitWeapons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/equipment-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 裝備範本目錄（編裝編輯器配發用） */
+        get: operations["listEquipmentTemplates"];
+        put?: never;
+        /** @description 建立武器/裝備範本（限統裁/管理；base_stats 依 weaponeering.schema.json 驗證） */
+        post: operations["createEquipmentTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/equipment-templates/{tid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description 更新武器/裝備範本屬性（限統裁/管理；影響全域目錄） */
+        put: operations["updateEquipmentTemplate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/units/{uid}/equipment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        /** @description 單位編裝清單（fog of war：全知見任一，否則僅己方單位→403） */
+        get: operations["listUnitEquipment"];
+        put?: never;
+        /** @description 為單位配發一件裝備（編裝編輯權限：白軍，或本軍且該局開放自編） */
+        post: operations["addUnitEquipment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/units/{uid}/equipment/{eid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+                eid: components["parameters"]["EquipmentId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 移除單位的一件裝備——編裝編輯權限 */
+        delete: operations["removeUnitEquipment"];
+        options?: never;
+        head?: never;
+        /** @description 覆寫裝備實例即時狀態（如彈藥量）——編裝編輯權限 */
+        patch: operations["editUnitEquipment"];
+        trace?: never;
+    };
+    "/sessions/{id}/map-features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍） */
+        get: operations["listMapFeatures"];
+        put?: never;
+        /** @description 新增地圖標註/工事（全知可指定 owner_faction；否則本軍） */
+        post: operations["createMapFeature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/map-features/{fid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                fid: components["parameters"]["FeatureId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 移除標註（全知任一；否則僅本軍標註） */
+        delete: operations["deleteMapFeature"];
+        options?: never;
+        head?: never;
+        /** @description 編輯標註（全知任一；否則僅本軍標註） */
+        patch: operations["editMapFeature"];
+        trace?: never;
+    };
+    "/sessions/{id}/terrain/footprint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 武器射向/雷達扇區的地形裁切（viewshed fan，#11）——逐方位查 LOS 取通視距離 */
+        post: operations["terrainFootprint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/movement/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 移動路徑預覽（#28）——試算距離/tick/油耗/可行性/強穿阻礙（下令前） */
+        post: operations["previewMovement"];
         delete?: never;
         options?: never;
         head?: never;
@@ -330,6 +605,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scenarios/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: components["parameters"]["ScenarioId"];
+            };
+            cookie?: never;
+        };
+        /** @description 回傳已存想定 bundle（供編輯器載入）；限統裁/管理 */
+        get: operations["getScenario"];
+        put?: never;
+        post?: never;
+        /** @description 刪除想定；限統裁/管理 */
+        delete: operations["deleteScenario"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/plugins": {
         parameters: {
             query?: never;
@@ -375,7 +670,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -411,6 +706,25 @@ export interface components {
             username: string;
             role: components["schemas"]["UserRole"];
         };
+        /** @description 帳號管理列表項（#32） */
+        UserView: {
+            id: string;
+            username: string;
+            role: components["schemas"]["UserRole"];
+            /** @description 建立時間 ISO8601 */
+            created_at?: string | null;
+        };
+        /** @description 建立帳號（#32；白軍/管理設定角色與初始密碼） */
+        CreateUserRequest: {
+            username: string;
+            password: string;
+            role?: components["schemas"]["UserRole"];
+        };
+        /** @description 更新帳號角色（權限）或重設密碼（#32；None＝不動） */
+        UpdateUserRequest: {
+            role?: components["schemas"]["UserRole"];
+            password?: string | null;
+        };
         /** @description lobby 列表項（faction/角色過濾後） */
         SessionSummary: {
             id: string;
@@ -420,6 +734,23 @@ export interface components {
             status: string;
             /** @description 呼叫者在此 session 的陣營（非參與者為 null） */
             my_faction?: string | null;
+            /** @description 開局（session 建立）時間 ISO8601，供 COP 顯示執行時間 */
+            start_time?: string | null;
+            /** @description 想定世界初始日期時間 ISO8601（#16/#6 日照） */
+            world_start_time?: string | null;
+            /** @description 封存時間 ISO8601（#31；有值＝已封存） */
+            archived_at?: string | null;
+            /**
+             * @description 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編）
+             * @default false
+             */
+            orbat_edit: boolean;
+        };
+        /** @description 編輯已開推演設定（#16）——限統裁/管理 */
+        EditSessionRequest: {
+            name?: string | null;
+            /** @description 想定世界初始日期時間 ISO8601（空字串＝清除） */
+            world_start_time?: string | null;
         };
         UnitView: {
             id: string;
@@ -428,8 +759,175 @@ export interface components {
             faction: string;
             lat?: number | null;
             lng?: number | null;
+            /** @description 作戰效能%（由 current/authorized 戰力比經效能曲線導出，真實化交戰） */
             health: number;
+            /** @description 當前戰力（權威量；交戰漸進扣減） */
+            strength?: number;
+            /** @description 滿編戰力（TO&E 分母） */
+            authorized_strength?: number;
+            /** @description 平台/建制數（每次命中僅損一個平台份量） */
+            platform_count?: number;
+            /** @description 當前人員數（顯示用，可空） */
+            personnel_current?: number | null;
             comms: string;
+        };
+        /** @description 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種 */
+        WeaponView: {
+            id: string;
+            template_id: string;
+            name: string;
+            category: string;
+            max_range_m?: number | null;
+            min_range_m: number;
+            ammo_types: string[];
+            ammo_remaining?: number | null;
+        };
+        /** @description 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄 */
+        EquipmentTemplateView: {
+            id: string;
+            name: string;
+            /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
+            category: string;
+            /** @description 依 weaponeering.schema.json 驗證的屬性 */
+            base_stats: Record<string, never>;
+        };
+        /** @description 單位持有的裝備實例（含即時狀態與範本屬性，供編裝編輯器） */
+        EquipmentInstanceView: {
+            id: string;
+            template_id: string;
+            name: string;
+            category: string;
+            /** @description 即時狀態（如 {ammo:100}） */
+            current_state: Record<string, never>;
+            base_stats: Record<string, never>;
+            /**
+             * @description 建制數量（#30；班內同型武器件數，驅動 squad 齊射）
+             * @default 1
+             */
+            quantity: number;
+        };
+        AddEquipmentRequest: {
+            template_id: string;
+            /**
+             * @description 配發件數（#30）
+             * @default 1
+             */
+            quantity: number;
+        };
+        /** @description 建立/更新裝備範本（武器屬性/功能）——base_stats 依 weaponeering.schema.json 驗證 */
+        EquipmentTemplateEdit: {
+            name: string;
+            /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
+            category: string;
+            base_stats: Record<string, never>;
+        };
+        /** @description 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面） */
+        MapFeatureView: {
+            id: string;
+            /** @description OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION */
+            kind: string;
+            /** @description POINT / LINE / POLYGON */
+            geometry_type: string;
+            /** @description GeoJSON coordinates（依 geometry_type） */
+            geometry: unknown;
+            /** @description 擁有陣營（WHITE_CELL＝共同） */
+            owner_faction: string;
+            label?: string | null;
+            influence_radius_m?: number | null;
+            weapon_template_id?: string | null;
+            attributes: Record<string, never>;
+        };
+        MapFeatureCreate: {
+            kind: string;
+            geometry_type: string;
+            geometry: unknown;
+            /** @description 全知可指定（含 WHITE_CELL）；否則本軍 */
+            owner_faction?: string | null;
+            label?: string | null;
+            influence_radius_m?: number | null;
+            weapon_template_id?: string | null;
+            attributes?: Record<string, never>;
+        };
+        MapFeatureEdit: {
+            kind?: string | null;
+            geometry_type?: string | null;
+            geometry?: unknown;
+            label?: string | null;
+            influence_radius_m?: number | null;
+            weapon_template_id?: string | null;
+            attributes?: Record<string, never> | null;
+        };
+        /** @description 武器射向/雷達扇區的地形裁切請求（#11） */
+        TerrainFootprintRequest: {
+            /** @description [lng, lat]（射源） */
+            origin: number[];
+            max_range_m: number;
+            /** @description 扇形中心方位（北為 0、順時針）；全圓可省 */
+            direction_deg?: number | null;
+            /** @description 張角；null 或 ≥360 → 全圓（雷達） */
+            arc_deg?: number | null;
+            /**
+             * @description 方位取樣數（伺服端夾至上限 72）
+             * @default 24
+             */
+            steps: number;
+            /**
+             * @description 射源/雷達離地高
+             * @default 10
+             */
+            observer_height_m: number;
+            /**
+             * @description 目標/障礙離地高（default 2m）
+             * @default 2
+             */
+            target_height_m: number;
+        };
+        /** @description 地形裁切後的射界多邊形（GeoJSON 環） */
+        TerrainFootprintView: {
+            /** @description [[lng,lat],…] 閉合環 */
+            ring: number[][];
+            /** @description 是否有方位受地形限制 */
+            clipped: boolean;
+            max_range_m: number;
+        };
+        /** @description 移動路徑預覽請求（#28）——waypoints 優先，否則單一目的地（起點取單位當前座標） */
+        MovementPreviewRequest: {
+            unit_id: string;
+            /** @description [[lng,lat],…] 自訂路徑 */
+            waypoints?: number[][] | null;
+            to_h3?: string | null;
+            to_lat?: number | null;
+            to_lng?: number | null;
+        };
+        /** @description 路徑穿越一個不可通行標註的紀錄（#28） */
+        MovementCrossing: {
+            feature_id: string;
+            /** @description OBSTACLE/BUILDING/TERRAIN */
+            kind: string;
+            label?: string | null;
+            /** @description 0..1 沿全程進入該阻礙的比例 */
+            entry_frac: number;
+        };
+        /** @description 移動路徑試算結果（#28） */
+        MovementPreviewView: {
+            /** @description [[lng,lat],…] 含起點 */
+            path: number[][];
+            distance_m: number;
+            duration_ticks: number;
+            fuel_cost: number;
+            /** @description 基礎（確定性）耗損；強穿隨機加成不含在內 */
+            est_attrition: number;
+            /** @description 無強穿＝可行 */
+            feasible: boolean;
+            /** @description 是否需強穿至少一個阻礙 */
+            forced: boolean;
+            crossings: components["schemas"]["MovementCrossing"][];
+        };
+        EquipmentStateEdit: {
+            /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
+            current_state: Record<string, never>;
+            /** @description 調整建制數量（#30；null＝不動） */
+            quantity?: number | null;
         };
         CreateSessionRequest: {
             name: string;
@@ -462,9 +960,15 @@ export interface components {
         OrderRequest: {
             unit_id: string;
             order_type: components["schemas"]["OrderType"];
-            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile}；ENGAGE={target_unit_id,weapon_id?} */
+            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。 */
             payload?: Record<string, never>;
         };
+        /**
+         * @description 聯合兵種火力政策（SPEC_EXTEND P3；ENGAGE payload.fire_policy，未指定＝FREE）。僅意圖/篩選，不改物理數值。指定 payload.weapon_id 等同僅該武器射擊（單武器）。
+         * @default FREE
+         * @enum {string}
+         */
+        FirePolicy: "FREE" | "SMALL_ARMS_ONLY" | "ANTI_ARMOR_HOLD";
         PrecheckCheck: {
             name: string;
             passed: boolean;
@@ -482,14 +986,24 @@ export interface components {
             status: components["schemas"]["OrderStatus"];
             precheck?: components["schemas"]["PrecheckResult"] | null;
             issued_at_tick: number;
+            resolved_at_tick?: number | null;
+            /** @description ENGAGE 目標單位 */
+            target_unit_id?: string | null;
+            /** @description MOVE 目的地 hex */
+            target_h3?: string | null;
         };
     };
     responses: never;
     parameters: {
         SessionId: string;
         OrderId: string;
+        UnitId: string;
+        EquipmentId: string;
+        TemplateId: string;
+        FeatureId: string;
         TaskId: string;
         PluginName: string;
+        ScenarioId: string;
     };
     requestBodies: never;
     headers: never;
@@ -543,13 +1057,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New access token */
+            /** @description 新的 token 對（滑動續期：access + 新 refresh） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AccessToken"];
+                    "application/json": components["schemas"]["TokenPair"];
                 };
             };
             /** @description Invalid or expired refresh token */
@@ -601,6 +1115,159 @@ export interface operations {
             };
             /** @description Unauthenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserView"][];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserView"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Username exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserView"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -663,6 +1330,132 @@ export interface operations {
             };
             /** @description Unauthenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    archiveSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    unarchiveSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Restored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -737,6 +1530,473 @@ export interface operations {
             };
             /** @description Not a participant */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listUnitWeapons: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Weapons */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeaponView"][];
+                };
+            };
+            /** @description Not own faction */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listEquipmentTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Templates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentTemplateView"][];
+                };
+            };
+        };
+    };
+    createEquipmentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EquipmentTemplateEdit"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentTemplateView"];
+                };
+            };
+            /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description base_stats invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateEquipmentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EquipmentTemplateEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentTemplateView"];
+                };
+            };
+            /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description base_stats invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Equipment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentInstanceView"][];
+                };
+            };
+            /** @description Not own faction */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    addUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddEquipmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentInstanceView"];
+                };
+            };
+            /** @description No orbat-edit permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removeUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+                eid: components["parameters"]["EquipmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No orbat-edit permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editUnitEquipment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+                eid: components["parameters"]["EquipmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EquipmentStateEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquipmentInstanceView"];
+                };
+            };
+            /** @description No orbat-edit permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listMapFeatures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Features */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapFeatureView"][];
+                };
+            };
+        };
+    };
+    createMapFeature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MapFeatureCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapFeatureView"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteMapFeature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                fid: components["parameters"]["FeatureId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editMapFeature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                fid: components["parameters"]["FeatureId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MapFeatureEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapFeatureView"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    terrainFootprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerrainFootprintRequest"];
+            };
+        };
+        responses: {
+            /** @description Clipped footprint polygon */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerrainFootprintView"];
+                };
+            };
+            /** @description Terrain unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewMovement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MovementPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Route estimate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MovementPreviewView"];
+                };
+            };
+            /** @description Bad request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1080,6 +2340,57 @@ export interface operations {
         responses: {
             /** @description Validated & stored */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: components["parameters"]["ScenarioId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scenario bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: components["parameters"]["ScenarioId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };

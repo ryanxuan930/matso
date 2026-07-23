@@ -33,10 +33,32 @@ model WargameSession {
   mode           SessionMode @default(REALTIME)
   startTime      DateTime  @default(now())
   endTime        DateTime?
+  archivedAt     DateTime? // #31 封存時間（歷史頁）：有值＝已封存（活模擬凍結、可還原/刪除）
+  worldStartTime DateTime? // 想定世界初始日期時間（in-world t=0；供 #6 日照/晨昏推算；可編輯 #16）
   currentWeather Json // Processed output strictly from the Weather Module
+  // #6：允許「自行編輯本軍編裝（ORBAT）」的陣營清單（White Cell 設定）。null/[] = 僅白軍可編。
+  orbatEditFactions Json?
 
-  units     TacticalUnit[]
-  eventLogs TacticalEventLog[]
+  units       TacticalUnit[]
+  eventLogs   TacticalEventLog[]
+  mapFeatures MapFeature[]
+}
+
+// 地圖標註/工事：武器據點、障礙、建築、控制措施等（點/線/面 + 影響範圍 + 屬性）。
+// ownerFaction=WHITE_CELL → 共同/ground truth（全體可見）；其餘＝該陣營標注（fog of war，後端過濾）。
+model MapFeature {
+  id           String         @id @default(uuid())
+  sessionId    String
+  session      WargameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind         String // OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION
+  geometryType String // POINT / LINE / POLYGON
+  geometry     Json // GeoJSON coordinates（依 geometryType：Point=[lng,lat]、Line=[[lng,lat]…]、Polygon=[[[lng,lat]…]]）
+  ownerFaction String // 擁有陣營（WHITE_CELL＝共同）
+  label        String?
+  influenceRadiusM Float? // 影響範圍（公尺；點/線常用）
+  weaponTemplateId String? // WEAPON_EMPLACEMENT 連結的武器範本（EquipmentTemplate.id）
+  attributes   Json     @default("{}") // 額外屬性（passable/damage/color…）
+  createdAt    DateTime @default(now())
 }
 
 enum SessionMode {
@@ -87,6 +109,13 @@ model TacticalUnit {
   currentLat   Float? // WGS84
   currentLng   Float? // WGS84
   elevation    Float? // 由 Terrain Module 查詢
+  // 戰力（真實化交戰）：authorizedStrength＝滿編戰力（TO&E 分母，不遞減）；currentStrength＝當前
+  // 戰力（唯一權威量，交戰扣此）；healthStatus 改為由 currentStrength/authorizedStrength 經凹形
+  // 折點曲線導出的「效能%」（供 COP 顯示，不再是權威 HP）。人員數供顯示/回報（可空）。
+  authorizedStrength  Float @default(100.0)
+  currentStrength     Float @default(100.0)
+  personnelAuthorized Int?
+  personnelCurrent    Int?
   healthStatus Float      @default(100.0)
   commsStatus  CommsState @default(ONLINE)
 
@@ -114,6 +143,8 @@ model EquipmentInstance {
   ownerId      String
   owner        TacticalUnit      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   currentState Json              @default("{}")
+  // #30 建制數量：一個 instance 代表 N 件同型裝備（如班內 7 支步槍）；驅動 squad 火力容量。
+  quantity     Int               @default(1)
 }
 
 // ==========================================
