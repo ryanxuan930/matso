@@ -132,10 +132,12 @@ class SimManager:
             resolver, seed = await asyncio.to_thread(
                 self._prepare_engage, engage_db, session_id, hot
             )
+            sim_clock = SimClock(tick_rate_ms=_TICK_RATE_MS)
             kernel = Kernel(
                 session_id=session_id,
-                clock=SimClock(tick_rate_ms=_TICK_RATE_MS),
-                order_source=EngageOrderSource(engage_db, session_id),
+                clock=sim_clock,
+                # #33b 通信閘門：OFFLINE/DEGRADED 時 ENGAGE 延後送達（傳 hot + 同一 clock）。
+                order_source=EngageOrderSource(engage_db, session_id, hot, sim_clock),
                 adjudicator=EngagementAdjudicator(
                     engage_db,
                     hot,

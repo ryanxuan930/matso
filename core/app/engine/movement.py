@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.adjudication.effectiveness import effectiveness_pct
+from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
 from app.models import MapFeature, Order, OrderStatus, TacticalUnit
@@ -122,6 +123,11 @@ class UnitMovementSystem:
                 targets = self._targets(p, dest_h3=p.get("to_h3"), h3mod=h3)
                 if not targets:
                     continue
+                # #33b 通信閘門：OFFLINE 收不到新指令、DEGRADED 延遲 N ticks（§6.2）。
+                # 僅擋「新指令」（VALIDATED）；已在執行（EXECUTING）者續行——收不到＝繼續原任務。
+                # 靜默保留（不逐 tick 記事件避免洗版）；玩家由 Unit 卡通聯狀態研判。
+                if o.status == OrderStatus.VALIDATED and not self._comms_admits(o, now):
+                    continue
                 # 強穿耗損：僅於 admit（首見，status 仍 VALIDATED）擲一次。
                 if o.status == OrderStatus.VALIDATED and self._rng is not None:
                     if obstacles is None:
@@ -134,6 +140,12 @@ class UnitMovementSystem:
                     events.append(ev)
             db.commit()
         return events
+
+    def _comms_admits(self, o: Order, now: SimTime) -> bool:
+        """通信閘門（§6.2）：OFFLINE 收不到新指令、DEGRADED 延遲送達。缺 comms_state → ONLINE。"""
+        state = self._hot_state.get_unit(o.unit_id) or {}
+        link = parse_link_state(state.get("comms_state"))
+        return order_admissible(link, int(o.issued_at_tick or 0), now.tick)
 
     def _targets(
         self,

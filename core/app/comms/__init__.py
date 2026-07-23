@@ -16,6 +16,8 @@ from app.comms.consequences import (
     can_receive_command,
     command_delivery,
     intel_granularity,
+    order_admissible,
+    parse_link_state,
     position_report_frozen,
     position_report_interval,
 )
@@ -46,6 +48,8 @@ __all__ = [
     "link_margin_db",
     "link_state",
     "mesh_states",
+    "order_admissible",
+    "parse_link_state",
     "position_report_frozen",
     "position_report_interval",
 ]

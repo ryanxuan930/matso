@@ -26,6 +26,7 @@ from app.adjudication.engagement import (
     resolve_engagement,
 )
 from app.adjudication.weapon import WeaponProfile
+from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
 from app.models.enums import OrderStatus
@@ -55,11 +56,23 @@ QuantityLookup = Callable[[EngageCommand], int]
 
 
 class EngageOrderSource:
-    """從 DB 拉本 session 的 VALIDATED ENGAGE 指令並轉 EXECUTING（確定性排序）。"""
+    """從 DB 拉本 session 的 VALIDATED ENGAGE 指令並轉 EXECUTING（確定性排序）。
 
-    def __init__(self, db: Session, session_id: str) -> None:
+    #33b 通信閘門：射手 OFFLINE 收不到新交戰指令、DEGRADED 延遲 N ticks（§6.2）——被擋者留在
+    VALIDATED（不轉 EXECUTING），待通信恢復後再送達。tick 由注入的 clock 提供（決定性）。
+    """
+
+    def __init__(
+        self,
+        db: Session,
+        session_id: str,
+        hot_state: HotStateStore | None = None,
+        clock: object | None = None,
+    ) -> None:
         self._db = db
         self._session_id = session_id
+        self._hot = hot_state
+        self._clock = clock  # 具 now().tick 者（SimClock）；None → 不套通信延遲閘門
 
     async def drain(self) -> list[EngageCommand]:
         orders = self._db.scalars(
@@ -71,8 +84,15 @@ class EngageOrderSource:
             )
             .order_by(Order.issued_at_tick, Order.id)
         ).all()
+        now_tick = self._clock.now().tick if self._clock is not None else None  # type: ignore[attr-defined]
         commands: list[EngageCommand] = []
         for order in orders:
+            if (
+                self._hot is not None
+                and now_tick is not None
+                and not self._comms_admits(order, now_tick)
+            ):
+                continue  # 通信擋下 → 留 VALIDATED，本 tick 不執行
             order.status = next_status(order.status, OrderStatus.EXECUTING)
             payload = order.payload or {}
             wid = payload.get("weapon_id")
@@ -86,6 +106,13 @@ class EngageOrderSource:
             )
         self._db.commit()
         return commands
+
+    def _comms_admits(self, order: Order, now_tick: int) -> bool:
+        """射手通信是否允許本 tick 接收此新交戰指令（§6.2）。缺 hot/comms_state → 允許。"""
+        assert self._hot is not None
+        state = self._hot.get_unit(order.unit_id) or {}
+        link = parse_link_state(state.get("comms_state"))
+        return order_admissible(link, int(order.issued_at_tick or 0), now_tick)
 
 
 class EngagementAdjudicator:
