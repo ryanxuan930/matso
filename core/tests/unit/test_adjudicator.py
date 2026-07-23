@@ -195,6 +195,54 @@ async def test_combined_path_engages_with_weapon_mix(
         assert db.get(Order, oid).status is OrderStatus.COMPLETED  # type: ignore[union-attr]
 
 
+async def test_drain_parses_fire_policy(session_factory: sessionmaker[Session]) -> None:
+    # P3：ENGAGE payload.fire_policy → EngageCommand.fire_policy。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        OrderService(db, FakeGateway(visible=True)).submit(
+            world.session_id,
+            OrderRequest(
+                unit_id=world.blue_unit_id,
+                order_type=OrderType.ENGAGE,
+                payload={
+                    "target_unit_id": world.red_unit_id,
+                    "fire_policy": "SMALL_ARMS_ONLY",
+                },
+            ),
+            world.blue_issuer_id,
+        )
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        assert cmd.fire_policy == "SMALL_ARMS_ONLY"
+        assert cmd.weapon_template_id is None
+
+
+async def test_explicit_weapon_skips_combined_path(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # P3：指定 weapon_id（操作員選單一武器）→ 即使 ≥2 武器也走既有單武器路徑（非 COMBINED）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        OrderService(db, FakeGateway(visible=True)).submit(
+            world.session_id,
+            OrderRequest(
+                unit_id=world.blue_unit_id,
+                order_type=OrderType.ENGAGE,
+                payload={"target_unit_id": world.red_unit_id, "weapon_id": "w-rifle"},
+            ),
+            world.blue_issuer_id,
+        )
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(world.blue_unit_id, {"ammo": 5, "ammo_by_weapon": {"w-rifle": 5, "w-atgm": 8}})
+        hot.put_unit(world.red_unit_id, {"health": 100.0, "armor_class": "INFANTRY"})
+        weapons = [
+            CombinedWeapon("w-rifle", _RIFLE_C, quantity=7, ammo=5),
+            CombinedWeapon("w-atgm", _ATGM_C, quantity=2, ammo=8),
+        ]
+        events = _adjudicator_combined(db, hot, lambda _sid: weapons).resolve(cmd, SimTime(0, 0))
+        assert events[0].ai_decision.get("mode") != "COMBINED"  # 指定武器 → 走單武器路徑
+
+
 async def test_single_weapon_unit_skips_combined_path(
     session_factory: sessionmaker[Session],
 ) -> None:

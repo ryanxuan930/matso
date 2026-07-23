@@ -383,7 +383,15 @@ components:
         order_type: { $ref: "#/components/schemas/OrderType" }
         payload:
           type: object
-          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?}"
+          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。"
+    FirePolicy:
+      type: string
+      description: "聯合兵種火力政策（SPEC_EXTEND P3；ENGAGE payload.fire_policy，未指定＝FREE）。僅意圖/篩選，不改物理數值。指定 payload.weapon_id 等同僅該武器射擊（單武器）。"
+      default: FREE
+      enum:
+        - FREE              # 自由開火：所有在射程/有彈/可達的武器一起打
+        - SMALL_ARMS_ONLY   # 僅輕兵器（節約重火力/保持隱蔽）；反裝甲/飛彈類保留
+        - ANTI_ARMOR_HOLD   # 反裝甲/飛彈類僅在對此目標有效（pk>0）時才用，勿浪費在步兵
     PrecheckCheck:
       type: object
       required: [name, passed]

@@ -22,7 +22,7 @@ _RIFLE = WeaponProfile.from_base_stats(
         "rate_per_tick": 1.0,
     }
 )
-# 反戰車飛彈：長射程、只殺裝甲（pk INFANTRY 缺→0）。
+# 反戰車飛彈：長射程、只殺裝甲（pk INFANTRY 缺→0）。kinetic_kind ATGM → 政策視為反裝甲/重火力。
 _ATGM = WeaponProfile.from_base_stats(
     {
         "max_range_m": 4000,
@@ -31,6 +31,7 @@ _ATGM = WeaponProfile.from_base_stats(
         "pk_by_armor_class": {"ARMOR": 0.8},
         "ammo_types": ["AMMO_ATGM"],
         "rate_per_tick": 1.0,
+        "kinetic_kind": "ATGM",
     }
 )
 
@@ -165,6 +166,90 @@ def test_deterministic_replay() -> None:
     assert a.damage == b.damage
     assert a.target_strength_after == b.target_strength_after
     assert a.ammo_spent_by_weapon == b.ammo_spent_by_weapon
+
+
+def _atgm_only() -> list[CombinedWeapon]:
+    return [CombinedWeapon("w-atgm", _ATGM, quantity=2, ammo=8)]
+
+
+# ── SPEC_EXTEND P3：火力政策（fire_policy）─────────────────────────────────
+
+
+def test_policy_small_arms_only_holds_atgm() -> None:
+    # SMALL_ARMS_ONLY：反裝甲（ATGM）保留不發射、不耗彈；步槍照打。
+    r = resolve_combined_engagement(
+        _weapons(),
+        "s",
+        1.0,
+        _target("INFANTRY"),
+        _env_at(300),
+        _rng(),
+        1,
+        fire_policy="SMALL_ARMS_ONLY",
+    )
+    assert _pw(r, "w-atgm")["status"] == "HELD"
+    assert r.ammo_spent_by_weapon is not None
+    assert "w-atgm" not in r.ammo_spent_by_weapon  # 未耗彈
+    assert _pw(r, "w-rifle")["strength_loss"] > 0.0
+
+
+def test_policy_anti_armor_hold_vs_infantry_holds_atgm() -> None:
+    # ANTI_ARMOR_HOLD 對步兵：ATGM 對步兵無效（pk 0）→ 保留（不浪費反裝甲）；步槍照打。
+    r = resolve_combined_engagement(
+        _weapons(),
+        "s",
+        1.0,
+        _target("INFANTRY"),
+        _env_at(300),
+        _rng(),
+        1,
+        fire_policy="ANTI_ARMOR_HOLD",
+    )
+    assert _pw(r, "w-atgm")["status"] == "HELD"
+    assert _pw(r, "w-rifle")["strength_loss"] > 0.0
+
+
+def test_policy_anti_armor_hold_vs_armor_fires_atgm() -> None:
+    # ANTI_ARMOR_HOLD 對裝甲：ATGM 有效（pk 0.8）→ 發射；步槍（非反裝甲）照打（但 pk 0 → 0 毀傷）。
+    r = resolve_combined_engagement(
+        _weapons(),
+        "s",
+        1.0,
+        _target("ARMOR"),
+        _env_at(300),
+        _rng(),
+        1,
+        fire_policy="ANTI_ARMOR_HOLD",
+    )
+    assert _pw(r, "w-atgm")["status"] != "HELD"
+    assert _pw(r, "w-atgm")["strength_loss"] > 0.0
+    assert r.status is Resolution.HIT
+
+
+def test_policy_holds_all_weapons_is_rejected_hold_fire() -> None:
+    # 只有 ATGM 的單位 + SMALL_ARMS_ONLY → 全被保留 → REJECTED HOLD_FIRE，不耗彈。
+    r = resolve_combined_engagement(
+        _atgm_only(),
+        "s",
+        1.0,
+        _target("ARMOR"),
+        _env_at(300),
+        _rng(),
+        1,
+        fire_policy="SMALL_ARMS_ONLY",
+    )
+    assert r.status is Resolution.REJECTED
+    assert r.reason == "HOLD_FIRE"
+    assert r.ammo_spent == 0
+
+
+def test_policy_free_is_default_all_fire() -> None:
+    # 預設 FREE：反裝甲對步兵仍發射耗彈（0 毀傷）——驗證 P3 未破壞 P2 預設行為。
+    r = resolve_combined_engagement(
+        _weapons(), "s", 1.0, _target("INFANTRY"), _env_at(300), _rng(), 1
+    )
+    assert r.ammo_spent_by_weapon is not None
+    assert "w-atgm" in r.ammo_spent_by_weapon  # FREE 下 ATGM 仍發射耗彈
 
 
 def test_weapon_order_is_deterministic_dispersion() -> None:

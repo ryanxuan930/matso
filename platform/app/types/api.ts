@@ -960,9 +960,15 @@ export interface components {
         OrderRequest: {
             unit_id: string;
             order_type: components["schemas"]["OrderType"];
-            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?} */
+            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。 */
             payload?: Record<string, never>;
         };
+        /**
+         * @description 聯合兵種火力政策（SPEC_EXTEND P3；ENGAGE payload.fire_policy，未指定＝FREE）。僅意圖/篩選，不改物理數值。指定 payload.weapon_id 等同僅該武器射擊（單武器）。
+         * @default FREE
+         * @enum {string}
+         */
+        FirePolicy: "FREE" | "SMALL_ARMS_ONLY" | "ANTI_ARMOR_HOLD";
         PrecheckCheck: {
             name: string;
             passed: boolean;

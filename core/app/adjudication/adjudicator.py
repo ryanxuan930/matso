@@ -56,6 +56,8 @@ class EngageCommand:
     target_id: str
     # 下令時選定的武器範本（payload.weapon_id）；None＝由 weapon_for 取單位主武器（#11）。
     weapon_template_id: str | None = None
+    # 聯合兵種火力政策（SPEC_EXTEND P3，payload.fire_policy）；None＝FREE。指定 weapon_id 時忽略。
+    fire_policy: str | None = None
 
 
 # 武器查表：由整筆交戰命令解析（可依 weapon_template_id honor 操作員選武器，或退回單位主武器）。
@@ -114,12 +116,14 @@ class EngageOrderSource:
             order.status = next_status(order.status, OrderStatus.EXECUTING)
             payload = order.payload or {}
             wid = payload.get("weapon_id")
+            fp = payload.get("fire_policy")
             commands.append(
                 EngageCommand(
                     order_id=order.id,
                     shooter_id=order.unit_id,
                     target_id=str(payload["target_unit_id"]),
                     weapon_template_id=str(wid) if wid else None,
+                    fire_policy=str(fp) if fp else None,
                 )
             )
         self._db.commit()
@@ -172,9 +176,9 @@ class EngagementAdjudicator:
         if shooter_unit is not None and should_aggregate(shooter_unit.unit_level):
             return self._resolve_aggregate(order, weapon, env, shooter_state, target_state, now)
 
-        # SPEC_EXTEND P2 聯合兵種：射手持 ≥2 種武器系統 → 武器組合加總（Σ per-weapon volley）。
-        # 單武器單位（<2）落回下方既有單/齊射路徑 → golden replay 不變。
-        if self._combined_weapons_for is not None:
+        # SPEC_EXTEND P2/P3 聯合兵種：**未指定單一武器**且射手持 ≥2 種武器系統 → 武器組合加總。
+        # 指定 weapon_id（操作員選單一武器）或單武器單位 → 落回既有單/齊射路徑（golden 不變）。
+        if self._combined_weapons_for is not None and order.weapon_template_id is None:
             cweapons = self._combined_weapons_for(order.shooter_id)
             if len(cweapons) >= 2:
                 return self._resolve_combined(order, cweapons, shooter_state, target_state, now)
@@ -288,7 +292,14 @@ class EngagementAdjudicator:
             return self._env_for(order.shooter_id, order.target_id, profile.indirect_fire)
 
         result = resolve_combined_engagement(
-            cweapons, order.shooter_id, effectiveness, target, env_for, self._rng, now.tick
+            cweapons,
+            order.shooter_id,
+            effectiveness,
+            target,
+            env_for,
+            self._rng,
+            now.tick,
+            fire_policy=order.fire_policy or "FREE",
         )
         self._apply(order, result)
         self._complete(order.order_id, now.tick)

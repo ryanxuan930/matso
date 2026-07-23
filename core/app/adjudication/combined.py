@@ -39,12 +39,35 @@ _DISPERSION = (0.8, 1.2)
 # 合格集為空時回報原因的優先序（越前越「可行動」）：在射程但被遮蔽/彈道阻，比全出界更有資訊。
 _REJECT_PRIORITY = ("NO_LOS", "TRAJECTORY_BLOCKED", "OUT_OF_RANGE", "NO_AMMO")
 
+# 火力政策（SPEC_EXTEND P3）：FREE 全打；SMALL_ARMS_ONLY 僅輕兵器；ANTI_ARMOR_HOLD 反裝甲僅對
+# 有效目標。未知政策→當 FREE。「指定 weapon_id 僅該武器」由 adjudicator gating 走既有單武器路徑。
+FIRE_POLICIES = ("FREE", "SMALL_ARMS_ONLY", "ANTI_ARMOR_HOLD")
+# 反裝甲/重火力武器分類（供政策篩選；v0 可調）：飛彈旗標 或 kinetic_kind 屬此集。
+_ANTI_ARMOR_KINDS = frozenset({"ATGM", "TANK_MAIN_GUN", "RECOILLESS", "ROCKET", "AUTOCANNON"})
+
 # 供 wiring 注入的「每武器環境」查表：依武器飛行剖面（直/間瞄、彈道）給不同 EnvSnapshot。
 WeaponEnvLookup = Callable[[WeaponProfile], EnvSnapshot]
 
 
 def _clamp01(v: float) -> float:
     return 0.0 if v < 0.0 else 1.0 if v > 1.0 else v
+
+
+def _is_anti_armor(profile: WeaponProfile) -> bool:
+    """武器是否為反裝甲/重火力（供火力政策篩選）：飛彈導引 或 kinetic_kind 屬重火力集。"""
+    return profile.missile or profile.kinetic_kind in _ANTI_ARMOR_KINDS
+
+
+def _policy_allows(policy: str, profile: WeaponProfile, target_armor: str) -> bool:
+    """火力政策是否允許此武器對此目標開火（僅篩選，不改物理數值）。"""
+    if policy == "SMALL_ARMS_ONLY":
+        return not _is_anti_armor(profile)
+    if policy == "ANTI_ARMOR_HOLD":
+        # 反裝甲武器僅在對此目標有效（pk>0，即目標為裝甲）時才用；其餘武器照打。
+        if _is_anti_armor(profile):
+            return profile.expected_casualties(target_armor) > 0.0
+        return True
+    return True  # FREE / 未知政策
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +92,13 @@ def resolve_combined_engagement(
     env_for: WeaponEnvLookup,
     rng: DeterministicRNG,
     tick: int,
+    fire_policy: str = "FREE",
 ) -> EngagementResult:
     """裁決單位以武器組合對目標的單次交戰。確定性：相同 (輸入, rng 狀態) → 相同結果。
 
-    對每件武器：逐武器合法性篩選 → 合格者算 volley 期望毀傷（含一次 dispersion 抽樣）→ Σ；
-    毀傷累計夾在目標當前戰力內（能量守恆）。無任何合格武器 → REJECTED。
+    對每件武器：火力政策篩選（P3）→ 逐武器合法性篩選 → 合格者算 volley 期望毀傷（含一次
+    dispersion 抽樣）→ Σ；毀傷累計夾在目標當前戰力內（能量守恆）。無任何合格武器 → REJECTED。
+    政策保留（HELD）的武器不發射、不耗彈、不抽 dispersion（決定性）。
     """
     authorized = (
         target.authorized_strength
@@ -95,7 +120,13 @@ def resolve_combined_engagement(
     eligible = False
     fired = False
 
+    held_by_policy = False
     for w in weapons:
+        # 火力政策篩選（P3）：被保留者不發射、不耗彈、不抽 dispersion（決定性）。
+        if not _policy_allows(fire_policy, w.profile, target.armor_class):
+            held_by_policy = True
+            per_weapon.append({"weapon_id": w.weapon_id, "status": "HELD", "reason": "POLICY"})
+            continue
         env = env_for(w.profile)
         shooter_i = Shooter(
             unit_id=shooter_id, ammo_count=w.ammo, quantity=w.quantity, effectiveness=eff
@@ -148,8 +179,11 @@ def resolve_combined_engagement(
         )
 
     if not eligible:
-        # 無任何武器可打 → REJECTED（取最可行動的原因）。不消耗彈藥。
-        reason = _pick_reason(reject_reasons)
+        # 無任何武器可打 → REJECTED。有合法性原因取優先序；否則全被政策保留→HOLD_FIRE。不耗彈。
+        if reject_reasons:
+            reason = _pick_reason(reject_reasons)
+        else:
+            reason = "HOLD_FIRE" if held_by_policy else "OUT_OF_RANGE"
         event = LedgerEvent(
             event_type="ENGAGEMENT_RESOLVED",
             tick=tick,
@@ -179,7 +213,7 @@ def resolve_combined_engagement(
     strength_after = max(0.0, remaining)
     health_after = effectiveness_pct(strength_after / authorized)
     status = Resolution.HIT if fired else Resolution.MISS
-    n_fired = sum(1 for pw in per_weapon if pw["status"] != "REJECTED")
+    n_fired = sum(1 for pw in per_weapon if pw["status"] in ("HIT", "MISS"))
     coefficients = {
         "weapons_fired": float(n_fired),
         "strength_loss": round(total_loss, 3),
