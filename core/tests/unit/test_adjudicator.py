@@ -243,6 +243,65 @@ async def test_explicit_weapon_skips_combined_path(
         assert events[0].ai_decision.get("mode") != "COMBINED"  # 指定武器 → 走單武器路徑
 
 
+async def test_combined_persists_spent_ammo_to_db(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # #53：聯合交戰消耗的彈藥持久化到 DB EquipmentInstance（供 GET /weapons 顯示 + 重啟續戰）。
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        # DB 武器射程夠長 → submit precheck 過（單武器路徑）；resolve 走注入的聯合武器組合。
+        tmpl = EquipmentTemplate(
+            name="RIFLE",
+            category="KINETIC",
+            base_stats={
+                "max_range_m": 8000,
+                "ph_by_range_band": [[100, 0.8], [8000, 0.3]],
+                "damage_by_armor_class": {"INFANTRY": 35},
+                "pk_by_armor_class": {"INFANTRY": 0.5},
+                "ammo_types": ["A556"],
+            },
+        )
+        db.add(tmpl)
+        db.flush()
+        inst = EquipmentInstance(
+            template_id=tmpl.id, owner_id=world.blue_unit_id, current_state={"ammo": 100}
+        )
+        db.add(inst)
+        db.commit()
+        oid = _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(
+            world.blue_unit_id,
+            {
+                "ammo": 108,
+                "ammo_by_weapon": {inst.id: 100, "w-atgm": 8},
+                "strength": 100.0,
+                "authorized_strength": 100.0,
+            },
+        )
+        hot.put_unit(
+            world.red_unit_id,
+            {
+                "health": 100.0,
+                "armor_class": "INFANTRY",
+                "strength": 100.0,
+                "authorized_strength": 100.0,
+                "platform_count": 10,
+            },
+        )
+        weapons = [
+            CombinedWeapon(inst.id, _RIFLE_C, quantity=7, ammo=100),
+            CombinedWeapon("w-atgm", _ATGM_C, quantity=2, ammo=8),
+        ]
+        _adjudicator_combined(db, hot, lambda _sid: weapons).resolve(cmd, SimTime(0, 0))
+        db.refresh(inst)
+        assert inst.current_state["ammo"] < 100  # 消耗已持久化到 DB
+    assert oid  # 令已建立
+
+
 async def test_single_weapon_unit_skips_combined_path(
     session_factory: sessionmaker[Session],
 ) -> None:

@@ -39,7 +39,7 @@ from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
 from app.models.enums import OrderStatus
-from app.models.tables import Order, TacticalUnit
+from app.models.tables import EquipmentInstance, Order, TacticalUnit
 from app.orders.schemas import OrderType
 from app.orders.state_machine import next_status
 from app.state.hot_state import HotStateStore
@@ -328,6 +328,12 @@ class EngagementAdjudicator:
                 order.shooter_id,
                 {"ammo_by_weapon": abw, "ammo": max(0, ammo - result.ammo_spent)},
             )
+            # 持久化剩餘彈藥到 DB EquipmentInstance（#53）：供 GET /weapons 顯示正確 + sim 重啟續戰
+            # 不回滿。weapon_id＝EquipmentInstance.id。commit 由 _complete 一併處理。
+            for wid in result.ammo_spent_by_weapon:
+                inst = self._db.get(EquipmentInstance, wid)
+                if inst is not None:
+                    inst.current_state = {**(inst.current_state or {}), "ammo": abw[wid]}
         else:
             ammo = int(shooter.get("ammo", 0))
             # 消耗實際發射彈藥（單發＝1；squad 齊射＝發射數）。

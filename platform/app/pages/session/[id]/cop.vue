@@ -291,6 +291,15 @@ const FIRE_POLICY_OPTS: { value: FirePolicy; label: string }[] = [
 ]
 // 聯合火力模式＝未指定單一武器（≥2 武器才有意義）；指定武器＝單武器射擊。
 const combinedMode = computed(() => weaponId.value === null && weapons.value.length >= 2)
+// 活彈藥（#53）：交戰消耗即時反映——優先讀 STATE_DIFF 串流的 ammo_by_weapon（活模擬扣減），
+// 否則回 w.ammo_remaining（GET /weapons 的 DB 值）。w.id＝EquipmentInstance.id＝ammo_by_weapon 鍵。
+function liveAmmo(w: WeaponView): number | null {
+  const abw = stream.unitPatches[selectedId.value ?? '']?.ammo_by_weapon as
+    | Record<string, number>
+    | undefined
+  const live = abw?.[w.id]
+  return typeof live === 'number' ? live : (w.ammo_remaining ?? null)
+}
 const precheck = ref<OrderResponse['precheck'] | null>(null)
 const message = ref('')
 
@@ -1495,7 +1504,7 @@ watch(
               <select v-model="weaponId" data-testid="engage-weapon">
                 <option :value="null">{{ weapons.length >= 2 ? '聯合火力（全武器一起打）' : '預設武器' }}</option>
                 <option v-for="w in weapons" :key="w.id" :value="w.id">
-                  {{ w.name }}<span v-if="w.ammo_remaining != null"> · 彈 {{ w.ammo_remaining }}</span>
+                  {{ w.name }}<span v-if="liveAmmo(w) != null"> · 彈 {{ liveAmmo(w) }}</span>
                 </option>
               </select>
               <!-- 聯合火力（未選單一武器且 ≥2 武器）：顯示將開火的武器組合 + 火力政策（P4）。 -->
@@ -1509,7 +1518,7 @@ watch(
                   <li v-for="w in weapons" :key="w.id">
                     <i class="pi pi-bullseye" /> {{ w.name }}
                     <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
-                    <span v-if="w.ammo_remaining != null" class="dim">· 彈 {{ w.ammo_remaining }}</span>
+                    <span v-if="liveAmmo(w) != null" class="dim">· 彈 {{ liveAmmo(w) }}</span>
                   </li>
                 </ul>
               </template>
@@ -2015,7 +2024,7 @@ watch(
               <li v-for="w in weapons" :key="w.id">
                 {{ w.name }}
                 <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
-                <span v-if="w.ammo_remaining != null" class="dim">· 彈 {{ w.ammo_remaining }}</span>
+                <span v-if="liveAmmo(w) != null" class="dim">· 彈 {{ liveAmmo(w) }}</span>
               </li>
             </ul>
           </div>
