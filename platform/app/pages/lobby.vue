@@ -134,12 +134,7 @@ onMounted(async () => {
     <header>
       <h1>系統首頁</h1>
       <div class="who">
-        <a
-          v-if="canEditScenario"
-          class="help"
-          href="/scenario-editor"
-          data-testid="nav-scenario-editor"
-        >劇本編輯器</a>
+        <!-- 劇本編輯器入口移至「劇本管理」頁（新劇本／編輯按鈕）；首頁不再重複。 -->
         <a
           v-if="canEditScenario"
           class="help"

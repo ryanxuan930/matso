@@ -179,15 +179,31 @@ function buildFactionTree(units: EditorUnit[], keyOf: (u: EditorUnit) => string)
   return roots
 }
 // 依單位在 model.units 的索引作為穩定 key（供 remove + expandedKeys）。
+// 每個**宣告的陣營**都建一棵樹（即使 0 單位）→ 各陣營皆可「＋加單位」；另補上「有單位但未宣告」
+// 的陣營（匯入相容，不遺失單位）。
 const orbatTrees = computed(() => {
   const keyOf = (u: EditorUnit) => String(model.value.units.indexOf(u))
-  const present = [...new Set(model.value.units.map((u) => u.faction))]
-  return present.map((fid) => {
+  const declared = model.value.factions.map((f) => f.id)
+  const extra = [...new Set(model.value.units.map((u) => u.faction))].filter(
+    (f) => !declared.includes(f),
+  )
+  return [...declared, ...extra].map((fid) => {
     const color = model.value.factions.find((f) => f.id === fid)?.color
     const units = model.value.units.filter((u) => u.faction === fid)
     return { id: fid, color, count: units.length, nodes: buildFactionTree(units, keyOf) }
   })
 })
+// 展開/收合整棵陣營樹（PrimeVue TreeTable 以 expandedKeys 控制；收合下級單位用）。
+function setTreeExpanded(nodes: OrbatNode[], val: boolean): void {
+  const keys = { ...expandedKeys.value }
+  const walk = (ns: OrbatNode[]) =>
+    ns.forEach((n) => {
+      keys[n.key] = val
+      walk(n.children)
+    })
+  walk(nodes)
+  expandedKeys.value = keys
+}
 // 新增節點預設展開，保留使用者手動摺疊。
 const expandedKeys = ref<Record<string, boolean>>({})
 watch(
@@ -329,8 +345,28 @@ async function saveToServer() {
             data-testid="add-unit-faction"
             @click="addUnitTo(tree.id)"
           >＋ 加單位</Button>
+          <span v-if="tree.count > 1" class="tree-toggles">
+            <Button
+              size="small"
+              text
+              severity="secondary"
+              data-testid="expand-all"
+              @click="setTreeExpanded(tree.nodes, true)"
+            >展開全部</Button>
+            <Button
+              size="small"
+              text
+              severity="secondary"
+              data-testid="collapse-all"
+              @click="setTreeExpanded(tree.nodes, false)"
+            >收合全部</Button>
+          </span>
         </div>
+        <p v-if="!tree.nodes.length" class="empty-hint" data-testid="orbat-faction-empty">
+          此陣營尚無單位，按「＋ 加單位」新增（設「上級」欄即構成可收合的指揮層級）。
+        </p>
         <TreeTable
+          v-else
           v-model:expanded-keys="expandedKeys"
           :value="tree.nodes"
           size="small"
@@ -475,6 +511,7 @@ h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; g
   width: 0.75rem; height: 0.75rem; border-radius: 50%; display: inline-block; flex: none;
 }
 .orbat-faction-head .fac-count { color: #94a3b8; font-size: 0.8rem; }
+.orbat-faction-head .tree-toggles { margin-left: auto; display: inline-flex; gap: 0.25rem; }
 .coord-cell { display: inline-flex; gap: 0.25rem; align-items: center; }
 .picker-wrap { margin: 0.25rem 0 0.5rem; }
 .picker-label { display: block; color: #94a3b8; font-size: 0.75rem; margin-bottom: 0.2rem; }
