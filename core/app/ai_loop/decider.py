@@ -111,6 +111,11 @@ class LlmFactionDecider:
         return _extract_json(response.text)
 
 
+_LLM_TIMEOUT_S = (
+    60.0  # LLM 呼叫逾時（O11.8）：超時 → 拋錯 → worker fallback HOLD，不卡 worker 執行緒。
+)
+
+
 def build_llm_client(
     *,
     base_url: str,
@@ -118,6 +123,7 @@ def build_llm_client(
     model: str,
     replay_dir: str | None = None,
     record_dir: str | None = None,
+    timeout: float = _LLM_TIMEOUT_S,
 ) -> LLMClient:
     """依決定性策略挑 client（O11.6，SPEC_AUTONOMY §6）：
 
@@ -131,7 +137,7 @@ def build_llm_client(
     record = record_dir or os.environ.get("MATSO_LLM_RECORD_DIR") or ""
     if replay:
         return ReplayClient.from_dir(replay)
-    real = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
+    real = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model, timeout=timeout)
     if record:
         return RecordingClient(inner=real, out_dir=Path(record))
     return real

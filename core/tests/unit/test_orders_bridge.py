@@ -158,3 +158,23 @@ def test_submit_hold_skipped(session_factory: sessionmaker[Session]) -> None:
         )
     assert not res.submitted and not res.rejected
     assert len(res.skipped) == 1
+
+
+def test_submit_rate_cap(session_factory: sessionmaker[Session]) -> None:
+    # O11.8 防洗版：LLM 一次吐 10 令、上限 3 → 只處理前 3，其餘記 capped。
+    world = seed_world(session_factory)
+    orders = [
+        {"unit_id": world.blue_unit_id, "order_type": "MOVE", "target_h3": f"8a2a1072b59{i}fff"}
+        for i in range(10)
+    ]
+    with session_factory() as db:
+        res = submit_faction_orders(
+            db,
+            world.session_id,
+            orders,
+            issuer_id=world.blue_issuer_id,
+            gateway=FakeGateway(reachable=True),
+            max_orders=3,
+        )
+    assert res.capped == 7
+    assert len(res.submitted) + len(res.rejected) + len(res.skipped) == 3

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,8 +29,12 @@ from app.orders.schemas import EngagePayload, MovePayload, OrderRequest, OrderTy
 from app.orders.service import OrderService
 from app.orders.validator import ValidatedOrder
 
+_LOG = logging.getLogger("app.ai_orders_bridge")
+
 # AI MOVE 令的預設機動 profile（與前端 COP 預設一致）；未來可由單位型別導出。
 _DEFAULT_MOBILITY = "FOOT"
+# 單一決策週期落單上限（O11.8 防洗版）：LLM 一次吐幾十上百令時只處理前 N。
+_MAX_ORDERS_PER_CYCLE = 25
 
 _TypedPayload = MovePayload | EngagePayload | dict[str, Any]
 
@@ -117,6 +122,7 @@ class BridgeResult:
     submitted: list[str] = field(default_factory=list)  # 成 VALIDATED 的 order id
     rejected: list[dict[str, Any]] = field(default_factory=list)  # {order, reason}
     skipped: list[dict[str, Any]] = field(default_factory=list)  # 無法映射（HOLD 等）
+    capped: int = 0  # 因速率上限被丟棄的令數（O11.8 防洗版；>0 代表本週期超量）
 
 
 def submit_faction_orders(
@@ -128,14 +134,26 @@ def submit_faction_orders(
     gateway: PhysicsGateway,
     relations: FactionRelations | None = None,
     tick_source: Callable[[], int] = lambda: 0,
+    max_orders: int = _MAX_ORDERS_PER_CYCLE,
 ) -> BridgeResult:
     """把 AI 令逐筆經 OrderService.submit 落成 VALIDATED（issuer＝AI 陣營 participant）。
 
     submit 對不可行令會持久化 REJECTED 後拋 PrecheckFailedError；此處捕捉並歸入 rejected，
     不中斷整批。與人類同入口 → 再驗一次 + Kernel 照常 drain 執行。
+
+    速率上限（O11.8）：一週期最多處理 `max_orders` 筆，超量截斷並記 `capped`（防 LLM 洗版）。
     """
-    service = OrderService(db, gateway, tick_source=tick_source, relations=relations)
     result = BridgeResult()
+    if len(orders) > max_orders:
+        result.capped = len(orders) - max_orders
+        _LOG.warning(
+            "AI 落單超速率上限（session %s）：收到 %d 令，僅處理前 %d（防洗版）",
+            session_id,
+            len(orders),
+            max_orders,
+        )
+        orders = orders[:max_orders]
+    service = OrderService(db, gateway, tick_source=tick_source, relations=relations)
     for order in orders:
         req = tactical_order_to_request(order)
         if req is None:

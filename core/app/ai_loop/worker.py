@@ -37,6 +37,8 @@ _LOG = logging.getLogger("app.ai_worker")
 
 _DEFAULT_HEARTBEAT_S = 45.0  # 決策心跳（牆鐘秒）：LLM ~15s，留餘裕；場景可覆寫（D2）。
 _STOP_POLL_S = 1.0  # 心跳等待期間輪詢 stop 的粒度（讓收工快速反應）。
+_MIN_HEARTBEAT_S = 5.0  # 心跳下限（O11.8）：防誤設過小導致緊迴圈狂打 LLM。
+_MAX_TOTAL_ORDERS = 500  # 單 worker 累計落單上限（O11.8 runaway 守衛）：超過即停（異常保護）。
 
 
 class EnemyVisibility(Protocol):
@@ -215,29 +217,50 @@ async def run_faction_worker(
     heartbeat_s: float = _DEFAULT_HEARTBEAT_S,
     on_cycle: Callable[[DecisionOutcome], None] | None = None,
 ) -> None:
-    """陣營 AI 決策迴路：固定心跳，每週期取快照→LLM→護欄→落單。非 pre_tick（不阻塞 tick）。"""
+    """陣營 AI 決策迴路：固定心跳，每週期取快照→LLM→護欄→落單。非 pre_tick（不阻塞 tick）。
+
+    韌性（O11.8）：心跳夾下限（防緊迴圈）；LLM 逾時/失敗 → 記錄後續跑（fallback HOLD，不停）；
+    累計落單超上限 → runaway 守衛停止（異常保護）。
+    """
+    heartbeat_s = max(_MIN_HEARTBEAT_S, heartbeat_s)
     _LOG.info(
         "AI worker 啟動：session=%s faction=%s 心跳=%.0fs",
         deps.session_id,
         deps.faction,
         heartbeat_s,
     )
+    cycles = 0
+    total_submitted = 0
     while not should_stop():
         try:
             outcome = await asyncio.to_thread(_cycle_with_db, deps)
             b = outcome.bridge
+            cycles += 1
+            total_submitted += len(b.submitted)
             _LOG.info(
-                "AI %s/%s：accepted=%s fallback=%s 落單=%d 拒=%d 略=%d",
+                "AI %s/%s #%d：accepted=%s fallback=%s 落單=%d(累計%d) 拒=%d 略=%d 超量=%d",
                 deps.session_id,
                 deps.faction,
+                cycles,
                 outcome.turn.accepted,
                 outcome.turn.fallback_used,
                 len(b.submitted),
+                total_submitted,
                 len(b.rejected),
                 len(b.skipped),
+                b.capped,
             )
             if on_cycle is not None:
                 on_cycle(outcome)
+            if total_submitted > _MAX_TOTAL_ORDERS:
+                _LOG.warning(
+                    "AI worker runaway 守衛觸發：session=%s faction=%s 累計落單 %d 超上限 %d，停止",
+                    deps.session_id,
+                    deps.faction,
+                    total_submitted,
+                    _MAX_TOTAL_ORDERS,
+                )
+                return
         except asyncio.CancelledError:
             raise
         except Exception:
