@@ -35,6 +35,13 @@ function ammoOf(inst: EquipmentInstance): number | null {
   const a = (inst.current_state as Record<string, unknown>)?.ammo
   return typeof a === 'number' ? a : null
 }
+// 武器（消耗彈藥者）：有 ammo_types 或屬武器類別 → 需要彈藥欄。感測/通信/後勤等不需。
+const WEAPON_CATEGORIES = ['KINETIC', 'ARTILLERY', 'MISSILE']
+function usesAmmo(inst: EquipmentInstance): boolean {
+  const at = (inst.base_stats as Record<string, unknown>)?.ammo_types
+  if (Array.isArray(at) && at.length > 0) return true
+  return WEAPON_CATEGORIES.includes(inst.category)
+}
 
 async function add() {
   if (!addId.value || busy.value) return
@@ -113,13 +120,15 @@ async function saveQty(inst: EquipmentInstance, ev: Event) {
           >
           <span v-else>{{ inst.quantity ?? 1 }}</span>
         </label>
-        <label v-if="ammoOf(inst) != null" class="eq-ammo">
+        <!-- 編輯：武器（消耗彈藥者）一律顯示彈藥欄（即使目前無值，預設 0 讓可設定，修 Javelin
+             等無初始彈藥的武器沒有彈藥欄可填的問題）。唯讀：僅有值才顯示。 -->
+        <label v-if="canEdit ? usesAmmo(inst) : ammoOf(inst) != null" class="eq-ammo">
           彈
           <input
             v-if="canEdit"
             type="number"
             min="0"
-            :value="ammoOf(inst)"
+            :value="ammoOf(inst) ?? 0"
             data-testid="eq-ammo"
             @change="saveAmmo(inst, $event)"
           >
