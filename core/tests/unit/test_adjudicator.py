@@ -90,6 +90,37 @@ async def test_hit_applies_damage_and_completes(session_factory: sessionmaker[Se
         assert db.get(Order, oid).status is OrderStatus.COMPLETED  # type: ignore[union-attr]
 
 
+async def test_battalion_uses_aggregate_lanchester(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # #33a：射手為營級 → 走聚合 Lanchester，雙方同時消耗（AGGREGATE_ENGAGEMENT_RESOLVED）。
+    from app.models.enums import UnitLevel
+    from app.models.tables import TacticalUnit
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        blue = db.get(TacticalUnit, world.blue_unit_id)
+        assert blue is not None
+        blue.unit_level = UnitLevel.BATTALION  # 提升到聚合門檻
+        db.commit()
+        oid = _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(
+            world.blue_unit_id, {"ammo": 999, "strength": 100.0, "authorized_strength": 100.0}
+        )
+        hot.put_unit(
+            world.red_unit_id,
+            {"strength": 100.0, "authorized_strength": 100.0, "armor_class": "INFANTRY"},
+        )
+        events = _adjudicator(db, hot).resolve(cmd, SimTime(0, 0))
+        assert events and events[0].event_type == "AGGREGATE_ENGAGEMENT_RESOLVED"
+        # Lanchester 雙方同時消耗：目標與射手戰力皆下降。
+        assert hot.get_unit(world.red_unit_id)["strength"] < 100.0
+        assert hot.get_unit(world.blue_unit_id)["strength"] < 100.0
+        assert db.get(Order, oid).status is OrderStatus.COMPLETED  # type: ignore[union-attr]
+
+
 async def test_rejected_no_ammo_no_damage(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db:
