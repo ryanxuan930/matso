@@ -184,6 +184,98 @@ def test_seed_combat_state_preserves_existing_progress() -> None:
     assert st["lat"] == pytest.approx(23.75)  # 座標仍同步
 
 
+# ── SPEC_EXTEND P1：武器清單 + per-weapon 彈藥 ──────────────────────────────
+
+
+def test_weapons_for_returns_full_weapon_mix() -> None:
+    # 多武器單位（RIFLE + ATGM）→ weapons_for 回全部武器（含 quantity/ammo），非只主武器。
+    db = _db()
+    sid, uid, _rifle_id, _atgm_id = _seed(db)
+    r = WeaponResolver(db, sid)
+    entries = r.weapons_for(uid)
+    assert len(entries) == 2
+    ranges = sorted(e.profile.max_range_m for e in entries)
+    assert ranges == pytest.approx([600, 4000])
+    ammo = sorted(e.ammo for e in entries)
+    assert ammo == [8, 100]
+    assert all(e.quantity >= 1 for e in entries)
+
+
+def test_weapons_for_is_stably_ordered_by_weapon_id() -> None:
+    # 穩定序（依 weapon_id）：P2 每武器一次 dispersion 抽樣順序需決定性。
+    db = _db()
+    sid, uid, _r, _a = _seed(db)
+    entries = WeaponResolver(db, sid).weapons_for(uid)
+    ids = [e.weapon_id for e in entries]
+    assert ids == sorted(ids)
+    # weapon_id ＝ EquipmentInstance.id（COP 下令鍵 / 熱狀態 ammo_by_weapon 鍵）。
+    inst_ids = set(
+        db.scalars(select(EquipmentInstance.id).where(EquipmentInstance.owner_id == uid)).all()
+    )
+    assert set(ids) == inst_ids
+
+
+def test_weapons_for_single_weapon_matches_primary() -> None:
+    # 單武器單位：清單長度 1，profile 與 weapon_for（未指定選武器）一致 → P2 gating 退回單武器路徑。
+    db = _db()
+    s = WargameSession(name="w", master_seed=1, current_weather={})
+    db.add(s)
+    db.flush()
+    u = TacticalUnit(
+        session_id=s.id,
+        designation="R1",
+        unit_level=UnitLevel.PLATOON,
+        faction="BLUE",
+        current_lat=23.75,
+        current_lng=121.25,
+    )
+    rifle = EquipmentTemplate(name="RIFLE", category="KINETIC", base_stats=_RIFLE)
+    db.add_all([u, rifle])
+    db.flush()
+    db.add(EquipmentInstance(template_id=rifle.id, owner_id=u.id, current_state={"ammo": 100}))
+    db.commit()
+    r = WeaponResolver(db, s.id)
+    entries = r.weapons_for(u.id)
+    assert len(entries) == 1
+    primary = r.weapon_for(EngageCommand(order_id="o", shooter_id=u.id, target_id="t"))
+    assert entries[0].profile.max_range_m == pytest.approx(primary.max_range_m)
+
+
+def test_weapons_for_unknown_unit_is_empty() -> None:
+    db = _db()
+    sid, _uid, _r, _a = _seed(db)
+    assert WeaponResolver(db, sid).weapons_for("ghost") == []
+
+
+def test_seed_combat_state_populates_ammo_by_weapon() -> None:
+    # per-weapon 活彈藥播入熱狀態：{instance_id: ammo}（RIFLE 100 + ATGM 8）。
+    db = _db()
+    sid, uid, _r, _a = _seed(db)
+    hot = InMemoryHotState()
+    seed_combat_state(db, hot, sid, WeaponResolver(db, sid))
+    st = hot.get_unit(uid)
+    assert st is not None
+    abw = st["ammo_by_weapon"]
+    assert isinstance(abw, dict)
+    assert sorted(abw.values()) == [8, 100]
+    inst_ids = set(
+        db.scalars(select(EquipmentInstance.id).where(EquipmentInstance.owner_id == uid)).all()
+    )
+    assert set(abw.keys()) == inst_ids
+
+
+def test_seed_combat_state_preserves_existing_ammo_by_weapon() -> None:
+    # 執行期重啟：熱狀態已有逐武器扣過的彈藥 → seed 不得重置回 DB 初值。
+    db = _db()
+    sid, uid, _r, _a = _seed(db)
+    hot = InMemoryHotState()
+    hot.put_unit(uid, {"ammo_by_weapon": {"w1": 3}})
+    seed_combat_state(db, hot, sid, WeaponResolver(db, sid))
+    st = hot.get_unit(uid)
+    assert st is not None
+    assert st["ammo_by_weapon"] == {"w1": 3}  # 保留執行期已扣量
+
+
 def test_make_engage_env_computes_range() -> None:
     hot = InMemoryHotState()
     hot.put_unit("s", {"lat": 23.75, "lng": 121.25})
