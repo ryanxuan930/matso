@@ -111,6 +111,23 @@ async function testConnection() {
   }
 }
 
+// LLM 後端快速預設。Google 走 Gemini API 的 OpenAI 相容端點（Gemma 也在此 API）。
+function applyPreset(kind: 'ollama' | 'google') {
+  if (kind === 'ollama') {
+    llmBaseUrl.value = 'http://host.docker.internal:11434'
+  } else {
+    llmBaseUrl.value = 'https://generativelanguage.googleapis.com/v1beta/openai'
+    llmModel.value = 'gemma-4-31b-it'
+  }
+}
+
+// 是否為雲端後端（非本機）——用於資料外送警示。
+const isCloudBackend = computed(() => {
+  const u = llmBaseUrl.value.trim().toLowerCase()
+  if (!u) return false
+  return !/(localhost|127\.0\.0\.1|host\.docker\.internal|0\.0\.0\.0|::1)/.test(u)
+})
+
 onMounted(async () => {
   if (!auth.user) await auth.fetchMe()
   if (canManage.value) await load()
@@ -151,7 +168,20 @@ onMounted(async () => {
             <em>AI 模式環境預設</em> 只是環境變數 fallback——<strong>未在此設定時</strong>才會採用，兩者不同屬正常。
           </p>
 
-          <div class="subhd">LLM 後端（OpenAI 相容，如 Ollama / vLLM）</div>
+          <div class="subhd">LLM 後端（OpenAI 相容，如 Ollama / vLLM / Google AI Studio）</div>
+          <div class="presets">
+            <span class="plabel">快速預設：</span>
+            <button type="button" data-testid="preset-ollama" @click="applyPreset('ollama')">
+              Ollama（本機）
+            </button>
+            <button type="button" data-testid="preset-google" @click="applyPreset('google')">
+              Google AI Studio（雲端 Gemma）
+            </button>
+          </div>
+          <p v-if="isCloudBackend" class="egress-warn" data-testid="egress-warn">
+            ⚠ 雲端後端：AI 決策會把戰場 COP（單位位置、陣營、任務、敵情）送到該服務。
+            機敏/機密兵推請改用本機模型；非機密演練再用雲端。
+          </p>
           <label class="field">
             <span class="lbl">Base URL</span>
             <input
@@ -180,7 +210,7 @@ onMounted(async () => {
               v-model="llmApiKey"
               type="password"
               data-testid="llm-api-key"
-              :placeholder="apiKeyAlreadySet ? '（已設定，留空＝不變）' : '（Ollama 免填）'"
+              :placeholder="apiKeyAlreadySet ? '（已設定，留空＝不變）' : (isCloudBackend ? '（雲端後端必填，如 Google AI Studio 金鑰）' : '（Ollama 免填）')"
               autocomplete="new-password"
             >
           </label>
@@ -274,6 +304,39 @@ h1 {
   font-size: 0.82rem;
   border-top: 1px solid #1e293b;
   padding-top: 0.7rem;
+}
+.presets {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.2rem 0 0.5rem;
+}
+.presets .plabel {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.presets button {
+  background: #0b1220;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  border-radius: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.presets button:hover {
+  border-color: #60a5fa;
+}
+.egress-warn {
+  margin: 0.2rem 0 0.6rem;
+  color: #fbbf24;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 0.35rem;
+  padding: 0.45rem 0.6rem;
 }
 .field {
   display: flex;

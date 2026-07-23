@@ -10,7 +10,13 @@ import pytest
 
 from app.ai_loop import run_faction_turn
 from app.ai_loop.context import build_faction_context
-from app.ai_loop.decider import LlmFactionDecider, _extract_json, build_llm_client
+from app.ai_loop.decider import (
+    LlmFactionDecider,
+    _extract_json,
+    _is_local_backend,
+    build_llm_client,
+    make_llm_faction_decider,
+)
 from app.factions.relations import FactionRelations, Relation
 from app.guardrails import GuardrailGateway
 from app.models.enums import AiMode
@@ -192,3 +198,21 @@ def test_record_then_replay_is_deterministic(tmp_path: Any) -> None:
     out2 = rep.decide(ctx)
     assert out1 == out2
     assert out2["orders"][0]["unit_id"] == "b1"  # 同 context → 同決策（決定性）
+
+
+# ---- 雲端後端（Google AI Studio）序列化策略 ----
+
+
+def test_is_local_backend() -> None:
+    assert _is_local_backend("http://host.docker.internal:11434") is True
+    assert _is_local_backend("http://localhost:11434") is True
+    assert _is_local_backend("https://generativelanguage.googleapis.com/v1beta/openai") is False
+
+
+def test_decider_serializes_local_not_cloud() -> None:
+    local = make_llm_faction_decider(base_url="http://localhost:11434", model="m")
+    cloud = make_llm_faction_decider(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai", model="m", api_key="k"
+    )
+    assert local._serialize is True  # 本機單一模型 → 序列化
+    assert cloud._serialize is False  # 雲端自有併發 → 免序列化

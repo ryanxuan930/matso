@@ -34,6 +34,7 @@ from app.errors import AuthForbiddenError, OrderValidationError
 from app.models.enums import AiMode
 from app.models.tables import SystemConfiguration
 from app.stream.faction_filter import is_omniscient
+from matso_ai.inference.client import chat_completions_url
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 
@@ -183,9 +184,10 @@ def test_llm(
     headers = {"Content-Type": "application/json"}
     if req.api_key:
         headers["Authorization"] = f"Bearer {req.api_key}"
-    # base_url 由 admin 填入（受 admin gate 保護）；走與真 client 同一 /v1/chat/completions 路徑。
+    # base_url 由 admin 填入（受 admin gate 保護）；端點路徑與真 client 同源（Ollama→/v1/…、
+    # Google AI Studio 等已含路徑者→/chat/completions），確保「測試連線」與實際呼叫一致。
     request = urllib.request.Request(
-        f"{base}/v1/chat/completions",
+        chat_completions_url(base),
         data=json.dumps(payload).encode(),
         headers=headers,
         method="POST",

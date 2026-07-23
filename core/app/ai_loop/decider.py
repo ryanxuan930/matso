@@ -100,12 +100,15 @@ class LlmFactionDecider:
         mode: AiMode | str,
         role: Role = Role.FACTION_COMMANDER,
         adapter: str = "base",
+        serialize_calls: bool = True,
     ) -> None:
         self._client = client
         self._model = model
         self._mode = _mode_str(mode)
         self._role = role
         self._adapter = adapter
+        # 單一本機模型 → 序列化（多陣營 worker 輪流，不互搶 GPU）；雲端後端自有併發 → 免序列化。
+        self._serialize = serialize_calls
 
     def decide(self, context: dict[str, Any], *, feedback: str | None = None) -> dict[str, Any]:
         system = build_system_prompt(self._role, self._mode)
@@ -113,9 +116,23 @@ class LlmFactionDecider:
         if feedback:
             user += _FEEDBACK_PREFIX + feedback
         messages = [ChatMessage("system", system), ChatMessage("user", user)]
-        with _LLM_CALL_LOCK:  # 序列化：單一本機模型時，多陣營 worker 輪流呼叫（不互搶算力）
+        if self._serialize:
+            with _LLM_CALL_LOCK:
+                response = self._client.complete(messages, model=self._model, adapter=self._adapter)
+        else:
             response = self._client.complete(messages, model=self._model, adapter=self._adapter)
         return _extract_json(response.text)
+
+
+# 本機後端主機名——這些走序列化鎖（單一 GPU）；其餘（雲端）併發呼叫。
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal", "::1")
+
+
+def _is_local_backend(base_url: str) -> bool:
+    from urllib.parse import urlparse
+
+    host = (urlparse(base_url).hostname or base_url).lower()
+    return any(h in host for h in _LOCAL_HOSTS)
 
 
 # LLM 呼叫逾時（O11.8）：超時 → 拋錯 → worker fallback HOLD，不卡 worker 執行緒。
@@ -167,4 +184,7 @@ def make_llm_faction_decider(
         replay_dir=replay_dir,
         record_dir=record_dir,
     )
-    return LlmFactionDecider(client, model=model, mode=mode)
+    # 雲端後端（如 Google AI Studio）自有併發能力 → 不序列化；本機單一模型 → 序列化。
+    return LlmFactionDecider(
+        client, model=model, mode=mode, serialize_calls=_is_local_backend(base_url)
+    )

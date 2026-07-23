@@ -12,8 +12,31 @@ from matso_ai.inference.client import (
     OpenAICompatibleClient,
     RecordingClient,
     ReplayClient,
+    chat_completions_url,
     prompt_hash,
 )
+
+
+@pytest.mark.parametrize(
+    ("base", "expected"),
+    [
+        # Ollama / vLLM 只給 host[:port] → 補 /v1/chat/completions
+        (
+            "http://host.docker.internal:11434",
+            "http://host.docker.internal:11434/v1/chat/completions",
+        ),
+        ("http://localhost:11434/", "http://localhost:11434/v1/chat/completions"),
+        # 已含路徑（Google AI Studio / vLLM /v1）→ 只補 /chat/completions（不誤加 /v1）
+        (
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        ),
+        ("http://host:8000/v1", "http://host:8000/v1/chat/completions"),
+    ],
+)
+def test_chat_completions_url(base: str, expected: str) -> None:
+    assert chat_completions_url(base) == expected
+
 
 MSGS = [ChatMessage("system", "你是紅軍指揮官"), ChatMessage("user", "敵在 H-45")]
 
