@@ -330,7 +330,8 @@ export interface paths {
         /** @description 更新武器/裝備範本屬性（限統裁/管理；影響全域目錄） */
         put: operations["updateEquipmentTemplate"];
         post?: never;
-        delete?: never;
+        /** @description 刪除武器/裝備範本（限統裁/管理；使用中→422 拒刪，避免孤兒編裝） */
+        delete: operations["deleteEquipmentTemplate"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1850,6 +1851,44 @@ export interface operations {
                 };
             };
             /** @description base_stats invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteEquipmentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found / in use */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -20,6 +20,9 @@ export function createEquipmentTemplate(body: TemplateEdit): Promise<EquipmentTe
 export function updateEquipmentTemplate(tid: string, body: TemplateEdit): Promise<EquipmentTemplate> {
   return apiFetch<EquipmentTemplate>(`/equipment-templates/${tid}`, { method: 'PUT', body })
 }
+export async function deleteEquipmentTemplate(tid: string): Promise<void> {
+  await apiFetch<unknown>(`/equipment-templates/${tid}`, { method: 'DELETE' })
+}
 export function fetchUnitEquipment(sessionId: string, unitId: string): Promise<EquipmentInstance[]> {
   return apiFetch<EquipmentInstance[]>(`/sessions/${sessionId}/units/${unitId}/equipment`)
 }

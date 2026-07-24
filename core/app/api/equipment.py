@@ -220,6 +220,32 @@ def update_equipment_template(
     return _template_view(tmpl)
 
 
+@router.delete("/equipment-templates/{tid}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_equipment_template(
+    tid: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """刪除武器/裝備範本（全域武器庫）。限統裁/管理。使用中（有單位配發）→ 拒刪，避免孤兒編裝。"""
+    _require_admin(user)
+    tmpl = db.get(EquipmentTemplate, tid)
+    if tmpl is None:
+        raise OrderValidationError(
+            f"裝備範本不存在：{tid}", error_code="EQUIPMENT_TEMPLATE_NOT_FOUND"
+        )
+    in_use = db.scalar(
+        select(EquipmentInstance.id).where(EquipmentInstance.template_id == tid).limit(1)
+    )
+    if in_use is not None:
+        raise OrderValidationError(
+            "此範本正被單位裝備使用中，無法刪除（請先移除各單位的此裝備）",
+            error_code="EQUIPMENT_TEMPLATE_IN_USE",
+        )
+    db.delete(tmpl)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get(
     "/sessions/{session_id}/units/{unit_id}/equipment",
     response_model=list[EquipmentInstanceView],

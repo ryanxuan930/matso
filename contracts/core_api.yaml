@@ -756,6 +756,14 @@ paths:
               schema: { $ref: "#/components/schemas/EquipmentTemplateView" }
         "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { description: base_stats invalid, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteEquipmentTemplate
+      security: [{ bearerAuth: [] }]
+      description: 刪除武器/裝備範本（限統裁/管理；使用中→422 拒刪，避免孤兒編裝）
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Not found / in use, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/units/{uid}/equipment:
     parameters:
       - { $ref: "#/components/parameters/SessionId" }
