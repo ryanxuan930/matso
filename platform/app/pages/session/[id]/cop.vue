@@ -2155,27 +2155,41 @@ watch(
   font-size: 0.95rem;
 }
 .mapedit-bar {
+  /* 置中浮動藥丸：避免被左右浮動工具視窗（z 15+）遮住兩端與「開始兵推」鈕。 */
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 1rem;
-  background: rgba(251, 191, 36, 0.14);
-  border-bottom: 1px solid rgba(251, 191, 36, 0.4);
+  gap: 0.7rem;
+  max-width: min(760px, 94vw);
+  padding: 0.45rem 0.55rem 0.45rem 0.9rem;
+  background: rgba(69, 51, 8, 0.97);
+  border: 1px solid rgba(251, 191, 36, 0.6);
+  border-radius: 0.55rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   color: #fde68a;
-  font-size: 0.88rem;
+  font-size: 0.85rem;
 }
 .mapedit-bar .meb-txt {
   flex: 1 1 auto;
 }
 .mapedit-bar .meb-start {
+  flex: 0 0 auto;
   background: #16a34a;
   border: none;
   color: #fff;
-  border-radius: 0.3rem;
-  padding: 0.35rem 0.9rem;
+  border-radius: 0.35rem;
+  padding: 0.4rem 0.95rem;
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 600;
+  white-space: nowrap;
+}
+.mapedit-bar .meb-start:hover {
+  background: #15803d;
 }
 .victory-banner .vb-aar {
   margin-left: auto;
