@@ -15,7 +15,12 @@ import {
   orderTypeLabel,
   submitOrder,
 } from '~/composables/useOrders'
-import { fetchEquipmentTemplates, type EquipmentTemplate } from '~/composables/useEquipment'
+import {
+  fetchEquipmentTemplates,
+  fetchOrbatPermissions,
+  setOrbatPermissions,
+  type EquipmentTemplate,
+} from '~/composables/useEquipment'
 import { forward as mgrsForward } from 'mgrs'
 import { latLngToCell } from 'h3-js'
 import {
@@ -702,6 +707,42 @@ const unitsByFaction = computed(() => {
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([faction, units]) => ({ faction, units }))
 })
+
+// ---- 裝備管理（COP 專屬面板）：白軍編任一單位編裝 + 設各軍自編權限；或本軍（該局開放自編）----
+const equipMgr = ref(false)
+const equipUnitId = ref('')
+const orbatPerms = ref<string[]>([])
+const canManageEquip = computed(() => canControl.value || orbatEdit.value)
+// 可編裝單位：白軍見全部（依陣營分組）；一般角色僅本軍（且該局開放自編）。
+const equipEditableFactions = computed(() =>
+  canControl.value
+    ? unitsByFaction.value
+    : unitsByFaction.value.filter((g) => !!myFaction.value && g.faction === myFaction.value),
+)
+async function openEquipMgr() {
+  equipMgr.value = true
+  equipUnitId.value = ''
+  if (canControl.value) {
+    orbatPerms.value = (await fetchOrbatPermissions(sessionId.value).catch(() => ({ factions: [] })))
+      .factions
+  }
+}
+async function toggleOrbatPerm(f: string) {
+  const set = new Set(orbatPerms.value)
+  if (set.has(f)) set.delete(f)
+  else set.add(f)
+  const next = [...set]
+  try {
+    orbatPerms.value = (await setOrbatPermissions(sessionId.value, next)).factions
+    toasts.push({
+      severity: 'success',
+      title: `自編權限：${orbatPerms.value.join('、') || '（僅白軍）'}`,
+      timeoutMs: 2500,
+    })
+  } catch {
+    toasts.push({ severity: 'error', title: '設定自編權限失敗', timeoutMs: 3000 })
+  }
+}
 
 // ---- 地圖編輯器（stage ③b）----
 const canDraw = computed(() => canControl.value || !!myFaction.value)
@@ -1473,6 +1514,14 @@ watch(
         >
           ⚙ 白軍控制台
         </button>
+        <button
+          v-if="canManageEquip"
+          data-testid="nav-equip-mgr"
+          title="裝備管理：編輯各單位配發的武器/裝備（白軍編任一；本軍需該局開放自編）"
+          @click="openEquipMgr"
+        >
+          <i class="pi pi-box" /> 裝備管理
+        </button>
         <div class="widget-menu">
           <button
             data-testid="nav-widgets"
@@ -1526,6 +1575,66 @@ watch(
       （tick {{ victory.tick }}）
       <button class="vb-aar" @click="navigateTo(`/session/${sessionId}/aar`)">看 AAR →</button>
     </div>
+
+    <!-- 裝備管理面板：白軍編任一單位編裝 + 設各軍自編權限；本軍（開放自編）僅編本軍單位 -->
+    <div v-if="equipMgr" class="equip-overlay" data-testid="equip-mgr" @click.self="equipMgr = false">
+      <div class="equip-modal">
+        <div class="eq-hd">
+          <h3><i class="pi pi-box" /> 裝備管理</h3>
+          <button class="eq-x" data-testid="equip-close" @click="equipMgr = false"><i class="pi pi-times" /></button>
+        </div>
+
+        <div v-if="canControl" class="eq-perms" data-testid="equip-perms">
+          <div class="eq-perms-hd">各軍自編權限（開放後該陣營指揮官可自行編裝本軍單位）</div>
+          <div class="eq-perms-row">
+            <label
+              v-for="g in unitsByFaction"
+              :key="g.faction"
+              class="eq-perm"
+              :data-testid="`equip-perm-${g.faction}`"
+            >
+              <input
+                type="checkbox"
+                :checked="orbatPerms.includes(g.faction)"
+                @change="toggleOrbatPerm(g.faction)"
+              >
+              <span class="u-dot" :style="{ background: factionColor(g.faction) }" />{{ g.faction }}
+            </label>
+            <span v-if="!unitsByFaction.length" class="eq-hint">（本局尚無單位）</span>
+          </div>
+        </div>
+
+        <div class="eq-body">
+          <div class="eq-units" data-testid="equip-unit-list">
+            <div v-for="g in equipEditableFactions" :key="g.faction" class="eq-fac">
+              <div class="eq-fac-hd">
+                <span class="u-dot" :style="{ background: factionColor(g.faction) }" /><b>{{ g.faction }}</b>
+                <span class="dim">· {{ g.units.length }}</span>
+              </div>
+              <button
+                v-for="u in g.units"
+                :key="u.id"
+                class="eq-unit"
+                :class="{ sel: u.id === equipUnitId }"
+                data-testid="equip-unit"
+                @click="equipUnitId = u.id"
+              >
+                {{ u.designation }}
+              </button>
+            </div>
+            <p v-if="!equipEditableFactions.length" class="eq-hint">（無可編裝的單位）</p>
+          </div>
+          <div class="eq-editor">
+            <div v-if="equipUnitId" class="eq-editor-in">
+              <div class="eq-editor-hd">編裝 · {{ realUnits.find((u) => u.id === equipUnitId)?.designation ?? equipUnitId }}</div>
+              <UnitOrbatEditor :session-id="sessionId" :unit-id="equipUnitId" :can-edit="true" />
+            </div>
+            <p v-else class="eq-hint">← 選一個單位以編輯其武器/裝備配發</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="body">
       <!-- #12 停靠側欄容器（拖到最左/右緣的視窗落於此；空則以 :empty 隱藏）。 -->
       <div id="dock-left-col" class="dock-col left" />
@@ -2282,6 +2391,130 @@ watch(
 }
 .mapedit-bar .meb-start:hover {
   background: #15803d;
+}
+.equip-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.equip-modal {
+  width: min(760px, 94vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  color: #e2e8f0;
+  overflow: hidden;
+}
+.equip-modal .eq-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid #1e293b;
+}
+.equip-modal .eq-hd h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.equip-modal .eq-x {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.eq-perms {
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid #1e293b;
+  background: #0a1626;
+}
+.eq-perms-hd {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-bottom: 0.35rem;
+}
+.eq-perms-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.9rem;
+}
+.eq-perm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.eq-perm .u-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.eq-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.eq-units {
+  flex: 0 0 40%;
+  max-width: 16rem;
+  overflow-y: auto;
+  padding: 0.6rem;
+  border-right: 1px solid #1e293b;
+}
+.eq-fac-hd {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  margin: 0.4rem 0 0.2rem;
+}
+.eq-fac-hd .u-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.eq-unit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  margin: 0.15rem 0;
+  border: 1px solid #1e293b;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.eq-unit.sel {
+  border-color: #2563eb;
+  background: #172554;
+}
+.eq-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 0.7rem 0.9rem;
+}
+.eq-editor-hd {
+  font-size: 0.85rem;
+  color: #cbd5e1;
+  margin-bottom: 0.5rem;
+}
+.eq-hint {
+  color: #64748b;
+  font-size: 0.82rem;
 }
 .victory-banner .vb-aar {
   margin-left: auto;
