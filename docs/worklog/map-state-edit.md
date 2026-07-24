@@ -67,3 +67,12 @@ agent: Opus 4.8
 - **瀏覽器實測（trusted 事件，computer 工具）**：進編輯模式 `boxZoom` 已停用；Shift+點單位→選取
   filter 命中 + 青環 + 「已選 1 個」徽章渲染（截圖確認）——修好前 filter 恆空。地圖 201ms 正常載入。
   前端 lint/typecheck 綠。
+
+## 再修：整組拖曳跨陣營無反應（2026-07-24，使用者回報「已選 3 個但拖動沒反應」）
+**根因**：`myFaction = me.my_faction`；被指派陣營的導演（如 BLUE）視角下，**他陣營單位是
+contact（敵情），不在 `props.ownUnits`**。但多選/框選可選任一 rendered 單位（含 contact），而舊
+`startGroupDrag` / `onBoxUp` 只從 `props.ownUnits` 取座標 → 選了跨陣營單位時 origs 幾乎為空、
+拖曳整組靜默 no-op（單拖已可動因 reposition 端點對全知放行任一單位）。編輯模式＝白軍神視角，
+本就該能調任一陣營。**修法**：新增 `allUnitPositions()`（我方 + contact 皆納入）；`startGroupDrag`
+origs、`onBoxUp` 框選、`syncUnits(override)` 即時跟隨全部改用之（含 contact 座標覆寫）。
+lint/typecheck 綠；同陣營整組拖曳先前已驗（DB 同 delta），本修僅擴大納入集合、不影響既有路徑。

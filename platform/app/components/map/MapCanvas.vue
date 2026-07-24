@@ -483,18 +483,33 @@ function setLayerVisibility(id: string, visible: boolean) {
   if (map?.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
 }
 
+/** 選取拖曳用：所有單位當前座標（我方 + 敵情 contact）——編輯模式白軍可調任一陣營單位。 */
+function allUnitPositions(): { id: string; lng: number; lat: number }[] {
+  const out: { id: string; lng: number; lat: number }[] = []
+  for (const u of props.ownUnits) out.push({ id: u.id, lng: u.lng, lat: u.lat })
+  for (const c of props.contacts) out.push({ id: c.contactId, lng: c.lng, lat: c.lat })
+  return out
+}
+
 /** 依 props 的單位/contact 重建 symbol 特徵：生成/快取 milsymbol icon（去重 addImage）→ setData。 */
 function syncUnits(posOverride?: Map<string, { lng: number; lat: number }>) {
   if (!map) return
   // 整組拖曳即時跟隨：以覆寫座標重建，讓真圖標 + 高亮環跟著游標移動（暫停中無 STATE_DIFF 覆蓋）。
-  const own =
-    posOverride && posOverride.size
-      ? props.ownUnits.map((u) => {
-          const o = posOverride.get(u.id)
-          return o ? { ...u, lng: o.lng, lat: o.lat } : u
-        })
-      : props.ownUnits
-  const { collection, icons } = buildUnitFeatures(own, props.contacts, props.currentTick)
+  // 我方 + 敵情 contact 皆套覆寫（編輯模式可同時拖曳兩陣營單位）。
+  const ov = posOverride && posOverride.size ? posOverride : null
+  const own = ov
+    ? props.ownUnits.map((u) => {
+        const o = ov.get(u.id)
+        return o ? { ...u, lng: o.lng, lat: o.lat } : u
+      })
+    : props.ownUnits
+  const contacts = ov
+    ? props.contacts.map((c) => {
+        const o = ov.get(c.contactId)
+        return o ? { ...c, lng: o.lng, lat: o.lat } : c
+      })
+    : props.contacts
+  const { collection, icons } = buildUnitFeatures(own, contacts, props.currentTick)
   for (const spec of icons) {
     if (map.hasImage(spec.key)) continue
     const img = symbolImage(spec.key, spec.sidc, spec.options)
@@ -1057,9 +1072,7 @@ onMounted(async () => {
     if (moves.length) emit('unitsMove', { moves })
   }
   const startGroupDrag = (e: _LngLatEvt): void => {
-    const origs = props.ownUnits
-      .filter((u) => selectedUnitIds.has(u.id))
-      .map((u) => ({ id: u.id, lng: u.lng, lat: u.lat }))
+    const origs = allUnitPositions().filter((u) => selectedUnitIds.has(u.id))
     if (!origs.length || !map) return
     groupDrag = { start: { lng: e.lngLat.lng, lat: e.lngLat.lat }, origs }
     map.getCanvas().style.cursor = 'grabbing'
@@ -1114,7 +1127,7 @@ onMounted(async () => {
     const maxX = Math.max(a.x, b.x)
     const minY = Math.min(a.y, b.y)
     const maxY = Math.max(a.y, b.y)
-    for (const u of props.ownUnits) {
+    for (const u of allUnitPositions()) {
       const pt = map.project([u.lng, u.lat])
       if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) selectedUnitIds.add(u.id)
     }
