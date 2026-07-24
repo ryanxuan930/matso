@@ -42,3 +42,11 @@ agent: Opus 4.8
 ## 完成 / 後續可強化
 - **完成**：白軍於 COP 按「地圖狀態編輯」→ 暫停 → 拖單位定位 + 繪障礙 → 「開始兵推」恢復。
 - **後續可強化**：拖曳時單位圖標即時跟隨（目前用落點預覽點，放開後 refetch 定位）；編輯模式內新增/刪除單位；ORBAT 面板數值化改座標。
+
+## 追加：多選 + 框選整組移動（2026-07-24）
+編輯模式下可一次移動多個單位：
+- **Shift＋點單位**＝加入/移除多選（青色高亮環）；**Shift＋空白處拖曳**＝框選矩形範圍內單位（累加）；點空白（無 Shift）清空多選。
+- 拖曳任一已選單位 → **整組依相同經緯位移平移**（拖曳中顯示多點落點預覽），放開後批次 reposition（並行 POST）再重載一次。
+- 設計：MapCanvas 自持選取集 `selectedUnitIds` + `unit-multiselect-ring` 高亮層（`in` filter）+ `unit-multidrag` 預覽層 + 框選 rubber-band（掛地圖容器的 inline-style div）；emit `unitsMove{moves[]}` → cop `onUnitsMove` 批次 reposition。離開編輯模式自動清空多選。
+- 檔案：MapCanvas.vue（多選/框選/整組拖曳 + 2 圖層 + 1 預覽源）、cop.vue（onUnitsMove + `@units-move` + 工具列提示 Shift/框選）。
+- **瀏覽器實測**（e2e-orders，經 `window.__matsoMap` 派真事件驗證）：Shift 多選 filter 命中 2 單位 + 青環渲染；框選矩形選中範圍內 2 單位、點空白清空；整組拖曳後 DB 兩單位位移量完全一致（dLng 相同）；驗畢還原座標 + RESUME。前端 lint/typecheck 綠。

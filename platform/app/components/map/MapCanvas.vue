@@ -42,6 +42,8 @@ const emit = defineEmits<{
   ]
   featureMove: [{ id: string; lng: number; lat: number }] // 拖放移動點特徵（#11 B2）
   unitMove: [{ id: string; lng: number; lat: number }] // 地圖狀態編輯：拖放單位到新座標
+  // 地圖狀態編輯（多選）：一次移動多個單位（Shift 多選 / 框選後整組拖曳）到各自新座標。
+  unitsMove: [{ moves: { id: string; lng: number; lat: number }[] }]
   // 選取單位的螢幕座標（供 Unit 資訊卡懸浮於圖標旁；地圖平移/縮放即時更新；無選取→null）。
   selectScreenPos: [{ x: number; y: number } | null]
 }>()
@@ -218,8 +220,30 @@ const loaded = ref(false)
 let map: MapLibreMap | null = null
 let dragFeatId: string | null = null // 拖放移動中的點特徵 id（#11 B2）
 let dragUnitId: string | null = null // 拖放移動中的單位 id（地圖狀態編輯）
+// 地圖狀態編輯 · 多選：選取單位集合 + 整組拖曳/框選狀態。
+const selectedUnitIds = new Set<string>()
+let groupDrag: { start: { lng: number; lat: number }; origs: { id: string; lng: number; lat: number }[] } | null = null
+let boxStart: { x: number; y: number } | null = null
+let rubberBand: HTMLDivElement | null = null // 框選矩形（螢幕座標 overlay）
+const MULTISEL_SRC = 'unit-multiselect' // 整組拖曳落點預覽（多點）
 // 拖曳事件的結構化型別（避免引入 maplibre 具名事件型別）。
 type _LngLatEvt = { lngLat: { lng: number; lat: number } }
+type _PointEvt = { point: { x: number; y: number }; lngLat: { lng: number; lat: number }; originalEvent: MouseEvent; preventDefault: () => void }
+
+// 多選高亮環 filter：只畫在 selectedUnitIds 內的單位。
+function _multiSelFilter(): unknown[] {
+  return ['in', ['get', 'id'], ['literal', Array.from(selectedUnitIds)]]
+}
+function refreshMultiSelect(): void {
+  if (map?.getLayer('unit-multiselect-ring')) {
+    map.setFilter('unit-multiselect-ring', _multiSelFilter() as never)
+  }
+}
+function clearMultiSelect(): void {
+  if (!selectedUnitIds.size) return
+  selectedUnitIds.clear()
+  refreshMultiSelect()
+}
 function onFeatDragMove(e: _LngLatEvt): void {
   if (!dragFeatId || !map) return
   ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData({
@@ -868,6 +892,19 @@ onMounted(async () => {
         ],
       },
     })
+    // 地圖狀態編輯 · 多選高亮環（青色）：繞在被 Shift 多選/框選的單位外圈，置於符號層下方。
+    map.addLayer({
+      id: 'unit-multiselect-ring',
+      type: 'circle',
+      source: UNITS_SRC,
+      filter: _multiSelFilter() as never,
+      paint: {
+        'circle-radius': 18,
+        'circle-color': 'rgba(34,211,238,0.14)',
+        'circle-stroke-color': '#22d3ee',
+        'circle-stroke-width': 2.5,
+      },
+    })
     map.addLayer({
       id: 'units',
       type: 'symbol',
@@ -878,6 +915,19 @@ onMounted(async () => {
         'icon-ignore-placement': true,
       },
       paint: { 'icon-opacity': ['get', 'opacity'] },
+    })
+    // 整組拖曳落點預覽（多點青環，同單位符號偏移）。
+    map.addSource(MULTISEL_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer({
+      id: 'unit-multidrag',
+      type: 'circle',
+      source: MULTISEL_SRC,
+      paint: {
+        'circle-radius': 7,
+        'circle-color': 'rgba(34,211,238,0.25)',
+        'circle-stroke-color': '#22d3ee',
+        'circle-stroke-width': 2,
+      },
     })
     // 固定單位鎖頭徽章（指揮部等）：canvas 生成 ImageData（離線免 glyphs），疊在符號右上角。
     // 只我方（kind='own' + fixed）——不洩漏敵方編成（fog of war）。
@@ -937,6 +987,8 @@ onMounted(async () => {
       emit('featureClick', { id: String(fhit.properties.id) })
       return
     }
+    // 編輯模式下點空白（未按 Shift）→ 清空多選。
+    if (props.editUnits && !e.originalEvent.shiftKey) clearMultiSelect()
     emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
   })
   // 滑過單位符號時游標變手指（可點示意）；設定目標中則維持十字準星（#3）。
@@ -988,20 +1040,125 @@ onMounted(async () => {
     ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData(_EMPTY_FEAT_FC as never)
     emit('unitMove', { id, lng: e.lngLat.lng, lat: e.lngLat.lat })
   }
+  // 整組拖曳（多選）：以按下處為錨，各選取單位依相同經緯位移平移；拖曳中顯示多點落點預覽。
+  const onGroupDragMove = (e: _LngLatEvt): void => {
+    if (!groupDrag || !map) return
+    const dLng = e.lngLat.lng - groupDrag.start.lng
+    const dLat = e.lngLat.lat - groupDrag.start.lat
+    const feats = groupDrag.origs.map((o) => ({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Point', coordinates: [o.lng + dLng, o.lat + dLat] },
+    }))
+    ;(map.getSource(MULTISEL_SRC) as GeoJSONSource | undefined)?.setData({
+      type: 'FeatureCollection',
+      features: feats,
+    } as never)
+  }
+  const onGroupDrop = (e: _LngLatEvt): void => {
+    if (!groupDrag || !map) return
+    const dLng = e.lngLat.lng - groupDrag.start.lng
+    const dLat = e.lngLat.lat - groupDrag.start.lat
+    const moves = groupDrag.origs.map((o) => ({ id: o.id, lng: o.lng + dLng, lat: o.lat + dLat }))
+    groupDrag = null
+    map.getCanvas().style.cursor = ''
+    map.off('mousemove', onGroupDragMove)
+    ;(map.getSource(MULTISEL_SRC) as GeoJSONSource | undefined)?.setData(_EMPTY_FEAT_FC as never)
+    if (moves.length) emit('unitsMove', { moves })
+  }
+  const startGroupDrag = (e: _LngLatEvt): void => {
+    const origs = props.ownUnits
+      .filter((u) => selectedUnitIds.has(u.id))
+      .map((u) => ({ id: u.id, lng: u.lng, lat: u.lat }))
+    if (!origs.length || !map) return
+    groupDrag = { start: { lng: e.lngLat.lng, lat: e.lngLat.lat }, origs }
+    map.getCanvas().style.cursor = 'grabbing'
+    map.on('mousemove', onGroupDragMove)
+    map.once('mouseup', onGroupDrop)
+  }
   const onUnitDown = (e: {
     features?: { properties?: { id?: unknown } | null }[]
     preventDefault: () => void
+    originalEvent?: MouseEvent
+    lngLat?: { lng: number; lat: number }
   }) => {
     if (!props.editUnits) return // 僅編輯模式可拖曳單位
     const id = e.features?.[0]?.properties?.id
     if (id == null) return
+    const sid = String(id)
     e.preventDefault() // 阻止地圖平移
-    dragUnitId = String(id)
+    // Shift+點單位：加入/移除多選（不拖曳）。
+    if (e.originalEvent?.shiftKey) {
+      if (selectedUnitIds.has(sid)) selectedUnitIds.delete(sid)
+      else selectedUnitIds.add(sid)
+      refreshMultiSelect()
+      return
+    }
+    // 拖曳已多選的成員 → 整組移動；否則清空多選、單獨拖曳此單位（原行為）。
+    if (selectedUnitIds.has(sid) && selectedUnitIds.size > 1 && e.lngLat) {
+      startGroupDrag({ lngLat: e.lngLat })
+      return
+    }
+    clearMultiSelect()
+    dragUnitId = sid
     if (map) map.getCanvas().style.cursor = 'grabbing'
     map?.on('mousemove', onUnitDragMove)
     map?.once('mouseup', onUnitDrop)
   }
   map.on('mousedown', 'units', onUnitDown)
+  // 框選（匡選）：編輯模式下 Shift+於空白處拖曳 → 矩形選取範圍內單位（累加至多選）。
+  const onBoxMove = (e: _PointEvt): void => {
+    if (!boxStart || !rubberBand) return
+    const a = boxStart
+    const b = e.point
+    rubberBand.style.left = `${Math.min(a.x, b.x)}px`
+    rubberBand.style.top = `${Math.min(a.y, b.y)}px`
+    rubberBand.style.width = `${Math.abs(a.x - b.x)}px`
+    rubberBand.style.height = `${Math.abs(a.y - b.y)}px`
+    rubberBand.style.display = 'block'
+  }
+  const onBoxUp = (e: _PointEvt): void => {
+    if (!boxStart || !map) return
+    const a = boxStart
+    boxStart = null
+    map.off('mousemove', onBoxMove)
+    map.dragPan.enable()
+    if (rubberBand) rubberBand.style.display = 'none'
+    const b = e.point
+    if (Math.abs(a.x - b.x) < 3 && Math.abs(a.y - b.y) < 3) return // 幾乎沒動→視為點擊，不選
+    const minX = Math.min(a.x, b.x)
+    const maxX = Math.max(a.x, b.x)
+    const minY = Math.min(a.y, b.y)
+    const maxY = Math.max(a.y, b.y)
+    for (const u of props.ownUnits) {
+      const pt = map.project([u.lng, u.lat])
+      if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) selectedUnitIds.add(u.id)
+    }
+    refreshMultiSelect()
+  }
+  map.on('mousedown', (e: _PointEvt) => {
+    if (!props.editUnits || !map) return
+    if (!e.originalEvent.shiftKey) return // 框選只在 Shift+空白處拖曳（平移仍是無 Shift 拖曳）
+    if (map.queryRenderedFeatures(e.point, { layers: ['units'] }).length) return // 在單位上→交給 onUnitDown
+    boxStart = e.point
+    map.dragPan.disable()
+    e.preventDefault()
+    if (!rubberBand) {
+      rubberBand = document.createElement('div')
+      // inline 樣式：div 掛在地圖容器（非 scoped Vue 元素），scoped CSS 不會套用。
+      rubberBand.style.cssText =
+        'position:absolute;border:1.5px solid #22d3ee;background:rgba(34,211,238,0.12);' +
+        'pointer-events:none;z-index:5;display:none;'
+      map.getContainer().appendChild(rubberBand)
+    }
+    rubberBand.style.left = `${e.point.x}px`
+    rubberBand.style.top = `${e.point.y}px`
+    rubberBand.style.width = '0px'
+    rubberBand.style.height = '0px'
+    rubberBand.style.display = 'block'
+    map.on('mousemove', onBoxMove)
+    map.once('mouseup', onBoxUp)
+  })
   map.on('mouseenter', 'units', () => {
     if (map && props.editUnits && !dragUnitId) map.getCanvas().style.cursor = 'move'
   })
@@ -1072,6 +1229,13 @@ watch([() => props.latlngGrid, () => props.mgrsGrid, () => props.gridStepDeg], r
 watch([() => props.hexMaxRes, () => props.hexLimitKm], refreshHex)
 watch([() => props.dayNight, () => props.timeOfDay], applyDayNight)
 watch(() => props.targeting, applyTargetingCursor) // #3 十字準星
+// 離開地圖狀態編輯 → 清空多選（避免殘留高亮環）。
+watch(
+  () => props.editUnits,
+  (on) => {
+    if (!on) clearMultiSelect()
+  },
+)
 watch(() => props.queryPoint, syncQuery)
 watch(
   () => props.selectedFeatureId,

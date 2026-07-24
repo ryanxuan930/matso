@@ -731,6 +731,24 @@ async function onUnitMove(e: { id: string; lng: number; lat: number }) {
   // 無論成敗都重載（成功→定位、失敗→還原到 DB 權威位置）。
   realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
 }
+// 地圖狀態編輯 · 多選整組移動：逐一 reposition（並行）後只重載一次。
+async function onUnitsMove(e: { moves: { id: string; lng: number; lat: number }[] }) {
+  if (!e.moves.length) return
+  try {
+    await Promise.all(
+      e.moves.map((m) =>
+        apiFetch(`/sessions/${sessionId.value}/units/${m.id}/reposition`, {
+          method: 'POST',
+          body: { lat: m.lat, lng: m.lng },
+        }),
+      ),
+    )
+    toasts.push({ severity: 'success', title: `已移動 ${e.moves.length} 個單位`, timeoutMs: 2000 })
+  } catch {
+    toasts.push({ severity: 'error', title: '批次移動失敗（部分單位可能未套用）', timeoutMs: 3000 })
+  }
+  realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
+}
 // #12 元素顯隱：地圖只渲染未隱藏的特徵（清單仍列全部，供切換）。
 const shownFeatures = computed(() =>
   mapFeatures.value.filter((f) => !hiddenFeatureIds.value.includes(f.id)),
@@ -1471,7 +1489,7 @@ watch(
     <div v-if="mapEditMode" class="mapedit-bar" data-testid="mapedit-bar">
       <i class="pi pi-pencil" />
       <span class="meb-txt">
-        <strong>地圖狀態編輯（推演已暫停）</strong>——拖曳單位調整位置；用「地圖編輯」工具繪製障礙/建築。
+        <strong>地圖狀態編輯（推演已暫停）</strong>——拖曳單位調整位置；<b>Shift＋點單位</b>可多選、<b>Shift＋空白處拖曳</b>可框選，再拖曳任一選取單位即整組移動；用「地圖編輯」工具繪障礙/建築。
       </span>
       <button class="meb-start" data-testid="start-wargame" @click="startWargame">
         ▶ 開始兵推
@@ -1783,6 +1801,7 @@ watch(
             :time-of-day="timeOfDay"
             :targeting="targeting"
             :edit-units="mapEditMode"
+            @units-move="onUnitsMove"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @select-screen-pos="onSelectScreenPos"
