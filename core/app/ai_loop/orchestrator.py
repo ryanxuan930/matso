@@ -75,7 +75,7 @@ def ensure_ai_participant(db: Session, session_id: str, faction: str) -> str:
             session_id=session_id,
             faction=faction,
             role=UserRole.COMMANDER,
-            unit_scope={},
+            unit_scope=[],
         )
         db.add(part)
     db.commit()

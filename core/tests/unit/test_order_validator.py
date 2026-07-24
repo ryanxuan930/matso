@@ -116,6 +116,32 @@ def test_white_cell_also_cannot_move_fixed_unit(session_factory: sessionmaker[Se
     assert ei.value.error_code == "ORDER_UNIT_FIXED"
 
 
+def _set_scope(session_factory: sessionmaker[Session], issuer_id: str, scope: list[str]) -> None:
+    from app.models.tables import SessionParticipant
+
+    with session_factory() as db:
+        p = db.get(SessionParticipant, issuer_id)
+        assert p is not None
+        p.unit_scope = scope
+        db.commit()
+
+
+def test_unit_scope_blocks_out_of_scope(session_factory: sessionmaker[Session]) -> None:
+    # 名冊限縮此帳號只指揮某些單位（不含 blue_unit）→ 對 blue_unit 下令被擋。
+    world = seed_world(session_factory)
+    _set_scope(session_factory, world.blue_issuer_id, ["some-other-unit"])
+    with session_factory() as db, pytest.raises(OrderPermissionError):
+        validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
+
+
+def test_unit_scope_allows_in_scope(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    _set_scope(session_factory, world.blue_issuer_id, [world.blue_unit_id])
+    with session_factory() as db:
+        result = validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
+        assert result.unit.id == world.blue_unit_id
+
+
 def test_fixed_unit_can_still_engage(session_factory: sessionmaker[Session]) -> None:
     # 固定不等於非戰鬥：ENGAGE（原地自衛）不受固定限制，驗證通過（可行性另由物理預檢把關）。
     world = seed_world(session_factory)

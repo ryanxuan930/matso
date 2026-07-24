@@ -173,18 +173,29 @@ async function doAssign() {
     rosterBusy.value = false
   }
 }
-async function doReassign(userId: string, faction: string, role: string) {
+async function doReassign(userId: string, faction: string, role: string, unitScope: string[] = []) {
   if (!rosterFor.value) return
   rosterBusy.value = true
   rosterErr.value = ''
   try {
-    await assignParticipant(rosterFor.value.id, userId, faction, role)
+    await assignParticipant(rosterFor.value.id, userId, faction, role, unitScope)
     roster.value = await fetchRoster(rosterFor.value.id)
   } catch (e) {
     rosterErr.value = `更新失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
   } finally {
     rosterBusy.value = false
   }
+}
+// unit_scope（限指揮特定單位子集）——展開/收合的列 + 該陣營單位清單 + 切換。
+const scopeEditFor = ref('')
+function unitsOfFaction(faction: string) {
+  return (roster.value?.units ?? []).filter((u) => u.faction === faction)
+}
+function toggleScopeUnit(p: { user_id: string; faction: string; role: string; unit_scope?: string[] }, unitId: string) {
+  const cur = new Set(p.unit_scope ?? [])
+  if (cur.has(unitId)) cur.delete(unitId)
+  else cur.add(unitId)
+  doReassign(p.user_id, p.faction, p.role, [...cur])
 }
 async function doRemoveParticipant(userId: string) {
   if (!rosterFor.value) return
@@ -346,33 +357,56 @@ onMounted(async () => {
         <p v-if="rosterErr" class="modal-err" data-testid="roster-err">{{ rosterErr }}</p>
 
         <ul v-if="roster" class="roster-list" data-testid="roster-list">
-          <li v-for="p in roster.participants" :key="p.user_id" class="roster-row" data-testid="roster-item">
-            <span class="r-user">{{ p.username }}</span>
-            <select
-              :value="p.faction"
-              class="r-sel"
-              data-testid="roster-faction"
-              :disabled="rosterBusy"
-              @change="doReassign(p.user_id, ($event.target as HTMLSelectElement).value, p.role)"
-            >
-              <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
-            </select>
-            <select
-              :value="p.role"
-              class="r-sel"
-              data-testid="roster-role"
-              :disabled="rosterBusy"
-              @change="doReassign(p.user_id, p.faction, ($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="rr in ROLE_OPTIONS" :key="rr" :value="rr">{{ ROLE_LABELS[rr] ?? rr }}</option>
-            </select>
-            <button
-              class="edit-btn danger"
-              data-testid="roster-remove"
-              title="移除參與資格"
-              :disabled="rosterBusy"
-              @click="doRemoveParticipant(p.user_id)"
-            ><i class="pi pi-times" /></button>
+          <li v-for="p in roster.participants" :key="p.user_id" class="roster-row-wrap" data-testid="roster-item">
+            <div class="roster-row">
+              <span class="r-user">{{ p.username }}</span>
+              <select
+                :value="p.faction"
+                class="r-sel"
+                data-testid="roster-faction"
+                :disabled="rosterBusy"
+                @change="doReassign(p.user_id, ($event.target as HTMLSelectElement).value, p.role, [])"
+              >
+                <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
+              </select>
+              <select
+                :value="p.role"
+                class="r-sel"
+                data-testid="roster-role"
+                :disabled="rosterBusy"
+                @change="doReassign(p.user_id, p.faction, ($event.target as HTMLSelectElement).value, p.unit_scope ?? [])"
+              >
+                <option v-for="rr in ROLE_OPTIONS" :key="rr" :value="rr">{{ ROLE_LABELS[rr] ?? rr }}</option>
+              </select>
+              <button
+                v-if="unitsOfFaction(p.faction).length"
+                class="edit-btn"
+                data-testid="roster-scope-toggle"
+                :title="`限指揮單位（${(p.unit_scope ?? []).length ? (p.unit_scope ?? []).length + ' 個' : '全部'}）`"
+                @click="scopeEditFor = scopeEditFor === p.user_id ? '' : p.user_id"
+              >
+                <i class="pi pi-crosshairs" />
+                <span class="scope-badge">{{ (p.unit_scope ?? []).length || '全' }}</span>
+              </button>
+              <button
+                class="edit-btn danger"
+                data-testid="roster-remove"
+                title="移除參與資格"
+                :disabled="rosterBusy"
+                @click="doRemoveParticipant(p.user_id)"
+              ><i class="pi pi-times" /></button>
+            </div>
+            <div v-if="scopeEditFor === p.user_id" class="scope-panel" data-testid="roster-scope-panel">
+              <span class="scope-hint">限指揮單位（不勾＝整個 {{ p.faction }} 陣營）：</span>
+              <label v-for="u in unitsOfFaction(p.faction)" :key="u.id" class="scope-unit">
+                <input
+                  type="checkbox"
+                  :checked="(p.unit_scope ?? []).includes(u.id)"
+                  :disabled="rosterBusy"
+                  @change="toggleScopeUnit(p, u.id)"
+                >{{ u.designation }}
+              </label>
+            </div>
           </li>
           <li v-if="!roster.participants.length" class="roster-empty">（尚無參與者）</li>
         </ul>
@@ -655,10 +689,42 @@ ul {
   max-height: 40vh;
   overflow-y: auto;
 }
+.roster-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
 .roster-row {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+.scope-badge {
+  font-size: 0.7rem;
+  margin-left: 0.15rem;
+}
+.scope-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.7rem;
+  padding: 0.35rem 0.5rem;
+  margin-left: 0.5rem;
+  border-left: 2px solid #334155;
+  background: #0a1626;
+  border-radius: 0.25rem;
+}
+.scope-hint {
+  flex-basis: 100%;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+.scope-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  cursor: pointer;
 }
 .roster-row .r-user {
   flex: 1 1 auto;

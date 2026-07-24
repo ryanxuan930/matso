@@ -35,10 +35,11 @@ export function assignParticipant(
   userId: string,
   faction: string,
   role: string,
+  unitScope: string[] = [],
 ): Promise<SessionParticipantView> {
   return apiFetch<SessionParticipantView>(`/sessions/${sessionId}/participants/${userId}`, {
     method: 'PUT',
-    body: { faction, role },
+    body: { faction, role, unit_scope: unitScope },
   })
 }
 export function removeParticipant(sessionId: string, userId: string): Promise<unknown> {

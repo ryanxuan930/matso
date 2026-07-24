@@ -208,7 +208,8 @@ class SessionParticipant(Base):
     # faction＝想定定義字串 id（SPEC §12.1/ADR 006）；驗證於 app.factions
     faction: Mapped[str] = mapped_column("faction", String(191))
     role: Mapped[UserRole] = mapped_column("role", SAEnum(UserRole))
-    unit_scope: Mapped[dict] = mapped_column("unitScope", JSON)  # type: ignore[type-arg]
+    # unit_scope＝限指揮之單位 id 清單（JSON 陣列；空＝整個陣營）。以 Any 容納 JSON 值。
+    unit_scope: Mapped[Any] = mapped_column("unitScope", JSON, default=list)
 
 
 class Scenario(Base):

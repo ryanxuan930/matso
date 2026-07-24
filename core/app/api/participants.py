@@ -38,16 +38,25 @@ class SessionParticipantView(BaseModel):
     username: str
     faction: str
     role: str
+    unit_scope: list[str] = []  # 限指揮之單位子集（空＝整個陣營）
+
+
+class RosterUnit(BaseModel):
+    id: str
+    designation: str
+    faction: str
 
 
 class ParticipantRoster(BaseModel):
     participants: list[SessionParticipantView]
     factions: list[str]  # 可指派：本局單位陣營 + WHITE_CELL
+    units: list[RosterUnit]  # 供 unit_scope 選擇
 
 
 class AssignParticipantRequest(BaseModel):
     faction: str
     role: UserRole  # pydantic 驗證：非法角色 → FastAPI 422
+    unit_scope: list[str] = []  # 限指揮之單位子集（空＝整個陣營）
 
 
 def _require_session_director(db: Session, user: CurrentUser, session_id: str) -> WargameSession:
@@ -78,12 +87,26 @@ def _session_factions(db: Session, session_id: str) -> list[str]:
 
 def _view(db: Session, p: SessionParticipant) -> SessionParticipantView:
     u = db.get(User, p.user_id)
+    scope = p.unit_scope if isinstance(p.unit_scope, list) else []
     return SessionParticipantView(
         user_id=p.user_id,
         username=(u.username if u is not None else "?"),
         faction=p.faction,
         role=p.role.value,
+        unit_scope=[str(x) for x in scope],
     )
+
+
+def _session_units(db: Session, session_id: str) -> list[RosterUnit]:
+    units = (
+        db.execute(select(TacticalUnit).where(TacticalUnit.session_id == session_id))
+        .scalars()
+        .all()
+    )
+    return [
+        RosterUnit(id=u.id, designation=u.designation, faction=u.faction)
+        for u in sorted(units, key=lambda u: (u.faction, u.designation))
+    ]
 
 
 @router.get("/{session_id}/participants", response_model=ParticipantRoster)
@@ -99,7 +122,11 @@ def list_participants(
         .all()
     )
     factions = [*_session_factions(db, session_id), WHITE_CELL]
-    return ParticipantRoster(participants=[_view(db, p) for p in parts], factions=factions)
+    return ParticipantRoster(
+        participants=[_view(db, p) for p in parts],
+        factions=factions,
+        units=_session_units(db, session_id),
+    )
 
 
 @router.put("/{session_id}/participants/{user_id}", response_model=SessionParticipantView)
@@ -120,6 +147,20 @@ def assign_participant(
     allowed = {WHITE_CELL, *_session_factions(db, session_id)}
     if faction not in allowed:
         raise FactionInvalidError(f"陣營不屬於本局：{faction}（可指派：{sorted(allowed)}）")
+    # unit_scope 驗證：每個 id 須為本局該陣營單位（限縮只在自己陣營內有意義；空＝整個陣營）。
+    scope = list(dict.fromkeys(req.unit_scope))  # 去重、保序
+    if scope:
+        own_ids = {
+            u.id
+            for u in db.execute(
+                select(TacticalUnit).where(
+                    TacticalUnit.session_id == session_id, TacticalUnit.faction == faction
+                )
+            ).scalars()
+        }
+        bad = [uid for uid in scope if uid not in own_ids]
+        if bad:
+            raise FactionInvalidError(f"unit_scope 含非本陣營/本局單位：{bad}")
     existing = db.scalar(
         select(SessionParticipant).where(
             SessionParticipant.user_id == user_id,
@@ -129,6 +170,7 @@ def assign_participant(
     if existing is not None:
         existing.faction = faction
         existing.role = req.role
+        existing.unit_scope = scope
         p = existing
     else:
         p = SessionParticipant(
@@ -136,7 +178,7 @@ def assign_participant(
             session_id=session_id,
             faction=faction,
             role=req.role,
-            unit_scope=[],
+            unit_scope=scope,
         )
         db.add(p)
     db.commit()

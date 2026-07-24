@@ -226,19 +226,30 @@ components:
         username: { type: string }
         faction: { $ref: "#/components/schemas/Faction" }
         role: { $ref: "#/components/schemas/UserRole" }
+        unit_scope: { type: array, items: { type: string }, description: "限指揮之單位 id 子集（空＝整個陣營）" }
+    RosterUnit:
+      type: object
+      description: 名冊 unit_scope 選擇用的單位（供限縮至特定單位）
+      required: [id, designation, faction]
+      properties:
+        id: { type: string }
+        designation: { type: string }
+        faction: { $ref: "#/components/schemas/Faction" }
     ParticipantRoster:
       type: object
-      description: 一局的參與者名冊 + 可指派的陣營清單（想定宣告陣營 + WHITE_CELL）
-      required: [participants, factions]
+      description: 一局的參與者名冊 + 可指派陣營 + 單位清單（供 unit_scope 選擇）
+      required: [participants, factions, units]
       properties:
         participants: { type: array, items: { $ref: "#/components/schemas/SessionParticipantView" } }
         factions: { type: array, items: { type: string }, description: "可指派陣營（本局單位陣營 + WHITE_CELL）" }
+        units: { type: array, items: { $ref: "#/components/schemas/RosterUnit" } }
     AssignParticipantRequest:
       type: object
       required: [faction, role]
       properties:
         faction: { $ref: "#/components/schemas/Faction" }
         role: { $ref: "#/components/schemas/UserRole" }
+        unit_scope: { type: array, items: { type: string }, description: "限指揮之單位 id 子集（空/省略＝整個陣營）" }
     EquipmentTemplateView:
       type: object
       description: 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄

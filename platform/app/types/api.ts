@@ -831,16 +831,27 @@ export interface components {
             username: string;
             faction: components["schemas"]["Faction"];
             role: components["schemas"]["UserRole"];
+            /** @description 限指揮之單位 id 子集（空＝整個陣營） */
+            unit_scope?: string[];
         };
-        /** @description 一局的參與者名冊 + 可指派的陣營清單（想定宣告陣營 + WHITE_CELL） */
+        /** @description 名冊 unit_scope 選擇用的單位（供限縮至特定單位） */
+        RosterUnit: {
+            id: string;
+            designation: string;
+            faction: components["schemas"]["Faction"];
+        };
+        /** @description 一局的參與者名冊 + 可指派陣營 + 單位清單（供 unit_scope 選擇） */
         ParticipantRoster: {
             participants: components["schemas"]["SessionParticipantView"][];
             /** @description 可指派陣營（本局單位陣營 + WHITE_CELL） */
             factions: string[];
+            units: components["schemas"]["RosterUnit"][];
         };
         AssignParticipantRequest: {
             faction: components["schemas"]["Faction"];
             role: components["schemas"]["UserRole"];
+            /** @description 限指揮之單位 id 子集（空/省略＝整個陣營） */
+            unit_scope?: string[];
         };
         /** @description 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄 */
         EquipmentTemplateView: {

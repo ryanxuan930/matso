@@ -87,6 +87,13 @@ def _check_permission(db: Session, session_id: str, issuer_id: str, unit: Tactic
                 "unit_faction": unit.faction,
             },
         )
+    # unit_scope：若名冊限縮此帳號只指揮特定單位子集（非空），則只能對子集內單位下令。
+    scope = participant.unit_scope if isinstance(participant.unit_scope, list) else []
+    if scope and unit.id not in scope:
+        raise OrderPermissionError(
+            "此帳號僅獲授權指揮部分單位，不含此單位",
+            details={"unit_id": unit.id, "unit_scope": [str(x) for x in scope]},
+        )
 
 
 def _parse_payload(req: OrderRequest) -> MovePayload | EngagePayload | dict[str, object]:
