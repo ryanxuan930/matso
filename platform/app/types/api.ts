@@ -239,6 +239,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/participants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 一局的參與者名冊 + 可指派陣營。限統裁/白軍/管理（或本局統裁參與者）。 */
+        get: operations["listParticipants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/participants/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description 指派/更新某帳號的參與陣營與角色（upsert）。限統裁/白軍/管理。 */
+        put: operations["assignParticipant"];
+        post?: never;
+        /** @description 移除某帳號的參與資格。限統裁/白軍/管理；不可移除最後一位統裁。 */
+        delete: operations["removeParticipant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/units/{uid}/weapons": {
         parameters: {
             query?: never;
@@ -783,6 +823,23 @@ export interface components {
             min_range_m: number;
             ammo_types: string[];
             ammo_remaining?: number | null;
+        };
+        /** @description 推演參與者名冊條目——哪個帳號以哪個陣營/角色參與（決定操控/查看範圍） */
+        SessionParticipantView: {
+            user_id: string;
+            username: string;
+            faction: components["schemas"]["Faction"];
+            role: components["schemas"]["UserRole"];
+        };
+        /** @description 一局的參與者名冊 + 可指派的陣營清單（想定宣告陣營 + WHITE_CELL） */
+        ParticipantRoster: {
+            participants: components["schemas"]["SessionParticipantView"][];
+            /** @description 可指派陣營（本局單位陣營 + WHITE_CELL） */
+            factions: string[];
+        };
+        AssignParticipantRequest: {
+            faction: components["schemas"]["Faction"];
+            role: components["schemas"]["UserRole"];
         };
         /** @description 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄 */
         EquipmentTemplateView: {
@@ -1532,6 +1589,130 @@ export interface operations {
             };
             /** @description Not a participant */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listParticipants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Roster */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParticipantRoster"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    assignParticipant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignParticipantRequest"];
+            };
+        };
+        responses: {
+            /** @description Assigned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionParticipantView"];
+                };
+            };
+            /** @description Invalid faction/role */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User/session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removeParticipant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

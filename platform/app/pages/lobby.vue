@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import type { components } from '~/types/api'
 import { apiFetch } from '~/composables/useApi'
+import {
+  ASSIGNABLE_ROLES,
+  PARTICIPANT_ROLE_LABELS,
+  assignParticipant,
+  fetchAllUsers,
+  fetchRoster,
+  removeParticipant,
+  type ParticipantRoster,
+  type UserView,
+} from '~/composables/useParticipants'
 
 type SessionSummary = components['schemas']['SessionSummary']
 
@@ -118,6 +128,78 @@ async function doDelete() {
   }
 }
 
+// 參與者名冊——指派帳號↔陣營↔角色（決定誰能操控/查看哪個陣營）。限統裁/管理。
+const rosterFor = ref<SessionSummary | null>(null)
+const roster = ref<ParticipantRoster | null>(null)
+const allUsers = ref<UserView[]>([])
+const rosterErr = ref('')
+const rosterBusy = ref(false)
+const addUserId = ref('')
+const addFaction = ref('')
+const addRole = ref('COMMANDER')
+const ROLE_LABELS = PARTICIPANT_ROLE_LABELS
+const ROLE_OPTIONS = ASSIGNABLE_ROLES
+// 已在名冊中的帳號不重複列於「新增」下拉。
+const assignableUsers = computed(() => {
+  const inRoster = new Set((roster.value?.participants ?? []).map((p) => p.user_id))
+  return allUsers.value.filter((u) => !inRoster.has(u.id))
+})
+async function openRoster(s: SessionSummary) {
+  rosterFor.value = s
+  roster.value = null
+  rosterErr.value = ''
+  addUserId.value = ''
+  addRole.value = 'COMMANDER'
+  try {
+    const [r, us] = await Promise.all([fetchRoster(s.id), fetchAllUsers()])
+    roster.value = r
+    allUsers.value = us
+    addFaction.value = r.factions[0] ?? ''
+  } catch (e) {
+    rosterErr.value = `載入名冊失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+  }
+}
+async function doAssign() {
+  if (!rosterFor.value || !addUserId.value || !addFaction.value) return
+  rosterBusy.value = true
+  rosterErr.value = ''
+  try {
+    await assignParticipant(rosterFor.value.id, addUserId.value, addFaction.value, addRole.value)
+    roster.value = await fetchRoster(rosterFor.value.id)
+    addUserId.value = ''
+  } catch (e) {
+    rosterErr.value = `指派失敗：${(e as { code?: string; message?: string }).message ?? (e as { code?: string }).code ?? 'UNKNOWN'}`
+  } finally {
+    rosterBusy.value = false
+  }
+}
+async function doReassign(userId: string, faction: string, role: string) {
+  if (!rosterFor.value) return
+  rosterBusy.value = true
+  rosterErr.value = ''
+  try {
+    await assignParticipant(rosterFor.value.id, userId, faction, role)
+    roster.value = await fetchRoster(rosterFor.value.id)
+  } catch (e) {
+    rosterErr.value = `更新失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+  } finally {
+    rosterBusy.value = false
+  }
+}
+async function doRemoveParticipant(userId: string) {
+  if (!rosterFor.value) return
+  rosterBusy.value = true
+  rosterErr.value = ''
+  try {
+    await removeParticipant(rosterFor.value.id, userId)
+    roster.value = await fetchRoster(rosterFor.value.id)
+  } catch (e) {
+    rosterErr.value = `移除失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+  } finally {
+    rosterBusy.value = false
+  }
+}
+
 async function onLogout() {
   auth.logout()
   await navigateTo('/login')
@@ -200,6 +282,13 @@ onMounted(async () => {
           <button
             v-if="canEditScenario"
             class="edit-btn"
+            data-testid="roster-session"
+            title="參與者（指派帳號↔陣營↔角色）"
+            @click.stop="openRoster(s)"
+          ><i class="pi pi-users" /></button>
+          <button
+            v-if="canEditScenario"
+            class="edit-btn"
             data-testid="edit-session"
             title="編輯設定"
             @click.stop="openEdit(s)"
@@ -248,6 +337,66 @@ onMounted(async () => {
       </ul>
       <p v-else-if="showHistory" class="hist-empty" data-testid="history-empty">（無封存推演）</p>
     </section>
+
+    <!-- 參與者名冊——指派帳號↔陣營↔角色（決定操控/查看範圍） -->
+    <div v-if="rosterFor" class="modal-overlay" data-testid="roster-modal" @click.self="rosterFor = null">
+      <div class="modal roster-modal">
+        <h3>參與者 · {{ rosterFor.name }}</h3>
+        <p class="modal-hint">指派帳號到陣營與角色：指揮官/參謀＝可操控該陣營；觀察員＝只查看；白軍/統裁＝全知。</p>
+        <p v-if="rosterErr" class="modal-err" data-testid="roster-err">{{ rosterErr }}</p>
+
+        <ul v-if="roster" class="roster-list" data-testid="roster-list">
+          <li v-for="p in roster.participants" :key="p.user_id" class="roster-row" data-testid="roster-item">
+            <span class="r-user">{{ p.username }}</span>
+            <select
+              :value="p.faction"
+              class="r-sel"
+              data-testid="roster-faction"
+              :disabled="rosterBusy"
+              @change="doReassign(p.user_id, ($event.target as HTMLSelectElement).value, p.role)"
+            >
+              <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
+            </select>
+            <select
+              :value="p.role"
+              class="r-sel"
+              data-testid="roster-role"
+              :disabled="rosterBusy"
+              @change="doReassign(p.user_id, p.faction, ($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="rr in ROLE_OPTIONS" :key="rr" :value="rr">{{ ROLE_LABELS[rr] ?? rr }}</option>
+            </select>
+            <button
+              class="edit-btn danger"
+              data-testid="roster-remove"
+              title="移除參與資格"
+              :disabled="rosterBusy"
+              @click="doRemoveParticipant(p.user_id)"
+            ><i class="pi pi-times" /></button>
+          </li>
+          <li v-if="!roster.participants.length" class="roster-empty">（尚無參與者）</li>
+        </ul>
+        <p v-else class="modal-hint">載入中…</p>
+
+        <div v-if="roster" class="roster-add" data-testid="roster-add">
+          <select v-model="addUserId" class="r-sel" data-testid="roster-add-user">
+            <option value="">＋ 選帳號…</option>
+            <option v-for="u in assignableUsers" :key="u.id" :value="u.id">{{ u.username }}（{{ u.role }}）</option>
+          </select>
+          <select v-model="addFaction" class="r-sel" data-testid="roster-add-faction">
+            <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
+          </select>
+          <select v-model="addRole" class="r-sel" data-testid="roster-add-role">
+            <option v-for="rr in ROLE_OPTIONS" :key="rr" :value="rr">{{ ROLE_LABELS[rr] ?? rr }}</option>
+          </select>
+          <button data-testid="roster-assign" :disabled="!addUserId || rosterBusy" @click="doAssign">指派</button>
+        </div>
+
+        <div class="modal-btns">
+          <button class="ghost" data-testid="roster-close" @click="rosterFor = null">關閉</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 編輯已開推演設定（#16） -->
     <div v-if="editing" class="modal-overlay" data-testid="edit-session-modal" @click.self="editing = null">
@@ -496,5 +645,56 @@ ul {
   background: transparent;
   border: 1px solid #334155;
   color: #e2e8f0;
+}
+/* 參與者名冊 */
+.roster-modal {
+  width: 30rem;
+}
+.roster-list {
+  gap: 0.35rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.roster-row .r-user {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+.r-sel {
+  flex: 0 0 auto;
+  max-width: 9.5rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+}
+.roster-empty {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+.roster-add {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid #1e293b;
+  padding-top: 0.6rem;
+}
+.roster-add .r-sel {
+  flex: 1 1 auto;
+  min-width: 6rem;
+}
+.roster-add button {
+  flex: 0 0 auto;
 }
 </style>

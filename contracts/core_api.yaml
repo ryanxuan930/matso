@@ -217,6 +217,28 @@ components:
         min_range_m: { type: number }
         ammo_types: { type: array, items: { type: string } }
         ammo_remaining: { type: [integer, "null"] }
+    SessionParticipantView:
+      type: object
+      description: 推演參與者名冊條目——哪個帳號以哪個陣營/角色參與（決定操控/查看範圍）
+      required: [user_id, username, faction, role]
+      properties:
+        user_id: { type: string }
+        username: { type: string }
+        faction: { $ref: "#/components/schemas/Faction" }
+        role: { $ref: "#/components/schemas/UserRole" }
+    ParticipantRoster:
+      type: object
+      description: 一局的參與者名冊 + 可指派的陣營清單（想定宣告陣營 + WHITE_CELL）
+      required: [participants, factions]
+      properties:
+        participants: { type: array, items: { $ref: "#/components/schemas/SessionParticipantView" } }
+        factions: { type: array, items: { type: string }, description: "可指派陣營（本局單位陣營 + WHITE_CELL）" }
+    AssignParticipantRequest:
+      type: object
+      required: [faction, role]
+      properties:
+        faction: { $ref: "#/components/schemas/Faction" }
+        role: { $ref: "#/components/schemas/UserRole" }
     EquipmentTemplateView:
       type: object
       description: 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄
@@ -626,6 +648,52 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/UnitView" } }
         "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/participants:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listParticipants
+      security: [{ bearerAuth: [] }]
+      description: 一局的參與者名冊 + 可指派陣營。限統裁/白軍/管理（或本局統裁參與者）。
+      responses:
+        "200":
+          description: Roster
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ParticipantRoster" }
+        "403": { description: Forbidden, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/participants/{userId}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: assignParticipant
+      security: [{ bearerAuth: [] }]
+      description: 指派/更新某帳號的參與陣營與角色（upsert）。限統裁/白軍/管理。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssignParticipantRequest" }
+      responses:
+        "200":
+          description: Assigned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionParticipantView" }
+        "400": { description: Invalid faction/role, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: Forbidden, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: User/session not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: removeParticipant
+      security: [{ bearerAuth: [] }]
+      description: 移除某帳號的參與資格。限統裁/白軍/管理；不可移除最後一位統裁。
+      responses:
+        "204": { description: Removed }
+        "403": { description: Forbidden, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/units/{uid}/weapons:
     parameters:
       - { $ref: "#/components/parameters/SessionId" }
