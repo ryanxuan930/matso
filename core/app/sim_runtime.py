@@ -42,7 +42,7 @@ from app.engine.subsystems import (
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.runtime import PerfCounterClock, TickPacer, run_paced
-from app.sim_control import session_concluded_key, session_pause_key
+from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
 from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
@@ -268,11 +268,20 @@ class SimManager:
                 ai_tasks.append(self._start_victory_monitor(session_id, hot, client, autonomy_raw))
 
             concluded_key = session_concluded_key(session_id)
+            # runner 重啟旗標（自主 AI 指派只於起跑時讀取）：起跑先清舊旗標，避免立刻自我結束；
+            # 迴圈輪詢此鍵 → 存在即結束本迴圈，由掃描層 _ensure 重建 → 重讀指派、起 AI worker。
+            restart_key = session_restart_key(session_id)
+            with contextlib.suppress(Exception):
+                client.delete(restart_key)
             try:
                 await run_paced(
                     kernel,
                     pacer,
-                    should_stop=lambda: self._stop.is_set() or bool(client.exists(concluded_key)),
+                    should_stop=lambda: (
+                        self._stop.is_set()
+                        or bool(client.exists(concluded_key))
+                        or bool(client.exists(restart_key))
+                    ),
                     should_pause=lambda: bool(client.exists(pause_key)),
                     pre_tick=_apply_live_edits,
                 )

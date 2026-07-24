@@ -58,13 +58,13 @@ async function save() {
     }
     if (Object.keys(factionsPayload).length === 0) {
       await apiFetch(`/sessions/${sessionId}/autonomy`, { method: 'DELETE' })
-      saveMsg.value = '已清除自主指派（無 AI 陣營）'
+      saveMsg.value = '已清除自主指派——AI 將於數秒內停止'
     } else {
       await apiFetch(`/sessions/${sessionId}/autonomy`, {
         method: 'PUT',
         body: { factions: factionsPayload, heartbeat_s: heartbeat.value },
       })
-      saveMsg.value = '已儲存自主指派'
+      saveMsg.value = `已儲存並啟動——AI 將於數秒內接管 ${Object.keys(factionsPayload).join('、')}（回 COP 觀戰）`
     }
   } catch (e) {
     err.value = `儲存失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
@@ -125,12 +125,12 @@ onMounted(async () => {
         </section>
 
         <section class="card note">
-          <h2>如何運作</h2>
+          <h2>如何啟動 / 運作</h2>
           <ul>
-            <li>AI 模式（AI_OFF/BARE/FULL）與 LLM 後端於 <a href="/system-settings">系統設定</a> 設定，全系統適用。</li>
-            <li>每個 AI 陣營一條決策迴路（固定心跳）：讀該陣營視角 COP → LLM 產令 → 護欄 → 落單 → 引擎執行。</li>
+            <li><strong>先決條件</strong>：於 <a href="/system-settings">系統設定</a> 把 AI 模式設為 <strong>AI_BARE 或 AI_FULL</strong>（非 AI_OFF）並填 LLM 後端位址（Ollama/vLLM/雲端）。未設 → AI 不會啟動。</li>
+            <li><strong>啟動</strong>：在此勾要交給 AI 的陣營、填任務目標，按「儲存指派」即可——runner 會於<strong>數秒內</strong>自動重啟並讓 AI 接管（戰局熱狀態保留、不中斷；不需新建 session）。</li>
+            <li>每個 AI 陣營一條決策迴路（固定心跳）：讀該陣營視角 COP → LLM 產令 → 護欄 → 落單 → 引擎執行。首次產令約需一個心跳（預設 45s）＋ LLM 回應時間。</li>
             <li>勝負由確定性規則判定（預設「最後存活陣營」），底定即自動收場並記入戰況事件。</li>
-            <li>⚠ 指派於 session <strong>起跑時</strong>讀取；對已在跑的 session 需重啟其 runner 或新建 session 才生效。</li>
             <li>回 <a :href="`/session/${sessionId}/cop`">COP</a> 觀戰：AI 下的令會出現在指令列，護欄干預與勝負底定會出現在戰況事件。</li>
           </ul>
         </section>

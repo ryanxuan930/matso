@@ -4,8 +4,9 @@
 指派（存 Redis `session:{id}:ai_config`）。sim runner 於 session **起跑時**讀取並為每個 AI 陣營起
 決策 worker。限統裁/白軍/管理（is_omniscient）。
 
-註：目前於 session runner 起跑時讀取一次；對已在跑的 session 需重啟其 runner（或新建 session）
-才生效——動態熱掛載列為後續（O11.8）。
+指派只於 runner 起跑時讀取，故 PUT/DELETE 額外設「重啟旗標」（`session_restart_key`）：執行中的
+runner 輪詢到即結束當前迴圈，由掃描層數秒內重建 → 重讀指派 → 立即啟動/停止 AI（熱狀態於 Redis，
+不中斷戰局）。
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from app.auth.schemas import CurrentUser
 from app.cache import make_redis
 from app.config import Settings
 from app.errors import AuthForbiddenError
+from app.sim_control import session_restart_key
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["autonomy"])
@@ -56,8 +58,16 @@ def set_autonomy(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     _require_admin(user)
-    _redis(settings.redis_url).set(autonomy_config_key(session_id), cfg.model_dump_json())
-    return {"ok": True, "factions": list(cfg.factions), "heartbeat_s": cfg.heartbeat_s}
+    r = _redis(settings.redis_url)
+    r.set(autonomy_config_key(session_id), cfg.model_dump_json())
+    # 請求 runner 重啟以立即讀取指派（數秒內生效；戰局熱狀態於 Redis 不中斷）。
+    r.set(session_restart_key(session_id), "1")
+    return {
+        "ok": True,
+        "factions": list(cfg.factions),
+        "heartbeat_s": cfg.heartbeat_s,
+        "restarted": True,
+    }
 
 
 @router.get("/{session_id}/autonomy")
@@ -83,5 +93,7 @@ def clear_autonomy(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     _require_admin(user)
-    _redis(settings.redis_url).delete(autonomy_config_key(session_id))
-    return {"ok": True}
+    r = _redis(settings.redis_url)
+    r.delete(autonomy_config_key(session_id))
+    r.set(session_restart_key(session_id), "1")  # runner 重啟 → 停掉 AI worker
+    return {"ok": True, "restarted": True}
