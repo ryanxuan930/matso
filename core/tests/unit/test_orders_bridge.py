@@ -41,7 +41,21 @@ def test_map_engage_with_policy_and_weapon() -> None:
     assert req.payload["weapon_id"] == "w9"
 
 
+def test_map_move_by_latlng_derives_h3() -> None:
+    # AI 給經緯（LLM 算不出 H3）→ 伺服端換算 to_h3 + 保留精確落點。
+    import h3
+
+    req = tactical_order_to_request(
+        {"unit_id": "u1", "order_type": "MOVE", "target_lat": 24.15, "target_lng": 120.84}
+    )
+    assert req is not None
+    assert req.order_type is OrderType.MOVE
+    assert req.payload["to_h3"] == h3.latlng_to_cell(24.15, 120.84, 8)
+    assert req.payload["to_lat"] == 24.15 and req.payload["to_lng"] == 120.84
+
+
 def test_map_move_missing_target_returns_none() -> None:
+    # 無 target_h3 也無 target_lat/lng → 不落單。
     assert tactical_order_to_request({"unit_id": "u1", "order_type": "MOVE"}) is None
 
 

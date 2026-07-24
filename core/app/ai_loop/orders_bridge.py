@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import h3
 from pydantic import ValidationError
 
 from app.errors import MatsoError
@@ -33,10 +34,15 @@ _LOG = logging.getLogger("app.ai_orders_bridge")
 
 # AI MOVE 令的預設機動 profile（與前端 COP 預設一致）；未來可由單位型別導出。
 _DEFAULT_MOBILITY = "FOOT"
+_MOVE_H3_RES = 8  # AI MOVE 目標經緯 → H3 解析度（與戰術 hex grid 一致）。
 # 單一決策週期落單上限（O11.8 防洗版）：LLM 一次吐幾十上百令時只處理前 N。
 _MAX_ORDERS_PER_CYCLE = 25
 
 _TypedPayload = MovePayload | EngagePayload | dict[str, Any]
+
+
+def _num(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
 def tactical_order_to_request(order: dict[str, Any]) -> OrderRequest | None:
@@ -51,10 +57,21 @@ def tactical_order_to_request(order: dict[str, Any]) -> OrderRequest | None:
         return None  # HOLD 或未知型別 → 不落單（HOLD＝原地待命）
 
     if otype is OrderType.MOVE:
+        # LLM 無法算 H3 hex id，只給得出經緯（敵情/目標/自身皆為 lat/lng）；故 MOVE 優先接受
+        # target_lat/target_lng，伺服端換算 to_h3。缺經緯才退回 target_h3（少數已知格）。
+        lat, lng = _num(order.get("target_lat")), _num(order.get("target_lng"))
         target_h3 = order.get("target_h3")
-        if not isinstance(target_h3, str) or not target_h3:
+        if lat is not None and lng is not None:
+            payload: dict[str, Any] = {
+                "to_h3": h3.latlng_to_cell(lat, lng, _MOVE_H3_RES),
+                "mobility_profile": _DEFAULT_MOBILITY,
+                "to_lat": lat,
+                "to_lng": lng,
+            }
+        elif isinstance(target_h3, str) and target_h3:
+            payload = {"to_h3": target_h3, "mobility_profile": _DEFAULT_MOBILITY}
+        else:
             return None
-        payload: dict[str, Any] = {"to_h3": target_h3, "mobility_profile": _DEFAULT_MOBILITY}
     elif otype is OrderType.ENGAGE:
         target_unit_id = order.get("target_unit_id")
         if not isinstance(target_unit_id, str) or not target_unit_id:
