@@ -41,6 +41,7 @@ export interface OwnUnit {
   comms: CommsState
   lastReportedTick: number
   health?: number // 0–100 HP（僅我方；供地圖血量環 + 資訊卡 #5）。fog of war：contact 無血量。
+  isFixed?: boolean // 固定單位（指揮部等）：地圖符號加鎖頭徽章（只我方；不洩漏敵方編成）。
 }
 
 /** 編制層級 → 中文（兵-伍-班-排…，#5.3；與想定編輯器同義）。 */
@@ -160,6 +161,7 @@ export interface UnitFeature {
     opacity: number
     kind: 'own' | 'contact'
     health?: number
+    fixed?: boolean // 固定單位（指揮部等）：驅動地圖鎖頭徽章層（只我方）
   }
   geometry: { type: 'Point'; coordinates: [number, number] }
 }
@@ -193,12 +195,17 @@ export function buildUnitFeatures(
     opacity: number,
     kind: 'own' | 'contact',
     health?: number,
+    fixed?: boolean,
   ) => {
     const key = iconKey(sidc, options)
     if (!iconMap.has(key)) iconMap.set(key, { key, sidc, options })
     features.push({
       type: 'Feature',
-      properties: { id, faction, icon: key, opacity, kind, ...(health != null ? { health } : {}) },
+      properties: {
+        id, faction, icon: key, opacity, kind,
+        ...(health != null ? { health } : {}),
+        ...(fixed ? { fixed: true } : {}),
+      },
       geometry: { type: 'Point', coordinates: [lng, lat] },
     })
   }
@@ -208,7 +215,7 @@ export function buildUnitFeatures(
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
-    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health)
+    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health, u.isFixed)
   }
   for (const c of contacts) {
     const options: SymbolOpts =

@@ -15,7 +15,12 @@ import { hexCellsForBounds } from '~/composables/useHexGrid'
 import { buildLatLngGrid, buildMgrsLabels } from '~/composables/useCoordGrid'
 import { cellToBoundary, cellToLatLng, latLngToCell } from 'h3-js'
 import { type Contact, type OwnUnit, buildUnitFeatures } from '~/composables/useUnits'
-import { symbolImage } from '~/composables/useMilsymbol'
+import {
+  LOCK_BADGE_ID,
+  LOCK_BADGE_PIXEL_RATIO,
+  lockBadgeImage,
+  symbolImage,
+} from '~/composables/useMilsymbol'
 
 const emit = defineEmits<{
   mapClick: [{ lng: number; lat: number; h3: string }]
@@ -869,6 +874,25 @@ onMounted(async () => {
       source: UNITS_SRC,
       layout: {
         'icon-image': ['get', 'icon'],
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: { 'icon-opacity': ['get', 'opacity'] },
+    })
+    // 固定單位鎖頭徽章（指揮部等）：canvas 生成 ImageData（離線免 glyphs），疊在符號右上角。
+    // 只我方（kind='own' + fixed）——不洩漏敵方編成（fog of war）。
+    const lockImg = lockBadgeImage()
+    if (lockImg && !map.hasImage(LOCK_BADGE_ID)) {
+      map.addImage(LOCK_BADGE_ID, lockImg, { pixelRatio: LOCK_BADGE_PIXEL_RATIO })
+    }
+    map.addLayer({
+      id: 'unit-fixed-lock',
+      type: 'symbol',
+      source: UNITS_SRC,
+      filter: ['all', ['==', ['get', 'kind'], 'own'], ['==', ['get', 'fixed'], true]],
+      layout: {
+        'icon-image': LOCK_BADGE_ID,
+        'icon-offset': [10, -10], // 右上角（icon 座標；正 y 朝下）
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },

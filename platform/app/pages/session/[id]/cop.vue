@@ -334,6 +334,7 @@ const realAsOwn = computed<OwnUnit[]>(() =>
       comms: (u.comms as OwnUnit['comms']) ?? 'ONLINE',
       lastReportedTick: 100,
       health: liveHealth(u), // 血量環（#5）；fog of war：僅我方單位帶血量
+      isFixed: u.is_fixed, // 固定單位（指揮部等）→ 地圖鎖頭徽章
     })),
 )
 const realAsContacts = computed<Contact[]>(() =>

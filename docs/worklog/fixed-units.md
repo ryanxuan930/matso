@@ -39,7 +39,10 @@ agent: Opus 4.8
 | core/app/api/units.py | 改 | UnitView +is_fixed + _view 透出 |
 | platform/app/composables/useScenarioEditor.ts | 改 | EditorUnit.fixed + export/import roundtrip |
 | platform/app/pages/scenario-editor.vue | 改 | ORBAT TreeTable「固定」勾選欄（🔒 指揮部） |
-| platform/app/pages/session/[id]/cop.vue | 改 | 單位清單 🔒 標記 + 下令面板固定提示 + submit MOVE 前端擋 |
+| platform/app/pages/session/[id]/cop.vue | 改 | 單位清單 🔒 標記 + 下令面板固定提示 + submit MOVE 前端擋 + realAsOwn 帶 isFixed |
+| platform/app/composables/useMilsymbol.ts | 改 | lockBadgeImage（canvas 生成鎖頭 ImageData，離線免 glyphs） |
+| platform/app/composables/useUnits.ts | 改 | OwnUnit.isFixed + UnitFeature.fixed；own 特徵帶 fixed |
+| platform/app/components/map/MapCanvas.vue | 改 | unit-fixed-lock 符號層（addImage 鎖頭 + filter own+fixed，右上角疊放） |
 | platform/app/types/api.ts | 生成 | gen:api（UnitView.is_fixed） |
 | core/tests/unit/test_order_validator.py | 改 | +3（MOVE 擋 / 白軍也擋 / ENGAGE 不擋） |
 | core/tests/unit/test_scenario_loader.py | 改 | +1（fixed 載入 + 落地 is_fixed） |
@@ -56,6 +59,10 @@ agent: Opus 4.8
 
 ## 完成 / 後續可強化
 - **完成**：劇本編輯器勾「固定」→ 該單位落地 isFixed → MOVE 令一律被擋（AI 落 rejected、人類收
-  ORDER_UNIT_FIXED）→ AI context 標【固定·勿調動】不派其機動 → COP 顯示 🔒 且前端先擋 MOVE。
+  ORDER_UNIT_FIXED）→ AI context 標【固定·勿調動】不派其機動 → COP 清單顯示 🔒 且前端先擋 MOVE。
+- **地圖符號鎖頭**（追加）：COP 地圖對固定單位（我方）於符號右上角疊放鎖頭徽章——canvas 生成
+  ImageData 走 addImage（**離線免 glyphs**，air-gapped 仍可渲染），只 own+fixed（fog of war 不洩漏
+  敵方編成）。**瀏覽器實測**（session e2e-orders，B1 設固定）：清單 B1 🔒、地圖 B1 符號右上角鎖頭
+  正確顯示；驗畢還原 B1 isFixed=0。
 - **後續可強化**：固定單位若被圍可考慮「撤收→轉為可動」的白軍指令；ORBAT 依 unit_type（HQ）自動
   預設 fixed；COP 地圖符號對固定單位加鎖形記號。
