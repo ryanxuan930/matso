@@ -683,6 +683,26 @@ const selectedEditable = computed(
     (canControl.value || (!!myFaction.value && selectedUnit.value.faction === myFaction.value)),
 )
 
+// 單位/下令小工具依陣營分組（可收合/展開）。
+const collapsedFactions = ref<Set<string>>(new Set())
+function toggleFactionGroup(f: string) {
+  const s = new Set(collapsedFactions.value)
+  if (s.has(f)) s.delete(f)
+  else s.add(f)
+  collapsedFactions.value = s
+}
+const unitsByFaction = computed(() => {
+  const groups = new Map<string, UnitView[]>()
+  for (const u of realUnits.value) {
+    const arr = groups.get(u.faction) ?? []
+    arr.push(u)
+    groups.set(u.faction, arr)
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([faction, units]) => ({ faction, units }))
+})
+
 // ---- 地圖編輯器（stage ③b）----
 const canDraw = computed(() => canControl.value || !!myFaction.value)
 const drawActive = computed(() => drawKind.value !== null)
@@ -1528,24 +1548,43 @@ watch(
         @focus="focusWidget('units')"
       >
         <div class="wsec-hd">單位（{{ realUnits.length }}）</div>
-        <ul class="units" data-testid="unit-list">
-          <li
-            v-for="u in realUnits"
-            :key="u.id"
-            :class="{ sel: u.id === selectedId }"
-            data-testid="unit-item"
-            @click="selectUnit(u.id)"
+        <div class="units" data-testid="unit-list">
+          <div
+            v-for="g in unitsByFaction"
+            :key="g.faction"
+            class="ufac"
+            data-testid="unit-faction-group"
           >
-            <span class="u-dot" :style="{ background: factionColor(u.faction) }" />
-            {{ u.designation }} · {{ u.faction }} ·
-            <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
-              {{ Math.round(liveHealth(u) ?? 100) }}%
-            </span>
-            <span v-if="u.is_fixed" class="u-fixed" title="固定單位（指揮部等）：不可移動">🔒</span>
-            <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
-          </li>
-          <li v-if="!realUnits.length" class="empty">（此 session 無可下令單位）</li>
-        </ul>
+            <button
+              class="ufac-hd"
+              data-testid="unit-faction-head"
+              :title="`${g.faction}（${g.units.length}）— 點擊收合/展開`"
+              @click="toggleFactionGroup(g.faction)"
+            >
+              <i class="pi" :class="collapsedFactions.has(g.faction) ? 'pi-chevron-right' : 'pi-chevron-down'" />
+              <span class="u-dot" :style="{ background: factionColor(g.faction) }" />
+              <b>{{ g.faction }}</b>
+              <span class="ufac-count">· {{ g.units.length }}</span>
+            </button>
+            <ul v-show="!collapsedFactions.has(g.faction)" class="ufac-units">
+              <li
+                v-for="u in g.units"
+                :key="u.id"
+                :class="{ sel: u.id === selectedId }"
+                data-testid="unit-item"
+                @click="selectUnit(u.id)"
+              >
+                {{ u.designation }} ·
+                <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
+                  {{ Math.round(liveHealth(u) ?? 100) }}%
+                </span>
+                <span v-if="u.is_fixed" class="u-fixed" title="固定單位（指揮部等）：不可移動">🔒</span>
+                <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="!realUnits.length" class="empty">（此 session 無可下令單位）</div>
+        </div>
 
         <div v-if="selectedId" class="order" data-testid="order-panel">
           <h3>下令 · <span class="selunit" data-testid="selected-unit">{{ selectedUnit?.designation ?? selectedId }}</span></h3>
@@ -2603,6 +2642,42 @@ watch(
   border-radius: 0.25rem;
   cursor: pointer;
 }
+/* 單位小工具依陣營分組（可收合/展開） */
+.ufac {
+  margin-bottom: 0.35rem;
+}
+.ufac-hd {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 0.3rem;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.ufac-hd:hover {
+  border-color: #334155;
+}
+.ufac-hd .pi {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+.ufac-count {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+.ufac-units {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0 0 0 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
 /* #27 指令列：對象 + 時間 + 狀態。 */
 .orders li {
   cursor: default;
@@ -2667,13 +2742,12 @@ watch(
   border-color: #2563eb;
   background: #172554;
 }
-.units li .u-dot {
+.ufac-hd .u-dot {
   display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
+  width: 0.6rem;
+  height: 0.6rem;
   border-radius: 50%;
-  margin-right: 0.35rem;
-  vertical-align: middle;
+  flex: none;
 }
 .units li .u-hp {
   font-variant-numeric: tabular-nums;
