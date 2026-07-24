@@ -1,8 +1,8 @@
 ---
 task: "#79 AI 決策狀態列（思考中/倒數）+ 複製推演為新局"
-status: WIP
+status: DONE
 started: 2026-07-24T13:10+08:00
-updated: 2026-07-24T13:10+08:00
+updated: 2026-07-24T14:30+08:00
 agent: Opus 4.8
 ---
 
@@ -54,5 +54,14 @@ agent: Opus 4.8
   無「初始快照」機制（sim 執行期把座標/戰力/彈藥寫回 DB），故此為最誠實且正確的作法。
 - 新局給**新 RNG 種子**（新一輪獨立隨機），並沿用 AI 指派（任務/心跳）→ 一鍵再戰。
 
+## 實測（執行中容器 + 瀏覽器）
+- 重建 core 容器並上線（29808b5）。
+- **clone 實測**：複製使用者實局「玉山行動-0801」→ 新局 36→36 單位，逐單位比對 lat/lng/strength/
+  health/is_fixed **零差異**；AI 指派已複製且掃描層自動起跑（BLUE/RED/YELLOW workers thinking）。
+  測試副本已清除（DELETE 204 + Redis 42 orphan 鍵全清）。
+- **ai-status 實測**：端點回 thinking/idle + server 端倒數 + thinking_since_s；faction 過濾生效。
+- **前端瀏覽器**：lobby 每卡顯示「複製」鈕 + modal（含開打前提示）渲染正確；COP AI 狀態列
+  以注入假遙測（零 LLM）顯示「思考中…」chip；COP 無 console error。
+
 ## 中斷續作指引
-- 已完成。剩：重建 core 容器 + 對執行中容器實測 clone/ai-status（API）→ 前端瀏覽器驗收 → PROGRESS 更新。
+- 已完成並實測。分支未推。
