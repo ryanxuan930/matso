@@ -44,6 +44,7 @@ const emit = defineEmits<{
   unitMove: [{ id: string; lng: number; lat: number }] // 地圖狀態編輯：拖放單位到新座標
   // 地圖狀態編輯（多選）：一次移動多個單位（Shift 多選 / 框選後整組拖曳）到各自新座標。
   unitsMove: [{ moves: { id: string; lng: number; lat: number }[] }]
+  unitsSelected: [{ count: number }] // 多選數量變更（供「已選 N 個」徽章）
   // 選取單位的螢幕座標（供 Unit 資訊卡懸浮於圖標旁；地圖平移/縮放即時更新；無選取→null）。
   selectScreenPos: [{ x: number; y: number } | null]
 }>()
@@ -225,7 +226,6 @@ const selectedUnitIds = new Set<string>()
 let groupDrag: { start: { lng: number; lat: number }; origs: { id: string; lng: number; lat: number }[] } | null = null
 let boxStart: { x: number; y: number } | null = null
 let rubberBand: HTMLDivElement | null = null // 框選矩形（螢幕座標 overlay）
-const MULTISEL_SRC = 'unit-multiselect' // 整組拖曳落點預覽（多點）
 // 拖曳事件的結構化型別（避免引入 maplibre 具名事件型別）。
 type _LngLatEvt = { lngLat: { lng: number; lat: number } }
 type _PointEvt = { point: { x: number; y: number }; lngLat: { lng: number; lat: number }; originalEvent: MouseEvent; preventDefault: () => void }
@@ -238,6 +238,7 @@ function refreshMultiSelect(): void {
   if (map?.getLayer('unit-multiselect-ring')) {
     map.setFilter('unit-multiselect-ring', _multiSelFilter() as never)
   }
+  emit('unitsSelected', { count: selectedUnitIds.size })
 }
 function clearMultiSelect(): void {
   if (!selectedUnitIds.size) return
@@ -483,9 +484,17 @@ function setLayerVisibility(id: string, visible: boolean) {
 }
 
 /** 依 props 的單位/contact 重建 symbol 特徵：生成/快取 milsymbol icon（去重 addImage）→ setData。 */
-function syncUnits() {
+function syncUnits(posOverride?: Map<string, { lng: number; lat: number }>) {
   if (!map) return
-  const { collection, icons } = buildUnitFeatures(props.ownUnits, props.contacts, props.currentTick)
+  // 整組拖曳即時跟隨：以覆寫座標重建，讓真圖標 + 高亮環跟著游標移動（暫停中無 STATE_DIFF 覆蓋）。
+  const own =
+    posOverride && posOverride.size
+      ? props.ownUnits.map((u) => {
+          const o = posOverride.get(u.id)
+          return o ? { ...u, lng: o.lng, lat: o.lat } : u
+        })
+      : props.ownUnits
+  const { collection, icons } = buildUnitFeatures(own, props.contacts, props.currentTick)
   for (const spec of icons) {
     if (map.hasImage(spec.key)) continue
     const img = symbolImage(spec.key, spec.sidc, spec.options)
@@ -916,19 +925,6 @@ onMounted(async () => {
       },
       paint: { 'icon-opacity': ['get', 'opacity'] },
     })
-    // 整組拖曳落點預覽（多點青環，同單位符號偏移）。
-    map.addSource(MULTISEL_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-    map.addLayer({
-      id: 'unit-multidrag',
-      type: 'circle',
-      source: MULTISEL_SRC,
-      paint: {
-        'circle-radius': 7,
-        'circle-color': 'rgba(34,211,238,0.25)',
-        'circle-stroke-color': '#22d3ee',
-        'circle-stroke-width': 2,
-      },
-    })
     // 固定單位鎖頭徽章（指揮部等）：canvas 生成 ImageData（離線免 glyphs），疊在符號右上角。
     // 只我方（kind='own' + fixed）——不洩漏敵方編成（fog of war）。
     const lockImg = lockBadgeImage()
@@ -1040,30 +1036,24 @@ onMounted(async () => {
     ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData(_EMPTY_FEAT_FC as never)
     emit('unitMove', { id, lng: e.lngLat.lng, lat: e.lngLat.lat })
   }
-  // 整組拖曳（多選）：以按下處為錨，各選取單位依相同經緯位移平移；拖曳中顯示多點落點預覽。
+  // 整組拖曳（多選）：以按下處為錨，各選取單位依相同經緯位移平移；真圖標 + 高亮環即時跟隨游標。
+  const _groupOverride = (e: _LngLatEvt): Map<string, { lng: number; lat: number }> => {
+    const dLng = e.lngLat.lng - groupDrag!.start.lng
+    const dLat = e.lngLat.lat - groupDrag!.start.lat
+    return new Map(groupDrag!.origs.map((o) => [o.id, { lng: o.lng + dLng, lat: o.lat + dLat }]))
+  }
   const onGroupDragMove = (e: _LngLatEvt): void => {
     if (!groupDrag || !map) return
-    const dLng = e.lngLat.lng - groupDrag.start.lng
-    const dLat = e.lngLat.lat - groupDrag.start.lat
-    const feats = groupDrag.origs.map((o) => ({
-      type: 'Feature',
-      properties: {},
-      geometry: { type: 'Point', coordinates: [o.lng + dLng, o.lat + dLat] },
-    }))
-    ;(map.getSource(MULTISEL_SRC) as GeoJSONSource | undefined)?.setData({
-      type: 'FeatureCollection',
-      features: feats,
-    } as never)
+    syncUnits(_groupOverride(e)) // 圖標跟著游標
   }
   const onGroupDrop = (e: _LngLatEvt): void => {
     if (!groupDrag || !map) return
-    const dLng = e.lngLat.lng - groupDrag.start.lng
-    const dLat = e.lngLat.lat - groupDrag.start.lat
-    const moves = groupDrag.origs.map((o) => ({ id: o.id, lng: o.lng + dLng, lat: o.lat + dLat }))
+    const ov = _groupOverride(e)
+    const moves = [...ov.entries()].map(([id, p]) => ({ id, lng: p.lng, lat: p.lat }))
     groupDrag = null
     map.getCanvas().style.cursor = ''
     map.off('mousemove', onGroupDragMove)
-    ;(map.getSource(MULTISEL_SRC) as GeoJSONSource | undefined)?.setData(_EMPTY_FEAT_FC as never)
+    syncUnits(ov) // 保持在放開位置，待 cop reposition→refetch 後 props watch 以權威座標重繪（不回彈）
     if (moves.length) emit('unitsMove', { moves })
   }
   const startGroupDrag = (e: _LngLatEvt): void => {
@@ -1083,17 +1073,11 @@ onMounted(async () => {
     lngLat?: { lng: number; lat: number }
   }) => {
     if (!props.editUnits) return // 僅編輯模式可拖曳單位
+    if (e.originalEvent?.shiftKey) return // Shift 多選由下方通用 mousedown 處理（避免雙重切換）
     const id = e.features?.[0]?.properties?.id
     if (id == null) return
     const sid = String(id)
     e.preventDefault() // 阻止地圖平移
-    // Shift+點單位：加入/移除多選（不拖曳）。
-    if (e.originalEvent?.shiftKey) {
-      if (selectedUnitIds.has(sid)) selectedUnitIds.delete(sid)
-      else selectedUnitIds.add(sid)
-      refreshMultiSelect()
-      return
-    }
     // 拖曳已多選的成員 → 整組移動；否則清空多選、單獨拖曳此單位（原行為）。
     if (selectedUnitIds.has(sid) && selectedUnitIds.size > 1 && e.lngLat) {
       startGroupDrag({ lngLat: e.lngLat })
@@ -1138,8 +1122,19 @@ onMounted(async () => {
   }
   map.on('mousedown', (e: _PointEvt) => {
     if (!props.editUnits || !map) return
-    if (!e.originalEvent.shiftKey) return // 框選只在 Shift+空白處拖曳（平移仍是無 Shift 拖曳）
-    if (map.queryRenderedFeatures(e.point, { layers: ['units'] }).length) return // 在單位上→交給 onUnitDown
+    if (!e.originalEvent.shiftKey) return // 所有 Shift 互動集中於此（平移仍是無 Shift 拖曳）
+    // Shift+點單位 → 加入/移除多選（改在通用 mousedown 處理，不依賴會被 boxZoom 干擾的 layer 事件）。
+    const hit = map.queryRenderedFeatures(e.point, { layers: ['units'] })[0]
+    const hitId = hit?.properties?.id
+    if (hitId != null) {
+      const sid = String(hitId)
+      if (selectedUnitIds.has(sid)) selectedUnitIds.delete(sid)
+      else selectedUnitIds.add(sid)
+      refreshMultiSelect()
+      e.preventDefault()
+      return
+    }
+    // Shift+空白處拖曳 → 框選矩形。
     boxStart = e.point
     map.dragPan.disable()
     e.preventDefault()
@@ -1229,10 +1224,15 @@ watch([() => props.latlngGrid, () => props.mgrsGrid, () => props.gridStepDeg], r
 watch([() => props.hexMaxRes, () => props.hexLimitKm], refreshHex)
 watch([() => props.dayNight, () => props.timeOfDay], applyDayNight)
 watch(() => props.targeting, applyTargetingCursor) // #3 十字準星
-// 離開地圖狀態編輯 → 清空多選（避免殘留高亮環）。
+// 地圖狀態編輯：進入時停用 MapLibre 內建 boxZoom（Shift+拖曳預設是縮放框，會攔截多選/框選、
+// 干擾 Shift 事件）；離開時還原並清空多選（避免殘留高亮環）。
 watch(
   () => props.editUnits,
   (on) => {
+    if (map) {
+      if (on) map.boxZoom.disable()
+      else map.boxZoom.enable()
+    }
     if (!on) clearMultiSelect()
   },
 )

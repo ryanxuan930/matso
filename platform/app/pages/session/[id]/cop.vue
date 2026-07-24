@@ -689,6 +689,7 @@ const drawActive = computed(() => drawKind.value !== null)
 
 // ---- 地圖狀態編輯（暫停下布局：拖放單位 + 繪障礙，完成再開始兵推）。限白軍/導演。----
 const mapEditMode = ref(false)
+const selectedUnitCount = ref(0) // 地圖狀態編輯多選數量（「已選 N 個」徽章）
 async function enterMapEdit() {
   try {
     await apiFetch(`/sessions/${sessionId.value}/control`, {
@@ -732,6 +733,9 @@ async function onUnitMove(e: { id: string; lng: number; lat: number }) {
   realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
 }
 // 地圖狀態編輯 · 多選整組移動：逐一 reposition（並行）後只重載一次。
+function onUnitsSelected(e: { count: number }) {
+  selectedUnitCount.value = e.count
+}
 async function onUnitsMove(e: { moves: { id: string; lng: number; lat: number }[] }) {
   if (!e.moves.length) return
   try {
@@ -1488,6 +1492,7 @@ watch(
     </header>
     <div v-if="mapEditMode" class="mapedit-bar" data-testid="mapedit-bar">
       <i class="pi pi-pencil" />
+      <span v-if="selectedUnitCount" class="meb-badge" data-testid="selected-count">已選 {{ selectedUnitCount }} 個</span>
       <span class="meb-txt">
         <strong>地圖狀態編輯（推演已暫停）</strong>——拖曳單位調整位置；<b>Shift＋點單位</b>可多選、<b>Shift＋空白處拖曳</b>可框選，再拖曳任一選取單位即整組移動；用「地圖編輯」工具繪障礙/建築。
       </span>
@@ -1802,6 +1807,7 @@ watch(
             :targeting="targeting"
             :edit-units="mapEditMode"
             @units-move="onUnitsMove"
+            @units-selected="onUnitsSelected"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @select-screen-pos="onSelectScreenPos"
@@ -2211,6 +2217,17 @@ watch(
 }
 .mapedit-bar .meb-txt {
   flex: 1 1 auto;
+}
+.mapedit-bar .meb-badge {
+  flex: 0 0 auto;
+  background: #0e7490;
+  color: #cffafe;
+  border: 1px solid #22d3ee;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 .mapedit-bar .meb-start {
   flex: 0 0 auto;

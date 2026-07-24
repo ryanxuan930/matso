@@ -50,3 +50,20 @@ agent: Opus 4.8
 - 設計：MapCanvas 自持選取集 `selectedUnitIds` + `unit-multiselect-ring` 高亮層（`in` filter）+ `unit-multidrag` 預覽層 + 框選 rubber-band（掛地圖容器的 inline-style div）；emit `unitsMove{moves[]}` → cop `onUnitsMove` 批次 reposition。離開編輯模式自動清空多選。
 - 檔案：MapCanvas.vue（多選/框選/整組拖曳 + 2 圖層 + 1 預覽源）、cop.vue（onUnitsMove + `@units-move` + 工具列提示 Shift/框選）。
 - **瀏覽器實測**（e2e-orders，經 `window.__matsoMap` 派真事件驗證）：Shift 多選 filter 命中 2 單位 + 青環渲染；框選矩形選中範圍內 2 單位、點空白清空；整組拖曳後 DB 兩單位位移量完全一致（dLng 相同）；驗畢還原座標 + RESUME。前端 lint/typecheck 綠。
+
+## 修正 + 增強（2026-07-24，使用者回報「Shift 點選/框選無作用、無法拖移」）
+**根因（兩個）**：
+1. **MapLibre 內建 boxZoom**：Shift+拖曳預設是「縮放框」，會攔截 trusted（真使用者）Shift 事件——
+   我上一版用**非 trusted 合成事件**驗證（boxZoom 不觸發）故誤判為過。修法：編輯模式進入時
+   `map.boxZoom.disable()`（離開還原）；並把 **Shift 多選/框選集中到通用 `map.on('mousedown')`**
+   自行 queryRenderedFeatures 判定（不再依賴會被 boxZoom 干擾的 layer 委派事件）。
+2. **cop.vue 模板 inline handler 帶 TS 型別註記** `@units-selected="(e: {count:number})=>…"`：vue-tsc 過、
+   但**執行期模板編譯報錯**→ 整個 Cop 元件更新拋錯、地圖無法初始化（`isStyleLoaded` 恆 false）。
+   修法：改用具名方法 `onUnitsSelected`。
+**增強**：
+- **「已選 N 個」徽章**：MapCanvas emit `unitsSelected{count}` → cop 於工具列顯示青色藥丸徽章。
+- **整組拖曳圖標即時跟隨游標**：`syncUnits(posOverride)` 以覆寫座標重建 units 源，真圖標＋青環
+  跟著游標移動（取代原「多點預覽點」，移除 unit-multidrag 層/源）；放開保持在落點待 refetch。
+- **瀏覽器實測（trusted 事件，computer 工具）**：進編輯模式 `boxZoom` 已停用；Shift+點單位→選取
+  filter 命中 + 青環 + 「已選 1 個」徽章渲染（截圖確認）——修好前 filter 恆空。地圖 201ms 正常載入。
+  前端 lint/typecheck 綠。
