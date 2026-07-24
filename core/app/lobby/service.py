@@ -16,7 +16,12 @@ from sqlalchemy.orm import Session
 
 from app.auth.schemas import CurrentUser
 from app.factions import WHITE_CELL
-from app.lobby.schemas import CreateSessionRequest, EditSessionRequest, SessionSummary
+from app.lobby.schemas import (
+    CloneSessionRequest,
+    CreateSessionRequest,
+    EditSessionRequest,
+    SessionSummary,
+)
 from app.models import SessionParticipant, UserRole, WargameSession
 
 # 看得到全部 session 的統裁/管理角色（其餘只看自己參與的）
@@ -120,6 +125,142 @@ class LobbyService:
         session = self._db.get(WargameSession, sid)
         assert session is not None
         return self._summary(session, WHITE_CELL, orbat_edit=True)  # 建立者為統裁（全知）
+
+    def clone_session(
+        self, user: CurrentUser, session_id: str, req: CloneSessionRequest
+    ) -> SessionSummary:
+        """複製一局為新推演（#79）：verbatim 複製當下 DB 狀態，另給新 master_seed。
+
+        複製範圍：session 參數（名稱/模式/想定連結/天氣/世界時/自編陣營）、單位部署（座標/戰力/
+        人員/健康/通信/固定旗標/階層）、裝備（templateId+數量+current_state）、地圖標註、參與者名冊
+        （unit_scope 依 old→new 單位映射重寫；跳過 AI `ai-*` 帳號——runner 會重建）。
+
+        無「初始快照」——DB 即活權威（sim 執行期寫回座標/戰力/彈藥）；**開打前複製＝純淨初始局**。
+        新 master_seed（掺入新 session.id）→ 新一輪獨立 RNG 流。限統裁/管理（`_require_director`）。
+        """
+        from app.models import EquipmentInstance, MapFeature, TacticalUnit, User
+
+        src = self._require_director(user, session_id)
+        new_name = (req.name or "").strip() or f"{src.name}（副本）"
+        new = WargameSession(
+            name=new_name,
+            scenario_id=src.scenario_id,
+            master_seed=0,  # 佔位；flush 取得 id 後導出
+            mode=src.mode,
+            current_weather=dict(src.current_weather or {}),
+            world_start_time=src.world_start_time,
+            orbat_edit_factions=(
+                list(src.orbat_edit_factions) if isinstance(src.orbat_edit_factions, list) else None
+            ),
+        )
+        self._db.add(new)
+        self._db.flush()  # 取得 new.id
+        new.master_seed = _derive_seed(new_name, user.id, new.id)
+
+        # 單位：兩階段（先全建 → 再連 parent，避免順序相依）+ old→new 映射（供 parent/scope 重寫）。
+        src_units = list(
+            self._db.execute(
+                select(TacticalUnit).where(TacticalUnit.session_id == session_id)
+            ).scalars()
+        )
+        new_units: dict[str, TacticalUnit] = {}
+        for u in src_units:
+            clone = TacticalUnit(
+                session_id=new.id,
+                designation=u.designation,
+                unit_level=u.unit_level,
+                faction=u.faction,
+                is_fixed=u.is_fixed,
+                attributes=dict(u.attributes or {}),
+                current_lat=u.current_lat,
+                current_lng=u.current_lng,
+                elevation=u.elevation,
+                authorized_strength=u.authorized_strength,
+                current_strength=u.current_strength,
+                personnel_authorized=u.personnel_authorized,
+                personnel_current=u.personnel_current,
+                health_status=u.health_status,
+                comms_status=u.comms_status,
+            )
+            self._db.add(clone)
+            new_units[u.id] = clone
+        self._db.flush()  # 取得新單位 id
+        old_to_new = {old: clone.id for old, clone in new_units.items()}
+        for u in src_units:
+            if u.parent_id is not None and u.parent_id in new_units:
+                new_units[u.id].parent_id = new_units[u.parent_id].id
+
+        # 裝備 verbatim（templateId + 數量 + current_state）；含彈藥，開打前複製＝滿彈。
+        if new_units:
+            for e in self._db.execute(
+                select(EquipmentInstance).where(EquipmentInstance.owner_id.in_(list(new_units)))
+            ).scalars():
+                self._db.add(
+                    EquipmentInstance(
+                        template_id=e.template_id,
+                        owner_id=new_units[e.owner_id].id,
+                        current_state=dict(e.current_state or {}),
+                        quantity=e.quantity,
+                    )
+                )
+
+        # 地圖標註/工事（設置的據點/障礙/控制措施）。
+        for mf in self._db.execute(
+            select(MapFeature).where(MapFeature.session_id == session_id)
+        ).scalars():
+            self._db.add(
+                MapFeature(
+                    session_id=new.id,
+                    kind=mf.kind,
+                    geometry_type=mf.geometry_type,
+                    geometry=mf.geometry,
+                    owner_faction=mf.owner_faction,
+                    label=mf.label,
+                    influence_radius_m=mf.influence_radius_m,
+                    weapon_template_id=mf.weapon_template_id,
+                    attributes=dict(mf.attributes or {}),
+                )
+            )
+
+        # 參與者名冊：複製人類參與者（跳過 AI `ai-*`）；unit_scope 依 old→new 重寫、丟棄已不存在者。
+        rows = list(
+            self._db.execute(
+                select(SessionParticipant, User)
+                .join(User, User.id == SessionParticipant.user_id)
+                .where(SessionParticipant.session_id == session_id)
+            )
+        )
+        copied_user_ids: set[str] = set()
+        for part, puser in rows:
+            if puser.username.startswith("ai-"):
+                continue  # AI issuer participant 由 orchestrator 於 runner 起跑時重建
+            old_scope = part.unit_scope if isinstance(part.unit_scope, list) else []
+            new_scope = [old_to_new[str(x)] for x in old_scope if str(x) in old_to_new]
+            self._db.add(
+                SessionParticipant(
+                    user_id=part.user_id,
+                    session_id=new.id,
+                    faction=part.faction,
+                    role=part.role,
+                    unit_scope=new_scope,
+                )
+            )
+            copied_user_ids.add(part.user_id)
+        # 確保複製者為新局參與者（統裁）——即便其非來源局參與者（全知角色可跨局操作）。
+        if user.id not in copied_user_ids:
+            self._db.add(
+                SessionParticipant(
+                    user_id=user.id,
+                    session_id=new.id,
+                    faction=WHITE_CELL,
+                    role=UserRole.EXERCISE_DIRECTOR,
+                    unit_scope=[],
+                )
+            )
+
+        self._db.commit()
+        my_faction = self._participant_factions(user.id).get(new.id)
+        return self._summary(new, my_faction, orbat_edit=True)
 
     def _participant_factions(self, user_id: str) -> dict[str, str]:
         rows = (

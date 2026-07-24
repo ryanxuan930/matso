@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -215,17 +216,33 @@ async def _sleep_or_stop(seconds: float, should_stop: Callable[[], bool]) -> Non
         waited += _STOP_POLL_S
 
 
+def _emit_status(sink: Callable[[dict[str, Any]], None] | None, payload: dict[str, Any]) -> None:
+    """把一則決策狀態遙測交給 sink（失敗絕不影響決策迴路——遙測是觀測，非邏輯）。"""
+    if sink is None:
+        return
+    try:
+        sink(payload)
+    except Exception:
+        # 遙測寫入失敗不得中斷 worker（觀測非邏輯）。
+        _LOG.debug("AI 狀態遙測寫入失敗，忽略")
+
+
 async def run_faction_worker(
     deps: FactionWorkerDeps,
     *,
     should_stop: Callable[[], bool],
     heartbeat_s: float = _DEFAULT_HEARTBEAT_S,
     on_cycle: Callable[[DecisionOutcome], None] | None = None,
+    status_sink: Callable[[dict[str, Any]], None] | None = None,
+    now: Callable[[], float] = time.time,
 ) -> None:
     """陣營 AI 決策迴路：固定心跳，每週期取快照→LLM→護欄→落單。非 pre_tick（不阻塞 tick）。
 
     韌性（O11.8）：心跳夾下限（防緊迴圈）；LLM 逾時/失敗 → 記錄後續跑（fallback HOLD，不停）；
     累計落單超上限 → runaway 守衛停止（異常保護）。
+
+    觀測（#79）：`status_sink` 收「思考中／閒置（含下一次決策牆鐘）」遙測供 COP 顯示；
+    `now` 為牆鐘來源（worker 本即牆鐘心跳、非決定性 kernel，時間戳屬遙測不涉 SimClock 紅線）。
     """
     heartbeat_s = max(_MIN_HEARTBEAT_S, heartbeat_s)
     _LOG.info(
@@ -237,11 +254,31 @@ async def run_faction_worker(
     cycles = 0
     total_submitted = 0
     while not should_stop():
+        _emit_status(
+            status_sink,
+            {
+                "state": "thinking",
+                "thinking_since": now(),
+                "heartbeat_s": heartbeat_s,
+                "cycles": cycles,
+            },
+        )
         try:
             outcome = await asyncio.to_thread(_cycle_with_db, deps)
             b = outcome.bridge
             cycles += 1
             total_submitted += len(b.submitted)
+            _emit_status(
+                status_sink,
+                {
+                    "state": "idle",
+                    "last_decision_ts": now(),
+                    "heartbeat_s": heartbeat_s,
+                    "cycles": cycles,
+                    "last_submitted": len(b.submitted),
+                    "fallback": outcome.turn.fallback_used,
+                },
+            )
             _LOG.info(
                 "AI %s/%s #%d：accepted=%s fallback=%s 落單=%d(累計%d) 拒=%d 略=%d 超量=%d",
                 deps.session_id,
@@ -271,6 +308,18 @@ async def run_faction_worker(
         except Exception:
             _LOG.exception(
                 "AI worker 週期失敗：session=%s faction=%s", deps.session_id, deps.faction
+            )
+            # 失敗週期也回 idle（帶下一次心跳）——否則狀態會卡在「思考中」直到下輪。
+            _emit_status(
+                status_sink,
+                {
+                    "state": "idle",
+                    "last_decision_ts": now(),
+                    "heartbeat_s": heartbeat_s,
+                    "cycles": cycles,
+                    "last_submitted": 0,
+                    "fallback": True,
+                },
             )
         await _sleep_or_stop(heartbeat_s, should_stop)
     _LOG.info("AI worker 收工：session=%s faction=%s", deps.session_id, deps.faction)

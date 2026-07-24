@@ -39,6 +39,23 @@ def autonomy_config_key(session_id: str) -> str:
     return f"session:{session_id}:ai_config"
 
 
+def ai_status_key(session_id: str) -> str:
+    """Redis 鍵（hash，field=faction）：本局各陣營 AI 決策心跳狀態。worker 寫、COP 讀（#79）。"""
+    return f"session:{session_id}:ai_status"
+
+
+def _make_status_sink(
+    client: Any, session_id: str, faction: str
+) -> Callable[[dict[str, Any]], None]:
+    """建一則陣營專屬遙測寫入器：把決策狀態寫進 ai_status hash 的 faction field（單寫者無競態）。"""
+    key = ai_status_key(session_id)
+
+    def _sink(payload: dict[str, Any]) -> None:
+        client.hset(key, faction, json.dumps(payload))
+
+    return _sink
+
+
 def _tick_key(session_id: str) -> str:
     return f"session:{session_id}:tick"
 
@@ -165,7 +182,12 @@ def start_ai_workers(
         )
         tasks.append(
             asyncio.create_task(
-                run_faction_worker(deps, should_stop=should_stop, heartbeat_s=heartbeat)
+                run_faction_worker(
+                    deps,
+                    should_stop=should_stop,
+                    heartbeat_s=heartbeat,
+                    status_sink=_make_status_sink(redis_client, session_id, str(faction)),
+                )
             )
         )
         _LOG.info(

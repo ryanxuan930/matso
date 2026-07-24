@@ -188,6 +188,29 @@ components:
       properties:
         name: { type: [string, "null"], minLength: 1 }
         world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（空字串＝清除） }
+    CloneSessionRequest:
+      type: object
+      description: 複製一局為新推演（沿用部署/編裝/參與者/AI 指派，另給新 RNG 種子）
+      properties:
+        name: { type: [string, "null"], minLength: 1, description: 新局名稱（省略＝來源名 +「（副本）」） }
+    AiFactionStatus:
+      type: object
+      description: 一個陣營的 AI 決策心跳狀態（供 COP「思考中／下一次決策倒數」）
+      required: [faction, state]
+      properties:
+        faction: { type: string }
+        state: { type: string, enum: [thinking, idle, offline], description: thinking＝正打 LLM；idle＝等下一次心跳；offline＝worker 未上線/逾時 }
+        seconds_until_next: { type: [number, "null"], description: 距下一次決策的秒數（idle 時 >0；thinking/offline 為 null） }
+        heartbeat_s: { type: [number, "null"], description: 決策心跳（秒） }
+        thinking_since_s: { type: [number, "null"], description: 本次思考已歷時秒數（thinking 時） }
+        last_submitted: { type: [integer, "null"], description: 上一次決策落單數 }
+        cycles: { type: [integer, "null"], description: 累計決策週期數 }
+    AiStatusView:
+      type: object
+      description: 本局各陣營 AI 決策狀態（faction-scoped：一般角色僅見己方；全知見全部）
+      required: [factions]
+      properties:
+        factions: { type: array, items: { $ref: "#/components/schemas/AiFactionStatus" } }
     UnitView:
       type: object
       required: [id, designation, unit_level, faction, health, comms]
@@ -632,6 +655,37 @@ paths:
       responses:
         "200": { description: Restored, content: { application/json: { schema: { $ref: "#/components/schemas/SessionSummary" } } } }
         "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/clone:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: cloneSession
+      security: [{ bearerAuth: [] }]
+      description: 複製一局為新推演（沿用單位部署/編裝/地圖標註/參與者/AI 指派；新 RNG 種子）——限統裁/管理
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CloneSessionRequest" }
+      responses:
+        "201":
+          description: Cloned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionSummary" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/ai-status:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getAiStatus
+      security: [{ bearerAuth: [] }]
+      description: 本局各陣營 AI 決策心跳狀態（思考中／下一次決策倒數）——faction-scoped（一般角色僅見己方）
+      responses:
+        "200":
+          description: AI status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiStatusView" }
+        "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/lifecycle:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:

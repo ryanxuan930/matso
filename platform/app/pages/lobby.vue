@@ -128,6 +128,31 @@ async function doDelete() {
   }
 }
 
+// #79 複製推演為新局——沿用部署/編裝/名冊/AI 指派，新 RNG 種子。限統裁/管理。
+const cloning = ref<SessionSummary | null>(null)
+const cloneName = ref('')
+const cloneBusy = ref(false)
+function openClone(s: SessionSummary) {
+  cloning.value = s
+  cloneName.value = `${s.name}（副本）`
+}
+async function doClone() {
+  const s = cloning.value
+  if (!s) return
+  cloneBusy.value = true
+  try {
+    const created = await apiFetch<SessionSummary>(`/sessions/${s.id}/clone`, {
+      method: 'POST',
+      body: { name: cloneName.value.trim() || null },
+    })
+    cloning.value = null
+    await refresh()
+    await navigateTo(`/session/${created.id}/cop`) // 直接進新局 COP
+  } finally {
+    cloneBusy.value = false
+  }
+}
+
 // 參與者名冊——指派帳號↔陣營↔角色（決定誰能操控/查看哪個陣營）。限統裁/管理。
 const rosterFor = ref<SessionSummary | null>(null)
 const roster = ref<ParticipantRoster | null>(null)
@@ -307,6 +332,14 @@ onMounted(async () => {
           <button
             v-if="canEditScenario"
             class="edit-btn"
+            data-testid="clone-session"
+            title="複製為新局（沿用部署/編裝/AI 指派，建議開打前複製）"
+            :disabled="busyId === s.id"
+            @click.stop="openClone(s)"
+          ><i class="pi pi-copy" /></button>
+          <button
+            v-if="canEditScenario"
+            class="edit-btn"
             data-testid="archive-session"
             title="封存（移入歷史）"
             :disabled="busyId === s.id"
@@ -445,6 +478,23 @@ onMounted(async () => {
         <div class="modal-btns">
           <button class="ghost" @click="editing = null">取消</button>
           <button data-testid="save-session-edit" @click="saveEdit">儲存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- #79 複製為新局 -->
+    <div v-if="cloning" class="modal-overlay" data-testid="clone-modal" @click.self="cloning = null">
+      <div class="modal">
+        <h3>複製推演為新局</h3>
+        <p class="modal-hint">
+          沿用「<b>{{ cloning.name }}</b>」目前的單位部署、編裝、地圖標註、參與者名冊與 AI 指派，
+          另開一局並給新的隨機種子。<br>
+          提示：於<b>開打前</b>複製即為純淨初始局；若已交戰，將沿用當下的座標與戰力。
+        </p>
+        <label>新局名稱 <input v-model="cloneName" data-testid="clone-name" @keyup.enter="doClone"></label>
+        <div class="modal-btns">
+          <button class="ghost" @click="cloning = null">取消</button>
+          <button data-testid="clone-confirm" :disabled="cloneBusy" @click="doClone">建立副本</button>
         </div>
       </div>
     </div>

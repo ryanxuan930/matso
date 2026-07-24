@@ -43,10 +43,21 @@ import {
   type FeatureCreate,
   type MapFeature,
 } from '~/composables/useMapFeatures'
+import { formatCountdown, useAiStatus } from '~/composables/useAiStatus'
 
 // COP（SPEC §13.1/§13.4）：地圖基座（O4.2）+ 單位/fog of war（O4.4）+ 下令 UX（O4.5）。
 const route = useRoute()
 const sessionId = computed(() => String(route.params.id))
+
+// #79 AI 決策狀態列（思考中／下一次決策倒數）——後端 faction-scoped，一般角色只回己方。
+const aiStatus = useAiStatus(() => sessionId.value)
+const aiChips = computed(() =>
+  aiStatus.factions.value.map((f) => ({
+    faction: f.faction,
+    state: f.state,
+    countdown: formatCountdown(f.seconds_until_next),
+  })),
+)
 
 // 白軍控制台（時間控制 / 注入 / 視角）限統裁角色（SPEC §12）；其餘角色不顯示入口。
 const auth = useAuthStore()
@@ -1373,10 +1384,12 @@ onMounted(async () => {
   if (!auth.user) await auth.fetchMe() // 直接開/重整 COP 時補抓使用者，讓角色相關入口（白軍控制台）正確顯示
   refresh()
   stream.connect(sessionId.value)
+  aiStatus.start() // #79 AI 決策狀態輪詢（思考中／倒數）
   if (import.meta.client) resyncTimer = setInterval(() => refresh(), 10_000)
 })
 onBeforeUnmount(() => {
   stream.disconnect()
+  aiStatus.stop()
   if (resyncTimer) clearInterval(resyncTimer)
 })
 
@@ -1586,6 +1599,26 @@ watch(
       <strong>{{ victory.winners.length ? `${victory.winners.join('、')} 獲勝` : '平手' }}</strong>
       （tick {{ victory.tick }}）
       <button class="vb-aar" @click="navigateTo(`/session/${sessionId}/aar`)">看 AAR →</button>
+    </div>
+    <!-- #79 AI 決策狀態列（思考中／下一次決策倒數）——僅在本局有 AI 陣營時顯示 -->
+    <div v-if="aiChips.length" class="ai-status-bar" data-testid="ai-status-bar">
+      <span class="asb-label"><i class="pi pi-bolt" /> AI 指揮</span>
+      <span
+        v-for="c in aiChips"
+        :key="c.faction"
+        class="asb-chip"
+        :class="c.state"
+        :data-testid="`ai-status-${c.faction}`"
+      >
+        <b class="asb-fac">{{ c.faction }}</b>
+        <span v-if="c.state === 'thinking'" class="asb-state"
+          ><i class="pi pi-spin pi-spinner" /> 思考中…</span
+        >
+        <span v-else-if="c.state === 'idle'" class="asb-state"
+          >下一次決策 <b>{{ c.countdown }}</b></span
+        >
+        <span v-else class="asb-state asb-off">離線</span>
+      </span>
     </div>
 
     <!-- 裝備管理面板：白軍編任一單位編裝 + 設各軍自編權限；本軍（開放自編）僅編本軍單位 -->
@@ -2357,6 +2390,50 @@ watch(
   border-bottom: 1px solid #334155;
   color: #f1f5f9;
   font-size: 0.95rem;
+}
+/* #79 AI 決策狀態列 */
+.ai-status-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 1rem;
+  background: rgba(15, 23, 42, 0.7);
+  border-bottom: 1px solid #334155;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+.ai-status-bar .asb-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #93c5fd;
+  font-weight: 600;
+}
+.ai-status-bar .asb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.6);
+}
+.ai-status-bar .asb-chip.thinking {
+  border-color: #2563eb;
+  color: #bfdbfe;
+}
+.ai-status-bar .asb-chip.idle {
+  border-color: #475569;
+}
+.ai-status-bar .asb-chip.offline {
+  opacity: 0.55;
+}
+.ai-status-bar .asb-fac {
+  color: #f1f5f9;
+}
+.ai-status-bar .asb-off {
+  color: #94a3b8;
 }
 .mapedit-bar {
   /* 置中浮動藥丸：避免被左右浮動工具視窗（z 15+）遮住兩端與「開始兵推」鈕。 */

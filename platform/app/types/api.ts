@@ -182,6 +182,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 複製一局為新推演（沿用單位部署/編裝/地圖標註/參與者/AI 指派；新 RNG 種子）——限統裁/管理 */
+        post: operations["cloneSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/ai-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 本局各陣營 AI 決策心跳狀態（思考中／下一次決策倒數）——faction-scoped（一般角色僅見己方） */
+        get: operations["getAiStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/lifecycle": {
         parameters: {
             query?: never;
@@ -794,6 +832,34 @@ export interface components {
             name?: string | null;
             /** @description 想定世界初始日期時間 ISO8601（空字串＝清除） */
             world_start_time?: string | null;
+        };
+        /** @description 複製一局為新推演（沿用部署/編裝/參與者/AI 指派，另給新 RNG 種子） */
+        CloneSessionRequest: {
+            /** @description 新局名稱（省略＝來源名 +「（副本）」） */
+            name?: string | null;
+        };
+        /** @description 一個陣營的 AI 決策心跳狀態（供 COP「思考中／下一次決策倒數」） */
+        AiFactionStatus: {
+            faction: string;
+            /**
+             * @description thinking＝正打 LLM；idle＝等下一次心跳；offline＝worker 未上線/逾時
+             * @enum {string}
+             */
+            state: "thinking" | "idle" | "offline";
+            /** @description 距下一次決策的秒數（idle 時 >0；thinking/offline 為 null） */
+            seconds_until_next?: number | null;
+            /** @description 決策心跳（秒） */
+            heartbeat_s?: number | null;
+            /** @description 本次思考已歷時秒數（thinking 時） */
+            thinking_since_s?: number | null;
+            /** @description 上一次決策落單數 */
+            last_submitted?: number | null;
+            /** @description 累計決策週期數 */
+            cycles?: number | null;
+        };
+        /** @description 本局各陣營 AI 決策狀態（faction-scoped：一般角色僅見己方；全知見全部） */
+        AiStatusView: {
+            factions: components["schemas"]["AiFactionStatus"][];
         };
         UnitView: {
             id: string;
@@ -1528,6 +1594,72 @@ export interface operations {
                 };
             };
             /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    cloneSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CloneSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Cloned */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAiStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiStatusView"];
+                };
+            };
+            /** @description Not a participant */
             403: {
                 headers: {
                     [name: string]: unknown;

@@ -20,6 +20,12 @@ class EditSessionRequest(BaseModel):
     world_start_time: str | None = None  # ISO8601；空字串視為清除
 
 
+class CloneSessionRequest(BaseModel):
+    """複製一局為新推演（#79）——省略 name 則以來源名 +「（副本）」。"""
+
+    name: str | None = Field(default=None, min_length=1)
+
+
 class SessionSummary(BaseModel):
     id: str
     name: str

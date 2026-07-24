@@ -192,6 +192,57 @@ def test_worker_runs_one_cycle_then_stops(session_factory: sessionmaker[Session]
     assert len(cycles[0].bridge.submitted) == 1
 
 
+def test_worker_emits_thinking_then_idle_status(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """#79：每週期先發 thinking、完成後發 idle（含心跳與落單數）供 COP 倒數。"""
+    world = seed_world(session_factory)
+    decider = _StubDecider(
+        [{"unit_id": world.blue_unit_id, "order_type": "MOVE", "target_h3": "8a2a1072b59ffff"}]
+    )
+    deps = FactionWorkerDeps(
+        session_id=world.session_id,
+        faction="BLUE",
+        issuer_id=world.blue_issuer_id,
+        hot=_hot(world),
+        db_factory=session_factory,
+        decider=decider,
+        guardrail=GuardrailGateway(),
+        phys_gateway=FakeGateway(reachable=True, visible=True),
+        relations=_relations(),
+        mode=AiMode.AI_BARE,
+    )
+    statuses: list[dict[str, Any]] = []
+    stopped = {"v": False}
+    clock = {"t": 1000.0}
+
+    def should_stop() -> bool:
+        return stopped["v"]
+
+    def on_cycle(_outcome: Any) -> None:
+        stopped["v"] = True  # 跑完一輪即收工
+
+    def fake_now() -> float:
+        clock["t"] += 1.0
+        return clock["t"]
+
+    asyncio.run(
+        run_faction_worker(
+            deps,
+            should_stop=should_stop,
+            heartbeat_s=5.0,
+            on_cycle=on_cycle,
+            status_sink=statuses.append,
+            now=fake_now,
+        )
+    )
+    assert [s["state"] for s in statuses[:2]] == ["thinking", "idle"]
+    idle = statuses[1]
+    assert idle["heartbeat_s"] == 5.0
+    assert idle["last_submitted"] == 1
+    assert "last_decision_ts" in idle
+
+
 def test_decision_is_json_parseable_shape() -> None:
     # 保護：_decision 產出的結構可序列化（模擬真 LLM 回傳文字前的 dict）。
     json.dumps(_decision([]), ensure_ascii=False)
