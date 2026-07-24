@@ -5,8 +5,12 @@ GET /api/v1/sessions/{id}/units —— 一般角色見己方單位；全知（�
 
 from __future__ import annotations
 
+import contextlib
+from functools import lru_cache
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,10 +18,12 @@ from app.adjudication import WeaponProfile
 from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
+from app.cache import make_redis
 from app.config import Settings
-from app.errors import AuthForbiddenError
+from app.errors import AuthForbiddenError, SessionNotFoundError
 from app.factions import validate_faction_id
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
+from app.state.live_position import push_pos_cmd
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["units"])
@@ -157,3 +163,42 @@ def list_unit_weapons(
             )
         )
     return out
+
+
+@lru_cache(maxsize=1)
+def _reposition_redis(url: str) -> Any:
+    return make_redis(url)
+
+
+class RepositionRequest(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+@router.post("/{session_id}/units/{unit_id}/reposition", response_model=UnitView)
+def reposition_unit(
+    session_id: str,
+    unit_id: str,
+    req: RepositionRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> UnitView:
+    """White Cell「地圖狀態編輯」：把單位直接放到新座標（拖放）。
+
+    座標寫入 DB（權威，供顯示/reconnect/seed）+ 推入活模擬座標命令通道（sim 迴圈 drain 套 hot；
+    暫停中編輯 → 開始兵推後第一 tick 生效）。限全知（統裁/白軍/管理）——編輯任一陣營位置是布局動作。
+    """
+    if not is_omniscient(user.role):
+        raise AuthForbiddenError("僅統裁/白軍/管理可編輯單位位置（地圖狀態編輯）")
+    unit = db.get(TacticalUnit, unit_id)
+    if unit is None or unit.session_id != session_id:
+        raise SessionNotFoundError("單位不存在於此 session")
+    unit.current_lat = req.lat
+    unit.current_lng = req.lng
+    db.commit()
+    # 命令通道失敗（無活 sim / redis 不可達）不讓 DB 編輯回滾；下次 seed 仍帶 DB 值。
+    with contextlib.suppress(Exception):
+        push_pos_cmd(_reposition_redis(settings.redis_url), session_id, unit_id, req.lat, req.lng)
+    db.refresh(unit)
+    return _view(unit)

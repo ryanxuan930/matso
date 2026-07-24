@@ -47,6 +47,7 @@ from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
 from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
+from app.state.live_position import apply_pos_cmds, drain_pos_cmds
 from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
@@ -242,6 +243,10 @@ class SimManager:
                 cmds = await asyncio.to_thread(drain_ammo_cmds, client, session_id)
                 if cmds:
                     apply_ammo_cmds(hot, cmds)
+                # 地圖狀態編輯（拖放單位座標）：同紀律的座標命令通道。暫停中編輯 → RESUME 後 drain。
+                pos = await asyncio.to_thread(drain_pos_cmds, client, session_id)
+                if pos:
+                    apply_pos_cmds(hot, pos)
 
             # 自主推演（O11.4）：本 session 有 AI 指派（Redis ai_config）且 #54 AI 非 OFF 時，
             # 每個 AI 陣營起一條獨立 async 決策 worker（固定心跳、非 pre_tick → 不阻塞 tick）。

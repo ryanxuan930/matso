@@ -109,3 +109,32 @@ def test_non_white_cell_cannot_switch_viewpoint(session_factory: sessionmaker[Se
         headers=_auth(world),  # 藍方 COMMANDER
     )
     assert r.status_code == 403
+
+
+def test_reposition_white_cell_ok(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/units/{world.blue_unit_id}/reposition",
+        json={"lat": 24.5, "lng": 121.5},
+        headers=_auth(world, white=True),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["lat"] == 24.5 and body["lng"] == 121.5
+    from app.models import TacticalUnit
+
+    with session_factory() as db:
+        u = db.get(TacticalUnit, world.blue_unit_id)
+        assert u is not None and u.current_lat == 24.5 and u.current_lng == 121.5
+
+
+def test_reposition_commander_forbidden(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/units/{world.blue_unit_id}/reposition",
+        json={"lat": 24.5, "lng": 121.5},
+        headers=_auth(world),  # 一般 COMMANDER（非全知）
+    )
+    assert r.status_code == 403

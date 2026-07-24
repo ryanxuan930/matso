@@ -683,6 +683,51 @@ const selectedEditable = computed(
 // ---- 地圖編輯器（stage ③b）----
 const canDraw = computed(() => canControl.value || !!myFaction.value)
 const drawActive = computed(() => drawKind.value !== null)
+
+// ---- 地圖狀態編輯（暫停下布局：拖放單位 + 繪障礙，完成再開始兵推）。限白軍/導演。----
+const mapEditMode = ref(false)
+async function enterMapEdit() {
+  try {
+    await apiFetch(`/sessions/${sessionId.value}/control`, {
+      method: 'POST',
+      body: { action: 'PAUSE' },
+    })
+    mapEditMode.value = true
+    widgets.value.mapedit.open = true // 順帶開啟繪圖工具（障礙/建築）
+    focusWidget('mapedit')
+    toasts.push({
+      severity: 'info',
+      title: '地圖狀態編輯：已暫停推演',
+      detail: '拖曳單位調整位置、用地圖編輯繪製障礙/建築，完成後按「開始兵推」。',
+      timeoutMs: 6000,
+    })
+  } catch {
+    toasts.push({ severity: 'error', title: '進入編輯模式失敗（需白軍/導演權限）', timeoutMs: 4000 })
+  }
+}
+async function startWargame() {
+  try {
+    await apiFetch(`/sessions/${sessionId.value}/control`, {
+      method: 'POST',
+      body: { action: 'RESUME' },
+    })
+  } finally {
+    mapEditMode.value = false
+  }
+  toasts.push({ severity: 'success', title: '開始兵推', timeoutMs: 2500 })
+}
+async function onUnitMove(e: { id: string; lng: number; lat: number }) {
+  try {
+    await apiFetch(`/sessions/${sessionId.value}/units/${e.id}/reposition`, {
+      method: 'POST',
+      body: { lat: e.lat, lng: e.lng },
+    })
+  } catch {
+    toasts.push({ severity: 'error', title: '單位移動失敗', timeoutMs: 3000 })
+  }
+  // 無論成敗都重載（成功→定位、失敗→還原到 DB 權威位置）。
+  realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
+}
 // #12 元素顯隱：地圖只渲染未隱藏的特徵（清單仍列全部，供切換）。
 const shownFeatures = computed(() =>
   mapFeatures.value.filter((f) => !hiddenFeatureIds.value.includes(f.id)),
@@ -1359,6 +1404,14 @@ watch(
       <ClientOnly><SimClockBar :tick="stream.lastTick" :start-time="sessionStart" /></ClientOnly>
       <nav class="cop-nav">
         <button
+          v-if="canControl && !mapEditMode"
+          data-testid="nav-map-edit"
+          title="地圖狀態編輯：暫停推演、拖放單位、繪障礙，完成再開始"
+          @click="enterMapEdit"
+        >
+          <i class="pi pi-pencil" /> 地圖狀態編輯
+        </button>
+        <button
           v-if="canControl"
           data-testid="nav-white-cell"
           @click="navigateTo(`/session/${sessionId}/white-cell`)"
@@ -1402,6 +1455,15 @@ watch(
         <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)"><i class="pi pi-chart-bar" /> AAR</button>
       </nav>
     </header>
+    <div v-if="mapEditMode" class="mapedit-bar" data-testid="mapedit-bar">
+      <i class="pi pi-pencil" />
+      <span class="meb-txt">
+        <strong>地圖狀態編輯（推演已暫停）</strong>——拖曳單位調整位置；用「地圖編輯」工具繪製障礙/建築。
+      </span>
+      <button class="meb-start" data-testid="start-wargame" @click="startWargame">
+        ▶ 開始兵推
+      </button>
+    </div>
     <div v-if="victory" class="victory-banner" data-testid="victory-banner">
       🏁 推演結束 —
       <strong>{{ victory.winners.length ? `${victory.winners.join('、')} 獲勝` : '平手' }}</strong>
@@ -1703,11 +1765,13 @@ watch(
             :day-night="dayNight"
             :time-of-day="timeOfDay"
             :targeting="targeting"
+            :edit-units="mapEditMode"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @select-screen-pos="onSelectScreenPos"
             @feature-click="onFeatureClick"
             @feature-move="onFeatureMove"
+            @unit-move="onUnitMove"
             @basemap-error="onBasemapError"
             @context-menu="onContextMenu"
           />
@@ -2089,6 +2153,29 @@ watch(
   border-bottom: 1px solid #334155;
   color: #f1f5f9;
   font-size: 0.95rem;
+}
+.mapedit-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  background: rgba(251, 191, 36, 0.14);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.4);
+  color: #fde68a;
+  font-size: 0.88rem;
+}
+.mapedit-bar .meb-txt {
+  flex: 1 1 auto;
+}
+.mapedit-bar .meb-start {
+  background: #16a34a;
+  border: none;
+  color: #fff;
+  border-radius: 0.3rem;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 .victory-banner .vb-aar {
   margin-left: auto;

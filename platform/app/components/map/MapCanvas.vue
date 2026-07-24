@@ -36,6 +36,7 @@ const emit = defineEmits<{
     },
   ]
   featureMove: [{ id: string; lng: number; lat: number }] // 拖放移動點特徵（#11 B2）
+  unitMove: [{ id: string; lng: number; lat: number }] // 地圖狀態編輯：拖放單位到新座標
   // 選取單位的螢幕座標（供 Unit 資訊卡懸浮於圖標旁；地圖平移/縮放即時更新；無選取→null）。
   selectScreenPos: [{ x: number; y: number } | null]
 }>()
@@ -82,6 +83,7 @@ const props = withDefaults(
     selectedFeatureId?: string | null // 選取的標註（高亮）
     drawActive?: boolean // 繪圖模式：地圖點擊視為加頂點（不選單位/標註）
     targeting?: boolean // 設定目標中（#3）：游標改十字準星，提示「點地圖選落點/目標」
+    editUnits?: boolean // 地圖狀態編輯：單位可拖放到新座標（White Cell 布局）
     latlngGrid?: boolean // 經緯度網格（#9）
     mgrsGrid?: boolean // MGRS 標記（#9）
     gridStepDeg?: number // 網格密度（度，#9）
@@ -126,6 +128,7 @@ const props = withDefaults(
     selectedFeatureId: null,
     drawActive: false,
     targeting: false,
+    editUnits: false,
     latlngGrid: false,
     mgrsGrid: false,
     gridStepDeg: 0.5,
@@ -209,6 +212,7 @@ const container = ref<HTMLDivElement | null>(null)
 const loaded = ref(false)
 let map: MapLibreMap | null = null
 let dragFeatId: string | null = null // 拖放移動中的點特徵 id（#11 B2）
+let dragUnitId: string | null = null // 拖放移動中的單位 id（地圖狀態編輯）
 // 拖曳事件的結構化型別（避免引入 maplibre 具名事件型別）。
 type _LngLatEvt = { lngLat: { lng: number; lat: number } }
 function onFeatDragMove(e: _LngLatEvt): void {
@@ -942,6 +946,41 @@ onMounted(async () => {
       if (map && !dragFeatId && !props.targeting) map.getCanvas().style.cursor = ''
     })
   }
+  // 地圖狀態編輯：editUnits 模式下拖放單位到新座標（重用 FEAT_DRAG_SRC 作落點預覽點）。
+  const onUnitDragMove = (e: _LngLatEvt): void => {
+    if (!dragUnitId || !map) return
+    ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] },
+    } as never)
+  }
+  const onUnitDrop = (e: _LngLatEvt): void => {
+    if (!dragUnitId || !map) return
+    const id = dragUnitId
+    dragUnitId = null
+    map.getCanvas().style.cursor = ''
+    map.off('mousemove', onUnitDragMove)
+    ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData(_EMPTY_FEAT_FC as never)
+    emit('unitMove', { id, lng: e.lngLat.lng, lat: e.lngLat.lat })
+  }
+  const onUnitDown = (e: {
+    features?: { properties?: { id?: unknown } | null }[]
+    preventDefault: () => void
+  }) => {
+    if (!props.editUnits) return // 僅編輯模式可拖曳單位
+    const id = e.features?.[0]?.properties?.id
+    if (id == null) return
+    e.preventDefault() // 阻止地圖平移
+    dragUnitId = String(id)
+    if (map) map.getCanvas().style.cursor = 'grabbing'
+    map?.on('mousemove', onUnitDragMove)
+    map?.once('mouseup', onUnitDrop)
+  }
+  map.on('mousedown', 'units', onUnitDown)
+  map.on('mouseenter', 'units', () => {
+    if (map && props.editUnits && !dragUnitId) map.getCanvas().style.cursor = 'move'
+  })
   // 右鍵選單（#3）：阻止瀏覽器選單，emit 螢幕座標 + 經緯 + 游標下單位（供 ATAK 式移動/攻擊）。
   map.on('contextmenu', (e) => {
     const hit = map?.queryRenderedFeatures(e.point, { layers: ['units'] })?.[0]
