@@ -86,6 +86,7 @@ components:
                 - ORDER_PERMISSION_DENIED
                 - ORDER_INVALID_TRANSITION
                 - ORDER_UNIT_NO_POSITION
+                - ORDER_UNIT_FIXED
                 - ORDER_UNREACHABLE
                 - ORDER_TARGET_NOT_FOUND
                 - ORDER_NO_LOS
@@ -202,6 +203,7 @@ components:
         platform_count: { type: integer, description: "平台/建制數（每次命中僅損一個平台份量）" }
         personnel_current: { type: [integer, "null"], description: "當前人員數（顯示用，可空）" }
         comms: { type: string }
+        is_fixed: { type: boolean, description: "固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記" }
     WeaponView:
       type: object
       description: 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種

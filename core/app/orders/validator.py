@@ -52,6 +52,15 @@ def validate_order(
         )
 
     _check_permission(db, session_id, issuer_id, unit)
+    # 固定單位（指揮部/後勤/陣地）：不接受 MOVE 令——不論下令者是 AI 或白軍/導演。這是想定層的
+    # 編成約束（非物理裁決），故在驗證層擋下；ENGAGE/其他令不受限（原地自衛仍可）。座標「布局」
+    # 走 reposition 端點（White Cell god setup），不經此路徑，故固定單位仍可於地圖狀態編輯中擺放。
+    if req.order_type is OrderType.MOVE and unit.is_fixed:
+        raise OrderValidationError(
+            f"固定單位不可移動：{unit.designation}（指揮部等固定編成，於劇本設定）",
+            error_code="ORDER_UNIT_FIXED",
+            details={"unit_id": unit.id, "designation": unit.designation},
+        )
     payload = _parse_payload(req)
     return ValidatedOrder(unit=unit, order_type=req.order_type, payload=payload)
 

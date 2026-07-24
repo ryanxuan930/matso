@@ -68,6 +68,22 @@ def test_white_cell_sees_all(session_factory: sessionmaker[Session]) -> None:
     assert ids == {world.blue_unit_id, world.red_unit_id}  # 全知見雙方
 
 
+def test_units_expose_is_fixed(session_factory: sessionmaker[Session]) -> None:
+    # 固定單位旗標透出 UnitView（供 COP 顯示鎖定 + 前端擋 MOVE）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        from app.models import TacticalUnit
+
+        unit = db.get(TacticalUnit, world.blue_unit_id)
+        assert unit is not None
+        unit.is_fixed = True
+        db.commit()
+    client = _client(session_factory)
+    r = client.get(f"/api/v1/sessions/{world.session_id}/units", headers=_auth(world))
+    body = {u["id"]: u for u in r.json()}
+    assert body[world.blue_unit_id]["is_fixed"] is True
+
+
 def test_non_participant_403(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db:  # 非參與者使用者

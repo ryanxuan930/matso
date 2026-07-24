@@ -400,6 +400,18 @@ async function saveToServer() {
               />
             </template>
           </Column>
+          <Column header="固定">
+            <template #body="{ node }">
+              <label
+                class="fixed-cell"
+                data-testid="unit-fixed"
+                title="固定單位（指揮部/後勤/陣地）：不接受移動令，不會被派去移動或機動交戰"
+              >
+                <Checkbox v-model="node.data.fixed" binary />
+                <span v-if="node.data.fixed" class="fixed-tag">🔒 指揮部</span>
+              </label>
+            </template>
+          </Column>
           <Column header="座標">
             <template #body="{ node }">
               <span class="coord-cell">
@@ -513,6 +525,8 @@ h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; g
 .orbat-faction-head .fac-count { color: #94a3b8; font-size: 0.8rem; }
 .orbat-faction-head .tree-toggles { margin-left: auto; display: inline-flex; gap: 0.25rem; }
 .coord-cell { display: inline-flex; gap: 0.25rem; align-items: center; }
+.fixed-cell { display: inline-flex; gap: 0.35rem; align-items: center; cursor: pointer; }
+.fixed-tag { color: #fbbf24; font-size: 0.72rem; white-space: nowrap; }
 .picker-wrap { margin: 0.25rem 0 0.5rem; }
 .picker-label { display: block; color: #94a3b8; font-size: 0.75rem; margin-bottom: 0.2rem; }
 .empty-hint { color: #94a3b8; font-size: 0.82rem; }

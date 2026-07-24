@@ -31,6 +31,7 @@ class UnitMeta:
     faction: str
     designation: str
     unit_type: str
+    is_fixed: bool = False  # 固定單位（指揮部等）：不可移動，AI 不應派其機動/交戰。
 
 
 def _num(value: Any) -> float | None:
@@ -56,6 +57,8 @@ def _own_unit_view(unit_id: str, state: UnitState, meta: UnitMeta) -> dict[str, 
         "type": meta.unit_type,
         "status": unit_status(state),
     }
+    if meta.is_fixed:
+        view["fixed"] = True  # 固定單位：AI 不應派其移動/機動交戰（MOVE 令會被驗證層擋下）。
     lat, lng = _num(state.get("lat")), _num(state.get("lng"))
     if lat is not None and lng is not None:
         view["lat"] = round(lat, 6)
@@ -123,8 +126,10 @@ def _fmt_own(u: dict[str, Any]) -> str:
     pos = f"({u['lat']:.4f},{u['lng']:.4f})" if "lat" in u else "位置未知"
     ammo = u.get("ammo_by_weapon") or {}
     ammo_s = "、".join(f"{k}×{v}" for k, v in ammo.items()) or "—"
+    # 固定單位（指揮部等）：明確標註「勿調動」——不可下 MOVE，勿派其機動或投入攻勢交戰。
+    fixed = "【固定·勿調動】" if u.get("fixed") else ""
     return (
-        f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('type', '?')}）"
+        f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('type', '?')}）{fixed}"
         f" {u.get('status', '?')} 戰力{u.get('strength', '?')} @ {pos}｜彈藥：{ammo_s}"
     )
 

@@ -55,6 +55,26 @@ def test_own_vs_enemy_split_by_faction() -> None:
     assert ctx["own_units"][0]["unit_id"] == "b1"  # 依 unit_id 排序（決定性）
 
 
+def test_fixed_unit_marked_in_view_and_prompt() -> None:
+    # 固定單位（指揮部）：己方視圖帶 fixed=True，渲染出【固定·勿調動】讓 LLM 勿派其機動。
+    meta = _meta()
+    meta["b1"] = UnitMeta(faction="BLUFOR", designation="旅部", unit_type="HQ", is_fixed=True)
+    ctx = build_faction_context(
+        faction="BLUFOR",
+        tick=5,
+        hot_snapshot=_hot(),
+        unit_meta=meta,
+        known_enemies=[],
+        relations=_relations(),
+    )
+    b1 = next(u for u in ctx["own_units"] if u["unit_id"] == "b1")
+    b2 = next(u for u in ctx["own_units"] if u["unit_id"] == "b2")
+    assert b1["fixed"] is True
+    assert "fixed" not in b2  # 非固定單位不帶此鍵
+    prompt = render_context_prompt(ctx)
+    assert "固定·勿調動" in prompt
+
+
 def test_fog_enemies_come_only_from_injection() -> None:
     # known_enemies 空 → context 不得從 hot_snapshot 自行揭露敵方 r1（霧化紅線）。
     ctx = build_faction_context(

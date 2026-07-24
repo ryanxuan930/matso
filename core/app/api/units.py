@@ -42,6 +42,7 @@ class UnitView(BaseModel):
     platform_count: int  # 平台/建制數
     personnel_current: int | None = None  # 當前人員數（顯示用）
     comms: str
+    is_fixed: bool = False  # 固定單位（指揮部等）：不可下 MOVE 令；COP 顯示鎖定標記
 
 
 class WeaponView(BaseModel):
@@ -71,6 +72,7 @@ def _view(u: TacticalUnit) -> UnitView:
         platform_count=_platform_count(u),
         personnel_current=u.personnel_current,
         comms=u.comms_status.value,
+        is_fixed=u.is_fixed,
     )
 
 

@@ -670,7 +670,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -770,6 +770,8 @@ export interface components {
             /** @description 當前人員數（顯示用，可空） */
             personnel_current?: number | null;
             comms: string;
+            /** @description 固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記 */
+            is_fixed?: boolean;
         };
         /** @description 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種 */
         WeaponView: {

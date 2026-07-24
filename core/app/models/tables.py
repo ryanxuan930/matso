@@ -91,6 +91,8 @@ class TacticalUnit(Base):
     parent_id: Mapped[str | None] = mapped_column(
         "parentId", String(191), ForeignKey("TacticalUnit.id", ondelete="CASCADE")
     )
+    # 固定單位（指揮部/後勤/陣地）：不接受 MOVE 令、不被派去移動（劇本 ORBAT 設定，唯讀跟隨）。
+    is_fixed: Mapped[bool] = mapped_column("isFixed", Boolean, default=False)
     attributes: Mapped[dict] = mapped_column("attributes", JSON, default=dict)  # type: ignore[type-arg]
     current_lat: Mapped[float | None] = mapped_column("currentLat", Double)
     current_lng: Mapped[float | None] = mapped_column("currentLng", Double)

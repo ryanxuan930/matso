@@ -37,6 +37,7 @@ class ScenarioUnit:
     lat: float | None
     lng: float | None
     parent: str | None
+    fixed: bool = False  # 固定單位（指揮部等）：不接受 MOVE 令、不被派去移動（§11.1）。
 
 
 @dataclass(slots=True)
@@ -165,6 +166,7 @@ def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> lis
                     lat=u.get("lat"),
                     lng=u.get("lng"),
                     parent=parent,
+                    fixed=bool(u.get("fixed", False)),
                 )
             )
     return units
@@ -232,6 +234,7 @@ def create_session_from_scenario(
             faction=u.faction,
             current_lat=u.lat,
             current_lng=u.lng,
+            is_fixed=u.fixed,
         )
         db.add(unit)
         by_designation[(u.faction, u.designation)] = unit
@@ -315,6 +318,7 @@ def _load_orbats(
                     lat=u.get("lat"),
                     lng=u.get("lng"),
                     parent=parent,
+                    fixed=bool(u.get("fixed", False)),
                 )
             )
     return units

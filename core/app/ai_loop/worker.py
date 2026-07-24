@@ -61,7 +61,12 @@ def load_unit_meta(db: Session, session_id: str) -> dict[str, UnitMeta]:
     """DB → uid→UnitMeta（faction/designation/type；熱狀態不存這些）。"""
     units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
     return {
-        u.id: UnitMeta(faction=u.faction, designation=u.designation, unit_type=u.unit_level.value)
+        u.id: UnitMeta(
+            faction=u.faction,
+            designation=u.designation,
+            unit_type=u.unit_level.value,
+            is_fixed=u.is_fixed,
+        )
         for u in units
     }
 

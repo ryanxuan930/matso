@@ -104,6 +104,9 @@ model TacticalUnit {
   parent   TacticalUnit?  @relation("UnitHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
   subUnits TacticalUnit[] @relation("UnitHierarchy")
 
+  // 固定單位（指揮部/後勤/陣地等）：不接受 MOVE 令、不會被派去移動或機動交戰（劇本 ORBAT 設定）。
+  isFixed Boolean @default(false)
+
   // Extensible Properties & Live Telemetry
   attributes   Json       @default("{}")
   currentLat   Float? // WGS84

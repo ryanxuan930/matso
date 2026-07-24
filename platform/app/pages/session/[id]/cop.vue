@@ -671,6 +671,8 @@ function ctxLockTarget() {
 }
 
 const selectedUnit = computed(() => realUnits.value.find((u) => u.id === selectedId.value) ?? null)
+// 固定單位（指揮部等）：不可下移動令（後端 validator 權威擋 ORDER_UNIT_FIXED；此為 UX 提示）。
+const selectedUnitFixed = computed(() => !!selectedUnit.value?.is_fixed)
 const targetUnit = computed(() => realUnits.value.find((u) => u.id === targetUnitId.value) ?? null)
 // 選取單位是否可編裝：需該局開放編裝，且（我為白軍/全知 或 該單位為本軍）。
 const selectedEditable = computed(
@@ -1129,6 +1131,16 @@ watch([selectedId, orderType], () => {
 
 async function submit() {
   if (!selectedId.value) return
+  // 固定單位（指揮部等）不可移動——前端先擋（後端 validator 為權威閘門，回 ORDER_UNIT_FIXED）。
+  if (orderType.value === 'MOVE' && selectedUnitFixed.value) {
+    toasts.push({
+      severity: 'warn',
+      title: '固定單位不可移動',
+      detail: `${selectedUnit.value?.designation ?? ''} 為固定單位（指揮部等），不接受移動令。`,
+      timeoutMs: 4000,
+    })
+    return
+  }
   message.value = ''
   precheck.value = null
   const payload =
@@ -1505,6 +1517,7 @@ watch(
             <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
               {{ Math.round(liveHealth(u) ?? 100) }}%
             </span>
+            <span v-if="u.is_fixed" class="u-fixed" title="固定單位（指揮部等）：不可移動">🔒</span>
             <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
           </li>
           <li v-if="!realUnits.length" class="empty">（此 session 無可下令單位）</li>
@@ -1516,7 +1529,10 @@ watch(
             <option value="MOVE">移動</option>
             <option value="ENGAGE">交戰</option>
           </select>
-          <template v-if="orderType === 'MOVE'">
+          <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
+            🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
+          </p>
+          <template v-if="orderType === 'MOVE' && !selectedUnitFixed">
             <label class="precise">
               <input v-model="preciseMove" type="checkbox" data-testid="precise-move">
               精確移動（走到點擊處，不吸附六角格心）
@@ -2631,6 +2647,20 @@ watch(
   color: #ef4444;
   font-size: 0.72rem;
   font-weight: 700;
+}
+.units li .u-fixed {
+  margin-left: 0.3rem;
+  font-size: 0.78rem;
+}
+.order .fixed-note {
+  margin: 0.35rem 0;
+  padding: 0.35rem 0.5rem;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 0.3rem;
+  color: #fde68a;
+  font-size: 0.74rem;
+  line-height: 1.4;
 }
 .empty {
   color: #64748b;
