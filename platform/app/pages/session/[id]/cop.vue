@@ -217,6 +217,7 @@ const realUnits = ref<UnitView[]>([])
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
 const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
+const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個陣營）；範圍外單位不可下令
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 
 // 地圖編輯器（stage ③b）——標註/工事/武器據點的繪製與管理。
@@ -399,12 +400,19 @@ async function refresh() {
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
   // 我方陣營（決定友/敵渲染與目標可選集）+ 開局時間（#4 執行時間）——由 session 摘要取得。
   const sessions = await apiFetch<
-    { id: string; my_faction?: string; start_time?: string | null; orbat_edit?: boolean }[]
+    {
+      id: string
+      my_faction?: string
+      start_time?: string | null
+      orbat_edit?: boolean
+      my_unit_scope?: string[]
+    }[]
   >('/sessions').catch(() => [])
   const me = sessions.find((s) => s.id === sessionId.value)
   myFaction.value = me?.my_faction ?? ''
   sessionStart.value = me?.start_time ?? null
   orbatEdit.value = !!me?.orbat_edit
+  myUnitScope.value = me?.my_unit_scope ?? []
   await loadFeatures()
 }
 
@@ -688,6 +696,10 @@ const selectedEditable = computed(
     (canControl.value || (!!myFaction.value && selectedUnit.value.faction === myFaction.value)),
 )
 
+// unit_scope：白軍/全知不限；scope 空＝整個陣營；否則只能下令範圍內單位（後端 validator 亦強制）。
+function inScope(u: UnitView): boolean {
+  return canControl.value || myUnitScope.value.length === 0 || myUnitScope.value.includes(u.id)
+}
 // 單位/下令小工具依陣營分組（可收合/展開）。
 const collapsedFactions = ref<Set<string>>(new Set())
 function toggleFactionGroup(f: string) {
@@ -1679,15 +1691,17 @@ watch(
               <li
                 v-for="u in g.units"
                 :key="u.id"
-                :class="{ sel: u.id === selectedId }"
+                :class="{ sel: u.id === selectedId, 'out-scope': !inScope(u) }"
+                :title="inScope(u) ? '' : '不在你的指揮範圍（此帳號僅獲授權指揮部分單位）'"
                 data-testid="unit-item"
-                @click="selectUnit(u.id)"
+                @click="inScope(u) ? selectUnit(u.id) : null"
               >
                 {{ u.designation }} ·
                 <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
                   {{ Math.round(liveHealth(u) ?? 100) }}%
                 </span>
                 <span v-if="u.is_fixed" class="u-fixed" title="固定單位（指揮部等）：不可移動">🔒</span>
+                <span v-if="!inScope(u)" class="u-ban" title="不在指揮範圍">🚫</span>
                 <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
               </li>
             </ul>
@@ -2995,6 +3009,17 @@ watch(
 .units li .u-fixed {
   margin-left: 0.3rem;
   font-size: 0.78rem;
+}
+.units li.out-scope {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.units li.out-scope:hover {
+  border-color: #1e293b;
+}
+.units li .u-ban {
+  margin-left: 0.3rem;
+  font-size: 0.72rem;
 }
 .order .fixed-note {
   margin: 0.35rem 0;

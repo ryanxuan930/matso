@@ -31,3 +31,4 @@ class SessionSummary(BaseModel):
     world_start_time: str | None = None  # 想定世界初始日期時間（#16/#6）
     archived_at: str | None = None  # 封存時間 ISO8601（#31；有值＝已封存）
     orbat_edit: bool = False  # 呼叫者是否可編輯本 session 編裝（白軍，或本軍且該局開放自編）
+    my_unit_scope: list[str] = []  # 呼叫者限指揮之單位子集（空＝整個陣營；COP 灰化範圍外）

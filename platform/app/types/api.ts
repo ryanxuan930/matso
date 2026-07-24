@@ -786,6 +786,8 @@ export interface components {
              * @default false
              */
             orbat_edit: boolean;
+            /** @description 呼叫者限指揮之單位子集（空＝整個陣營；COP 下令面板灰化範圍外） */
+            my_unit_scope?: string[];
         };
         /** @description 編輯已開推演設定（#16）——限統裁/管理 */
         EditSessionRequest: {

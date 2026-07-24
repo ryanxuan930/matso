@@ -32,6 +32,7 @@ class LobbyService:
     def list_sessions(self, user: CurrentUser) -> list[SessionSummary]:
         """依角色過濾的 session 列表。統裁/管理見全部，其餘僅見自己參與的。"""
         my_factions = self._participant_factions(user.id)
+        my_scopes = self._participant_scopes(user.id)
         if user.role in _OMNISCIENT_ROLES:
             sessions = self._db.execute(select(WargameSession)).scalars().all()
         else:
@@ -49,6 +50,7 @@ class LobbyService:
                 s,
                 my_factions.get(s.id),
                 orbat_edit=omni or (my_factions.get(s.id) in set(s.orbat_edit_factions or [])),
+                my_unit_scope=my_scopes.get(s.id, []),
             )
             for s in sessions
         ]
@@ -129,9 +131,27 @@ class LobbyService:
         )
         return {p.session_id: p.faction for p in rows}
 
+    def _participant_scopes(self, user_id: str) -> dict[str, list[str]]:
+        """呼叫者於各 session 的 unit_scope（限指揮單位子集；空＝整個陣營）。"""
+        rows = (
+            self._db.execute(
+                select(SessionParticipant).where(SessionParticipant.user_id == user_id)
+            )
+            .scalars()
+            .all()
+        )
+        return {
+            p.session_id: [str(x) for x in p.unit_scope]
+            for p in rows
+            if isinstance(p.unit_scope, list) and p.unit_scope
+        }
+
     @staticmethod
     def _summary(
-        session: WargameSession, my_faction: str | None, orbat_edit: bool = False
+        session: WargameSession,
+        my_faction: str | None,
+        orbat_edit: bool = False,
+        my_unit_scope: list[str] | None = None,
     ) -> SessionSummary:
         return SessionSummary(
             id=session.id,
@@ -147,6 +167,7 @@ class LobbyService:
             ),
             my_faction=my_faction,
             orbat_edit=orbat_edit,
+            my_unit_scope=my_unit_scope or [],
             archived_at=(
                 session.archived_at.isoformat()
                 if session.archived_at is not None and hasattr(session.archived_at, "isoformat")
