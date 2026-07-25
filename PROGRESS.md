@@ -125,12 +125,11 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
    （只有 `_apply_forced_attrition` 強穿障礙才扣）。
 → 使用者症狀全部源於此：預覽暢通但執行不可行（模型 1 vs 2）、超乎常理直線高速（模型 3）、無耗損（模型 3）。
 **本次已做的контained 修補**：預檢不可達原因說明化（precheck.py）、前端預覽標籤正名「無障礙阻擋（地形可達性於送出時驗證）」。
-**待辦（分階段，需 SPEC + 可能動 golden 需重錄）**：
-- P1 統一模型：執行改走 terrain A* 路徑（沿 hex 路徑前進，非直線）；預覽/閘門/執行共用同一路由。
-- P2 速度真實化：速度由地形類別 + **坡度（爬升/下降）** + 是否沿道路（`taiwan_drive.graphml`，config 標「尚未使用」）調變；單位若含**運輸載具**（編裝）→ 機動 profile 提升。
-- P3 耗損：正常移動依距離/地形/坡度扣 strength（燃料/磨耗），非僅強穿。
-- P4 地形覆蓋：擴大預建 hex grid 範圍（或 on-demand 建格），避免長距離「超出範圍」誤拒。
-- 紅線：移動裁決用 `DeterministicRNG(seed,"movement")`；改動後 golden replay 需重錄（`ops/tools/rerecord_golden.py`）。
+**規格已寫（2026-07-25）→ `SPEC_MOVEMENT.md`**，分三張任務卡（TASKS.md「移動真實化」）：
+- **#80 Phase A**：per-unit 機動速度（機械化 vs 徒步，由編裝導出）+ 行軍耗損 + AI 機動感知。
+- **#81 Phase B**：地形類別/坡度逐段調速（沿用 mobility_matrix + weather）；不可通行段停邊界。
+- **#82 Phase C**：地形 A* 繞路（沿道路、繞開河/山/障礙）+ 道路網 + 油料 + 格網覆蓋；統一預覽/閘門/執行。
+- 紅線：AI 只選目的地/節奏、不裁決物理；移動隨機走 `DeterministicRNG(seed,"movement")`；**每 Phase 皆 golden replay 重錄**（`ops/tools/rerecord_golden.py`，屬預期）。使用者選定「A+B+C，先寫 SPEC 再分段執行」。
 
 ### O6 → O7 交接項（2026-07-21，M6 + 多陣營完成後）
 
