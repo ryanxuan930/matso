@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_movement_path_fn
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.errors import OrderValidationError, SessionNotFoundError
@@ -34,6 +34,7 @@ from app.movement.params import (
     TEMPO_ATTRITION_FACTOR,
     march_attrition_per_km,
 )
+from app.movement.router import plan_route
 from app.movement.terrain_sampler import build_terrain_cell_sampler
 from app.stream.faction_filter import is_omniscient
 
@@ -72,6 +73,7 @@ class MovementPreviewView(BaseModel):
     mobility_profile: str = "FOOT"  # #80：由編裝導出的機動 profile
     speed_kmh: float = 0.0  # #80/#81：有效速度（含 tempo、路徑平均地形調變），供 COP 顯示
     terrain_impassable: bool = False  # #81：路徑是否穿越對此 profile 不可通行的地形
+    terrain_routed: bool = False  # #82：路徑是否為地形 A* 繞路（False＝直線，含不可達退回）
 
 
 def _dest_lnglat(body: MovementPreviewRequest) -> tuple[float, float] | None:
@@ -92,6 +94,7 @@ def preview_movement(
     body: MovementPreviewRequest,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+    path_fn: object | None = Depends(get_movement_path_fn),
 ) -> MovementPreviewView:
     session = db.get(WargameSession, session_id)
     if session is None:
@@ -104,8 +107,9 @@ def preview_movement(
         raise OrderValidationError("單位尚無座標", error_code="MOVE_PREVIEW_NO_POS")
     start = (float(unit.current_lng), float(unit.current_lat))
 
-    # 路徑：自訂 waypoints 優先（首點若非起點則補上起點）；否則起點→目的地直線。
+    # 路徑：自訂 waypoints 優先（首點若非起點則補上起點）；否則 #82 地形路徑（不可達→直線）。
     waypoints: list[tuple[float, float]] = [start]
+    routed = False
     if body.waypoints:
         pts = [(float(p[0]), float(p[1])) for p in body.waypoints[:_MAX_WAYPOINTS] if len(p) >= 2]
         if pts and _close(pts[0], start):
@@ -117,7 +121,20 @@ def preview_movement(
             raise OrderValidationError(
                 "需提供 to_h3 / to_lat+to_lng 或 waypoints", error_code="MOVE_PREVIEW_NO_DEST"
             )
-        waypoints.append(dest)
+        # #82：預覽與執行共用同一規劃器 → 預覽路徑＝實際行進路徑（含任意點位精確起訖）。
+        if path_fn is not None:
+            route = plan_route(
+                path_fn,  # type: ignore[arg-type]
+                start_lat=start[1],
+                start_lng=start[0],
+                dest_lat=dest[1],
+                dest_lng=dest[0],
+                profile=resolve_unit_mobility(db, unit.id).profile,
+            )
+            waypoints.extend(route.waypoints)
+            routed = route.routed
+        else:
+            waypoints.append(dest)
 
     if len(waypoints) < 2:
         raise OrderValidationError("路徑至少需起訖兩點", error_code="MOVE_PREVIEW_SHORT")
@@ -180,6 +197,7 @@ def preview_movement(
         mobility_profile=mob.profile,
         speed_kmh=round(speed_kmh, 1),
         terrain_impassable=terrain_impassable,
+        terrain_routed=routed,
     )
 
 

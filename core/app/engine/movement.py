@@ -36,6 +36,7 @@ from app.movement.attrition import (
 from app.movement.mobility import UnitMobility, resolve_unit_mobility
 from app.movement.mobility_matrix import step_cost as _terrain_step_cost
 from app.movement.params import TEMPO_ATTRITION_FACTOR, march_attrition_per_km
+from app.movement.router import PathFn, plan_route
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
@@ -102,6 +103,7 @@ class UnitMovementSystem:
         rng: DeterministicRNG | None = None,
         terrain_sampler: TerrainSampler | None = None,
         weather_mobility: float = 1.0,
+        path_fn: PathFn | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
@@ -115,6 +117,8 @@ class UnitMovementSystem:
         self._terrain_sampler = terrain_sampler
         self._weather_mobility = weather_mobility if weather_mobility > 0 else 1.0
         self._terrain_cost_cache: dict[tuple[str, str], float | None] = {}
+        # #82 Phase C：地形 A* 路徑查詢（None＝不規劃，維持 Phase A/B 直線）。
+        self._path_fn = path_fn
 
     async def step(self, now: SimTime) -> list[LedgerEvent]:
         # 同步 DB/H3 計算移到執行緒，避免阻塞 event loop（HOW_TO §3.1）。
@@ -159,7 +163,19 @@ class UnitMovementSystem:
                         "_step_km": mob.step_km(self._tick_rate_ms, tempo=tempo),
                         "_mobility_profile": mob.profile,
                     }
-                    o.payload = p
+                    # #82 Phase C：規劃地形路徑（繞開不可通行）→ 存 _route_wp；規劃後重算 targets，
+                    # 使行軍耗損依**實際繞行距離**計（繞遠路更耗）。使用者自訂 waypoints 不覆寫。
+                    route_ev = None
+                    if self._path_fn is not None and not _waypoints_of(p):
+                        p, route_ev = self._plan_route(o, unit, p, mob.profile, now)
+                        o.payload = p
+                        targets = self._targets(p, dest_h3=p.get("to_h3"), h3mod=h3)
+                        if not targets:
+                            continue
+                    else:
+                        o.payload = p
+                    if route_ev is not None:
+                        events.append(route_ev)
                     # #80 行軍耗損：依總路徑距離 × per-km 磨耗 × tempo（確定性；地形難度 Phase B）。
                     ev_m = self._apply_march_attrition(unit, targets, mob, tempo, now)
                     if ev_m is not None:
@@ -190,10 +206,17 @@ class UnitMovementSystem:
         dest_h3: object,
         h3mod: object,
     ) -> list[tuple[float, float]]:
-        """回傳依序前進的目標點 [(lng,lat), …]（不含起點）。waypoints 優先；否則單一目的地。"""
+        """回傳依序前進的目標點 [(lng,lat), …]（不含起點）。
+
+        優先序：使用者自訂 waypoints（刻意畫的路線，尊重之）→ `_route_wp`（#82 地形規劃路徑）
+        → 單一目的地（精確經緯或格心）。
+        """
         wps = _waypoints_of(payload)
         if wps:
             return wps
+        routed = _waypoints_of({"waypoints": payload.get("_route_wp")})
+        if routed:
+            return routed
         to_lat, to_lng = payload.get("to_lat"), payload.get("to_lng")
         if isinstance(to_lat, (int, float)) and isinstance(to_lng, (int, float)):
             return [(float(to_lng), float(to_lat))]
@@ -264,6 +287,59 @@ class UnitMovementSystem:
             initiator_id=o.unit_id,
             detail={"order_id": o.id, "lat": nlat, "lng": nlng},
         )
+
+    def _plan_route(
+        self,
+        o: Order,
+        unit: TacticalUnit,
+        payload: dict,  # type: ignore[type-arg]
+        profile: str,
+        now: SimTime,
+    ) -> tuple[dict, LedgerEvent | None]:  # type: ignore[type-arg]
+        """規劃地形路徑存入 payload._route_wp（#82）。回 (payload, 事件|None)。
+
+        任意點位：由單位**當前精確座標**出發、以**精確目的地**作結（見 movement/router）。
+        規劃失敗/不可達 → 退回直線（payload 不變）並記 MOVE_ROUTE_FALLBACK 供觀測。
+        """
+        dest = self._dest_latlng(payload)
+        if dest is None:
+            return payload, None
+        route = plan_route(
+            self._path_fn,  # type: ignore[arg-type]
+            start_lat=float(unit.current_lat or 0.0),
+            start_lng=float(unit.current_lng or 0.0),
+            dest_lat=dest[0],
+            dest_lng=dest[1],
+            profile=profile,
+        )
+        if not route.routed:
+            # 退回直線：不阻擋移動（避免超出地形快取範圍的長距離誤拒），但留下可觀測記錄。
+            if route.reason != "same_cell":
+                return payload, LedgerEvent(
+                    event_type="MOVE_ROUTE_FALLBACK",
+                    tick=now.tick,
+                    initiator_id=o.unit_id,
+                    detail={"order_id": o.id, "reason": route.reason, "profile": profile},
+                )
+            return payload, None
+        return {**payload, "_route_wp": [[lng, lat] for lng, lat in route.waypoints]}, LedgerEvent(
+            event_type="MOVE_ROUTE_PLANNED",
+            tick=now.tick,
+            initiator_id=o.unit_id,
+            detail={"order_id": o.id, "legs": route.hops, "profile": profile},
+        )
+
+    @staticmethod
+    def _dest_latlng(payload: dict) -> tuple[float, float] | None:  # type: ignore[type-arg]
+        """由 payload 取精確目的地 (lat,lng)：優先 to_lat/to_lng，否則 to_h3 格心。"""
+        to_lat, to_lng = payload.get("to_lat"), payload.get("to_lng")
+        if isinstance(to_lat, (int, float)) and isinstance(to_lng, (int, float)):
+            return float(to_lat), float(to_lng)
+        dest_h3 = payload.get("to_h3")
+        if isinstance(dest_h3, str) and dest_h3:
+            lat, lng = h3.cell_to_latlng(dest_h3)
+            return float(lat), float(lng)
+        return None
 
     def _terrain_cost(self, cell: str, profile: str) -> float | None:
         """該格對此 profile 的通行成本倍率（快取；不可通行回 None）。

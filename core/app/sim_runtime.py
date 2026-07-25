@@ -41,7 +41,7 @@ from app.engine.subsystems import (
 )
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
-from app.movement.terrain_sampler import build_terrain_cell_sampler
+from app.movement.terrain_sampler import build_terrain_cell_sampler, build_terrain_path_fn
 from app.runtime import PerfCounterClock, TickPacer, run_paced
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
 from app.state.broadcaster import RedisBroadcaster
@@ -220,6 +220,7 @@ class SimManager:
                     speed_kmh=_UNIT_SPEED_KMH,
                     rng=DeterministicRNG(seed, "movement"),  # #28 強穿隨機耗損
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
+                    path_fn=build_terrain_path_fn(),  # #82 A* 繞路（不可達→直線）
                 ),
                 sensors=NoOpSensorSystem(),
                 comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 5 tick 重算鏈路狀態

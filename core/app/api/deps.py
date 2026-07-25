@@ -90,6 +90,18 @@ def get_gateway() -> PhysicsGateway:
     return TerrainGatewayAdapter(TerrainClient(_default_channel()))
 
 
+def get_movement_path_fn() -> object | None:
+    """移動地形路徑查詢器（#82，供預覽端）。STUB_GATEWAY → None（直線）。
+
+    以 DI 提供，讓測試可覆寫為 None——預覽單元測試因此不依賴 terrain 服務是否啟動（決定性）。
+    """
+    if get_settings().stub_gateway:
+        return None
+    from app.movement.terrain_sampler import build_terrain_path_fn
+
+    return build_terrain_path_fn()
+
+
 @lru_cache(maxsize=1)
 def _order_redis() -> object:
     """下令端唯讀 redis client（讀活模擬當前 tick 以戳記 issued_at_tick）。"""
