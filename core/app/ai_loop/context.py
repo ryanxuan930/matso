@@ -32,6 +32,8 @@ class UnitMeta:
     designation: str
     unit_type: str
     is_fixed: bool = False  # 固定單位（指揮部等）：不可移動，AI 不應派其機動/交戰。
+    mobility_profile: str = "FOOT"  # #80：由編裝導出（FOOT/WHEELED/TRACKED）。
+    speed_kmh: float | None = None  # #80：越野速度（km/h）；供 AI 判斷單回合可達距離。
 
 
 def _num(value: Any) -> float | None:
@@ -59,6 +61,10 @@ def _own_unit_view(unit_id: str, state: UnitState, meta: UnitMeta) -> dict[str, 
     }
     if meta.is_fixed:
         view["fixed"] = True  # 固定單位：AI 不應派其移動/機動交戰（MOVE 令會被驗證層擋下）。
+    else:
+        view["mobility"] = meta.mobility_profile  # #80：機動能力（步兵慢、機械化快）。
+        if meta.speed_kmh is not None:
+            view["speed_kmh"] = round(meta.speed_kmh, 1)
     lat, lng = _num(state.get("lat")), _num(state.get("lng"))
     if lat is not None and lng is not None:
         view["lat"] = round(lat, 6)
@@ -128,9 +134,13 @@ def _fmt_own(u: dict[str, Any]) -> str:
     ammo_s = "、".join(f"{k}×{v}" for k, v in ammo.items()) or "—"
     # 固定單位（指揮部等）：明確標註「勿調動」——不可下 MOVE，勿派其機動或投入攻勢交戰。
     fixed = "【固定·勿調動】" if u.get("fixed") else ""
+    # #80 機動：標示速度供 LLM 判斷「這回合走得到哪」；步兵慢、機械化快。
+    mob = ""
+    if not u.get("fixed") and u.get("speed_kmh") is not None:
+        mob = f"｜機動：{u.get('mobility', '?')} {u['speed_kmh']}km/h"
     return (
         f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('type', '?')}）{fixed}"
-        f" {u.get('status', '?')} 戰力{u.get('strength', '?')} @ {pos}｜彈藥：{ammo_s}"
+        f" {u.get('status', '?')} 戰力{u.get('strength', '?')} @ {pos}{mob}｜彈藥：{ammo_s}"
     )
 
 

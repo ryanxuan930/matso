@@ -239,7 +239,7 @@
 |------|------|----------|
 | #80 (Phase A) | Seed mobility_class/速度到 EquipmentTemplate；`UnitMobilityResolver` 導出 per-unit profile+速度；執行器改讀 per-unit step_km（取代固定 40）；開啟行軍耗損（距離×地形難度×tempo）；AI 導出 profile（去硬寫 FOOT）+ context 加速度/單回合可達 + decider 指示 | 機械化 vs 徒步同距離 ETA 明顯不同（固定 seed）；長程行軍產生 MOVE_ATTRITION（非強穿）；AI MOVE 用導出 profile；預覽與執行速度一致；**golden 6 重錄綠** |
 | #81 (Phase B) | `v_eff` 逐 tick 依地形類別+坡度（mobility_matrix.step_cost）+ weather modifier 調變；不可通行段→停邊界+MOVE_BLOCKED；預覽 estimate_route 採同一速度模型（分段 ETA/耗損） | 同路線穿森林/山地/濕地/上坡明顯慢於開闊/平地（固定 seed 係數比較）；進不可通行地形停邊界+事件；預覽分段 ETA＝執行；**golden 6 重錄綠** |
-| #82 (Phase C) | 執行改走 get_path A* 路徑（沿道路、繞開河/山/障礙）；預覽/閘門/執行同一路由；道路網整合 + 油料消耗（油盡 HALTED_FUEL）；格網覆蓋擴大/on-demand + GetPath.eta_ticks 真實化 | 單位繞開河/山而非直穿；沿道路加速；預覽路徑＝執行路徑；油盡停止+事件；長距離不再誤判 unreachable；**golden 6 重錄綠** |
+| #82 (Phase C) | 執行改走 get_path A* 路徑（沿道路、繞開河/山/障礙）；預覽/閘門/執行同一路由；**任意點位起終點**（非 hex 中心 → 首/末部分格幾何段，不吸附格中心、停精確終點，見 SPEC §2.3）；道路網整合 + 油料消耗（油盡 HALTED_FUEL）；格網覆蓋擴大/on-demand + GetPath.eta_ticks 真實化 | 單位繞開河/山而非直穿；沿道路加速；**任意 lat/lng 起終點路徑正確（停精確終點，非格中心）**；預覽路徑＝執行路徑；油盡停止+事件；長距離不再誤判 unreachable；**golden 6 重錄綠** |
 
 ---
 

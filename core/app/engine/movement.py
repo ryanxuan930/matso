@@ -29,9 +29,15 @@ from app.movement.attrition import (
     classify_crossings,
     forced_extra_attrition,
     obstacle_from_feature,
+    route_distance_m,
 )
+from app.movement.mobility import UnitMobility, resolve_unit_mobility
+from app.movement.params import TEMPO_ATTRITION_FACTOR, march_attrition_per_km
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
+
+# 單次行軍的耗損上限（佔進入時戰力）——避免長途一次歸零（強穿另有其上限）。
+_MARCH_LOSS_CAP_PCT = 0.30
 
 # 每小時公里 → 每 tick 公里 = speed_kmh × tick_rate_ms / 3_600_000
 _MS_PER_H = 3_600_000.0
@@ -89,6 +95,8 @@ class UnitMovementSystem:
         self._session_id = session_id
         self._session_factory = session_factory
         self._hot_state = hot_state
+        self._tick_rate_ms = tick_rate_ms
+        # 後備每 tick 步距（無法由編裝導出機動時）；#80 起改為 per-unit（見 _step_sync admit）。
         self._step_km = speed_kmh * tick_rate_ms / _MS_PER_H
         # 強穿耗損的隨機來源（stream="movement"）；None 則停用（既有測試不注入）。
         self._rng = rng
@@ -123,18 +131,28 @@ class UnitMovementSystem:
                 targets = self._targets(p, dest_h3=p.get("to_h3"), h3mod=h3)
                 if not targets:
                     continue
-                # #33b 通信閘門：OFFLINE 收不到新指令、DEGRADED 延遲 N ticks（§6.2）。
-                # 僅擋「新指令」（VALIDATED）；已在執行（EXECUTING）者續行——收不到＝繼續原任務。
-                # 靜默保留（不逐 tick 記事件避免洗版）；玩家由 Unit 卡通聯狀態研判。
-                if o.status == OrderStatus.VALIDATED and not self._comms_admits(o, now):
-                    continue
-                # 強穿耗損：僅於 admit（首見，status 仍 VALIDATED）擲一次。
-                if o.status == OrderStatus.VALIDATED and self._rng is not None:
-                    if obstacles is None:
-                        obstacles = self._load_obstacles(db)
-                    ev = self._apply_forced_attrition(db, unit, targets, obstacles, now)
-                    if ev is not None:
-                        events.append(ev)
+                # admit（首見，status 仍 VALIDATED）：一次性解析機動速度 + 行軍/強穿耗損。
+                if o.status == OrderStatus.VALIDATED:
+                    # #33b 通信閘門：OFFLINE 收不到新指令、DEGRADED 延遲 N ticks（§6.2）。僅擋新
+                    # 指令；已在執行者續行。靜默保留（不逐 tick 記事件避免洗版）。
+                    if not self._comms_admits(o, now):
+                        continue
+                    # #80：per-unit 機動速度（由編裝導出）→ 存 payload._step_km（跨 tick 沿用）。
+                    tempo = str(p.get("tempo") or "NORMAL")
+                    mob = resolve_unit_mobility(db, o.unit_id)
+                    p = {**p, "_step_km": mob.step_km(self._tick_rate_ms, tempo=tempo)}
+                    o.payload = p
+                    # #80 行軍耗損：依總路徑距離 × per-km 磨耗 × tempo（確定性；地形難度 Phase B）。
+                    ev_m = self._apply_march_attrition(unit, targets, mob, tempo, now)
+                    if ev_m is not None:
+                        events.append(ev_m)
+                    # 強穿障礙額外耗損（既有；RNG stream="movement"）。
+                    if self._rng is not None:
+                        if obstacles is None:
+                            obstacles = self._load_obstacles(db)
+                        ev = self._apply_forced_attrition(db, unit, targets, obstacles, now)
+                        if ev is not None:
+                            events.append(ev)
                 ev = self._advance_unit(o, unit, p, targets, now)
                 if ev is not None:
                     events.append(ev)
@@ -177,10 +195,16 @@ class UnitMovementSystem:
         leg = payload.get("_leg", 0)
         leg = int(leg) if isinstance(leg, (int, float)) else 0
         leg = max(0, min(leg, len(targets) - 1))
+        # #80 per-unit 步距：admit 時已由編裝導出存入 payload._step_km；缺則用後備常數。
+        raw_step = payload.get("_step_km")
+        if isinstance(raw_step, (int, float)) and raw_step > 0:
+            step_km = float(raw_step)
+        else:
+            step_km = self._step_km
         tgt_lng, tgt_lat = targets[leg]
         cur_lat, cur_lng = float(unit.current_lat or 0.0), float(unit.current_lng or 0.0)
         remaining = _haversine_km(cur_lat, cur_lng, tgt_lat, tgt_lng)
-        if remaining <= self._step_km:
+        if remaining <= step_km:
             # 抵達此段終點。
             unit.current_lat, unit.current_lng = float(tgt_lat), float(tgt_lng)
             self._hot_state.update_unit(o.unit_id, {"lat": tgt_lat, "lng": tgt_lng})
@@ -201,7 +225,7 @@ class UnitMovementSystem:
                 initiator_id=o.unit_id,
                 detail={"order_id": o.id, "lat": tgt_lat, "lng": tgt_lng, "leg": leg + 1},
             )
-        nlat, nlng = _step_towards(cur_lat, cur_lng, tgt_lat, tgt_lng, self._step_km)
+        nlat, nlng = _step_towards(cur_lat, cur_lng, tgt_lat, tgt_lng, step_km)
         unit.current_lat, unit.current_lng = float(nlat), float(nlng)
         if o.status != OrderStatus.EXECUTING:
             o.status = OrderStatus.EXECUTING
@@ -237,6 +261,50 @@ class UnitMovementSystem:
             if obs is not None:
                 out.append(obs)
         return out
+
+    def _apply_march_attrition(
+        self,
+        unit: TacticalUnit,
+        targets: list[tuple[float, float]],
+        mob: UnitMobility,
+        tempo: str,
+        now: SimTime,
+    ) -> LedgerEvent | None:
+        """行軍耗損（#80）：總路徑距離 × per-km 磨耗 × tempo 扣戰力（確定性；地形難度待 Phase B）。
+
+        於 admit 一次性套用（比照強穿）；march 先於強穿，兩者對剩餘戰力依序扣減、各記事件。
+        """
+        before = float(unit.current_strength)
+        if before <= 0.0 or not targets:
+            return None
+        route = [(float(unit.current_lng or 0.0), float(unit.current_lat or 0.0)), *targets]
+        dist_km = route_distance_m(route) / 1000.0
+        if dist_km <= 0.0:
+            return None
+        per_km = march_attrition_per_km(mob.profile)
+        tempo_mult = TEMPO_ATTRITION_FACTOR.get(tempo, 1.0)
+        loss = min(dist_km * per_km * tempo_mult, before * _MARCH_LOSS_CAP_PCT)
+        if loss <= 0.0:
+            return None
+        after = max(0.0, before - loss)
+        unit.current_strength = after
+        authorized = float(unit.authorized_strength) or 100.0
+        health = effectiveness_pct(after / authorized)
+        self._hot_state.update_unit(unit.id, {"strength": after, "health": health})
+        return LedgerEvent(
+            event_type="MOVE_ATTRITION",
+            tick=now.tick,
+            initiator_id=unit.id,
+            damage_calc=round(loss, 4),
+            detail={
+                "reason": "MARCH",
+                "profile": mob.profile,
+                "tempo": tempo,
+                "distance_km": round(dist_km, 3),
+                "strength_before": before,
+                "strength_after": after,
+            },
+        )
 
     def _apply_forced_attrition(
         self,

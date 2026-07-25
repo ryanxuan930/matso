@@ -25,7 +25,12 @@ from app.errors import OrderValidationError, SessionNotFoundError
 from app.factions import WHITE_CELL
 from app.models import MapFeature, TacticalUnit, WargameSession
 from app.movement.attrition import estimate_route, obstacle_from_feature
-from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
+from app.movement.mobility import resolve_unit_mobility
+from app.movement.params import (
+    MOVE_TICK_RATE_MS,
+    TEMPO_ATTRITION_FACTOR,
+    march_attrition_per_km,
+)
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["movement"])
@@ -41,6 +46,7 @@ class MovementPreviewRequest(BaseModel):
     to_h3: str | None = None
     to_lat: float | None = None
     to_lng: float | None = None
+    tempo: str = "NORMAL"  # #80：NORMAL / FORCED_MARCH（強行軍更快但更耗）
 
 
 class CrossingView(BaseModel):
@@ -55,10 +61,12 @@ class MovementPreviewView(BaseModel):
     distance_m: float
     duration_ticks: int
     fuel_cost: float
-    est_attrition: float  # 基礎（確定性）耗損；強穿隨機加成不在此
+    est_attrition: float  # 行軍（確定性）耗損；強穿隨機加成不在此
     feasible: bool
     forced: bool
     crossings: list[CrossingView]
+    mobility_profile: str = "FOOT"  # #80：由編裝導出的機動 profile
+    speed_kmh: float = 0.0  # #80：此單位的有效速度（含 tempo），供 COP 顯示
 
 
 def _dest_lnglat(body: MovementPreviewRequest) -> tuple[float, float] | None:
@@ -130,8 +138,17 @@ def preview_movement(
         if obs is not None:
             obstacles.append(obs)
 
+    # #80：per-unit 機動速度 + 行軍磨耗率（由編裝導出），使預覽與執行一致。
+    tempo = body.tempo if body.tempo in ("NORMAL", "FORCED_MARCH") else "NORMAL"
+    mob = resolve_unit_mobility(db, unit.id)
+    speed_kmh = mob.speed_kmh(tempo=tempo)
+    attrition_per_km = march_attrition_per_km(mob.profile) * TEMPO_ATTRITION_FACTOR.get(tempo, 1.0)
     est = estimate_route(
-        waypoints, obstacles, speed_kmh=MOVE_SPEED_KMH, tick_rate_ms=MOVE_TICK_RATE_MS
+        waypoints,
+        obstacles,
+        speed_kmh=speed_kmh,
+        tick_rate_ms=MOVE_TICK_RATE_MS,
+        attrition_per_km=attrition_per_km,
     )
     return MovementPreviewView(
         path=[[lng, lat] for lng, lat in waypoints],
@@ -147,6 +164,8 @@ def preview_movement(
             )
             for c in est.crossings
         ],
+        mobility_profile=mob.profile,
+        speed_kmh=round(speed_kmh, 1),
     )
 
 

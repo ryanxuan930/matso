@@ -92,14 +92,17 @@ def test_forced_crossing_applies_attrition(session_factory: sessionmaker[Session
     hot = InMemoryHotState()
     events = _run(session_factory, hot, 40)
     attr = [e for e in events if e.event_type == "MOVE_ATTRITION"]
-    assert len(attr) == 1  # 只在 admit 擲一次
-    assert attr[0].detail["reason"] == "FORCED_CROSSING"
+    reasons = {e.detail["reason"] for e in attr}
+    # #80：admit 一次性套用行軍（MARCH）+ 強穿（FORCED_CROSSING）兩種耗損。
+    assert "FORCED_CROSSING" in reasons
+    assert "MARCH" in reasons
     with session_factory() as db:
         u = db.get(TacticalUnit, uid)
         assert u is not None and u.current_strength < 100.0  # 戰力被扣
 
 
-def test_no_obstacle_no_attrition(session_factory: sessionmaker[Session]) -> None:
+def test_no_obstacle_only_march_attrition(session_factory: sessionmaker[Session]) -> None:
+    # #80：無障礙 → 無強穿，但正常行軍仍有耗損（距離×profile×tempo）。
     uid = _seed(
         session_factory,
         {"to_lat": 23.75, "to_lng": 121.30, "mobility_profile": "FOOT"},
@@ -107,17 +110,19 @@ def test_no_obstacle_no_attrition(session_factory: sessionmaker[Session]) -> Non
     )
     hot = InMemoryHotState()
     events = _run(session_factory, hot, 40)
-    assert not [e for e in events if e.event_type == "MOVE_ATTRITION"]
+    attr = [e for e in events if e.event_type == "MOVE_ATTRITION"]
+    reasons = {e.detail["reason"] for e in attr}
+    assert reasons == {"MARCH"}  # 只有行軍耗損，無強穿
     with session_factory() as db:
         u = db.get(TacticalUnit, uid)
-        assert u is not None and u.current_strength == 100.0
+        assert u is not None and u.current_strength < 100.0  # 行軍耗損扣過戰力
 
 
 def test_custom_waypoints_follow_and_complete(session_factory: sessionmaker[Session]) -> None:
-    # 兩段折線：先往東北一點，再往正東；無阻礙。
+    # 兩段折線（短距，徒步 5km/h 於 tick 預算內完成）：先往東北一點，再往正東；無阻礙。
     uid = _seed(
         session_factory,
-        {"waypoints": [[121.24, 23.76], [121.28, 23.76]], "mobility_profile": "FOOT"},
+        {"waypoints": [[121.205, 23.755], [121.21, 23.755]], "mobility_profile": "FOOT"},
         obstacle=False,
     )
     hot = InMemoryHotState()
@@ -128,7 +133,7 @@ def test_custom_waypoints_follow_and_complete(session_factory: sessionmaker[Sess
         u = db.get(TacticalUnit, uid)
         assert u is not None
         # 抵達最後一個 waypoint 附近。
-        assert abs(u.current_lng - 121.28) < 0.01 and abs(u.current_lat - 23.76) < 0.01
+        assert abs(u.current_lng - 121.21) < 0.01 and abs(u.current_lat - 23.755) < 0.01
 
 
 def test_deterministic_replay_same_seed(session_factory: sessionmaker[Session]) -> None:

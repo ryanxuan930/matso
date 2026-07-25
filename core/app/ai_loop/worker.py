@@ -31,6 +31,7 @@ from app.guardrails import GuardrailGateway
 from app.guardrails.schemas import CitationVerifier
 from app.models.enums import AiMode
 from app.models.tables import TacticalUnit
+from app.movement.mobility import resolve_session_mobility
 from app.orders.precheck import PhysicsGateway
 from app.state.hot_state import HotStateStore
 
@@ -59,14 +60,17 @@ class DecisionOutcome:
 
 
 def load_unit_meta(db: Session, session_id: str) -> dict[str, UnitMeta]:
-    """DB → uid→UnitMeta（faction/designation/type；熱狀態不存這些）。"""
+    """DB → uid→UnitMeta（faction/designation/type/機動；熱狀態不存這些）。"""
     units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
+    mob = resolve_session_mobility(db, [u.id for u in units])  # #80 批次導出機動（單次查詢）
     return {
         u.id: UnitMeta(
             faction=u.faction,
             designation=u.designation,
             unit_type=u.unit_level.value,
             is_fixed=u.is_fixed,
+            mobility_profile=mob[u.id].profile,
+            speed_kmh=mob[u.id].xc_kmh,
         )
         for u in units
     }

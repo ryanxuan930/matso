@@ -40,6 +40,7 @@ class MovePayload(BaseModel):
     mobility_profile: str = Field(min_length=1)
     to_lat: float | None = Field(default=None, ge=-90, le=90)
     to_lng: float | None = Field(default=None, ge=-180, le=180)
+    tempo: str = "NORMAL"  # #80：行軍節奏 NORMAL / FORCED_MARCH（速度↔耗損取捨）
 
 
 class EngagePayload(BaseModel):

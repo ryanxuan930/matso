@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from app.errors import MatsoError
 from app.factions.relations import FactionRelations
 from app.models.tables import TacticalUnit
+from app.movement.mobility import resolve_unit_mobility
 from app.orders.precheck import PhysicsGateway, run_precheck
 from app.orders.schemas import EngagePayload, MovePayload, OrderRequest, OrderType
 from app.orders.service import OrderService
@@ -45,8 +46,19 @@ def _num(v: Any) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
-def tactical_order_to_request(order: dict[str, Any]) -> OrderRequest | None:
-    """AI tactical_order dict → OrderRequest。無法映射（HOLD/缺欄位/不支援型別）回 None。"""
+_VALID_TEMPO = ("NORMAL", "FORCED_MARCH")
+
+
+def tactical_order_to_request(
+    order: dict[str, Any],
+    *,
+    mobility_lookup: Callable[[str], str] | None = None,
+) -> OrderRequest | None:
+    """AI tactical_order dict → OrderRequest。無法映射（HOLD/缺欄位/不支援型別）回 None。
+
+    `mobility_lookup`（#80）：unit_id → 機動 profile（由編裝導出）；None 則退回 FOOT 後備。
+    G3 與 submit 兩路徑傳入同一 lookup，確保預檢與落單用一致 profile。
+    """
     unit_id = order.get("unit_id")
     otype_raw = order.get("order_type")
     if not isinstance(unit_id, str) or not unit_id or not isinstance(otype_raw, str):
@@ -57,6 +69,10 @@ def tactical_order_to_request(order: dict[str, Any]) -> OrderRequest | None:
         return None  # HOLD 或未知型別 → 不落單（HOLD＝原地待命）
 
     if otype is OrderType.MOVE:
+        # #80：機動 profile 由編裝導出（不再硬寫 FOOT）；缺 lookup 才退回後備。
+        profile = mobility_lookup(unit_id) if mobility_lookup is not None else _DEFAULT_MOBILITY
+        tempo_raw = order.get("tempo")
+        tempo = tempo_raw if tempo_raw in _VALID_TEMPO else "NORMAL"
         # LLM 無法算 H3 hex id，只給得出經緯（敵情/目標/自身皆為 lat/lng）；故 MOVE 優先接受
         # target_lat/target_lng，伺服端換算 to_h3。缺經緯才退回 target_h3（少數已知格）。
         lat, lng = _num(order.get("target_lat")), _num(order.get("target_lng"))
@@ -64,12 +80,13 @@ def tactical_order_to_request(order: dict[str, Any]) -> OrderRequest | None:
         if lat is not None and lng is not None:
             payload: dict[str, Any] = {
                 "to_h3": h3.latlng_to_cell(lat, lng, _MOVE_H3_RES),
-                "mobility_profile": _DEFAULT_MOBILITY,
+                "mobility_profile": profile,
                 "to_lat": lat,
                 "to_lng": lng,
+                "tempo": tempo,
             }
         elif isinstance(target_h3, str) and target_h3:
-            payload = {"to_h3": target_h3, "mobility_profile": _DEFAULT_MOBILITY}
+            payload = {"to_h3": target_h3, "mobility_profile": profile, "tempo": tempo}
         else:
             return None
     elif otype is OrderType.ENGAGE:
@@ -118,7 +135,9 @@ class PrecheckFeasibility:
         self._relations = relations
 
     def is_feasible(self, order: dict[str, Any]) -> tuple[bool, str]:
-        req = tactical_order_to_request(order)
+        req = tactical_order_to_request(
+            order, mobility_lookup=lambda uid: resolve_unit_mobility(self._db, uid).profile
+        )
         if req is None:
             return False, "指令無法轉為可執行令（缺欄位或不支援的型別）"
         unit = self._db.get(TacticalUnit, req.unit_id)
@@ -178,7 +197,9 @@ def submit_faction_orders(
         orders = orders[:max_orders]
     service = OrderService(db, gateway, tick_source=tick_source, relations=relations)
     for order in orders:
-        req = tactical_order_to_request(order)
+        req = tactical_order_to_request(
+            order, mobility_lookup=lambda uid: resolve_unit_mobility(db, uid).profile
+        )
         if req is None:
             result.skipped.append({"order": order})
             continue
