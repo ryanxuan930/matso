@@ -1,8 +1,8 @@
 ---
 task: "#80 移動真實化 Phase A — 機動速度 + 行軍耗損 + AI 機動感知"
-status: WIP
+status: DONE
 started: 2026-07-25T00:00+08:00
-updated: 2026-07-25T00:00+08:00
+updated: 2026-07-25T01:30+08:00
 agent: Opus 4.8
 spec: SPEC_MOVEMENT.md §2.1/§2.2/§2.4/§5(A)
 ---
