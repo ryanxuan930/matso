@@ -239,7 +239,10 @@
 |------|------|----------|
 | #80 (Phase A) | Seed mobility_class/速度到 EquipmentTemplate；`UnitMobilityResolver` 導出 per-unit profile+速度；執行器改讀 per-unit step_km（取代固定 40）；開啟行軍耗損（距離×地形難度×tempo）；AI 導出 profile（去硬寫 FOOT）+ context 加速度/單回合可達 + decider 指示 | 機械化 vs 徒步同距離 ETA 明顯不同（固定 seed）；長程行軍產生 MOVE_ATTRITION（非強穿）；AI MOVE 用導出 profile；預覽與執行速度一致；**golden 6 重錄綠** |
 | #81 (Phase B) | `v_eff` 逐 tick 依地形類別+坡度（mobility_matrix.step_cost）+ weather modifier 調變；不可通行段→停邊界+MOVE_BLOCKED；預覽 estimate_route 採同一速度模型（分段 ETA/耗損） | 同路線穿森林/山地/濕地/上坡明顯慢於開闊/平地（固定 seed 係數比較）；進不可通行地形停邊界+事件；預覽分段 ETA＝執行；**golden 6 重錄綠** |
-| #82 (Phase C) | 執行改走 get_path A* 路徑（沿道路、繞開河/山/障礙）；預覽/閘門/執行同一路由；**任意點位起終點**（非 hex 中心 → 首/末部分格幾何段，不吸附格中心、停精確終點，見 SPEC §2.3）；道路網整合 + 油料消耗（油盡 HALTED_FUEL）；格網覆蓋擴大/on-demand + GetPath.eta_ticks 真實化 | 單位繞開河/山而非直穿；沿道路加速；**任意 lat/lng 起終點路徑正確（停精確終點，非格中心）**；預覽路徑＝執行路徑；油盡停止+事件；長距離不再誤判 unreachable；**golden 6 重錄綠** |
+| #82 (Phase C) ✅路由核心 | 執行改走 get_path A* 路徑（繞開河/山/不可通行）；預覽/執行同一路由；**任意點位起終點**（非 hex 中心 → 首/末部分格幾何段，不吸附格心、停精確終點，SPEC §2.3）；不可達/超出格網→退回直線不誤拒 | ✅ 單位繞開河/山而非直穿；✅ **任意 lat/lng 起終點正確（停精確終點）**；✅ 預覽路徑＝執行路徑；✅ golden 6 未破。worklog: movement-phase-c.md |
+| #83 道路網／土地利用 ingestion（OSM） | **#82 未竟項（資料阻擋）**：terrain `terrain_class` 目前只由坡度+高程導出（URBAN/FOREST 需 OSM 土地利用）；`mobility_matrix` 無 `ROAD` class；`MATSO_ROAD_GRAPH_PATH`（taiwan_drive.graphml）標「尚未使用」。需 OSM PBF 匯入 → 土地利用分類 + 道路網 → 新增 ROAD 成本/加速 | 沿既成道路移動明顯快於越野；森林/市區由土地利用（非坡度）正確分類 |
+| #84 油料消耗 | **#82 未竟項**：`EquipmentInstance.currentState` 記油料；移動依 `fuel_burn_per_km` 消耗；油盡 → 停止 + HALTED_FUEL（SPEC_FULL §5.3 MUST）。徒步不受限 | 長程機械化移動油料遞減；油盡停止並記事件；補給後可再動 |
+| #85 hex 格網覆蓋擴大／on-demand | **#82 未竟項**：預建格網範圍外 `get_cell` 回 None → A* 視為不可通行（現以退回直線容錯，但該區不會繞路）。擴大預建範圍或 on-demand 建格 + `GetPath.eta_ticks` 真實化 | 遠離預建範圍的長距離移動仍能正確繞路；ETA 反映真實速度 |
 
 ---
 
