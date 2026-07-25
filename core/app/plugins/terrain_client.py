@@ -135,6 +135,12 @@ class TerrainClient:
         )
         return self._invoke(self._stub.GetPath, req)
 
+    def get_cell_batch(self, h3_index: list[str]) -> terrain_pb2.GetCellBatchResponse:
+        """批次取一組 hex 的地形屬性（terrain_class / slope_deg / elevation）——#81 移動地形調速。"""
+        self._guard()
+        req = terrain_pb2.GetCellBatchRequest(h3_index=list(h3_index))
+        return self._invoke(self._stub.GetCellBatch, req)
+
     def _invoke(self, method: Callable[..., object], request: object):  # type: ignore[no-untyped-def]
         try:
             resp = method(request, timeout=self._deadline)

@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Callable
 
+import h3
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
@@ -32,12 +34,19 @@ from app.movement.attrition import (
     route_distance_m,
 )
 from app.movement.mobility import UnitMobility, resolve_unit_mobility
+from app.movement.mobility_matrix import step_cost as _terrain_step_cost
 from app.movement.params import TEMPO_ATTRITION_FACTOR, march_attrition_per_km
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
 # 單次行軍的耗損上限（佔進入時戰力）——避免長途一次歸零（強穿另有其上限）。
 _MARCH_LOSS_CAP_PCT = 0.30
+# #81 Phase B 地形調速：取樣單位所在 hex（與戰術格同解析度）→ terrain_class + slope。
+_TERRAIN_RES = 8
+_UNSET = object()  # _terrain_cost_cache 的哨兵（None＝不可通行，是合法快取值）。
+
+# h3_list → {h3: (terrain_class, slope_deg)}；建不出/失敗回空 → 不調速（Phase A 行為）。
+TerrainSampler = Callable[[list[str]], dict[str, tuple[str, float]]]
 
 # 每小時公里 → 每 tick 公里 = speed_kmh × tick_rate_ms / 3_600_000
 _MS_PER_H = 3_600_000.0
@@ -91,6 +100,8 @@ class UnitMovementSystem:
         tick_rate_ms: int,
         speed_kmh: float = 40.0,
         rng: DeterministicRNG | None = None,
+        terrain_sampler: TerrainSampler | None = None,
+        weather_mobility: float = 1.0,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
@@ -100,14 +111,16 @@ class UnitMovementSystem:
         self._step_km = speed_kmh * tick_rate_ms / _MS_PER_H
         # 強穿耗損的隨機來源（stream="movement"）；None 則停用（既有測試不注入）。
         self._rng = rng
+        # #81 Phase B：地形取樣器（None＝不調速）+ 天氣機動修正 + 每格成本快取（地形靜態）。
+        self._terrain_sampler = terrain_sampler
+        self._weather_mobility = weather_mobility if weather_mobility > 0 else 1.0
+        self._terrain_cost_cache: dict[tuple[str, str], float | None] = {}
 
     async def step(self, now: SimTime) -> list[LedgerEvent]:
         # 同步 DB/H3 計算移到執行緒，避免阻塞 event loop（HOW_TO §3.1）。
         return await asyncio.to_thread(self._step_sync, now)
 
     def _step_sync(self, now: SimTime) -> list[LedgerEvent]:
-        import h3
-
         events: list[LedgerEvent] = []
         with self._session_factory() as db:
             orders = (
@@ -137,10 +150,15 @@ class UnitMovementSystem:
                     # 指令；已在執行者續行。靜默保留（不逐 tick 記事件避免洗版）。
                     if not self._comms_admits(o, now):
                         continue
-                    # #80：per-unit 機動速度（由編裝導出）→ 存 payload._step_km（跨 tick 沿用）。
+                    # #80：per-unit 機動速度（由編裝導出）→ 存 payload._step_km（跨 tick 沿用）；
+                    # #81：另存 _mobility_profile 供地形成本查表。
                     tempo = str(p.get("tempo") or "NORMAL")
                     mob = resolve_unit_mobility(db, o.unit_id)
-                    p = {**p, "_step_km": mob.step_km(self._tick_rate_ms, tempo=tempo)}
+                    p = {
+                        **p,
+                        "_step_km": mob.step_km(self._tick_rate_ms, tempo=tempo),
+                        "_mobility_profile": mob.profile,
+                    }
                     o.payload = p
                     # #80 行軍耗損：依總路徑距離 × per-km 磨耗 × tempo（確定性；地形難度 Phase B）。
                     ev_m = self._apply_march_attrition(unit, targets, mob, tempo, now)
@@ -203,6 +221,16 @@ class UnitMovementSystem:
             step_km = self._step_km
         tgt_lng, tgt_lat = targets[leg]
         cur_lat, cur_lng = float(unit.current_lat or 0.0), float(unit.current_lng or 0.0)
+        # #81 Phase B：以目前所在格地形類別+坡度調速；不可通行→停在此 + MOVE_BLOCKED。
+        step_km *= self._weather_mobility
+        if self._terrain_sampler is not None:
+            prof = payload.get("_mobility_profile")
+            prof = prof if isinstance(prof, str) and prof else "FOOT"
+            cell = h3.latlng_to_cell(cur_lat, cur_lng, _TERRAIN_RES)
+            cost = self._terrain_cost(cell, prof)
+            if cost is None:
+                return self._block_impassable(o, unit, cell, prof, now)
+            step_km /= cost  # 成本↑＝越難走＝步距縮短
         remaining = _haversine_km(cur_lat, cur_lng, tgt_lat, tgt_lng)
         if remaining <= step_km:
             # 抵達此段終點。
@@ -235,6 +263,45 @@ class UnitMovementSystem:
             tick=now.tick,
             initiator_id=o.unit_id,
             detail={"order_id": o.id, "lat": nlat, "lng": nlng},
+        )
+
+    def _terrain_cost(self, cell: str, profile: str) -> float | None:
+        """該格對此 profile 的通行成本倍率（快取；不可通行回 None）。
+
+        地形靜態 → 以 (cell, profile) 快取跨 tick/單位共用。取樣失敗（terrain 服務暫不可用）→ 回 1.0
+        不快取（下次重試）——與交戰「地形服務中斷不凍結戰鬥」同紀律，且保持決定性退化。
+        """
+        key = (cell, profile)
+        cached = self._terrain_cost_cache.get(key, _UNSET)
+        if cached is not _UNSET:
+            return cached  # type: ignore[return-value]
+        assert self._terrain_sampler is not None
+        try:
+            info = self._terrain_sampler([cell])
+        except Exception:
+            return 1.0
+        ct = info.get(cell)
+        cost = _terrain_step_cost(profile, ct[0], ct[1]) if ct is not None else 1.0
+        self._terrain_cost_cache[key] = cost
+        return cost
+
+    def _block_impassable(
+        self, o: Order, unit: TacticalUnit, cell: str, profile: str, now: SimTime
+    ) -> LedgerEvent:
+        """單位進入不可通行地形 → 停在此、移動中止（COMPLETED）並記 MOVE_BLOCKED（#81）。"""
+        o.status = OrderStatus.COMPLETED
+        return LedgerEvent(
+            event_type="MOVE_BLOCKED",
+            tick=now.tick,
+            initiator_id=o.unit_id,
+            detail={
+                "order_id": o.id,
+                "reason": "IMPASSABLE_TERRAIN",
+                "profile": profile,
+                "cell": cell,
+                "lat": float(unit.current_lat or 0.0),
+                "lng": float(unit.current_lng or 0.0),
+            },
         )
 
     def _load_obstacles(self, db: object) -> list[Obstacle]:

@@ -12,6 +12,8 @@ POST /api/v1/sessions/{id}/movement/preview
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import h3
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -24,13 +26,15 @@ from app.auth.schemas import CurrentUser
 from app.errors import OrderValidationError, SessionNotFoundError
 from app.factions import WHITE_CELL
 from app.models import MapFeature, TacticalUnit, WargameSession
-from app.movement.attrition import estimate_route, obstacle_from_feature
+from app.movement.attrition import estimate_route, haversine_m, obstacle_from_feature
 from app.movement.mobility import resolve_unit_mobility
+from app.movement.mobility_matrix import step_cost
 from app.movement.params import (
     MOVE_TICK_RATE_MS,
     TEMPO_ATTRITION_FACTOR,
     march_attrition_per_km,
 )
+from app.movement.terrain_sampler import build_terrain_cell_sampler
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["movement"])
@@ -66,7 +70,8 @@ class MovementPreviewView(BaseModel):
     forced: bool
     crossings: list[CrossingView]
     mobility_profile: str = "FOOT"  # #80：由編裝導出的機動 profile
-    speed_kmh: float = 0.0  # #80：此單位的有效速度（含 tempo），供 COP 顯示
+    speed_kmh: float = 0.0  # #80/#81：有效速度（含 tempo、路徑平均地形調變），供 COP 顯示
+    terrain_impassable: bool = False  # #81：路徑是否穿越對此 profile 不可通行的地形
 
 
 def _dest_lnglat(body: MovementPreviewRequest) -> tuple[float, float] | None:
@@ -138,11 +143,19 @@ def preview_movement(
         if obs is not None:
             obstacles.append(obs)
 
-    # #80：per-unit 機動速度 + 行軍磨耗率（由編裝導出），使預覽與執行一致。
+    # #80：per-unit 機動速度 + 行軍磨耗率（由編裝導出）。
     tempo = body.tempo if body.tempo in ("NORMAL", "FORCED_MARCH") else "NORMAL"
     mob = resolve_unit_mobility(db, unit.id)
     speed_kmh = mob.speed_kmh(tempo=tempo)
     attrition_per_km = march_attrition_per_km(mob.profile) * TEMPO_ATTRITION_FACTOR.get(tempo, 1.0)
+    # #81：以路徑平均地形成本調變預覽速度，並標示是否穿越不可通行地形（terrain 不可用→不調）。
+    terrain_impassable = False
+    sampler = build_terrain_cell_sampler()
+    if sampler is not None:
+        cells = _route_cells(waypoints)
+        avg_cost, terrain_impassable = _route_terrain_cost(sampler, cells, mob.profile)
+        if avg_cost > 0:
+            speed_kmh /= avg_cost
     est = estimate_route(
         waypoints,
         obstacles,
@@ -156,7 +169,7 @@ def preview_movement(
         duration_ticks=est.duration_ticks,
         fuel_cost=est.fuel_cost,
         est_attrition=est.base_attrition,
-        feasible=est.feasible,
+        feasible=est.feasible and not terrain_impassable,
         forced=est.forced,
         crossings=[
             CrossingView(
@@ -166,8 +179,48 @@ def preview_movement(
         ],
         mobility_profile=mob.profile,
         speed_kmh=round(speed_kmh, 1),
+        terrain_impassable=terrain_impassable,
     )
 
 
 def _close(a: tuple[float, float], b: tuple[float, float], eps: float = 1e-7) -> bool:
     return abs(a[0] - b[0]) < eps and abs(a[1] - b[1]) < eps
+
+
+_ROUTE_SAMPLE_KM = 0.3  # 沿路徑取樣地形的間距（約 res-8 hex 尺度）
+
+
+def _route_cells(waypoints: list[tuple[float, float]]) -> list[str]:
+    """沿路徑（[(lng,lat)…]）取樣經過的 hex（res 8，去重保序）。"""
+    seen: list[str] = []
+    known: set[str] = set()
+    for (lng0, lat0), (lng1, lat1) in pairwise(waypoints):
+        dist_km = haversine_m((lng0, lat0), (lng1, lat1)) / 1000.0
+        n = max(1, int(dist_km / _ROUTE_SAMPLE_KM))
+        for i in range(n + 1):
+            f = i / n
+            cell = h3.latlng_to_cell(lat0 + (lat1 - lat0) * f, lng0 + (lng1 - lng0) * f, 8)
+            if cell not in known:
+                known.add(cell)
+                seen.append(cell)
+    return seen
+
+
+def _route_terrain_cost(sampler, cells: list[str], profile: str) -> tuple[float, bool]:  # type: ignore[no-untyped-def]
+    """回 (路徑平均地形成本, 是否含不可通行)。取樣失敗 → (1.0, False)（不調預覽）。"""
+    try:
+        info = sampler(cells)
+    except Exception:
+        return 1.0, False
+    costs: list[float] = []
+    impassable = False
+    for c in cells:
+        ct = info.get(c)
+        if ct is None:
+            continue
+        sc = step_cost(profile, ct[0], ct[1])
+        if sc is None:
+            impassable = True
+        elif sc > 0:
+            costs.append(sc)
+    return (sum(costs) / len(costs) if costs else 1.0), impassable
