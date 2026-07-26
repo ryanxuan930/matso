@@ -39,7 +39,14 @@ class UnitMobility:
     profile: str  # FOOT / WHEELED / TRACKED（BOAT/AIR 後續）
     road_kmh: float
     xc_kmh: float
+    # #84 油料：本單位自走載具的合計每公里油耗 / 滿油量（徒步皆 0 → 不受油料限制）。
     fuel_burn_per_km: float = 0.0
+    fuel_capacity: float = 0.0
+
+    @property
+    def needs_fuel(self) -> bool:
+        """是否受油料限制（有自走載具且有油耗定義）。徒步/無油耗資料 → 不限制。"""
+        return self.fuel_burn_per_km > 0.0
 
     def speed_kmh(self, *, on_road: bool = False, tempo: str = "NORMAL") -> float:
         """有效速度（km/h）：道路/越野 × 節奏倍率（地形/坡度修正於 Phase B）。"""
@@ -78,7 +85,33 @@ def mobility_from_stats(stats_list: list[dict[str, Any]]) -> UnitMobility:
     # 速度資料缺漏（seed 不全）→ 退回 FOOT，避免 0 速度卡死。
     if road <= 0.0 and xc <= 0.0:
         return FOOT
-    return UnitMobility(profile=chosen, road_kmh=road or xc, xc_kmh=xc or road)
+    # #84 油料：同 profile 的自走載具**合計**油耗與滿油量（整個車隊一起燒油）。
+    burn = sum(_fuel_burn_per_km(m, xc) for m in pool)
+    capacity = sum(float(m.get("fuel_capacity") or 0.0) for m in pool)
+    return UnitMobility(
+        profile=chosen,
+        road_kmh=road or xc,
+        xc_kmh=xc or road,
+        fuel_burn_per_km=burn,
+        fuel_capacity=capacity,
+    )
+
+
+def _fuel_burn_per_km(mob: dict[str, Any], xc_kmh: float) -> float:
+    """每公里油耗：優先 `fuel_burn_per_km`；僅有舊 `fuel_burn_per_tick` 時以越野速度換算。
+
+    換算理由（#81 起）：速度隨地形變動 → 每 tick 行進距離不再固定，per-tick 油耗不再有物理意義；
+    以「該車越野速度下 1 tick 走的公里數」把舊資料轉為 per-km（fuel/tick ÷ km/tick）。
+    """
+    per_km = mob.get("fuel_burn_per_km")
+    if isinstance(per_km, (int, float)) and per_km > 0:
+        return float(per_km)
+    per_tick = mob.get("fuel_burn_per_tick")
+    if isinstance(per_tick, (int, float)) and per_tick > 0 and xc_kmh > 0:
+        km_per_tick = xc_kmh * MOVE_TICK_RATE_MS / _MS_PER_H
+        if km_per_tick > 0:
+            return float(per_tick) / km_per_tick
+    return 0.0
 
 
 def _stats_for_units(db: Session, unit_ids: list[str]) -> dict[str, list[dict[str, Any]]]:

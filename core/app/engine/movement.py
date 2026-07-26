@@ -33,6 +33,7 @@ from app.movement.attrition import (
     obstacle_from_feature,
     route_distance_m,
 )
+from app.movement.fuel import UnitFuel, burn_fuel, load_unit_fuel
 from app.movement.mobility import UnitMobility, resolve_unit_mobility
 from app.movement.mobility_matrix import step_cost as _terrain_step_cost
 from app.movement.params import TEMPO_ATTRITION_FACTOR, march_attrition_per_km
@@ -162,6 +163,8 @@ class UnitMovementSystem:
                         **p,
                         "_step_km": mob.step_km(self._tick_rate_ms, tempo=tempo),
                         "_mobility_profile": mob.profile,
+                        # #84：油耗率（0＝徒步/無油料模型 → 逐 tick 完全略過油料處理）。
+                        "_fuel_burn_km": mob.fuel_burn_per_km,
                     }
                     # #82 Phase C：規劃地形路徑（繞開不可通行）→ 存 _route_wp；規劃後重算 targets，
                     # 使行軍耗損依**實際繞行距離**計（繞遠路更耗）。使用者自訂 waypoints 不覆寫。
@@ -187,9 +190,31 @@ class UnitMovementSystem:
                         ev = self._apply_forced_attrition(db, unit, targets, obstacles, now)
                         if ev is not None:
                             events.append(ev)
-                ev = self._advance_unit(o, unit, p, targets, now)
+                # #84 油料（SPEC_FULL §5.3「油料耗盡無法移動」MUST）：每 tick 先查油 → 以剩餘油量
+                # 夾住本 tick 可行距離 → 推進 → 依**實際位移**扣油並寫回 DB。油乾即停駛。
+                fuel = None
+                if self._fuel_rate(p) > 0:
+                    fuel = load_unit_fuel(db, o.unit_id)
+                    if fuel.needs_fuel and fuel.remaining <= 0:
+                        events.append(self._halt_out_of_fuel(o, unit, p, fuel, now))
+                        continue
+                before = (float(unit.current_lat or 0.0), float(unit.current_lng or 0.0))
+                cap = fuel.range_km() if fuel is not None and fuel.needs_fuel else None
+                ev = self._advance_unit(o, unit, p, targets, now, fuel_cap_km=cap)
                 if ev is not None:
                     events.append(ev)
+                if fuel is not None and fuel.needs_fuel:
+                    moved = _haversine_km(
+                        before[0],
+                        before[1],
+                        float(unit.current_lat or 0.0),
+                        float(unit.current_lng or 0.0),
+                    )
+                    burn_fuel(fuel, moved)
+                    self._hot_state.update_unit(o.unit_id, {"fuel": round(fuel.remaining, 2)})
+                    # 抵達者本令已 COMPLETED（不覆寫）；未抵達卻油乾 → 停駛。
+                    if fuel.remaining <= 0 and o.status is not OrderStatus.COMPLETED:
+                        events.append(self._halt_out_of_fuel(o, unit, p, fuel, now))
             db.commit()
         return events
 
@@ -232,6 +257,7 @@ class UnitMovementSystem:
         payload: dict,  # type: ignore[type-arg]
         targets: list[tuple[float, float]],
         now: SimTime,
+        fuel_cap_km: float | None = None,
     ) -> LedgerEvent | None:
         leg = payload.get("_leg", 0)
         leg = int(leg) if isinstance(leg, (int, float)) else 0
@@ -254,6 +280,9 @@ class UnitMovementSystem:
             if cost is None:
                 return self._block_impassable(o, unit, cell, prof, now)
             step_km /= cost  # 成本↑＝越難走＝步距縮短
+        # #84：本 tick 行程不得超過剩餘油量所能支撐的距離（開到沒油就停在那裡，不會超跑）。
+        if fuel_cap_km is not None:
+            step_km = min(step_km, max(0.0, fuel_cap_km))
         remaining = _haversine_km(cur_lat, cur_lng, tgt_lat, tgt_lng)
         if remaining <= step_km:
             # 抵達此段終點。
@@ -286,6 +315,43 @@ class UnitMovementSystem:
             tick=now.tick,
             initiator_id=o.unit_id,
             detail={"order_id": o.id, "lat": nlat, "lng": nlng},
+        )
+
+    @staticmethod
+    def _fuel_rate(payload: dict) -> float:  # type: ignore[type-arg]
+        """本令的每公里油耗（admit 時由編裝導出存入）。0＝不受油料限制（徒步等）。"""
+        rate = payload.get("_fuel_burn_km")
+        return float(rate) if isinstance(rate, (int, float)) and rate > 0 else 0.0
+
+    def _halt_out_of_fuel(
+        self,
+        o: Order,
+        unit: TacticalUnit,
+        payload: dict,  # type: ignore[type-arg]
+        fuel: UnitFuel,
+        now: SimTime,
+    ) -> LedgerEvent:
+        """油盡 → 停駛（本令結束、單位留原地）。同 #81 MOVE_BLOCKED 機制（COMPLETED＋事件）。
+
+        事件名 `MOVE_HALTED_FUEL`（與 MOVE_BLOCKED/MOVE_ATTRITION 同前綴）：廣播器不送 detail，
+        故**必須**用獨立 event_type 才能在 COP 戰況列區分「不可通行」與「沒油」。
+        補給後需重下 MOVE 令才能再動（COMPLETED 不會自行續跑）。
+        """
+        o.status = OrderStatus.COMPLETED
+        self._hot_state.update_unit(o.unit_id, {"fuel": 0.0})
+        return LedgerEvent(
+            event_type="MOVE_HALTED_FUEL",
+            tick=now.tick,
+            initiator_id=o.unit_id,
+            detail={
+                "order_id": o.id,
+                "reason": "OUT_OF_FUEL",
+                "profile": str(payload.get("_mobility_profile") or "?"),
+                "fuel_remaining": round(fuel.remaining, 3),
+                "fuel_burn_per_km": round(fuel.burn_per_km, 3),
+                "lat": float(unit.current_lat or 0.0),
+                "lng": float(unit.current_lng or 0.0),
+            },
         )
 
     def _plan_route(

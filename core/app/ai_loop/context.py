@@ -34,6 +34,7 @@ class UnitMeta:
     is_fixed: bool = False  # 固定單位（指揮部等）：不可移動，AI 不應派其機動/交戰。
     mobility_profile: str = "FOOT"  # #80：由編裝導出（FOOT/WHEELED/TRACKED）。
     speed_kmh: float | None = None  # #80：越野速度（km/h）；供 AI 判斷單回合可達距離。
+    range_km: float | None = None  # #84：現有油量還能走的公里數（None＝徒步不受限）。
 
 
 def _num(value: Any) -> float | None:
@@ -65,6 +66,8 @@ def _own_unit_view(unit_id: str, state: UnitState, meta: UnitMeta) -> dict[str, 
         view["mobility"] = meta.mobility_profile  # #80：機動能力（步兵慢、機械化快）。
         if meta.speed_kmh is not None:
             view["speed_kmh"] = round(meta.speed_kmh, 1)
+        if meta.range_km is not None:
+            view["range_km"] = round(meta.range_km, 1)  # #84：油料剩餘行程
     lat, lng = _num(state.get("lat")), _num(state.get("lng"))
     if lat is not None and lng is not None:
         view["lat"] = round(lat, 6)
@@ -138,6 +141,9 @@ def _fmt_own(u: dict[str, Any]) -> str:
     mob = ""
     if not u.get("fixed") and u.get("speed_kmh") is not None:
         mob = f"｜機動：{u.get('mobility', '?')} {u['speed_kmh']}km/h"
+        # #84：有油料限制者標剩餘行程 → LLM 不會下超出油料的長程移動。
+        if u.get("range_km") is not None:
+            mob += f"（剩餘行程 {u['range_km']}km）"
     return (
         f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('type', '?')}）{fixed}"
         f" {u.get('status', '?')} 戰力{u.get('strength', '?')} @ {pos}{mob}｜彈藥：{ammo_s}"

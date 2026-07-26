@@ -171,7 +171,9 @@
         },
         "max_road_speed_kmh": { "type": "number", "minimum": 0 },
         "max_cross_country_speed_kmh": { "type": "number", "minimum": 0 },
-        "fuel_burn_per_tick": { "type": "number", "minimum": 0, "default": 0 }
+        "fuel_burn_per_tick": { "type": "number", "minimum": 0, "default": 0, "deprecated": true, "description": "（舊）每 tick 油耗。#81 起速度隨地形變動，每 tick 行進距離不再固定 → 改用 fuel_burn_per_km；僅在缺後者時以本值與越野速度換算。" },
+        "fuel_capacity": { "type": "number", "minimum": 0, "description": "滿油量（抽象油量單位）。開局播入 EquipmentInstance.currentState.fuel（SPEC_FULL §5.3）。" },
+        "fuel_burn_per_km": { "type": "number", "minimum": 0, "description": "每公里油耗（#84）。移動距離 × 本值扣油；耗盡則無法移動（SPEC_FULL §5.3 MUST）。" }
       }
     },
     "artillery": {

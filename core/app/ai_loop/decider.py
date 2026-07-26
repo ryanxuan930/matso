@@ -52,6 +52,8 @@ OUTPUT_INSTRUCTION = (
     "    單位有速度上限（見各單位「機動：profile speed km/h」；步兵慢、機械化快），"
     "一個決策週期只能前進有限距離；**遠程目標請分多次 MOVE 逐步推進**，勿一次下超遠目的地。"
     "可加 tempo：FORCED_MARCH（強行軍，更快但耗損更高）／預設 NORMAL。\n"
+    "    標有「剩餘行程 N km」者受**油料**限制：超過 N km 的移動會中途拋錨停駛，"
+    "請勿下超出剩餘行程的目的地（必要時先就近集結/待補給）。\n"
     "  ‣ ENGAGE：用 target_unit_id 指向『已知敵情』的識別，可加 fire_policy"
     "（FREE/SMALL_ARMS_ONLY/ANTI_ARMOR_HOLD，預設 FREE）；僅在敵人於射程內才有效。\n"
     "- ihl_self_check：物件，含 civilian_risk_assessed（true/false）。\n"

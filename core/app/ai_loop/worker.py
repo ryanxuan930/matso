@@ -31,6 +31,7 @@ from app.guardrails import GuardrailGateway
 from app.guardrails.schemas import CitationVerifier
 from app.models.enums import AiMode
 from app.models.tables import TacticalUnit
+from app.movement.fuel import load_unit_fuel
 from app.movement.mobility import resolve_session_mobility
 from app.orders.precheck import PhysicsGateway
 from app.state.hot_state import HotStateStore
@@ -63,6 +64,11 @@ def load_unit_meta(db: Session, session_id: str) -> dict[str, UnitMeta]:
     """DB → uid→UnitMeta（faction/designation/type/機動；熱狀態不存這些）。"""
     units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
     mob = resolve_session_mobility(db, [u.id for u in units])  # #80 批次導出機動（單次查詢）
+    # #84：油料剩餘行程（僅自走載具有值）——讓 AI 知道「這台還能開多遠」。
+    ranges: dict[str, float | None] = {}
+    for u in units:
+        f = load_unit_fuel(db, u.id)
+        ranges[u.id] = round(f.range_km(), 1) if f.needs_fuel else None
     return {
         u.id: UnitMeta(
             faction=u.faction,
@@ -71,6 +77,7 @@ def load_unit_meta(db: Session, session_id: str) -> dict[str, UnitMeta]:
             is_fixed=u.is_fixed,
             mobility_profile=mob[u.id].profile,
             speed_kmh=mob[u.id].xc_kmh,
+            range_km=ranges.get(u.id),
         )
         for u in units
     }

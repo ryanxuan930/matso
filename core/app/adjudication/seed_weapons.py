@@ -97,6 +97,8 @@ SEED_ARTILLERY: dict[str, dict[str, Any]] = {
             "mobility_class": "TRACKED",
             "max_road_speed_kmh": 60,
             "max_cross_country_speed_kmh": 30,
+            "fuel_capacity": 510,  # M109 級：續航約 350km
+            "fuel_burn_per_km": 1.5,
         },
     },
     "MLRS_227": {
@@ -118,6 +120,8 @@ SEED_ARTILLERY: dict[str, dict[str, Any]] = {
             "mobility_class": "WHEELED",
             "max_road_speed_kmh": 85,
             "max_cross_country_speed_kmh": 40,
+            "fuel_capacity": 600,  # 輪型火箭車：續航約 480km
+            "fuel_burn_per_km": 1.25,
         },
     },
 }
@@ -135,6 +139,8 @@ SEED_VEHICLES: dict[str, dict[str, Any]] = {
             "max_road_speed_kmh": 65,
             "max_cross_country_speed_kmh": 40,
             "fuel_burn_per_tick": 0.5,
+            "fuel_capacity": 660,  # IFV 級：續航約 400km
+            "fuel_burn_per_km": 1.65,
         },
     },
     "MBT": {
@@ -148,6 +154,8 @@ SEED_VEHICLES: dict[str, dict[str, Any]] = {
             "max_road_speed_kmh": 70,
             "max_cross_country_speed_kmh": 45,
             "fuel_burn_per_tick": 0.8,
+            "fuel_capacity": 1900,  # MBT：耗油大，續航約 420km
+            "fuel_burn_per_km": 4.5,
         },
     },
 }

@@ -27,6 +27,7 @@ from app.errors import OrderValidationError, SessionNotFoundError
 from app.factions import WHITE_CELL
 from app.models import MapFeature, TacticalUnit, WargameSession
 from app.movement.attrition import estimate_route, haversine_m, obstacle_from_feature
+from app.movement.fuel import load_unit_fuel
 from app.movement.mobility import resolve_unit_mobility
 from app.movement.mobility_matrix import step_cost
 from app.movement.params import (
@@ -74,6 +75,8 @@ class MovementPreviewView(BaseModel):
     speed_kmh: float = 0.0  # #80/#81：有效速度（含 tempo、路徑平均地形調變），供 COP 顯示
     terrain_impassable: bool = False  # #81：路徑是否穿越對此 profile 不可通行的地形
     terrain_routed: bool = False  # #82：路徑是否為地形 A* 繞路（False＝直線，含不可達退回）
+    fuel_remaining: float = 0.0  # #84：單位目前剩餘油量（0＝徒步/無油料模型）
+    fuel_sufficient: bool = True  # #84：現有油量是否足以走完全程（否則中途會停駛）
 
 
 def _dest_lnglat(body: MovementPreviewRequest) -> tuple[float, float] | None:
@@ -173,13 +176,17 @@ def preview_movement(
         avg_cost, terrain_impassable = _route_terrain_cost(sampler, cells, mob.profile)
         if avg_cost > 0:
             speed_kmh /= avg_cost
+    # #84：油耗以**單位實際編裝**計（取代原本 1.0/km 佔位值）；並回報是否夠油走完全程。
+    unit_fuel = load_unit_fuel(db, unit.id)
     est = estimate_route(
         waypoints,
         obstacles,
         speed_kmh=speed_kmh,
         tick_rate_ms=MOVE_TICK_RATE_MS,
         attrition_per_km=attrition_per_km,
+        fuel_per_km=unit_fuel.burn_per_km,
     )
+    fuel_sufficient = (not unit_fuel.needs_fuel) or est.fuel_cost <= unit_fuel.remaining
     return MovementPreviewView(
         path=[[lng, lat] for lng, lat in waypoints],
         distance_m=est.distance_m,
@@ -198,6 +205,8 @@ def preview_movement(
         speed_kmh=round(speed_kmh, 1),
         terrain_impassable=terrain_impassable,
         terrain_routed=routed,
+        fuel_remaining=round(unit_fuel.remaining, 1),
+        fuel_sufficient=fuel_sufficient,
     )
 
 
