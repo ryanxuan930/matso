@@ -125,3 +125,85 @@ def burn_fuel(fuel: UnitFuel, distance_km: float) -> float:
         state = t.instance.current_state if isinstance(t.instance.current_state, dict) else {}
         t.instance.current_state = {**state, "fuel": round(t.remaining, 4)}
     return burned
+
+
+# ---------------- #85 補給（加油） ----------------
+
+_CARGO_FUEL_KEY = "cargo_fuel"
+
+
+def refuel(fuel: UnitFuel, amount: float) -> float:
+    """把 `amount` 注入單位油箱（各車按缺口比例補到滿為止），寫回 DB。回實際加注量。"""
+    if amount <= 0:
+        return 0.0
+    added = 0.0
+    for t in fuel.tanks:
+        if amount - added <= 0:
+            break
+        room = max(0.0, t.capacity - t.remaining)
+        take = min(room, amount - added)
+        if take <= 0:
+            continue
+        t.remaining += take
+        added += take
+        state = t.instance.current_state if isinstance(t.instance.current_state, dict) else {}
+        t.instance.current_state = {**state, "fuel": round(t.remaining, 4)}
+    return added
+
+
+@dataclass
+class SupplyCargo:
+    """一個補給單位所載的油料（LOGISTICS 裝備的 capacity.FUEL；惰性滿載）。"""
+
+    instances: list[tuple[EquipmentInstance, float]] = field(default_factory=list)  # (inst, 容量)
+    rate_per_tick: float = 0.0
+
+    @property
+    def remaining(self) -> float:
+        return sum(
+            _num((i.current_state or {}).get(_CARGO_FUEL_KEY, cap)) for i, cap in self.instances
+        )
+
+    @property
+    def has_fuel_cargo(self) -> bool:
+        return bool(self.instances)
+
+    def draw(self, amount: float) -> float:
+        """自載運油料中提取（不足則提可提之量），寫回 DB。回實際提取量。"""
+        if amount <= 0:
+            return 0.0
+        drawn = 0.0
+        for inst, cap in self.instances:
+            if amount - drawn <= 0:
+                break
+            state = inst.current_state if isinstance(inst.current_state, dict) else {}
+            have = _num(state.get(_CARGO_FUEL_KEY, cap))
+            take = min(have, amount - drawn)
+            if take <= 0:
+                continue
+            drawn += take
+            inst.current_state = {**state, _CARGO_FUEL_KEY: round(have - take, 4)}
+        return drawn
+
+
+def load_supply_cargo(db: Session, unit_id: str) -> SupplyCargo:
+    """讀補給單位的載運油料（category=LOGISTICS 且 capacity.FUEL>0；惰性滿載）。"""
+    rows = db.execute(
+        select(EquipmentInstance, EquipmentTemplate.base_stats)
+        .join(EquipmentTemplate, EquipmentTemplate.id == EquipmentInstance.template_id)
+        .where(EquipmentInstance.owner_id == unit_id)
+    ).all()
+    out: list[tuple[EquipmentInstance, float]] = []
+    rate = 0.0
+    for inst, base_stats in rows:
+        log = base_stats.get("logistics") if isinstance(base_stats, dict) else None
+        if not isinstance(log, dict):
+            continue
+        cap_block = log.get("capacity")
+        cap = _num(cap_block.get("FUEL")) if isinstance(cap_block, dict) else 0.0
+        if cap <= 0:
+            continue
+        qty = max(1, int(inst.quantity or 1))
+        out.append((inst, cap * qty))
+        rate += _num(log.get("resupply_rate_per_tick")) * qty
+    return SupplyCargo(instances=out, rate_per_tick=rate)

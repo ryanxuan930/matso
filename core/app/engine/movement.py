@@ -179,6 +179,12 @@ class UnitMovementSystem:
                         o.payload = p
                     if route_ev is not None:
                         events.append(route_ev)
+                    # #84：出發前先驗油——油箱已乾則**根本沒出發**，不應承受行軍/強穿耗損。
+                    if self._fuel_rate(p) > 0:
+                        pre = load_unit_fuel(db, o.unit_id)
+                        if pre.needs_fuel and pre.remaining <= 0:
+                            events.append(self._halt_out_of_fuel(o, unit, p, pre, now))
+                            continue
                     # #80 行軍耗損：依總路徑距離 × per-km 磨耗 × tempo（確定性；地形難度 Phase B）。
                     ev_m = self._apply_march_attrition(unit, targets, mob, tempo, now)
                     if ev_m is not None:

@@ -11,7 +11,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.adjudication.seed_weapons import SEED_ARTILLERY, SEED_VEHICLES, SEED_WEAPONS
+from app.adjudication.seed_weapons import (
+    SEED_ARTILLERY,
+    SEED_LOGISTICS,
+    SEED_VEHICLES,
+    SEED_WEAPONS,
+)
 from app.models.tables import EquipmentInstance, EquipmentTemplate, TacticalUnit
 
 
@@ -45,6 +50,7 @@ def ensure_mobility_templates(db: Session) -> dict[str, str]:
     既有單位編裝（不影響交戰/golden）。"""
     out = _upsert_templates(db, SEED_ARTILLERY, "ARTILLERY")
     out.update(_upsert_templates(db, SEED_VEHICLES, "VEHICLE"))
+    out.update(_upsert_templates(db, SEED_LOGISTICS, "LOGISTICS"))  # #85 補給車
     return out
 
 

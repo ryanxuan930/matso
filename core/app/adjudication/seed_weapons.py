@@ -159,3 +159,23 @@ SEED_VEHICLES: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+
+# 後勤車輛種子（#85 補給）——category=LOGISTICS。capacity.FUEL＝載運油量（撥交給受補單位）。
+SEED_LOGISTICS: dict[str, dict[str, Any]] = {
+    "FUEL_TRUCK": {
+        "logistics": {
+            "capacity": {"FUEL": 10000},  # 約可加滿 5 輛 MBT
+            "resupply_rate_per_tick": 400,  # 每分鐘撥交 400（滿油 MBT 約需 5 分鐘）
+            "crew": 2,
+            "mobility": {
+                "can_self_move": True,
+                "mobility_class": "WHEELED",
+                "max_road_speed_kmh": 80,
+                "max_cross_country_speed_kmh": 30,
+                "fuel_capacity": 300,  # 自身油箱（載運油料另計）
+                "fuel_burn_per_km": 0.5,
+            },
+        }
+    },
+}

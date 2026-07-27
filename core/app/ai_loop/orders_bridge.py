@@ -101,8 +101,14 @@ def tactical_order_to_request(
         weapon_id = order.get("weapon_template_id") or order.get("weapon_id")
         if isinstance(weapon_id, str) and weapon_id:
             payload["weapon_id"] = weapon_id
+    elif otype is OrderType.RESUPPLY:
+        # #85：補給令（補給車對同陣營單位加油）；子系統 ResupplySystem 執行。
+        target_unit_id = order.get("target_unit_id")
+        if not isinstance(target_unit_id, str) or not target_unit_id:
+            return None
+        payload = {"target_unit_id": target_unit_id}
     else:
-        return None  # RECON/RESUPPLY/POSTURE 首版不橋接（對應子系統 NoOp）
+        return None  # RECON/POSTURE 首版不橋接（對應子系統 NoOp）
 
     return OrderRequest(unit_id=unit_id, order_type=otype, payload=payload)
 

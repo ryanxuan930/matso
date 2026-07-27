@@ -32,10 +32,10 @@ from app.engine.engage_wiring import (
     seed_combat_state,
 )
 from app.engine.kernel import Kernel
+from app.engine.logistics import ResupplySystem
 from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.subsystems import (
-    NoOpLogisticsSystem,
     NoOpSensorSystem,
     NoOpTriggerChecker,
 )
@@ -228,7 +228,11 @@ class SimManager:
                     session_factory=self._factory,
                     hot_state=hot,
                 ),
-                logistics=NoOpLogisticsSystem(),
+                logistics=ResupplySystem(  # #85 補給：RESUPPLY 令加油（取代 NoOp）
+                    session_id=session_id,
+                    session_factory=self._factory,
+                    hot_state=hot,
+                ),
                 trigger_checker=NoOpTriggerChecker(),
                 broadcaster=RedisBroadcaster(client, session_id),
                 event_sink=LedgerWriter(self._factory),
