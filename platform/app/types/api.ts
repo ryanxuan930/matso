@@ -1061,6 +1061,36 @@ export interface components {
             /** @description 是否需強穿至少一個阻礙 */
             forced: boolean;
             crossings: components["schemas"]["MovementCrossing"][];
+            /**
+             * @description 由編裝導出的機動 profile（#80）：FOOT/WHEELED/TRACKED
+             * @default FOOT
+             */
+            mobility_profile: string;
+            /**
+             * @description 此單位有效速度（含 tempo 與路徑平均地形調變，#80/#81）
+             * @default 0
+             */
+            speed_kmh: number;
+            /**
+             * @description 路徑是否穿越對此 profile 不可通行的地形（#81）
+             * @default false
+             */
+            terrain_impassable: boolean;
+            /**
+             * @description 路徑是否為地形 A* 繞路（#82；false＝直線）
+             * @default false
+             */
+            terrain_routed: boolean;
+            /**
+             * @description 單位目前剩餘油量（#84；0＝徒步/無油料模型）
+             * @default 0
+             */
+            fuel_remaining: number;
+            /**
+             * @description 現有油量是否足以走完全程（#84；否則中途拋錨）
+             * @default true
+             */
+            fuel_sufficient: boolean;
         };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */

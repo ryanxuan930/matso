@@ -310,6 +310,11 @@ const FIRE_POLICY_OPTS: { value: FirePolicy; label: string }[] = [
 const combinedMode = computed(() => weaponId.value === null && weapons.value.length >= 2)
 // 活彈藥（#53）：交戰消耗即時反映——優先讀 STATE_DIFF 串流的 ammo_by_weapon（活模擬扣減），
 // 否則回 w.ammo_remaining（GET /weapons 的 DB 值）。w.id＝EquipmentInstance.id＝ammo_by_weapon 鍵。
+// #84 活油料：STATE_DIFF 串流的 fuel（移動耗油/補給加油即時反映）。無值＝徒步/無油料模型。
+function liveFuel(unitId: string | null): number | null {
+  const f = stream.unitPatches[unitId ?? '']?.fuel
+  return typeof f === 'number' ? f : null
+}
 function liveAmmo(w: WeaponView): number | null {
   const abw = stream.unitPatches[selectedId.value ?? '']?.ammo_by_weapon as
     | Record<string, number>
@@ -1211,6 +1216,15 @@ function crossKindLabel(kind: string): string {
     { OBSTACLE: '障礙', BUILDING: '建築', TERRAIN: '地形' } as Record<string, string>
   )[kind] ?? kind
 }
+// #80：機動 profile 中文標籤（由編裝導出：徒步/輪型/履帶）。
+function mobilityLabel(profile: string): string {
+  return (
+    { FOOT: '徒步', WHEELED: '輪型', TRACKED: '履帶', BOAT: '舟艇', AIR: '空中' } as Record<
+      string,
+      string
+    >
+  )[profile] ?? profile
+}
 function clearMovePath() {
   moveWaypoints.value = []
   waypointMode.value = false
@@ -1800,9 +1814,29 @@ watch(
               <div class="mv-row">
                 <span>距離 <b>{{ (movePreview.distance_m / 1000).toFixed(2) }} km</b></span>
                 <span>約 <b>{{ movePreview.duration_ticks }}</b> tick</span>
-                <span>油耗 <b>{{ movePreview.fuel_cost.toFixed(1) }}</b></span>
+                <span v-if="movePreview.fuel_cost > 0">油耗 <b>{{ movePreview.fuel_cost.toFixed(0) }}</b></span>
               </div>
-              <div v-if="movePreview.feasible" class="mv-ok" title="此預覽僅檢查直線路徑上的已知障礙；地形可達性（是否在已建置地形範圍內）於送出時驗證">
+              <!-- #80/#81：機動能力 + 實際速度（已含地形/坡度調變） -->
+              <div class="mv-row mv-sub">
+                <span :title="`機動 profile（由編裝導出）：${movePreview.mobility_profile}`">
+                  <i class="pi pi-forward" /> {{ mobilityLabel(movePreview.mobility_profile) }}
+                  <b>{{ movePreview.speed_kmh.toFixed(1) }}</b> km/h
+                </span>
+                <span v-if="movePreview.terrain_routed" class="mv-routed" title="已依地形 A* 繞開不可通行區（非直線）">
+                  <i class="pi pi-share-alt" /> 地形繞路
+                </span>
+              </div>
+              <!-- #84：油料是否夠走完全程 -->
+              <div v-if="movePreview.fuel_remaining > 0" class="mv-row mv-sub">
+                <span :class="{ 'mv-lowfuel': !movePreview.fuel_sufficient }">
+                  <i class="pi pi-bolt" /> 油料 <b>{{ movePreview.fuel_remaining.toFixed(0) }}</b>
+                  <template v-if="!movePreview.fuel_sufficient">（不足，將中途拋錨）</template>
+                </span>
+              </div>
+              <div v-if="movePreview.terrain_impassable" class="mv-forced" data-testid="move-impassable">
+                ⛔ 路徑穿越此單位<b>無法通行</b>的地形（{{ mobilityLabel(movePreview.mobility_profile) }}）——將於邊界停止
+              </div>
+              <div v-else-if="movePreview.feasible" class="mv-ok" title="此預覽僅檢查路徑上的已知障礙與地形；地形可達性於送出時再驗證">
                 ✓ 無障礙阻擋（地形可達性於送出時驗證）
               </div>
               <div v-else class="mv-forced" data-testid="move-forced">
@@ -2344,6 +2378,13 @@ watch(
             <div>
               <dt>座標</dt>
               <dd>{{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}</dd>
+            </div>
+            <div v-if="liveFuel(selectedId) != null" data-testid="unit-fuel">
+              <dt>油料</dt>
+              <dd :class="{ lowfuel: (liveFuel(selectedId) ?? 0) <= 0 }">
+                {{ (liveFuel(selectedId) ?? 0).toFixed(0) }}
+                <span v-if="(liveFuel(selectedId) ?? 0) <= 0" class="dim">· 拋錨（需補給）</span>
+              </dd>
             </div>
           </dl>
           <div v-if="weapons.length && !showOrbat" class="card-weapons">
@@ -3175,6 +3216,19 @@ watch(
 }
 .mvprev .mv-row b {
   color: #38bdf8;
+}
+.unit-card .lowfuel {
+  color: #f87171;
+}
+.mvprev .mv-sub {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.mvprev .mv-routed {
+  color: #7dd3fc;
+}
+.mvprev .mv-lowfuel {
+  color: #fbbf24;
 }
 .mvprev .mv-ok {
   margin-top: 0.25rem;

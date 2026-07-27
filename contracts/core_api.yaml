@@ -397,6 +397,12 @@ components:
         feasible: { type: boolean, description: 無強穿＝可行 }
         forced: { type: boolean, description: 是否需強穿至少一個阻礙 }
         crossings: { type: array, items: { $ref: "#/components/schemas/MovementCrossing" } }
+        mobility_profile: { type: string, default: FOOT, description: "由編裝導出的機動 profile（#80）：FOOT/WHEELED/TRACKED" }
+        speed_kmh: { type: number, default: 0, description: "此單位有效速度（含 tempo 與路徑平均地形調變，#80/#81）" }
+        terrain_impassable: { type: boolean, default: false, description: "路徑是否穿越對此 profile 不可通行的地形（#81）" }
+        terrain_routed: { type: boolean, default: false, description: "路徑是否為地形 A* 繞路（#82；false＝直線）" }
+        fuel_remaining: { type: number, default: 0, description: "單位目前剩餘油量（#84；0＝徒步/無油料模型）" }
+        fuel_sufficient: { type: boolean, default: true, description: "現有油量是否足以走完全程（#84；否則中途拋錨）" }
     EquipmentStateEdit:
       type: object
       required: [current_state]
