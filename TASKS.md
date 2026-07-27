@@ -244,7 +244,7 @@
 | #85 補給（加油）✅ | `ResupplySystem` 取代 NoOp logistics：補給車（LOGISTICS capacity.FUEL）2km 內對同陣營目標每 tick 撥交；超距等待不失敗；載運油存 `currentState.cargo_fuel`（惰性滿載）。AI 可下 RESUPPLY。**無契約變更**（協定/OrderType/schema 早已具備） | ✅ 拋錨→補給→重下 MOVE 可再動（e2e）；✅ 拒補他軍/非補給單位；✅ golden 6 未破。**未做：彈藥/水糧/電池撥交**。worklog: logistics-resupply-and-ui.md |
 | #86 移動真實化前端顯示 ✅ | 契約補 `MovementPreviewView` 6 欄（後端已回、契約漏宣告）；COP 預覽顯示機動 profile+實際速度、地形繞路、不可通行警告、油料不足警示；單位卡活油料列（0＝拋錨紅字） | ✅ preview API 回全欄；✅ COP 渲染無 console error；✅ 前端 lint/typecheck 綠 |
 | #84 油料消耗 ✅ | `EquipmentInstance.currentState.fuel`（惰性滿油，免 migration）；每 tick 夾距離→依實際位移扣油→寫回；油盡 `MOVE_HALTED_FUEL` 停駛（重下令才再動）；徒步不受限。預覽改用真油耗；AI 得知「剩餘行程 N km」 | ✅ 續航 340–480km（MBT/IFV/SP/MLRS）；✅ 油盡拋錨+事件；✅ golden 6 未破。**未做：補給加油（logistics 仍 NoOp）、前端油量顯示**。worklog: movement-fuel.md |
-| #85 hex 格網覆蓋擴大／on-demand | **#82 未竟項**：預建格網範圍外 `get_cell` 回 None → A* 視為不可通行（現以退回直線容錯，但該區不會繞路）。擴大預建範圍或 on-demand 建格 + `GetPath.eta_ticks` 真實化 | 遠離預建範圍的長距離移動仍能正確繞路；ETA 反映真實速度 |
+| #88 hex 格網覆蓋擴大／on-demand | **#82 未竟項**：預建格網範圍外 `get_cell` 回 None → A* 視為不可通行（現以退回直線容錯，但該區不會繞路）。擴大預建範圍或 on-demand 建格 + `GetPath.eta_ticks` 真實化 | 遠離預建範圍的長距離移動仍能正確繞路；ETA 反映真實速度 |
 
 ---
 
