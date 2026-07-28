@@ -1246,14 +1246,18 @@ async function onFeatureReshape(e: { id: string; geometry: number[][] }) {
   }
 }
 
-/** #99 右鍵控制點 → 刪除該頂點；會讓圖形低於最少頂點數則拒絕並說明（線≥2、面≥3）。 */
-async function ctxDeleteVertex() {
-  const idx = ctxMenu.value?.vertexIndex
-  const f = selectedFeature.value
-  closeCtx()
-  if (idx == null || !f) return
+/**
+ * #99 刪除線/面的一個控制點。低於最少頂點數（線 2、面 3）則拒絕並說明——
+ * 硬刪下去會變成退化幾何（2 點的面 `toGeometry` 回 null，該標註會直接從地圖上消失）。
+ * 兩條入口共用：右鍵選單、Alt＋點控制點。
+ */
+async function deleteVertexAt(index: number, featureId?: string) {
+  const f = featureId
+    ? (mapFeatures.value.find((x) => x.id === featureId) ?? null)
+    : selectedFeature.value
+  if (!f) return
   const ring = openRing((f.geometry as number[][]) ?? [])
-  const next = removeVertex(ring, idx, f.geometry_type)
+  const next = removeVertex(ring, index, f.geometry_type)
   if (!next) {
     toasts.push({
       severity: 'warn',
@@ -1264,6 +1268,16 @@ async function ctxDeleteVertex() {
     return
   }
   await onFeatureReshape({ id: f.id, geometry: next })
+}
+/** #99 右鍵控制點 → 刪除該頂點。 */
+async function ctxDeleteVertex() {
+  const idx = ctxMenu.value?.vertexIndex
+  closeCtx()
+  if (idx != null) await deleteVertexAt(idx)
+}
+/** #99c Alt＋點控制點 → 刪除該頂點（免開選單的快捷路徑）。 */
+async function onFeatureVertexDelete(e: { id: string; index: number }) {
+  await deleteVertexAt(e.index, e.id)
 }
 
 // 拖放移動點特徵（#11 B2）：MapCanvas emit 新座標 → PATCH 幾何 → 重載。
@@ -2358,6 +2372,7 @@ watch(
             @feature-click="onFeatureClick"
             @feature-move="onFeatureMove"
             @feature-reshape="onFeatureReshape"
+            @feature-vertex-delete="onFeatureVertexDelete"
             @unit-move="onUnitMove"
             @basemap-error="onBasemapError"
             @context-menu="onContextMenu"
@@ -2599,7 +2614,8 @@ watch(
                     <i class="pi pi-arrows-alt" /> 調整中：直接拖曳圖示可移動位置
                   </template>
                   <template v-else>
-                    <i class="pi pi-arrows-alt" /> 調整中：拖白點改形狀 · 拖小圈可加點 · 拖線/面本身整體移動 · 右鍵白點刪點
+                    <i class="pi pi-arrows-alt" /> 調整中：拖白點改形狀 · 拖小圈可加點 · 拖線/面本身整體移動 ·
+                    <b>Alt＋點白點</b>或<b>右鍵白點</b>刪點
                   </template>
                 </span>
                 <button class="me-lock" data-testid="reshape-lock" @click="armReshape(null)">

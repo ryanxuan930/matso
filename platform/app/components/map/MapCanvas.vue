@@ -53,6 +53,8 @@ const emit = defineEmits<{
   featureMove: [{ id: string; lng: number; lat: number }] // 拖放移動點特徵（#11 B2）
   // #99 整形：拖頂點/中點/本體後的新幾何（存放格式的開放環 [[lng,lat],…]）。
   featureReshape: [{ id: string; geometry: number[][] }]
+  // #99c 刪除控制點（Alt＋點控制點）。刪不刪得成由上層判（最少頂點數 + 提示）。
+  featureVertexDelete: [{ id: string; index: number }]
   unitMove: [{ id: string; lng: number; lat: number }] // 地圖狀態編輯：拖放單位到新座標
   // 地圖狀態編輯（多選）：一次移動多個單位（Shift 多選 / 框選後整組拖曳）到各自新座標。
   unitsMove: [{ moves: { id: string; lng: number; lat: number }[] }]
@@ -1202,6 +1204,18 @@ onMounted(async () => {
       emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
       return
     }
+    // #99c 點在控制點上 → 一律視為點在該圖形上。控制點畫在線/面之上，但線只有兩三像素寬，
+    // 點擊命中測試常常「打在控制點上卻沒打到線」→ 落到最後的 mapClick → 上層把選取清掉
+    // → 控制點在按下去的瞬間整組消失。實測就是這樣把整形狀態弄丟的。
+    const vertLayers = ['mapfeat-vertex', 'mapfeat-midpoint'].filter((l) => map?.getLayer(l))
+    if (
+      vertLayers.length &&
+      map?.queryRenderedFeatures(e.point, { layers: vertLayers })?.length &&
+      props.selectedFeatureId
+    ) {
+      emit('featureClick', { id: props.selectedFeatureId }) // 維持選取（同 id → 不會取消整形解鎖）
+      return
+    }
     const hit = map?.queryRenderedFeatures(e.point, { layers: ['units'] })?.[0]
     const p = hit?.properties
     if (p && p.id != null) {
@@ -1231,11 +1245,13 @@ onMounted(async () => {
   const featLayers = () => ['mapfeat-point', 'mapfeat-symbol']
   const onFeatDown = (e: {
     features?: { properties?: { id?: unknown; gtype?: unknown } | null }[]
+    originalEvent?: MouseEvent
     preventDefault: () => void
   }) => {
     const props0 = e.features?.[0]?.properties
     const id = props0?.id
     if (!id || String(id) !== String(props.selectedFeatureId)) return // 只拖選取者
+    if (e.originalEvent && e.originalEvent.button !== 0) return // 右鍵要留給選單
     if (!props.featureEdit) return // #99 無編修權就別讓人拖了才吃 403
     if (props0?.gtype && props0.gtype !== 'POINT') return // 僅點特徵可拖
     e.preventDefault() // 阻止地圖平移
@@ -1257,14 +1273,27 @@ onMounted(async () => {
   const onVertexDown = (e: {
     features?: { properties?: { i?: unknown; mid?: unknown } | null }[]
     lngLat: { lng: number; lat: number }
+    originalEvent?: MouseEvent
     preventDefault: () => void
   }) => {
     if (!props.featureEdit || props.drawActive || !map) return
+    // 只有左鍵才起拖：右鍵是叫選單用的，不擋掉的話「右鍵刪點」會先被當成一次微幅拖曳，
+    // 送出一筆無意義的幾何 PATCH（滑鼠若在按下與放開間動了一兩個像素，還會真的把點挪走）。
+    if (e.originalEvent && e.originalEvent.button !== 0) return
     const sel = selectedRing()
     const p = e.features?.[0]?.properties
     if (!sel || !p) return
     const idx = Number(p.i)
     if (!Number.isFinite(idx)) return
+    // Alt＋點控制點＝刪點（右鍵選單之外的快捷路徑）。
+    // 最少頂點檢查與提示留在上層做——那裡才有 toast。
+    if (e.originalEvent?.altKey) {
+      e.preventDefault()
+      // 中點不是實頂點、無從刪起：**直接忽略**。若讓它落回下面的插點流程，
+      // 「Alt＝刪點」按在小圈上反而會多一個點，與使用者的預期正好相反。
+      if (p.mid !== true) emit('featureVertexDelete', { id: sel.id, index: idx })
+      return
+    }
     e.preventDefault() // 阻止地圖平移
     if (p.mid === true) {
       // 中點：先插入實頂點，接著拖的就是這顆新頂點（Google/Leaflet 慣例）。
@@ -1293,9 +1322,11 @@ onMounted(async () => {
     features?: { properties?: { id?: unknown } | null }[]
     point: { x: number; y: number }
     lngLat: { lng: number; lat: number }
+    originalEvent?: MouseEvent
     preventDefault: () => void
   }) => {
     if (!props.featureEdit || props.drawActive || !map) return
+    if (e.originalEvent && e.originalEvent.button !== 0) return // 右鍵要留給選單
     // **控制點優先**：控制點畫在線/面之上，同一次 mousedown 兩個委派監聽器都會收到。
     // 不在此擋掉的話，拖頂點會變成整體平移（實測：三個頂點同時位移）。
     // 用命中查詢而非「註冊順序」來決定優先權——順序是隱性契約，改天調換註冊位置就再度失效。
