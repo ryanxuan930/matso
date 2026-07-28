@@ -39,7 +39,14 @@ def build_terrain_cell_sampler() -> TerrainSampler | None:
 
         def _sample(cells: list[str]) -> dict[str, tuple[str, float]]:
             resp = client.get_cell_batch(list(cells))
-            return {c.h3_index: (str(c.terrain_class), float(c.slope_deg)) for c in resp.cells}
+            # #83：terrain_class 後附道路等級（"FOREST|primary"），維持既有 tuple 形狀不動介面。
+            return {
+                c.h3_index: (
+                    f"{c.terrain_class}|{c.road_class}" if c.road_class else str(c.terrain_class),
+                    float(c.slope_deg),
+                )
+                for c in resp.cells
+            }
 
         return _sample
     except Exception:

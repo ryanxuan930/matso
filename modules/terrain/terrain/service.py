@@ -119,4 +119,5 @@ def _cell_info(c: CellAttributes) -> terrain_pb2.CellInfo:
         terrain_class=str(c.terrain_class),
         water=c.water,
         mobility_cost=c.mobility_cost,
+        road_class=c.road_class,
     )

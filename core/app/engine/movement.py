@@ -35,6 +35,7 @@ from app.movement.attrition import (
 )
 from app.movement.fuel import UnitFuel, burn_fuel, load_unit_fuel
 from app.movement.mobility import UnitMobility, resolve_unit_mobility
+from app.movement.mobility_matrix import road_speed_factor
 from app.movement.mobility_matrix import step_cost as _terrain_step_cost
 from app.movement.params import TEMPO_ATTRITION_FACTOR, march_attrition_per_km
 from app.movement.router import PathFn, plan_route
@@ -165,6 +166,8 @@ class UnitMovementSystem:
                         "_mobility_profile": mob.profile,
                         # #84：油耗率（0＝徒步/無油料模型 → 逐 tick 完全略過油料處理）。
                         "_fuel_burn_km": mob.fuel_burn_per_km,
+                        # #83：沿路速度基準（road_kmh × tempo）——進入有路的格時改用。
+                        "_road_step_km": mob.step_km(self._tick_rate_ms, on_road=True, tempo=tempo),
                     }
                     # #82 Phase C：規劃地形路徑（繞開不可通行）→ 存 _route_wp；規劃後重算 targets，
                     # 使行軍耗損依**實際繞行距離**計（繞遠路更耗）。使用者自訂 waypoints 不覆寫。
@@ -282,10 +285,20 @@ class UnitMovementSystem:
             prof = payload.get("_mobility_profile")
             prof = prof if isinstance(prof, str) and prof else "FOOT"
             cell = h3.latlng_to_cell(cur_lat, cur_lng, _TERRAIN_RES)
-            cost = self._terrain_cost(cell, prof)
-            if cost is None:
-                return self._block_impassable(o, unit, cell, prof, now)
-            step_km /= cost  # 成本↑＝越難走＝步距縮短
+            klass, _slope = self._terrain_of(cell)
+            # #83 道路優先：此格有可用道路 → 改用道路速度基準，且**不套地形/坡度成本**
+            # （路面已鋪整；林中公路不該按森林算）。
+            road_cls = klass.split("|", 1)[1] if "|" in klass else ""
+            factor = road_speed_factor(prof, road_cls) if road_cls else None
+            if factor is not None:
+                raw_road = payload.get("_road_step_km")
+                if isinstance(raw_road, (int, float)) and raw_road > 0:
+                    step_km = float(raw_road) * self._weather_mobility * factor
+            else:
+                cost = self._terrain_cost(cell, prof)
+                if cost is None:
+                    return self._block_impassable(o, unit, cell, prof, now)
+                step_km /= cost  # 成本↑＝越難走＝步距縮短
         # #84：本 tick 行程不得超過剩餘油量所能支撐的距離（開到沒油就停在那裡，不會超跑）。
         if fuel_cap_km is not None:
             step_km = min(step_km, max(0.0, fuel_cap_km))
@@ -413,6 +426,16 @@ class UnitMovementSystem:
             return float(lat), float(lng)
         return None
 
+    def _terrain_of(self, cell: str) -> tuple[str, float]:
+        """取該格的 (terrain_class[|road_class], slope)。取樣失敗/無取樣器 → ("", 0.0)。"""
+        if self._terrain_sampler is None:
+            return ("", 0.0)
+        try:
+            info = self._terrain_sampler([cell])
+        except Exception:
+            return ("", 0.0)
+        return info.get(cell, ("", 0.0))
+
     def _terrain_cost(self, cell: str, profile: str) -> float | None:
         """該格對此 profile 的通行成本倍率（快取；不可通行回 None）。
 
@@ -429,7 +452,8 @@ class UnitMovementSystem:
         except Exception:
             return 1.0
         ct = info.get(cell)
-        cost = _terrain_step_cost(profile, ct[0], ct[1]) if ct is not None else 1.0
+        # #83：取樣值可能是 "FOREST|primary"，地形成本只看 terrain_class 部分。
+        cost = _terrain_step_cost(profile, ct[0].split("|", 1)[0], ct[1]) if ct is not None else 1.0
         self._terrain_cost_cache[key] = cost
         return cost
 

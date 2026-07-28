@@ -18,7 +18,7 @@ from __future__ import annotations
 import enum
 import math
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import h3
@@ -57,6 +57,7 @@ class CellAttributes:
     terrain_class: TerrainClass
     water: bool
     mobility_cost: float
+    road_class: str = ""  # #83 道路疊加（空＝無道路）；由 roads.parquet 注入，不入 hex parquet
 
 
 def classify_terrain(elevation_mean: float, slope_deg: float, water: bool) -> TerrainClass:
@@ -220,6 +221,23 @@ class HexGridCache:
         self._cells = cells
         self._builder = builder
         self._on_demand: dict[str, CellAttributes] = {}  # 隨需計算的記憶化（不落 parquet）
+        self._roads: dict[str, str] = {}  # #83 h3 → road_class（疊加，不改 terrain_class）
+
+    def with_roads(self, roads: dict[str, str]) -> HexGridCache:
+        """注入道路索引（#83）。cell 的 terrain_class 不變，另帶 road_class 供移動加速。"""
+        self._roads = roads
+        return self
+
+    @property
+    def road_count(self) -> int:
+        return len(self._roads)
+
+    def _decorate(self, cell: CellAttributes | None) -> CellAttributes | None:
+        """替 cell 貼上道路等級（#83）。無道路資料 → 原樣回傳。"""
+        if cell is None or not self._roads:
+            return cell
+        cls = self._roads.get(cell.h3_index)
+        return replace(cell, road_class=cls) if cls else cell
 
     def with_builder(self, builder: HexGridBuilder | None) -> HexGridCache:
         """回傳同一份快取但附上隨需 builder（服務層在 DTED 可用時注入）。"""
@@ -269,7 +287,9 @@ class HexGridCache:
 
     def get_cell(self, h3_index: str) -> CellAttributes | None:
         hit = self._cells.get(h3_index)
-        return hit if hit is not None else self._compute(h3_index)  # #88 預建範圍外隨需補算
+        if hit is None:
+            hit = self._compute(h3_index)  # #88 預建範圍外隨需補算
+        return self._decorate(hit)
 
     def get_cell_batch(self, h3_indexes: Iterable[str]) -> dict[str, CellAttributes]:
         """批次查詢；缺漏的 h3_index 不出現在回傳 dict（呼叫方自行判斷）。
@@ -281,6 +301,7 @@ class HexGridCache:
             cell = self._cells.get(h)
             if cell is None:
                 cell = self._compute(h)
-            if cell is not None:
-                out[h] = cell
+            decorated = self._decorate(cell)
+            if decorated is not None:
+                out[h] = decorated
         return out

@@ -22,6 +22,35 @@ _SLOPE_REF_DEG = 45.0
 
 
 @functools.lru_cache(maxsize=1)
+def _road() -> tuple[dict[str, float], dict[str, bool]]:
+    """#83 道路區塊：road_class → 速度係數、profile → 是否可用路。"""
+    data = json.loads(_MATRIX_PATH.read_text(encoding="utf-8"))
+    block = data.get("road") or {}
+    factors = {
+        str(k): float(v)
+        for k, v in (block.get("speed_factor_by_class") or {}).items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    usable = {str(k): bool(v) for k, v in (block.get("usable_by_profile") or {}).items()}
+    return factors, usable
+
+
+def road_speed_factor(profile: str, road_class: str) -> float | None:
+    """有道路時的速度係數（0<f≤1，乘上 road_kmh）。無路/該 profile 不能用路 → None。
+
+    回 None 表示「照原本越野+地形模型走」；有值則呼叫端改用道路速度且**不再套地形/坡度成本**
+    （路面已鋪整，林中公路不該按森林算）。
+    """
+    if not road_class:
+        return None
+    factors, usable = _road()
+    if not usable.get(profile, True):
+        return None
+    f = factors.get(road_class)
+    return f if f is not None and f > 0 else None
+
+
+@functools.lru_cache(maxsize=1)
 def _matrix() -> tuple[dict[str, dict[str, float]], dict[str, float]]:
     data = json.loads(_MATRIX_PATH.read_text(encoding="utf-8"))
     profiles = {

@@ -194,3 +194,51 @@ def test_no_sampler_is_phase_a(session_factory: sessionmaker[Session]) -> None:
         )
         < 1e-6
     )
+
+
+# ---------------- #83 道路加速 ----------------
+
+
+def test_road_speed_factor_lookup() -> None:
+    from app.movement.mobility_matrix import road_speed_factor
+
+    assert road_speed_factor("WHEELED", "motorway") == 1.0
+    assert road_speed_factor("WHEELED", "residential") == 0.55
+    assert road_speed_factor("FOOT", "primary") == 0.95
+    assert road_speed_factor("WHEELED", "") is None  # 無路
+    assert road_speed_factor("BOAT", "motorway") is None  # 舟艇不能走公路
+    assert road_speed_factor("WHEELED", "unknown_kind") is None
+
+
+def test_road_is_faster_than_cross_country(session_factory: sessionmaker[Session]) -> None:
+    """#83：同樣地形下，有公路的格明顯快於越野（輪型 road 85 vs xc 40 km/h）。"""
+    with session_factory() as db:
+        xc_id = _seed(db, "xc", vehicle=_TRUCK)
+        db.commit()
+    with session_factory() as db:
+        road_id = _seed(db, "road", vehicle=_TRUCK)
+        db.commit()
+    # 同為 GRASSLAND；一個沒路、一個有 motorway。
+    _run(session_factory, "xc", _fixed_terrain("GRASSLAND"), 10)
+    _run(session_factory, "road", _fixed_terrain("GRASSLAND|motorway"), 10)
+    xc = _dist_covered(session_factory, "xc", xc_id)
+    road = _dist_covered(session_factory, "road", road_id)
+    # 公路顯著較快（road 85 vs xc 40 km/h）。註：若沿路單位已抵達目的地，比值會被抵達截斷，
+    # 故只斷言「明顯更遠」而非精確比值。
+    assert road > xc * 1.5
+
+
+def test_road_bypasses_terrain_cost(session_factory: sessionmaker[Session]) -> None:
+    """林中公路不按森林算：有路 → 不套地形/坡度成本。"""
+    with session_factory() as db:
+        forest_id = _seed(db, "fst", vehicle=_TRUCK)
+        db.commit()
+    with session_factory() as db:
+        froad_id = _seed(db, "fstroad", vehicle=_TRUCK)
+        db.commit()
+    _run(session_factory, "fst", _fixed_terrain("FOREST"), 10)  # WHEELED 森林成本 4.0
+    _run(session_factory, "fstroad", _fixed_terrain("FOREST|primary"), 10)
+    assert (
+        _dist_covered(session_factory, "fstroad", froad_id)
+        > _dist_covered(session_factory, "fst", forest_id) * 3
+    )
