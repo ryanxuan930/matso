@@ -210,3 +210,39 @@ def _poly():  # type: ignore[no-untyped-def]
     return h3.LatLngPoly(
         [(min_lat, min_lng), (min_lat, max_lng), (max_lat, max_lng), (max_lat, min_lng)]
     )
+
+
+# ---------------- #88 隨需補格（預建 bbox 外） ----------------
+
+
+def test_on_demand_fills_cells_outside_prebuilt_bbox(fixture_tiff: Path) -> None:
+    """預建範圍外的 cell：無 builder → None（舊行為）；注入 builder → 當場由 DTED 算出。"""
+    import h3 as _h3
+    from terrain.dted import DtedMap
+    from terrain.hexgrid import HexGridBuilder, HexGridCache
+
+    with DtedMap.open(fixture_tiff) as dted:
+        builder = HexGridBuilder(dted)
+        # 只預建一小塊
+        cells = {c.h3_index: c for c in builder.build_region((121.20, 23.70, 121.30, 23.80), 8)}
+        cache = HexGridCache(cells)
+        inside = next(iter(cells))
+        # 夾具涵蓋但**未預建**的格（bbox 外、仍在 GeoTIFF 內）
+        outside = _h3.latlng_to_cell(23.65, 121.40, 8)
+        assert outside not in cells
+
+        # 無 builder → 維持既有語義（None＝A* 視為不可通行）
+        assert cache.get_cell(inside) is not None
+        assert cache.get_cell(outside) is None
+        assert cache.get_cell_batch([outside]) == {}
+
+        # 注入 builder → 隨需補算
+        cache.with_builder(builder)
+        got = cache.get_cell(outside)
+        assert got is not None and got.h3_index == outside
+        assert cache.get_cell_batch([outside]) != {}
+        assert cache.on_demand_count >= 1  # 已記憶化
+        # 記憶化後不重算
+        before = cache.on_demand_count
+        cache.get_cell(outside)
+        assert cache.on_demand_count == before

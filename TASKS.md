@@ -240,11 +240,11 @@
 | #80 (Phase A) | Seed mobility_class/速度到 EquipmentTemplate；`UnitMobilityResolver` 導出 per-unit profile+速度；執行器改讀 per-unit step_km（取代固定 40）；開啟行軍耗損（距離×地形難度×tempo）；AI 導出 profile（去硬寫 FOOT）+ context 加速度/單回合可達 + decider 指示 | 機械化 vs 徒步同距離 ETA 明顯不同（固定 seed）；長程行軍產生 MOVE_ATTRITION（非強穿）；AI MOVE 用導出 profile；預覽與執行速度一致；**golden 6 重錄綠** |
 | #81 (Phase B) | `v_eff` 逐 tick 依地形類別+坡度（mobility_matrix.step_cost）+ weather modifier 調變；不可通行段→停邊界+MOVE_BLOCKED；預覽 estimate_route 採同一速度模型（分段 ETA/耗損） | 同路線穿森林/山地/濕地/上坡明顯慢於開闊/平地（固定 seed 係數比較）；進不可通行地形停邊界+事件；預覽分段 ETA＝執行；**golden 6 重錄綠** |
 | #82 (Phase C) ✅路由核心 | 執行改走 get_path A* 路徑（繞開河/山/不可通行）；預覽/執行同一路由；**任意點位起終點**（非 hex 中心 → 首/末部分格幾何段，不吸附格心、停精確終點，SPEC §2.3）；不可達/超出格網→退回直線不誤拒 | ✅ 單位繞開河/山而非直穿；✅ **任意 lat/lng 起終點正確（停精確終點）**；✅ 預覽路徑＝執行路徑；✅ golden 6 未破。worklog: movement-phase-c.md |
-| #83 道路網／土地利用 ingestion（OSM） | **#82 未竟項（資料阻擋）**：terrain `terrain_class` 目前只由坡度+高程導出（URBAN/FOREST 需 OSM 土地利用）；`mobility_matrix` 無 `ROAD` class；`MATSO_ROAD_GRAPH_PATH`（taiwan_drive.graphml）標「尚未使用」。需 OSM PBF 匯入 → 土地利用分類 + 道路網 → 新增 ROAD 成本/加速 | 沿既成道路移動明顯快於越野；森林/市區由土地利用（非坡度）正確分類 |
+| #83 道路網／土地利用 ingestion（OSM） | **#82 未竟項**（資料已備：`/Volumes/M200/Maps/{taiwan.osm.pbf,taiwan_drive.graphml}`，容器已掛載於 `/data`）：terrain `terrain_class` 目前只由坡度+高程導出（URBAN/FOREST 需 OSM 土地利用）；`mobility_matrix` 無 `ROAD` class；`MATSO_ROAD_GRAPH_PATH`（taiwan_drive.graphml）標「尚未使用」。需 OSM PBF 匯入 → 土地利用分類 + 道路網 → 新增 ROAD 成本/加速 | 沿既成道路移動明顯快於越野；森林/市區由土地利用（非坡度）正確分類 |
 | #85 補給（加油）✅ | `ResupplySystem` 取代 NoOp logistics：補給車（LOGISTICS capacity.FUEL）2km 內對同陣營目標每 tick 撥交；超距等待不失敗；載運油存 `currentState.cargo_fuel`（惰性滿載）。AI 可下 RESUPPLY。**無契約變更**（協定/OrderType/schema 早已具備） | ✅ 拋錨→補給→重下 MOVE 可再動（e2e）；✅ 拒補他軍/非補給單位；✅ golden 6 未破。**未做：彈藥/水糧/電池撥交**。worklog: logistics-resupply-and-ui.md |
 | #86 移動真實化前端顯示 ✅ | 契約補 `MovementPreviewView` 6 欄（後端已回、契約漏宣告）；COP 預覽顯示機動 profile+實際速度、地形繞路、不可通行警告、油料不足警示；單位卡活油料列（0＝拋錨紅字） | ✅ preview API 回全欄；✅ COP 渲染無 console error；✅ 前端 lint/typecheck 綠 |
 | #84 油料消耗 ✅ | `EquipmentInstance.currentState.fuel`（惰性滿油，免 migration）；每 tick 夾距離→依實際位移扣油→寫回；油盡 `MOVE_HALTED_FUEL` 停駛（重下令才再動）；徒步不受限。預覽改用真油耗；AI 得知「剩餘行程 N km」 | ✅ 續航 340–480km（MBT/IFV/SP/MLRS）；✅ 油盡拋錨+事件；✅ golden 6 未破。**未做：補給加油（logistics 仍 NoOp）、前端油量顯示**。worklog: movement-fuel.md |
-| #88 hex 格網覆蓋擴大／on-demand | **#82 未竟項**：預建格網範圍外 `get_cell` 回 None → A* 視為不可通行（現以退回直線容錯，但該區不會繞路）。擴大預建範圍或 on-demand 建格 + `GetPath.eta_ticks` 真實化 | 遠離預建範圍的長距離移動仍能正確繞路；ETA 反映真實速度 |
+| #88 hex 格網覆蓋擴大／on-demand ✅ | `HexGridCache` 可注入 `HexGridBuilder`：預建 bbox 外的 cell **當場由 DTED 算**並記憶化（未注入 builder → 維持舊 None 語義）；`TerrainService` 於 DTED+快取皆備時自動注入 | ✅ 實測預建外（高雄）取得真地形；✅ 台南→高雄 A* reachable 15 hops（原不可達）；✅ golden 6 未破。**未做：eta_ticks 真實化（刻意；core 為權威 ETA，避免重建第二套速度模型）**。worklog: hexgrid-ondemand.md |
 
 ---
 
