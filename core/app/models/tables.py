@@ -75,6 +75,11 @@ class WargameSession(Base):
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "orbatEditFactions", JSON, nullable=True
     )
+    # #98 陣營關係矩陣：三元組 [[a, b, "ALLIED"|"NEUTRAL"|"HOSTILE"], …]，對稱。
+    # None = 未宣告 → 全 HOSTILE 預設（既有局零遷移）。以 `factions.relations_from_triples` 讀取。
+    faction_relations: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
+        "factionRelations", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):

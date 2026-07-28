@@ -220,6 +220,9 @@ def create_session_from_scenario(
         master_seed=master_seed,
         mode=SessionMode(loaded.mode),
         current_weather={},
+        # #98 關係矩陣落地：想定宣告的敵我關係從此隨局持久化（過去 loader 建完就丟，
+        # 導致執行期只能退回全 HOSTILE）。空宣告存 None ＝ 未宣告 ＝ 全 HOSTILE 預設。
+        faction_relations=loaded.relations.to_triples() or None,
     )
     db.add(session)
     db.flush()

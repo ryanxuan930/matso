@@ -152,6 +152,10 @@ class LobbyService:
             orbat_edit_factions=(
                 list(src.orbat_edit_factions) if isinstance(src.orbat_edit_factions, list) else None
             ),
+            # #98 複製關係矩陣——否則副本會退回全 HOSTILE，盟友關係憑空消失。
+            faction_relations=(
+                list(src.faction_relations) if isinstance(src.faction_relations, list) else None
+            ),
         )
         self._db.add(new)
         self._db.flush()  # 取得 new.id

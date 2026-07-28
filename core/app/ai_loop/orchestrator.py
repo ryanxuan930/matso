@@ -23,7 +23,7 @@ from app.ai_loop.decider import make_llm_faction_decider
 from app.ai_loop.opfor import OpforDecider
 from app.ai_loop.worker import FactionWorkerDeps, run_faction_worker
 from app.config import Settings
-from app.factions.relations import FactionRelations
+from app.factions.session_store import load_session_relations
 from app.guardrails import GuardrailGateway
 from app.guardrails.modes import resolve_ai_mode
 from app.models.enums import AiMode, UserRole
@@ -155,8 +155,10 @@ def start_ai_workers(
         mode=mode,
     )
     guardrail = GuardrailGateway()
-    # 首版預設全 HOSTILE（多陣營敵我）；alliance/NEUTRAL 之後由 scenario relations 注入。
-    relations = FactionRelations()
+    # #98：改讀該局持久化的關係矩陣（原本寫死全 HOSTILE，導致 AI 會攻擊盟軍）。
+    # 未宣告的局仍回全 HOSTILE 預設 → 既有行為不變。
+    with db_factory() as db:
+        relations = load_session_relations(db, session_id)
     heartbeat = float(cfg.get("heartbeat_s") or 45.0)
 
     tasks: list[asyncio.Task[None]] = []

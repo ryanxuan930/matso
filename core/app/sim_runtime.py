@@ -37,6 +37,7 @@ from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
 from app.engine.subsystems import NoOpTriggerChecker
+from app.factions.session_store import load_session_relations
 from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
@@ -197,6 +198,8 @@ class SimManager:
             )
             # #97 偵測：單位→感測器規格/陣營的解析（一次建好快取，sweep 每 tick 查）。
             sensor_resolver = await asyncio.to_thread(SensorResolver, engage_db, session_id)
+            # #98 該局的陣營關係矩陣（未宣告→全 HOSTILE，與過去語義相同）。
+            relations = await asyncio.to_thread(load_session_relations, engage_db, session_id)
             sim_clock = SimClock(tick_rate_ms=_TICK_RATE_MS)
             kernel = Kernel(
                 session_id=session_id,
@@ -232,6 +235,7 @@ class SimManager:
                     sensor_for=sensor_resolver.sensor_for,
                     faction_for=sensor_resolver.faction_for,
                     env_for=make_detect_env(_engage_gateway(), _weather_snapshot()),
+                    relations=relations,  # #98 盟軍不互相成為 contact
                 ),
                 comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 5 tick 重算鏈路狀態
                     session_id=session_id,
