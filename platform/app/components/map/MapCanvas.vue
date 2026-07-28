@@ -96,6 +96,7 @@ const props = withDefaults(
     featSymbolIcons?: { key: string; sidc: string }[] // 需生成的 milsymbol icon 規格（#11）
     influenceFc?: Fc // 影響範圍圓
     draftFc?: Fc // 繪製中草稿
+    weaponTrackFc?: Fc // #95 武器軌跡（顯示用；由已裁決的交戰事件驅動）
     selectedFeatureId?: string | null // 選取的標註（高亮）
     drawActive?: boolean // 繪圖模式：地圖點擊視為加頂點（不選單位/標註）
     targeting?: boolean // 設定目標中（#3）：游標改十字準星，提示「點地圖選落點/目標」
@@ -141,6 +142,7 @@ const props = withDefaults(
     featSymbolIcons: () => [],
     influenceFc: () => ({ type: 'FeatureCollection', features: [] }),
     draftFc: () => ({ type: 'FeatureCollection', features: [] }),
+    weaponTrackFc: () => ({ type: 'FeatureCollection', features: [] }),
     selectedFeatureId: null,
     drawActive: false,
     targeting: false,
@@ -283,6 +285,7 @@ const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
 const DEST_SRC = 'move-dest'
 const MOVE_PATH_SRC = 'move-path' // #28 移動路徑預覽（線 + 強穿標記）
+const TRACK_SRC = 'weapon-tracks' // #95 武器軌跡（短暫顯示後淡出）
 const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
 const FEAT_SYM_SRC = 'mapfeatsym' // 帶北約符號的點特徵（#11）
 const FEAT_DRAG_SRC = 'mapfeatdrag' // 拖放移動預覽（#11 B2）
@@ -320,6 +323,7 @@ function syncFeatures() {
   ;(map?.getSource(FEAT_SRC) as GeoJSONSource | undefined)?.setData((props.featureFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(INFL_SRC) as GeoJSONSource | undefined)?.setData((props.influenceFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(DRAFT_SRC) as GeoJSONSource | undefined)?.setData((props.draftFc ?? _EMPTY_FEAT_FC) as never)
+  ;(map?.getSource(TRACK_SRC) as GeoJSONSource | undefined)?.setData((props.weaponTrackFc ?? _EMPTY_FEAT_FC) as never)
   // 北約符號點特徵（#11）：生成/快取 milsymbol icon（去重）→ setData。
   if (map) {
     for (const spec of props.featSymbolIcons ?? []) {
@@ -873,6 +877,21 @@ onMounted(async () => {
         'line-opacity': 0.9,
       },
     })
+    // #95 武器軌跡：射手→目標直線，HIT 亮橘、MISS 灰藍虛線；透明度由 feature 帶（淡出）。
+    // **純顯示**：由後端已裁決的 ENGAGEMENT_RESOLVED 驅動，不參與任何判定。
+    map.addSource(TRACK_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'weapon-track',
+      type: 'line',
+      source: TRACK_SRC,
+      layout: { 'line-cap': 'round' },
+      paint: {
+        'line-color': ['match', ['get', 'status'], 'HIT', '#fb923c', '#94a3b8'],
+        'line-width': ['match', ['get', 'status'], 'HIT', 2.6, 1.4],
+        'line-opacity': ['get', 'opacity'],
+        'line-dasharray': ['match', ['get', 'status'], 'HIT', ['literal', [1, 0]], ['literal', [2, 2]]],
+      },
+    })
     map.addLayer({
       id: 'move-path-cross',
       type: 'circle',
@@ -1267,6 +1286,7 @@ watch(
     () => props.featSymbolIcons,
     () => props.influenceFc,
     () => props.draftFc,
+    () => props.weaponTrackFc,
   ],
   syncFeatures,
   { deep: true },
