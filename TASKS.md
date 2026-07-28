@@ -248,6 +248,24 @@
 
 ---
 
+## COP 視角／符號／設定／顯示（2026-07-28 使用者回報 7 項）
+
+> **盤點結論（動工前先查，避免重工）**：其中 4 項的後端／機制**早已存在**，缺的是接線或前端，
+> 故工作量差距很大（#96 半天、#93 需先做參數清冊）。紅線照舊：**fog 過濾只在後端**（#90 的
+> 視角切換必須走後端 `as_faction`，不可前端過濾）；契約先行；一次一張卡。
+
+| 任務 | 現況盤點 | 內容 | 驗收重點 |
+|------|----------|------|----------|
+| #90 COP 視角切換（全知者可套各陣營迷霧） | **後端已有** `?as_faction=` 於 `/units`（units.py:91）與 `/intel`（intel.py:28）；一般角色帶他陣營→403。**缺**：COP 頁無視角選擇器（`fetchUnits` 未帶參數），white-cell.vue 才有；map-features 無此參數；WS 串流未依視角收斂 | COP 加視角下拉（僅全知角色可見）：全局／各陣營；選定後 units/intel/map-features 皆帶 `as_faction`，套用該陣營迷霧 | 白軍切 BLUE 視角只見 BLUE 可見範圍（與 BLUE 帳號登入所見一致）；一般角色看不到此選擇器且無法偽造 |
+| #91 友軍/敵軍 2525 affiliation 依關係矩陣 | **前端機制已齊**：`affiliationForRelation`（ALLIED=F/NEUTRAL=N/HOSTILE=H）、`buildSidc`、`sidcForContact` 全在 useUnits.ts。**後端矩陣已有** `factions/relations.py`（對稱三值、未宣告預設 HOSTILE）。**缺**：無 API 透出矩陣 → `cop.vue:402` **硬寫 `relation: 'HOSTILE'`**；且 `realAsOwn` 只認己方，友軍陣營被當他軍 | 契約先行透出該局關係矩陣（或 per-faction 關係）；COP 依矩陣決定 affiliation：己方+ALLIED→Friendly 外型/色、HOSTILE→Enemy、NEUTRAL→中立；**#90 的視角切換須連動**（以所選視角陣營為觀測者） | 三陣營局中，BLUE 視角下 ALLIED 陣營顯示為友軍藍框、HOSTILE 為敵軍紅框；切視角後符號跟著變 |
+| #92 地圖標註陣營歸屬與視角過濾 | **後端已完整**：`MapFeature.ownerFaction` 欄位存在；`map_features.py:133` 已過濾（全知見全部／否則見 WHITE_CELL+本軍）；建立/編修權限已依陣營控管。**缺**：前端不顯示歸屬陣營；全知建立時預設 WHITE_CELL，未依 #90 所選視角歸屬 | 標註清單/地圖顯示所屬陣營（色點+標籤）；全知在某陣營視角下繪製→歸該陣營；可改歸屬；list 帶 `as_faction` | 以 BLUE 視角繪的標註，RED 視角看不到、BLUE 與白軍全局看得到且標示 BLUE |
+| #93 全域參數集中於系統設定（熱更新／冷啟動分類） | **已有**：system-settings.vue 可編 AI 模式 + LLM base/model/api key；唯讀區顯示 env。**缺**：其餘全域參數（各 gRPC target、逾時、心跳下限、速率上限、RESUPPLY_RANGE_KM、mobility/attrition 參數、tile/底圖設定…）散在 env 與程式常數，未集中亦未分類 | **先做參數清冊**（掃 core/terrain/weather/comms + compose env + 程式常數），逐項標記熱更新／需重啟；熱更新者於系統設定頁可改可即時套用（走既有設定儲存機制），冷啟動者唯讀顯示並標示「需重啟 X 服務」 | 清冊涵蓋所有全域參數且分類正確；熱更新項改完即生效（不重啟可驗證）；冷啟動項明確標示 |
+| #94 單位圖標上方顯示血量 | **已有** `unit-health-ring`（環狀）。**缺**：圖標上方的數值/血條 | 單位符號上方顯示血量（數值或血條），沿用 `healthColor` 色帶；可由圖層小工具開關 | 血量變動即時反映；符號密集時不互相遮蔽到不可讀 |
+| #95 攻擊時繪製武器軌跡 | **後端已有**彈道判定 `adjudication/trajectory.py`（拋物線淨空）+ `TRAJECTORY_BLOCKED`。**缺**：交戰事件未帶射手→目標幾何 → 前端無從繪製 | 交戰事件補射擊幾何（射手/目標座標、武器類別、命中與否）；COP 短暫繪製軌跡（直射直線／彈道拋物線），數秒後淡出 | 交戰發生時 COP 出現軌跡並自動消失；命中/未命中可辨；**事件屬顯示用，不得回頭影響裁決** |
+| #96 地圖編輯器線條粗細 | **已有** `attributes.color`（drawColor/editFeatColor）已落地並由 `['get','color']` 驅動；`attributes` 是 Json → **免 migration**。**缺**：`line-width` 於 MapCanvas.vue:716 寫死 2 | 繪製/編輯時可設線寬 → 存 `attributes.width`；圖層改用 `['get','width']`（缺值退預設） | 新繪線條寬度可調並持久化；既有無 width 的標註仍以預設寬度正常顯示 |
+
+---
+
 ## 附錄：任務中斷與續作（額度用完時的保命機制）
 
 1. **worklog 是即時的**：每完成一個實質步驟（一個檔案、一個測試通過、一個決策）就更新 `docs/worklog/O<id>.md`，不是收工才寫。
