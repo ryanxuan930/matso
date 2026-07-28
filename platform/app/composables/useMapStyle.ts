@@ -120,6 +120,49 @@ export interface BasemapConfig {
 export const OFFLINE_SOURCE: BasemapSource = { id: 'offline', label: '離線格線', type: 'offline' }
 
 /**
+ * 內政部國土測繪中心（NLSC）WMTS —— 台灣戰區的權威官方圖資。
+ *
+ * 服務端點取自 `https://wmts.nlsc.gov.tw/wmts/1.0.0/WMTSCapabilities.xml`（非猜測）：
+ * 三者皆為 `GoogleMapsCompatible`（EPSG:3857、z0–19），故可直接當 XYZ 光柵用。
+ *
+ * **URL 順序是 `{z}/{y}/{x}`**（WMTS 模板為 `{TileMatrix}/{TileRow}/{TileCol}`，
+ * row 在前）——與 Esri 同、與 Google/OSM 相反。寫反會拿到位置錯亂的圖磚。
+ *
+ * 僅涵蓋台灣；**需外網**（與 Google/Esri 同受 onlineBasemaps 開關管制）。
+ */
+const _NLSC = 'https://wmts.nlsc.gov.tw/wmts'
+const _NLSC_ATTR = '© 內政部國土測繪中心（NLSC）'
+export const NLSC_RASTER_SOURCES: BasemapSource[] = [
+  {
+    id: 'nlsc-emap-contour',
+    label: '通用電子地圖（含等高線）',
+    type: 'raster',
+    tileSize: 256,
+    maxzoom: 19,
+    tiles: [`${_NLSC}/EMAP5_OPENDATA/default/GoogleMapsCompatible/{z}/{y}/{x}`],
+    attribution: _NLSC_ATTR,
+  },
+  {
+    id: 'nlsc-photo',
+    label: '正射影像圖（通用）',
+    type: 'raster',
+    tileSize: 256,
+    maxzoom: 19,
+    tiles: [`${_NLSC}/PHOTO2/default/GoogleMapsCompatible/{z}/{y}/{x}`],
+    attribution: _NLSC_ATTR,
+  },
+  {
+    id: 'nlsc-b5000',
+    label: '1/5000 基本地形圖',
+    type: 'raster',
+    tileSize: 256,
+    maxzoom: 19,
+    tiles: [`${_NLSC}/B5000/default/GoogleMapsCompatible/{z}/{y}/{x}`],
+    attribution: _NLSC_ATTR,
+  },
+]
+
+/**
  * 線上 XYZ 光柵底圖（**需外網，非 air-gapped**；由 onlineBasemaps 開關，預設關）。
  * 注意 Esri 走 {z}/{y}/{x} 順序（與 Google/OSM 的 {z}/{x}/{y} 不同）。
  */
@@ -165,7 +208,10 @@ export function buildBasemapSources(cfg: BasemapConfig): BasemapSource[] {
       attribution: '衛星影像',
     })
   }
-  if (cfg.onlineBasemaps) out.push(...ONLINE_RASTER_SOURCES) // Google/Esri（需外網）
+  if (cfg.onlineBasemaps) {
+    // NLSC 排在 Google/Esri 之前：台灣戰區的官方圖資，優先於通用商用底圖。
+    out.push(...NLSC_RASTER_SOURCES, ...ONLINE_RASTER_SOURCES) // 皆需外網
+  }
   for (const b of cfg.basemaps ?? []) out.push(b) // 軍方 / 自訂來源
   return out
 }
