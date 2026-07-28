@@ -26,6 +26,17 @@ export function factionColor(faction: string, palette: Record<string, string> = 
   return _FALLBACK_COLORS[h % _FALLBACK_COLORS.length]!
 }
 
+// ---- 血條桶號（#94）----
+// 圖標上方血條以 5% 為一桶：肉眼分辨不出 1% 差異，卻能把 addImage 從 101 次降到 21 次。
+// 純算部分放這裡（本模組無任何相依）；canvas 繪製在 useMilsymbol。
+export const HP_BAR_PREFIX = 'unit-hp-bar-'
+export const HP_BAR_STEP = 5
+
+/** 血量 → 桶號（0/5/…/100）。圖層 icon-image 與 addImage 共用同一套鍵。 */
+export function hpBucket(pct: number): number {
+  return Math.round(Math.min(100, Math.max(0, pct)) / HP_BAR_STEP) * HP_BAR_STEP
+}
+
 /** 關係 → 2525 affiliation 字母：ALLIED=F(友)、NEUTRAL=N(中)、HOSTILE=H(敵)。 */
 export function affiliationForRelation(rel: Relation): string {
   return rel === 'ALLIED' ? 'F' : rel === 'NEUTRAL' ? 'N' : 'H'
@@ -204,6 +215,8 @@ export function buildUnitFeatures(
       properties: {
         id, faction, icon: key, opacity, kind,
         ...(health != null ? { health } : {}),
+        // #94 血條圖標鍵：以 5% 為桶（見 hpBucket），讓圖層直接 ['get','hpIcon'] 取圖。
+        ...(health != null ? { hpIcon: `${HP_BAR_PREFIX}${hpBucket(health)}` } : {}),
         ...(fixed ? { fixed: true } : {}),
       },
       geometry: { type: 'Point', coordinates: [lng, lat] },

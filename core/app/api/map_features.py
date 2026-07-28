@@ -67,6 +67,8 @@ class MapFeatureEdit(BaseModel):
     influence_radius_m: float | None = None
     weapon_template_id: str | None = None
     attributes: dict[str, Any] | None = None
+    # 變更歸屬（WHITE_CELL＝共同層）。**僅全知可用**——見 edit_map_feature 的檢查。
+    owner_faction: str | None = None
 
 
 class TerrainFootprintRequest(BaseModel):
@@ -215,6 +217,12 @@ def edit_map_feature(
         feat.weapon_template_id = edit.weapon_template_id
     if edit.attributes is not None:
         feat.attributes = {**(feat.attributes or {}), **edit.attributes}
+    if edit.owner_faction is not None:
+        # 轉移歸屬僅全知可為：一般角色若能改，等同可把標註轉給他軍、或逕自發布到共同層
+        # （WHITE_CELL）讓全體看見——那會繞過 fog of war。
+        if not is_omniscient(user.role):
+            raise AuthForbiddenError("僅 White Cell 可變更標註歸屬")
+        feat.owner_faction = validate_faction_id(edit.owner_faction)
     db.commit()
     return _view(feat)
 

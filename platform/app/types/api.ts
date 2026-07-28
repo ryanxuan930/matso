@@ -1068,6 +1068,8 @@ export interface components {
             influence_radius_m?: number | null;
             weapon_template_id?: string | null;
             attributes?: Record<string, never> | null;
+            /** @description 變更歸屬陣營（WHITE_CELL＝共同層，全體可見）。**僅全知可用**——一般角色帶此欄→403， 以免自己把標註轉給他軍或逕自發布到共同層而繞過 fog。 */
+            owner_faction?: string | null;
         };
         /** @description 武器射向/雷達扇區的地形裁切請求（#11） */
         TerrainFootprintRequest: {

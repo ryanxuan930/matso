@@ -100,6 +100,15 @@ export function featureDisplayColor(f: MapFeature): string {
   return typeof c === 'string' && c ? c : featureColor(f.kind)
 }
 
+/** 標註線寬（#96）：`attributes.width`；未設 → 預設 2（既有標註維持原樣）。夾在 0.5–12。 */
+export const DEFAULT_FEATURE_WIDTH = 2
+export function featureLineWidth(f: MapFeature): number {
+  const w = (f.attributes as Record<string, unknown> | undefined)?.width
+  return typeof w === 'number' && Number.isFinite(w)
+    ? Math.min(12, Math.max(0.5, w))
+    : DEFAULT_FEATURE_WIDTH
+}
+
 const R_EARTH = 6378137
 /** 兩點（[lng,lat]）間近似距離（公尺）——供圓形半徑。 */
 export function haversineM(a: number[], b: number[]): number {
@@ -256,6 +265,9 @@ export function featuresToFc(features: MapFeature[]): FC {
         owner: f.owner_faction,
         color: featureDisplayColor(f),
         gtype: f.geometry_type,
+        // #96 線寬：存於 attributes.width（Json 欄位 → 免 migration）；缺值退預設 2，
+        // 讓既有沒設過寬度的標註維持原樣。
+        width: featureLineWidth(f),
         label: f.label ?? '',
         hasSym: f.geometry_type === 'POINT' && featureSidc(f) !== '',
       },

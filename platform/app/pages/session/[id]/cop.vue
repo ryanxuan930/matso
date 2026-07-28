@@ -262,6 +262,9 @@ const selectedFeatureId = ref<string | null>(null)
 // 選取特徵的編輯欄位（#11）
 const editFeatLabel = ref('')
 const editFeatColor = ref('')
+const editFeatOwner = ref('') // #92 歸屬陣營（僅全知可改；'' = 不變更）
+const drawWidth = ref(DEFAULT_FEATURE_WIDTH) // #96 繪製線寬
+const editFeatWidth = ref(DEFAULT_FEATURE_WIDTH) // #96 編輯線寬
 const editFeatNotes = ref('')
 const editFeatHeight = ref<number | null>(null)
 const editFeatSidc = ref('')
@@ -384,7 +387,12 @@ function factionPower(units: UnitView[]): { pct: number; mass: number; ko: numbe
 // 真單位依「我方 / 他軍」分流渲染：我方＝友軍符號（可選取指揮）；他軍＝敵情符號（可鎖為攻擊目標）。
 // 觀測者陣營（#90）：白軍/管理員切了視角＝以該陣營之眼觀戰；否則為自身陣營。
 // 未選視角的純白軍為空字串＝全局 god view。#91/#92 皆以此為「我方」的判準。
-const observerFaction = computed(() => viewpoint.value || myFaction.value)
+// WHITE_CELL 是統裁保留字、不是交戰陣營：以它當觀測者會導致「沒有任何單位算我方」
+// （既有 bug——白軍被登記為 WHITE_CELL 參與者時，COP 的「單位」恆為 0、地圖只剩敵情）。
+// 故視同無觀測者＝全局視角。
+const observerFaction = computed(() =>
+  viewpoint.value || (myFaction.value === 'WHITE_CELL' ? '' : myFaction.value),
+)
 
 /**
  * 觀測者對某陣營的關係（#91）——2525 affiliation 的唯一依據。
@@ -971,6 +979,7 @@ async function finishDraw() {
   const ring = isShape ? shapeToPolygon(drawKind.value, draftCoords.value) : null
   const attrs: Record<string, unknown> = {}
   if (drawColor.value) attrs.color = drawColor.value
+  if (drawWidth.value !== DEFAULT_FEATURE_WIDTH) attrs.width = drawWidth.value
   if (drawNotes.value.trim()) attrs.notes = drawNotes.value.trim()
   if (drawHeight.value != null) attrs.height_m = drawHeight.value
   if (drawSidc.value && drawKind.value === 'POINT') attrs.sidc = drawSidc.value
@@ -1011,6 +1020,8 @@ function onFeatureClick(e: { id: string }) {
   const a = (f?.attributes ?? {}) as Record<string, unknown>
   editFeatLabel.value = f?.label ?? ''
   editFeatColor.value = typeof a.color === 'string' ? a.color : ''
+  editFeatOwner.value = f?.owner_faction ?? ''
+  editFeatWidth.value = f ? featureLineWidth(f) : DEFAULT_FEATURE_WIDTH
   editFeatNotes.value = typeof a.notes === 'string' ? a.notes : ''
   editFeatHeight.value = typeof a.height_m === 'number' ? a.height_m : null
   editFeatSidc.value = typeof a.sidc === 'string' ? a.sidc : ''
@@ -1138,6 +1149,8 @@ async function saveFeatureEdit() {
   const attrs: Record<string, unknown> = { ...((f?.attributes ?? {}) as Record<string, unknown>) }
   if (editFeatColor.value) attrs.color = editFeatColor.value
   else delete attrs.color
+  if (editFeatWidth.value !== DEFAULT_FEATURE_WIDTH) attrs.width = editFeatWidth.value
+  else delete attrs.width
   if (editFeatNotes.value.trim()) attrs.notes = editFeatNotes.value.trim()
   else delete attrs.notes
   if (editFeatHeight.value != null) attrs.height_m = editFeatHeight.value
@@ -1159,10 +1172,14 @@ async function saveFeatureEdit() {
     editFeatArc.value !== origArc.value
   if (arcChanged) attrs.viewshed_ring = null // 射界參數變動 → 一併清除持久化的裁切環
   try {
+    const ownerChanged =
+      canControl.value && !!editFeatOwner.value && editFeatOwner.value !== f?.owner_faction
     await editMapFeature(sessionId.value, fid, {
       label: editFeatLabel.value.trim() || null,
       influence_radius_m: editFeatRange.value,
       attributes: attrs,
+      // 僅全知且確實變更才送——一般角色帶此欄後端會 403，不該因為存個名稱就撞上。
+      ...(ownerChanged ? { owner_faction: editFeatOwner.value } : {}),
     })
     if (arcChanged) clearTerrainClip(fid)
     origRange.value = editFeatRange.value
@@ -2282,6 +2299,16 @@ watch(
                   <input v-model="drawColor" type="color">
                   顏色
                 </label>
+                <label class="me-h" title="線條粗細（點狀標註不適用）">
+                  線寬<input
+                    v-model.number="drawWidth"
+                    data-testid="draw-width"
+                    type="range"
+                    min="0.5"
+                    max="12"
+                    step="0.5"
+                  >{{ drawWidth }}
+                </label>
                 <label v-if="drawFeatureKind === 'OBSTACLE' || drawFeatureKind === 'BUILDING'" class="me-h">
                   高度<input v-model.number="drawHeight" type="number" min="0" step="0.5"> m
                 </label>
@@ -2357,10 +2384,28 @@ watch(
             <input v-model="editFeatLabel" class="me-in" data-testid="edit-feat-label" placeholder="名稱">
             <div class="me-row2">
               <label class="me-color"><input v-model="editFeatColor" type="color"> 顏色</label>
+              <label class="me-h" title="線條粗細">
+                線寬<input
+                  v-model.number="editFeatWidth"
+                  data-testid="edit-feat-width"
+                  type="range"
+                  min="0.5"
+                  max="12"
+                  step="0.5"
+                >{{ editFeatWidth }}
+              </label>
               <label v-if="selectedFeature.kind === 'OBSTACLE' || selectedFeature.kind === 'BUILDING'" class="me-h">
                 高度<input v-model.number="editFeatHeight" type="number" min="0" step="0.5"> m
               </label>
             </div>
+            <!-- #92 歸屬變更：僅全知可改（一般角色不顯示；後端亦擋 403）。 -->
+            <label v-if="canControl" class="me-own">
+              歸屬
+              <select v-model="editFeatOwner" data-testid="edit-feat-owner">
+                <option value="WHITE_CELL">共同（全體可見）</option>
+                <option v-for="f in sessionFactions" :key="f" :value="f">{{ f }}</option>
+              </select>
+            </label>
             <NatoSymbolSelect
               v-if="selectedFeature.geometry_type === 'POINT'"
               v-model="editFeatSidc"
@@ -3605,6 +3650,23 @@ watch(
   gap: 0.25rem;
   font-size: 0.72rem;
   color: #94a3b8;
+}
+/* #92 歸屬變更下拉（僅全知可見）。 */
+.map-editor .me-own {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+.map-editor .me-own select {
+  flex: 1;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+  font-size: 0.72rem;
 }
 .map-editor .me-color input {
   width: 1.6rem;

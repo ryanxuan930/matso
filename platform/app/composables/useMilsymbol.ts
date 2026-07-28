@@ -79,6 +79,48 @@ export function lockBadgeImage(): ImageData | null {
   return lockBadge
 }
 
+// ---- 血量條（#94）：圖標上方的血條 ----
+//
+// **為何用 canvas 圖而非 text-field**：MapLibre 的 symbol 文字需要 glyphs，而純離線模式
+// （無 tileUrl）style 不含 glyphs → 文字層會整個不出來。同鎖頭徽章的紀律：canvas 生成
+// ImageData，air-gapped 也一定畫得出來。
+//
+// 以 5% 為一桶（21 張圖）而非每個整數一張：肉眼分辨不出 1% 差異，卻能把 addImage 從 101
+// 降到 21 次。桶號同時作為 icon-image 的鍵。
+export const HP_BAR_PIXEL_RATIO = 2
+const HP_BAR_W = 40
+const HP_BAR_H = 8
+
+/** 單一桶的血條 ImageData：暗底 + 依血量帶著色的填充（與 healthColor 同色帶）。 */
+export function hpBarImage(bucket: number): ImageData | null {
+  if (typeof document === 'undefined') return null // SSR 保護
+  const canvas = document.createElement('canvas')
+  canvas.width = HP_BAR_W
+  canvas.height = HP_BAR_H
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  const r = 2
+  const rounded = (x: number, y: number, w: number, h: number) => {
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.arcTo(x + w, y, x + w, y + h, r)
+    ctx.arcTo(x + w, y + h, x, y + h, r)
+    ctx.arcTo(x, y + h, x, y, r)
+    ctx.arcTo(x, y, x + w, y, r)
+    ctx.closePath()
+  }
+  ctx.fillStyle = 'rgba(10,22,38,0.85)' // 暗底：確保在亮色底圖（衛星）上仍讀得出來
+  rounded(0, 0, HP_BAR_W, HP_BAR_H)
+  ctx.fill()
+  const inner = HP_BAR_W - 4
+  const filled = Math.round((inner * bucket) / 100)
+  if (filled > 0) {
+    ctx.fillStyle = bucket < 34 ? '#ef4444' : bucket < 67 ? '#f59e0b' : '#22c55e'
+    ctx.fillRect(2, 2, filled, HP_BAR_H - 4)
+  }
+  return ctx.getImageData(0, 0, HP_BAR_W, HP_BAR_H)
+}
+
 // SIDC → PNG data URL（供 <img> 內嵌預覽，如北約符號選單）。快取避免重複生成。
 const urlCache = new Map<string, string>()
 export function symbolDataUrl(sidc: string, size = 26): string {

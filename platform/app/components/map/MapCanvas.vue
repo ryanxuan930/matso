@@ -14,10 +14,18 @@ import {
 import { hexCellsForBounds } from '~/composables/useHexGrid'
 import { buildLatLngGrid, buildMgrsLabels } from '~/composables/useCoordGrid'
 import { cellToBoundary, cellToLatLng, latLngToCell } from 'h3-js'
-import { type Contact, type OwnUnit, buildUnitFeatures } from '~/composables/useUnits'
 import {
+  HP_BAR_PREFIX,
+  HP_BAR_STEP,
+  type Contact,
+  type OwnUnit,
+  buildUnitFeatures,
+} from '~/composables/useUnits'
+import {
+  HP_BAR_PIXEL_RATIO,
   LOCK_BADGE_ID,
   LOCK_BADGE_PIXEL_RATIO,
+  hpBarImage,
   lockBadgeImage,
   symbolImage,
 } from '~/composables/useMilsymbol'
@@ -713,7 +721,8 @@ onMounted(async () => {
       type: 'line',
       source: FEAT_SRC,
       filter: ['match', ['geometry-type'], ['LineString', 'Polygon'], true, false],
-      paint: { 'line-color': ['get', 'color'], 'line-width': 2 },
+      // #96 線寬資料驅動（attributes.width；缺值由 featureLineWidth 給預設 2）。
+      paint: { 'line-color': ['get', 'color'], 'line-width': ['get', 'width'] },
     })
     map.addLayer({
       id: 'mapfeat-point',
@@ -941,6 +950,28 @@ onMounted(async () => {
       source: UNITS_SRC,
       layout: {
         'icon-image': ['get', 'icon'],
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: { 'icon-opacity': ['get', 'opacity'] },
+    })
+    // 血條（#94）：圖標上方一條，離線免 glyphs（同鎖頭徽章的做法，見 useMilsymbol）。
+    // 我方/友軍常駐；contact 僅在後端有給血量時才有（未偵獲細節時不會有 hpIcon → 不畫）。
+    for (let pct = 0; pct <= 100; pct += HP_BAR_STEP) {
+      const id = `${HP_BAR_PREFIX}${pct}`
+      if (map.hasImage(id)) continue
+      const img = hpBarImage(pct)
+      if (img) map.addImage(id, img, { pixelRatio: HP_BAR_PIXEL_RATIO })
+    }
+    map.addLayer({
+      id: 'unit-hp-bar',
+      type: 'symbol',
+      source: UNITS_SRC,
+      filter: ['has', 'hpIcon'],
+      minzoom: 8, // 與血量環同步：拉遠時單位密集，血條會糊成一片
+      layout: {
+        'icon-image': ['get', 'hpIcon'],
+        'icon-offset': [0, -26], // 置於符號上方（符號 24px，pixelRatio 2）
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },

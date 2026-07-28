@@ -119,6 +119,43 @@ def test_viewpoint_filters_annotations_like_the_faction_sees_them(
     assert blue == {f["label"] for f in client.get(_base(world), headers=_cmdr(world)).json()}
 
 
+def test_white_cell_can_transfer_ownership(session_factory: sessionmaker[Session]) -> None:
+    """既有標註可改歸屬：轉給 RED 後藍軍就看不到了（歸屬變更真的改變可見性）。"""
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    fid = client.post(
+        _base(world),
+        json={**_POINT, "owner_faction": "BLUE", "label": "MOVE-ME"},
+        headers=_white(world),
+    ).json()["id"]
+    assert any(
+        f["label"] == "MOVE-ME" for f in client.get(_base(world), headers=_cmdr(world)).json()
+    )
+
+    r = client.patch(f"{_base(world)}/{fid}", json={"owner_faction": "RED"}, headers=_white(world))
+
+    assert r.status_code == 200
+    assert r.json()["owner_faction"] == "RED"
+    assert all(
+        f["label"] != "MOVE-ME" for f in client.get(_base(world), headers=_cmdr(world)).json()
+    )
+
+
+def test_commander_cannot_transfer_ownership(session_factory: sessionmaker[Session]) -> None:
+    """一般角色不得改歸屬——否則可把標註轉給他軍，或逕自發布到共同層繞過 fog。"""
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    fid = client.post(
+        _base(world), json={**_POINT, "kind": "OBSTACLE"}, headers=_cmdr(world)
+    ).json()["id"]
+
+    r = client.patch(
+        f"{_base(world)}/{fid}", json={"owner_faction": "WHITE_CELL"}, headers=_cmdr(world)
+    )
+
+    assert r.status_code == 403
+
+
 def test_commander_cannot_use_viewpoint(session_factory: sessionmaker[Session]) -> None:
     """一般角色不得以他陣營視角看標註（與 units/intel/relations 同紀律）。"""
     world = seed_world(session_factory)
