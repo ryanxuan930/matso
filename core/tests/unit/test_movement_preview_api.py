@@ -10,7 +10,7 @@ from _order_fakes import OrderWorld, order_token, seed_world
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.deps import get_db, get_settings
+from app.api.deps import get_db, get_movement_path_fn, get_settings
 from app.main import app
 from app.models import UserRole
 
@@ -31,6 +31,8 @@ def _client(factory: sessionmaker[Session]) -> TestClient:
 
     app.dependency_overrides[get_db] = _db
     app.dependency_overrides[get_settings] = lambda: TEST_SETTINGS
+    # #82：本檔驗預覽的距離/耗損/fog，非地形繞路 → 關規劃（不依賴 terrain 服務是否啟動）。
+    app.dependency_overrides[get_movement_path_fn] = lambda: None
     return TestClient(app)
 
 

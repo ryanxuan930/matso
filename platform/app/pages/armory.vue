@@ -4,6 +4,7 @@
 // 任何類別皆可「一鍵切換 表單/JSON」（保留擴充屬性：儲存時結構化欄位覆蓋於原 baseStats 之上）。
 import {
   createEquipmentTemplate,
+  deleteEquipmentTemplate,
   fetchEquipmentTemplates,
   updateEquipmentTemplate,
   type EquipmentTemplate,
@@ -529,6 +530,31 @@ async function save() {
     busy.value = false
   }
 }
+
+// 刪除範本（使用中→後端 422 拒刪）。二次確認後刪。
+const confirmDeleteTpl = ref<EquipmentTemplate | null>(null)
+async function doDeleteTemplate() {
+  const t = confirmDeleteTpl.value
+  if (!t) return
+  busy.value = true
+  try {
+    await deleteEquipmentTemplate(t.id)
+    confirmDeleteTpl.value = null
+    if (selectedId.value === t.id) resetForm()
+    await load()
+    toasts.push({ severity: 'success', title: `已刪除範本：${t.name}`, timeoutMs: 3000 })
+  } catch (e) {
+    const err = e as { code?: string; message?: string }
+    toasts.push({
+      severity: 'error',
+      title: `刪除失敗${err.code ? `（${err.code}）` : ''}`,
+      detail: err.message ?? '此範本可能正被單位裝備使用中',
+      timeoutMs: 0,
+    })
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -551,6 +577,12 @@ async function save() {
           >
             <span class="t-name">{{ t.name }}</span>
             <span class="t-cat">{{ t.category }}</span>
+            <button
+              class="t-del"
+              data-testid="armory-delete"
+              title="刪除範本"
+              @click.stop="confirmDeleteTpl = t"
+            ><i class="pi pi-trash" /></button>
           </li>
           <li v-if="!templates.length" class="empty">（尚無範本）</li>
         </ul>
@@ -884,6 +916,26 @@ async function save() {
         </div>
       </section>
     </div>
+
+    <!-- 刪除範本二次確認 -->
+    <div
+      v-if="confirmDeleteTpl"
+      class="armory-modal-overlay"
+      data-testid="armory-delete-modal"
+      @click.self="confirmDeleteTpl = null"
+    >
+      <div class="armory-modal">
+        <h3>刪除範本？</h3>
+        <p class="am-hint">
+          將刪除武器/裝備範本「<b>{{ confirmDeleteTpl.name }}</b>」（{{ confirmDeleteTpl.category }}）。
+          若已被單位配發使用中則無法刪除。
+        </p>
+        <div class="am-btns">
+          <button class="ghost" @click="confirmDeleteTpl = null">取消</button>
+          <button class="danger" data-testid="armory-delete-confirm" :disabled="busy" @click="doDeleteTemplate">確認刪除</button>
+        </div>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -952,13 +1004,87 @@ header h1 {
   border-color: #2563eb;
   background: #172554;
 }
+.list li .t-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .list .t-cat {
   color: #64748b;
   font-size: 0.7rem;
+  flex: none;
+}
+.list .t-del {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.1rem 0.2rem;
+  opacity: 0;
+}
+.list li:hover .t-del {
+  opacity: 1;
+}
+.list .t-del:hover {
+  color: #f87171;
 }
 .list .empty {
   color: #64748b;
   cursor: default;
+}
+.armory-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.armory-modal {
+  width: 24rem;
+  max-width: 90vw;
+  padding: 1.25rem;
+  border-radius: 0.5rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.armory-modal h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.am-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+.am-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.am-btns .ghost {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 0.25rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+}
+.am-btns .danger {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 0.25rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
 }
 .editor {
   flex: 1;

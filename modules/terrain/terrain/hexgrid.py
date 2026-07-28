@@ -18,7 +18,7 @@ from __future__ import annotations
 import enum
 import math
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import h3
@@ -57,6 +57,7 @@ class CellAttributes:
     terrain_class: TerrainClass
     water: bool
     mobility_cost: float
+    road_class: str = ""  # #83 道路疊加（空＝無道路）；由 roads.parquet 注入，不入 hex parquet
 
 
 def classify_terrain(elevation_mean: float, slope_deg: float, water: bool) -> TerrainClass:
@@ -207,10 +208,83 @@ def write_parquet(cells: Iterable[CellAttributes], path: Path) -> int:
 
 
 class HexGridCache:
-    """parquet 快取的查詢端。**不需 DTED / 外接硬碟**——載入後純記憶體查詢。"""
+    """parquet 快取的查詢端。**不需 DTED / 外接硬碟**——載入後純記憶體查詢。
 
-    def __init__(self, cells: dict[str, CellAttributes]) -> None:
+    #88 隨需補格：預建範圍外的 cell 在快取中缺席，A* 會視為不可通行（長距離移動因此被誤拒）。
+    若注入 `builder`（需 DTED），未命中的 cell 即**當場由 DTED 計算**並記憶化，讓路徑規劃不再
+    受限於預建 bbox。未注入 builder（快取-only 部署）→ 行為與過去完全相同（回 None）。
+    """
+
+    def __init__(
+        self, cells: dict[str, CellAttributes], builder: HexGridBuilder | None = None
+    ) -> None:
         self._cells = cells
+        self._builder = builder
+        self._on_demand: dict[str, CellAttributes] = {}  # 隨需計算的記憶化（不落 parquet）
+        self._roads: dict[str, str] = {}  # #83 h3 → road_class（疊加，不改 terrain_class）
+        self._landuse: dict[str, str] = {}  # #89 h3 → 真實土地利用 terrain_class（修正坡度猜測）
+
+    def with_landuse(self, landuse: dict[str, str]) -> HexGridCache:
+        """注入土地利用索引（#89）——修正只靠坡度+高程猜不出的 URBAN/FOREST。
+
+        優先序（見 `_decorate`）：DEM 的 WATER（海面 nodata）與 MOUNTAIN（陡峭）**優先於**土地利用
+        ——前者關乎可通行性正確、後者關乎機動難度；其餘情形以真實土地利用為準。
+        """
+        self._landuse = landuse
+        return self
+
+    @property
+    def landuse_count(self) -> int:
+        return len(self._landuse)
+
+    def with_roads(self, roads: dict[str, str]) -> HexGridCache:
+        """注入道路索引（#83）。cell 的 terrain_class 不變，另帶 road_class 供移動加速。"""
+        self._roads = roads
+        return self
+
+    @property
+    def road_count(self) -> int:
+        return len(self._roads)
+
+    def _decorate(self, cell: CellAttributes | None) -> CellAttributes | None:
+        """疊加道路等級（#83）與真實土地利用（#89）。無對應資料 → 原樣回傳。"""
+        if cell is None:
+            return cell
+        road = self._roads.get(cell.h3_index, "") if self._roads else ""
+        klass = cell.terrain_class
+        if self._landuse:
+            lu = self._landuse.get(cell.h3_index)
+            # DEM 的 WATER/MOUNTAIN 優先（可通行性與機動難度），其餘以土地利用為準。
+            keep_dem = klass in (TerrainClass.WATER, TerrainClass.MOUNTAIN)
+            if lu and not keep_dem:
+                klass = TerrainClass(lu)
+        if not road and klass is cell.terrain_class:
+            return cell
+        return replace(cell, road_class=road or cell.road_class, terrain_class=klass)
+
+    def with_builder(self, builder: HexGridBuilder | None) -> HexGridCache:
+        """回傳同一份快取但附上隨需 builder（服務層在 DTED 可用時注入）。"""
+        self._builder = builder
+        return self
+
+    @property
+    def on_demand_count(self) -> int:
+        """本行程隨需計算過的 cell 數（觀測用）。"""
+        return len(self._on_demand)
+
+    def _compute(self, h3_index: str) -> CellAttributes | None:
+        """隨需由 DTED 算一個 cell（失敗→None，維持既有「不可通行」語義，不讓服務崩潰）。"""
+        if self._builder is None:
+            return None
+        hit = self._on_demand.get(h3_index)
+        if hit is not None:
+            return hit
+        try:
+            cell = self._builder.build_cell(h3_index)
+        except Exception:
+            return None
+        self._on_demand[h3_index] = cell
+        return cell
 
     @classmethod
     def open(cls, path: Path) -> HexGridCache:
@@ -235,8 +309,22 @@ class HexGridCache:
         return len(self._cells)
 
     def get_cell(self, h3_index: str) -> CellAttributes | None:
-        return self._cells.get(h3_index)
+        hit = self._cells.get(h3_index)
+        if hit is None:
+            hit = self._compute(h3_index)  # #88 預建範圍外隨需補算
+        return self._decorate(hit)
 
     def get_cell_batch(self, h3_indexes: Iterable[str]) -> dict[str, CellAttributes]:
-        """批次查詢；缺漏的 h3_index 不出現在回傳 dict（呼叫方自行判斷）。"""
-        return {h: self._cells[h] for h in h3_indexes if h in self._cells}
+        """批次查詢；缺漏的 h3_index 不出現在回傳 dict（呼叫方自行判斷）。
+
+        #88：快取未命中者若有 DTED builder 則隨需補算；仍算不出（無 DTED/超出 DTED 範圍）才略過。
+        """
+        out: dict[str, CellAttributes] = {}
+        for h in h3_indexes:
+            cell = self._cells.get(h)
+            if cell is None:
+                cell = self._compute(h)
+            decorated = self._decorate(cell)
+            if decorated is not None:
+                out[h] = decorated
+        return out

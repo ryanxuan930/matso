@@ -68,8 +68,9 @@ def test_move_steps_toward_dest_then_completes(session_factory: sessionmaker[Ses
     clock = SimClock(tick_rate_ms=60_000)
 
     # 第一個 tick：單位應朝目標移動（狀態轉 EXECUTING），熱狀態有 lat/lng diff。
+    # #80：admit 亦會先發 MOVE_ATTRITION（行軍耗損），故檢查「有 UNIT_MOVED」而非首則。
     events = asyncio.run(mover.step(clock.now()))
-    assert events and events[0].event_type == "UNIT_MOVED"
+    assert any(e.event_type == "UNIT_MOVED" for e in events)
     diff = hot.drain_diff()
     assert unit_id in diff and "lat" in diff[unit_id] and "lng" in diff[unit_id]
     with session_factory() as db:
@@ -82,8 +83,8 @@ def test_move_steps_toward_dest_then_completes(session_factory: sessionmaker[Ses
     assert _dist_km(_START, moved) > 0
     assert _dist_km(moved, (dest_lat, dest_lng)) < _dist_km(_START, (dest_lat, dest_lng))
 
-    # 多跑幾個 tick → 應到點並 COMPLETED（3km / 0.667km ≈ 5 ticks，給足 20）。
-    for _ in range(20):
+    # #80：無編裝＝徒步 5km/h（~0.083 km/tick）→ 到 hex 心約 55 ticks；給足 70。
+    for _ in range(70):
         clock.advance()
         asyncio.run(mover.step(clock.now()))
     with session_factory() as db:

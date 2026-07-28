@@ -61,6 +61,10 @@ message CellInfo {
   string terrain_class = 6; // URBAN/FOREST/GRASSLAND/WETLAND/BARREN/WATER/MOUNTAIN
   bool water = 7;
   double mobility_cost = 8;
+  // #83 道路疊加：此 cell 是否有既成道路通過，及其等級（motorway/trunk/primary/secondary/
+  // tertiary/residential/track…，取 cell 內最高等級）。空字串＝無道路。道路是**疊加**於
+  // terrain_class 之上（林中公路仍是 FOREST，供未來遮蔽/掩蔽使用），移動時另以道路速度計。
+  string road_class = 9;
 }
 
 message GetCellBatchResponse {

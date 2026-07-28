@@ -58,6 +58,10 @@ class FactionRelations:
         out = [(min(p), max(p), rel) for p, rel in self._pairs.items()]
         return sorted(out, key=lambda t: (t[0], t[1]))
 
+    def to_triples(self) -> list[list[str]]:
+        """→ JSON 可存的三元組（`WargameSession.factionRelations`，#98）。確定性排序。"""
+        return [[a, b, rel.value] for a, b, rel in self.declarations()]
+
     def set_relation(self, a: str, b: str, rel: Relation, *, tick: int) -> LedgerEvent:
         """局中調整關係（宣戰/停火）→ 回 FACTION_RELATION_CHANGED 事件供寫入 Ledger。"""
         if a == b:
@@ -68,3 +72,26 @@ class FactionRelations:
             tick=tick,
             ai_decision={"factions": sorted([a, b]), "relation": rel.value},
         )
+
+
+def relations_from_triples(raw: object) -> FactionRelations:
+    """`WargameSession.factionRelations`（JSON 三元組）→ FactionRelations（#98）。
+
+    **刻意寬容**：None / 空 / 任何格式異常一律回全 HOSTILE 預設而非拋錯——關係矩陣讀不出來
+    不該讓整局跑不動，且「未宣告＝敵對」本就是既有語義（既有局的欄位全為 NULL）。
+    未知的關係字串同樣跳過該筆（不讓一筆髒資料毀掉整個矩陣）。
+    """
+    if not isinstance(raw, list):
+        return FactionRelations()
+    decls: list[tuple[str, str, Relation]] = []
+    for item in raw:
+        if not isinstance(item, (list, tuple)) or len(item) != 3:
+            continue
+        a, b, rel = item
+        if not (isinstance(a, str) and isinstance(b, str) and isinstance(rel, str)):
+            continue
+        try:
+            decls.append((a, b, Relation(rel)))
+        except ValueError:
+            continue  # 未知關係值 → 跳過該筆
+    return FactionRelations(decls)

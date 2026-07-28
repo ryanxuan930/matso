@@ -76,6 +76,16 @@ function addMsel() {
     inject: { event_type: 'INTEL_REPORT', payload: {}, faction: undefined },
   })
 }
+// 勝負條件（想定規格要求至少一條）：預設「某陣營於敵方被殲滅時獲勝」，條件 DSL 與 MSEL 觸發共用。
+function addVictory() {
+  const winner = factionIds.value[0] ?? 'BLUE'
+  const enemy = factionIds.value.find((f) => f !== winner) ?? winner
+  model.value.victoryConditions.push({
+    faction: winner,
+    condition: emptyCondition('faction_eliminated', enemy),
+  })
+}
+const factionOptions = computed(() => factionIds.value.map((f) => ({ label: f, value: f })))
 function remove<T>(arr: T[], i: number) {
   arr.splice(i, 1)
 }
@@ -400,6 +410,18 @@ async function saveToServer() {
               />
             </template>
           </Column>
+          <Column header="固定">
+            <template #body="{ node }">
+              <label
+                class="fixed-cell"
+                data-testid="unit-fixed"
+                title="固定單位（指揮部/後勤/陣地）：不接受移動令，不會被派去移動或機動交戰"
+              >
+                <Checkbox v-model="node.data.fixed" binary />
+                <span v-if="node.data.fixed" class="fixed-tag">🔒 指揮部</span>
+              </label>
+            </template>
+          </Column>
           <Column header="座標">
             <template #body="{ node }">
               <span class="coord-cell">
@@ -475,6 +497,32 @@ async function saveToServer() {
       </div>
     </section>
 
+    <section data-testid="victory-section">
+      <h2>勝負條件 <Button data-testid="add-victory" size="small" text @click="addVictory">＋</Button></h2>
+      <p class="hint">每條：指定陣營於「條件」成立時獲勝（條件 DSL 與 MSEL 觸發共用）。想定規格要求至少一條。</p>
+      <p v-if="!model.victoryConditions.length" class="empty-hint" data-testid="victory-empty">
+        尚無勝負條件——按 ＋ 新增（未設定將無法存檔）。
+      </p>
+      <div v-for="(v, i) in model.victoryConditions" :key="i" class="victory-row" data-testid="victory-row">
+        <div class="victory-head">
+          <label class="victory-winner">獲勝陣營
+            <Select
+              v-model="v.faction"
+              :options="factionOptions"
+              option-label="label"
+              option-value="value"
+              size="small"
+            />
+          </label>
+          <Button size="small" text severity="danger" data-testid="remove-victory" @click="remove(model.victoryConditions, i)">✕</Button>
+        </div>
+        <div class="victory-block">
+          <span class="msel-label">條件</span>
+          <ConditionBuilder v-model="v.condition" :factions="factionIds" />
+        </div>
+      </div>
+    </section>
+
     <section class="io">
       <div>
         <h2>匯出</h2>
@@ -513,6 +561,8 @@ h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; g
 .orbat-faction-head .fac-count { color: #94a3b8; font-size: 0.8rem; }
 .orbat-faction-head .tree-toggles { margin-left: auto; display: inline-flex; gap: 0.25rem; }
 .coord-cell { display: inline-flex; gap: 0.25rem; align-items: center; }
+.fixed-cell { display: inline-flex; gap: 0.35rem; align-items: center; cursor: pointer; }
+.fixed-tag { color: #fbbf24; font-size: 0.72rem; white-space: nowrap; }
 .picker-wrap { margin: 0.25rem 0 0.5rem; }
 .picker-label { display: block; color: #94a3b8; font-size: 0.75rem; margin-bottom: 0.2rem; }
 .empty-hint { color: #94a3b8; font-size: 0.82rem; }
@@ -539,4 +589,8 @@ h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; g
 .msel-once { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; color: #94a3b8; }
 .msel-block { display: flex; gap: 0.4rem; align-items: baseline; margin-top: 0.4rem; flex-wrap: wrap; }
 .msel-label { font-size: 0.8125rem; color: #64748b; min-width: 2.5rem; }
+.victory-row { border: 1px solid #1e293b; border-radius: 0.35rem; padding: 0.5rem; margin: 0.4rem 0; }
+.victory-head { display: flex; gap: 0.5rem; align-items: center; }
+.victory-winner { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8125rem; color: #94a3b8; }
+.victory-block { display: flex; gap: 0.4rem; align-items: baseline; margin-top: 0.4rem; flex-wrap: wrap; }
 </style>

@@ -38,6 +38,10 @@ model WargameSession {
   currentWeather Json // Processed output strictly from the Weather Module
   // #6：允許「自行編輯本軍編裝（ORBAT）」的陣營清單（White Cell 設定）。null/[] = 僅白軍可編。
   orbatEditFactions Json?
+  // #98 陣營關係矩陣（SPEC §12.1）：三元組陣列 [[a, b, "ALLIED"|"NEUTRAL"|"HOSTILE"], …]，對稱。
+  // 想定載入時寫入；**null = 未宣告 → 全 HOSTILE 預設**（既有局零遷移、語義與過去一致）。
+  // 存在此處而非只靠 scenarioId，是因為：無想定的局也要能有關係、且白軍可局中宣戰/停火。
+  factionRelations Json?
 
   units       TacticalUnit[]
   eventLogs   TacticalEventLog[]
@@ -103,6 +107,9 @@ model TacticalUnit {
   parentId String?
   parent   TacticalUnit?  @relation("UnitHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
   subUnits TacticalUnit[] @relation("UnitHierarchy")
+
+  // 固定單位（指揮部/後勤/陣地等）：不接受 MOVE 令、不會被派去移動或機動交戰（劇本 ORBAT 設定）。
+  isFixed Boolean @default(false)
 
   // Extensible Properties & Live Telemetry
   attributes   Json       @default("{}")

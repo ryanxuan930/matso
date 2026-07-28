@@ -16,8 +16,23 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 _FIXTURE_VERSION = 1
+
+
+def chat_completions_url(base_url: str) -> str:
+    """由 base_url 組出 Chat Completions 端點——同時支援本機 Ollama 與雲端 OpenAI 相容端點。
+
+    - base 只給 host[:port]（Ollama/vLLM，如 `http://host:11434`）→ 補 `/v1/chat/completions`。
+    - base 已含路徑（如 Google AI Studio 的 `.../v1beta/openai`、或 vLLM 的 `.../v1`）→ 只補
+      `/chat/completions`。避免對 Google 端點誤加 `/v1` 造成 404。
+    """
+    base = base_url.rstrip("/")
+    path = urlparse(base).path
+    if path and path != "/":
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
 
 
 @dataclass(frozen=True)
@@ -108,7 +123,7 @@ class OpenAICompatibleClient:
             "messages": [{"role": m.role, "content": m.content} for m in messages],
         }
         resp = self._client().post(
-            f"{self._base_url}/v1/chat/completions", json=payload, headers=headers
+            chat_completions_url(self._base_url), json=payload, headers=headers
         )
         resp.raise_for_status()
         data = resp.json()

@@ -193,6 +193,50 @@ def test_create_template_admin_ok(session_factory: sessionmaker[Session]) -> Non
     assert r.json()["base_stats"]["max_range_m"] == 1200
 
 
+def test_delete_template_admin_ok_and_gated(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    tid = client.post(
+        "/api/v1/equipment-templates",
+        json={"name": "SCRAP_GUN", "category": "KINETIC", "base_stats": _VALID_KINETIC},
+        headers=_white(world),
+    ).json()["id"]
+    # 一般指揮官不可刪（限統裁/管理）
+    assert (
+        client.delete(f"/api/v1/equipment-templates/{tid}", headers=_cmdr(world)).status_code == 403
+    )
+    # 白軍可刪（未使用中）
+    assert (
+        client.delete(f"/api/v1/equipment-templates/{tid}", headers=_white(world)).status_code
+        == 204
+    )
+    # 已不在清單
+    names = {
+        t["name"] for t in client.get("/api/v1/equipment-templates", headers=_white(world)).json()
+    }
+    assert "SCRAP_GUN" not in names
+
+
+def test_delete_template_in_use_rejected(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    tid = client.post(
+        "/api/v1/equipment-templates",
+        json={"name": "ISSUED_GUN", "category": "KINETIC", "base_stats": _VALID_KINETIC},
+        headers=_white(world),
+    ).json()["id"]
+    # 配發給藍軍單位 → 使用中
+    add = client.post(
+        f"/api/v1/sessions/{world.session_id}/units/{world.blue_unit_id}/equipment",
+        json={"template_id": tid},
+        headers=_white(world),
+    )
+    assert add.status_code in (200, 201), add.text
+    r = client.delete(f"/api/v1/equipment-templates/{tid}", headers=_white(world))
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "EQUIPMENT_TEMPLATE_IN_USE"
+
+
 _MISSILE_STATS = {
     "max_range_m": 2500,
     "min_range_m": 65,

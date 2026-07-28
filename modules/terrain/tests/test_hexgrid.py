@@ -210,3 +210,90 @@ def _poly():  # type: ignore[no-untyped-def]
     return h3.LatLngPoly(
         [(min_lat, min_lng), (min_lat, max_lng), (max_lat, max_lng), (max_lat, min_lng)]
     )
+
+
+# ---------------- #88 隨需補格（預建 bbox 外） ----------------
+
+
+def test_on_demand_fills_cells_outside_prebuilt_bbox(fixture_tiff: Path) -> None:
+    """預建範圍外的 cell：無 builder → None（舊行為）；注入 builder → 當場由 DTED 算出。"""
+    import h3 as _h3
+    from terrain.dted import DtedMap
+    from terrain.hexgrid import HexGridBuilder, HexGridCache
+
+    with DtedMap.open(fixture_tiff) as dted:
+        builder = HexGridBuilder(dted)
+        # 只預建一小塊
+        cells = {c.h3_index: c for c in builder.build_region((121.20, 23.70, 121.30, 23.80), 8)}
+        cache = HexGridCache(cells)
+        inside = next(iter(cells))
+        # 夾具涵蓋但**未預建**的格（bbox 外、仍在 GeoTIFF 內）
+        outside = _h3.latlng_to_cell(23.65, 121.40, 8)
+        assert outside not in cells
+
+        # 無 builder → 維持既有語義（None＝A* 視為不可通行）
+        assert cache.get_cell(inside) is not None
+        assert cache.get_cell(outside) is None
+        assert cache.get_cell_batch([outside]) == {}
+
+        # 注入 builder → 隨需補算
+        cache.with_builder(builder)
+        got = cache.get_cell(outside)
+        assert got is not None and got.h3_index == outside
+        assert cache.get_cell_batch([outside]) != {}
+        assert cache.on_demand_count >= 1  # 已記憶化
+        # 記憶化後不重算
+        before = cache.on_demand_count
+        cache.get_cell(outside)
+        assert cache.on_demand_count == before
+
+
+# ---------------- #89 土地利用疊加 ----------------
+
+
+def _cell(h3_index: str, klass: str) -> object:
+    from terrain.hexgrid import CellAttributes, TerrainClass
+
+    return CellAttributes(
+        h3_index=h3_index,
+        center_lat=23.7,
+        center_lng=121.2,
+        elevation_mean=50.0,
+        elevation_max=60.0,
+        slope_deg=2.0,
+        terrain_class=TerrainClass(klass),
+        water=False,
+        mobility_cost=1.1,
+    )
+
+
+def test_landuse_overrides_dem_guess() -> None:
+    """#89：坡度猜的 WETLAND（低平台北）被真實土地利用改為 URBAN。"""
+    from terrain.hexgrid import HexGridCache, TerrainClass
+
+    c = "8a2a1072b59ffff"
+    cache = HexGridCache({c: _cell(c, "WETLAND")}).with_landuse({c: "URBAN"})
+    got = cache.get_cell(c)
+    assert got is not None and got.terrain_class is TerrainClass.URBAN
+    assert cache.landuse_count == 1
+
+
+def test_dem_water_and_mountain_win_over_landuse() -> None:
+    """DEM 的 WATER（海面）與 MOUNTAIN（陡峭）優先於土地利用——可通行性/機動難度為重。"""
+    from terrain.hexgrid import HexGridCache, TerrainClass
+
+    w, m = "8a2a1072b59ffff", "8a2a1072b5bffff"
+    cache = HexGridCache({w: _cell(w, "WATER"), m: _cell(m, "MOUNTAIN")}).with_landuse(
+        {w: "URBAN", m: "FOREST"}
+    )
+    assert cache.get_cell(w).terrain_class is TerrainClass.WATER
+    assert cache.get_cell(m).terrain_class is TerrainClass.MOUNTAIN
+
+
+def test_no_landuse_leaves_cells_untouched() -> None:
+    """未注入土地利用 → 完全維持既有（坡度推導）行為。"""
+    from terrain.hexgrid import HexGridCache, TerrainClass
+
+    c = "8a2a1072b59ffff"
+    cache = HexGridCache({c: _cell(c, "WETLAND")})
+    assert cache.get_cell(c).terrain_class is TerrainClass.WETLAND

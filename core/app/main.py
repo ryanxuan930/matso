@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -13,6 +14,7 @@ from app import __version__
 from app.api import (
     aar_router,
     auth_router,
+    autonomy_router,
     control_router,
     equipment_router,
     inject_router,
@@ -23,7 +25,10 @@ from app.api import (
     movement_router,
     orbat_router,
     orders_router,
+    participants_router,
+    relations_router,
     scenarios_router,
+    system_router,
     units_router,
     users_router,
     ws_router,
@@ -43,10 +48,14 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     E2E/測試（STUB_GATEWAY=1）不啟動——避免與「送出後取消 VALIDATED 指令」等流程相衝，
     且測試不需真 Redis。正式/開發（無 stub）啟動 SimManager 掃描迴圈。
+
+    `MATSO_DISABLE_SIM=1`（pytest 專用）：即使非 stub 也不啟動 SimManager——讓 pytest 不因
+    lifespan 背景活模擬（真 MySQL 迴圈）與端點測試併發競態/拖慢，又不動 STUB_GATEWAY 的其他語意。
     """
     manager: SimManager | None = None
     task: asyncio.Task[None] | None = None
-    if not _settings.stub_gateway:
+    _sim_disabled = os.environ.get("MATSO_DISABLE_SIM") == "1"
+    if not _settings.stub_gateway and not _sim_disabled:
         manager = SimManager(redis_url=_settings.redis_url)
         task = asyncio.create_task(manager.run())
         logging.getLogger("app").info("Sim runtime 已啟動（活模擬 O10.1）")
@@ -83,16 +92,20 @@ app.add_middleware(
 
 install_error_handlers(app)
 app.include_router(auth_router)
+app.include_router(autonomy_router)
 app.include_router(lobby_router)
 app.include_router(orbat_router)
 app.include_router(equipment_router)
 app.include_router(map_features_router)
 app.include_router(movement_router)
 app.include_router(orders_router)
+app.include_router(participants_router)
 app.include_router(scenarios_router)
+app.include_router(system_router)
 app.include_router(units_router)
 app.include_router(users_router)
 app.include_router(intel_router)
+app.include_router(relations_router)
 app.include_router(inject_router)
 app.include_router(control_router)
 app.include_router(aar_router)

@@ -23,9 +23,14 @@ export function orderStatusLabel(s?: string): string {
   return (s && ORDER_STATUS_LABELS[s]) || s || ''
 }
 
-/** 取 session 的 faction-scoped 單位（下令對象）。 */
-export function fetchUnits(sessionId: string): Promise<UnitView[]> {
-  return apiFetch<UnitView[]>(`/sessions/${sessionId}/units`)
+/**
+ * 取 session 的 faction-scoped 單位（下令對象）。
+ * `asFaction`：**僅全知角色可用**——以該陣營視角取其單位（#90）；一般角色帶他陣營→後端 403。
+ * 過濾一律在後端（紅線 #3：fog of war 不在前端做）。
+ */
+export function fetchUnits(sessionId: string, asFaction?: string | null): Promise<UnitView[]> {
+  const q = asFaction ? `?as_faction=${encodeURIComponent(asFaction)}` : ''
+  return apiFetch<UnitView[]>(`/sessions/${sessionId}/units${q}`)
 }
 
 /** 取單位可用武器（ENGAGE 選武器/彈種；資料驅動 baseStats）。他方單位後端回 403。 */

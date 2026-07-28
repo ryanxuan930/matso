@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import type { Contact, OwnUnit } from '~/composables/useUnits'
+import type { Contact, OwnUnit, Relation } from '~/composables/useUnits'
 import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composables/useUnits'
 import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
 import type { components } from '~/types/api'
 import type { ApiError } from '~/composables/useApi'
+import type { ContactView } from '~/composables/useIntel'
+import { fetchIntel, fetchRelations, toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
 import { buildBasemapSources } from '~/composables/useMapStyle'
 import {
@@ -15,7 +17,12 @@ import {
   orderTypeLabel,
   submitOrder,
 } from '~/composables/useOrders'
-import { fetchEquipmentTemplates, type EquipmentTemplate } from '~/composables/useEquipment'
+import {
+  fetchEquipmentTemplates,
+  fetchOrbatPermissions,
+  setOrbatPermissions,
+  type EquipmentTemplate,
+} from '~/composables/useEquipment'
 import { forward as mgrsForward } from 'mgrs'
 import { latLngToCell } from 'h3-js'
 import {
@@ -31,17 +38,31 @@ import {
   fetchMovementPreview,
   fetchTerrainFootprint,
   influenceToFc,
+  MIN_VERTICES,
   type MovementPreview,
+  openRing,
+  removeVertex,
   rotatePoints,
   shapeToPolygon,
   type DraftKind,
   type FeatureCreate,
   type MapFeature,
 } from '~/composables/useMapFeatures'
+import { formatCountdown, useAiStatus } from '~/composables/useAiStatus'
 
 // COP（SPEC §13.1/§13.4）：地圖基座（O4.2）+ 單位/fog of war（O4.4）+ 下令 UX（O4.5）。
 const route = useRoute()
 const sessionId = computed(() => String(route.params.id))
+
+// #79 AI 決策狀態列（思考中／下一次決策倒數）——後端 faction-scoped，一般角色只回己方。
+const aiStatus = useAiStatus(() => sessionId.value)
+const aiChips = computed(() =>
+  aiStatus.factions.value.map((f) => ({
+    faction: f.faction,
+    state: f.state,
+    countdown: formatCountdown(f.seconds_until_next),
+  })),
+)
 
 // 白軍控制台（時間控制 / 注入 / 視角）限統裁角色（SPEC §12）；其餘角色不顯示入口。
 const auth = useAuthStore()
@@ -209,9 +230,17 @@ const syntheticUnits = computed<OwnUnit[]>(() => {
 
 // 真單位（GET /units；下令對象）
 const realUnits = ref<UnitView[]>([])
+const intelContacts = ref<ContactView[]>([]) // 後端 fog 過濾後的敵情（#90）
+// 視角切換（#90）：僅全知角色可用。'' = 全局 god view；否則＝以該陣營之眼觀戰（套其戰場迷霧）。
+// **不在前端過濾**——值只是帶給後端的 as_faction，實際可見性由後端決定（紅線 #3）。
+const viewpoint = ref<string>('')
+const sessionFactions = ref<string[]>([]) // 視角下拉選項（全局視角時取得，切視角後不縮）
+// #91 觀測者對各陣營的關係（後端以觀測者為中心給，不含第三方之間的結盟）。
+const factionRelations = ref<Record<string, string>>({})
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
 const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
+const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個陣營）；範圍外單位不可下令
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 
 // 地圖編輯器（stage ③b）——標註/工事/武器據點的繪製與管理。
@@ -236,6 +265,9 @@ const selectedFeatureId = ref<string | null>(null)
 // 選取特徵的編輯欄位（#11）
 const editFeatLabel = ref('')
 const editFeatColor = ref('')
+const editFeatOwner = ref('') // #92 歸屬陣營（僅全知可改；'' = 不變更）
+const drawWidth = ref(DEFAULT_FEATURE_WIDTH) // #96 繪製線寬
+const editFeatWidth = ref(DEFAULT_FEATURE_WIDTH) // #96 編輯線寬
 const editFeatNotes = ref('')
 const editFeatHeight = ref<number | null>(null)
 const editFeatSidc = ref('')
@@ -291,6 +323,20 @@ const FIRE_POLICY_OPTS: { value: FirePolicy; label: string }[] = [
 ]
 // 聯合火力模式＝未指定單一武器（≥2 武器才有意義）；指定武器＝單武器射擊。
 const combinedMode = computed(() => weaponId.value === null && weapons.value.length >= 2)
+// 活彈藥（#53）：交戰消耗即時反映——優先讀 STATE_DIFF 串流的 ammo_by_weapon（活模擬扣減），
+// 否則回 w.ammo_remaining（GET /weapons 的 DB 值）。w.id＝EquipmentInstance.id＝ammo_by_weapon 鍵。
+// #84 活油料：STATE_DIFF 串流的 fuel（移動耗油/補給加油即時反映）。無值＝徒步/無油料模型。
+function liveFuel(unitId: string | null): number | null {
+  const f = stream.unitPatches[unitId ?? '']?.fuel
+  return typeof f === 'number' ? f : null
+}
+function liveAmmo(w: WeaponView): number | null {
+  const abw = stream.unitPatches[selectedId.value ?? '']?.ammo_by_weapon as
+    | Record<string, number>
+    | undefined
+  const live = abw?.[w.id]
+  return typeof live === 'number' ? live : (w.ammo_remaining ?? null)
+}
 const precheck = ref<OrderResponse['precheck'] | null>(null)
 const message = ref('')
 
@@ -313,11 +359,66 @@ function liveHealth(u: UnitView): number | undefined {
   return (typeof p?.health === 'number' ? p.health : u.health) ?? undefined
 }
 
+/**
+ * 單位量體＝加權平均的權重。用滿編戰力（TO&E 分母，與規模同單位）；
+ * 缺值退平台/建制數，再缺退 1（此時等同未加權平均）。
+ */
+function unitMass(u: UnitView): number {
+  const m = u.authorized_strength ?? u.platform_count ?? 1
+  return m > 0 ? m : 1
+}
+
+/**
+ * 陣營戰力＝各單位作戰效能%以量體加權平均（Σ 量體×效能 ÷ Σ 量體）。
+ * 一個連跌到 50% 不該和一個營跌到 50% 等重，故不用單純平均。
+ * **被摧毀單位仍計入分母**（量體照算、效能 0）——否則全滅的陣營會顯示 100%。
+ */
+function factionPower(units: UnitView[]): { pct: number; mass: number; ko: number } {
+  let weighted = 0
+  let mass = 0
+  let ko = 0
+  for (const u of units) {
+    const w = unitMass(u)
+    const h = Math.min(100, Math.max(0, liveHealth(u) ?? 100))
+    if (h <= 0) ko += 1
+    weighted += w * h
+    mass += w
+  }
+  return { pct: mass > 0 ? weighted / mass : 0, mass, ko }
+}
+
 // 真單位依「我方 / 他軍」分流渲染：我方＝友軍符號（可選取指揮）；他軍＝敵情符號（可鎖為攻擊目標）。
-// myFaction 未知（純白軍全知）時，全部以友軍呈現以便至少可見。
+// 觀測者陣營（#90）：白軍/管理員切了視角＝以該陣營之眼觀戰；否則為自身陣營。
+// 未選視角的純白軍為空字串＝全局 god view。#91/#92 皆以此為「我方」的判準。
+// WHITE_CELL 是統裁保留字、不是交戰陣營：以它當觀測者會導致「沒有任何單位算我方」
+// （既有 bug——白軍被登記為 WHITE_CELL 參與者時，COP 的「單位」恆為 0、地圖只剩敵情）。
+// 故視同無觀測者＝全局視角。
+const observerFaction = computed(() =>
+  viewpoint.value || (myFaction.value === 'WHITE_CELL' ? '' : myFaction.value),
+)
+
+/**
+ * 觀測者對某陣營的關係（#91）——2525 affiliation 的唯一依據。
+ *
+ * 己方恆 ALLIED；其餘查後端給的關係列。**未宣告 → HOSTILE**（SPEC §12.1 預設，
+ * 與後端 `FactionRelations` 同一語義；不在前端另立一套判敵規則）。
+ * faction 為 undefined（contact 未達 IDENTIFIED，敵我尚未揭露）→ 亦回 HOSTILE 保守標敵。
+ */
+function relationOf(faction?: string | null): Relation {
+  if (!faction) return 'HOSTILE'
+  if (faction === observerFaction.value) return 'ALLIED'
+  const r = factionRelations.value[faction]
+  return r === 'ALLIED' || r === 'NEUTRAL' ? r : 'HOSTILE'
+}
+/** 我方＋友軍（#91 共享視圖）：這些陣營的單位以 Friendly 外型呈現、且可被指揮判定沿用。 */
+function isFriendly(faction?: string | null): boolean {
+  return !observerFaction.value || relationOf(faction) === 'ALLIED'
+}
+// observerFaction 未知（純白軍全局視角）時，全部以友軍呈現以便至少可見。
+// #91：我方**與友軍（ALLIED）**皆列此（後端 units 已回共享視圖，此處符號一致以 Friendly 呈現）。
 const realAsOwn = computed<OwnUnit[]>(() =>
   realUnits.value
-    .filter((u) => !myFaction.value || u.faction === myFaction.value)
+    .filter((u) => isFriendly(u.faction))
     .map((u) => ({
       id: u.id,
       faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
@@ -325,24 +426,23 @@ const realAsOwn = computed<OwnUnit[]>(() =>
       comms: (u.comms as OwnUnit['comms']) ?? 'ONLINE',
       lastReportedTick: 100,
       health: liveHealth(u), // 血量環（#5）；fog of war：僅我方單位帶血量
+      isFixed: u.is_fixed, // 固定單位（指揮部等）→ 地圖鎖頭徽章
     })),
 )
+/**
+ * 敵情 contacts（#90）：**取自後端偵測結果**（`/intel`），不再由 `/units` 反推。
+ *
+ * 舊做法是「拿 units 裡非我方的挑出來當敵情」，那有兩個問題：一般陣營角色的 `/units`
+ * 只回己方 → 敵情恆為空（實際上就是看不到敵人）；白軍全知 → 等於把 ground truth 當敵情。
+ * 現在一律以後端 fog 過濾後的 contacts 為準（未偵獲就是看不到），位置為最後已知。
+ */
 const realAsContacts = computed<Contact[]>(() =>
-  myFaction.value
-    ? realUnits.value
-        .filter((u) => u.faction !== myFaction.value)
-        .map((u) => ({
-          contactId: u.id,
-          fidelity: 'IDENTIFIED' as const,
-          ...livePos(u),
-          errorRadiusM: 0,
-          designation: u.designation,
-          lastSeenTick: 100,
-          faction: u.faction,
-          relation: 'HOSTILE' as const, // 前端保守標敵；真 ROE 由後端關係矩陣裁決
-          health: liveHealth(u), // 敵情血量：STATE_DIFF 已帶 ground truth → 供地圖血量環/摧毀顯示
-        }))
-    : [],
+  // 全局視角（無觀測者）不畫敵情：該視角本就以 ground truth 呈現全部單位，再疊各陣營的偵測結果
+  // 會讓同一個單位出現兩次（一次友軍符號、一次 contact）。有觀測者時才是「他看得到什麼」。
+  !observerFaction.value
+    ? []
+    : // #91：affiliation 依觀測者對該陣營的關係決定（未達 IDENTIFIED 時 faction 未揭露 → 保守標敵）。
+      intelContacts.value.map((c) => toContact(c, relationOf)),
 )
 // 固定示範一個 OFFLINE 虛影（fog of war demo，O4.4）
 const GHOST: OwnUnit = {
@@ -373,23 +473,84 @@ const contacts = computed<Contact[]>(() => [
   ...realAsContacts.value,
 ])
 
+// ---- #95 武器軌跡（**純顯示**）----
+//
+// 紅線：這只是把已裁決的結果畫出來，**絕不回頭影響裁決**——軌跡由 ENGAGEMENT_RESOLVED
+// 事件（後端已裁決完）觸發，前端不做任何命中/可達判定。
+//
+// 端點座標取自「client 本來就看得到的東西」（我方/友軍單位 + 已偵獲的 contact），
+// **刻意不讓後端在事件裡夾帶座標**：交戰事件目前沒有 faction 受眾標籤（見
+// state/broadcaster.py），夾帶座標等於把全場每次交戰的精確位置廣播給所有陣營。
+// 代價：陣營視角下若看不到某一端（例如未偵獲的射手），該次交戰就不畫——這是正確的迷霧行為。
+const TRACK_TTL_MS = 4000
+interface WeaponTrack {
+  key: string
+  from: [number, number]
+  to: [number, number]
+  status: string
+  born: number
+}
+const weaponTracks = ref<WeaponTrack[]>([])
+const trackNow = ref(0) // 由計時器推進，驅動淡出（只在有軌跡時跑）
+
+/** 由 id 找地圖上的座標：我方/友軍單位，或已偵獲的 contact。查無 → null（不畫）。 */
+function trackPos(id?: string | null): [number, number] | null {
+  if (!id) return null
+  const u = ownUnits.value.find((x) => x.id === id)
+  if (u) return [u.lng, u.lat]
+  const c = contacts.value.find((x) => x.contactId === id)
+  return c ? [c.lng, c.lat] : null
+}
+
+const weaponTrackFc = computed(() => ({
+  type: 'FeatureCollection' as const,
+  features: weaponTracks.value.map((t) => {
+    const age = Math.max(0, trackNow.value - t.born)
+    return {
+      type: 'Feature' as const,
+      properties: {
+        status: t.status,
+        // 線性淡出；REJECTED 不畫（下方過濾），HIT 較亮、MISS 較淡以便一眼分辨。
+        opacity: Math.max(0, 1 - age / TRACK_TTL_MS) * (t.status === 'HIT' ? 0.95 : 0.5),
+      },
+      geometry: { type: 'LineString' as const, coordinates: [t.from, t.to] },
+    }
+  }),
+}))
+
 // 可作 ENGAGE 目標的真單位（他軍）——供下拉與地圖點選鎖定共用。
 const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
 const engageTargets = computed(() =>
-  realUnits.value.filter((u) => u.id !== selectedId.value && u.faction !== myFaction.value),
+  realUnits.value.filter((u) => u.id !== selectedId.value && !isFriendly(u.faction)),
 )
 
 async function refresh() {
-  realUnits.value = await fetchUnits(sessionId.value).catch(() => [])
+  realUnits.value = await fetchUnits(sessionId.value, viewpoint.value || null).catch(() => [])
+  intelContacts.value = await fetchIntel(sessionId.value, viewpoint.value || null).catch(() => [])
+  // #91 關係矩陣：決定友/中/敵符號。取不到 → 空物件 → relationOf 退回 HOSTILE（保守標敵）。
+  factionRelations.value = await fetchRelations(sessionId.value, viewpoint.value || null)
+    .then((r) => r.relations ?? {})
+    .catch(() => ({}))
+  // 視角下拉的選項來源：只在全局視角時更新（切了視角後 /units 只回該陣營，會把清單縮成一項）。
+  if (!viewpoint.value) {
+    sessionFactions.value = [...new Set(realUnits.value.map((u) => u.faction))].sort()
+  }
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
   // 我方陣營（決定友/敵渲染與目標可選集）+ 開局時間（#4 執行時間）——由 session 摘要取得。
   const sessions = await apiFetch<
-    { id: string; my_faction?: string; start_time?: string | null; orbat_edit?: boolean }[]
+    {
+      id: string
+      my_faction?: string
+      start_time?: string | null
+      orbat_edit?: boolean
+      my_unit_scope?: string[]
+    }[]
   >('/sessions').catch(() => [])
   const me = sessions.find((s) => s.id === sessionId.value)
   myFaction.value = me?.my_faction ?? ''
   sessionStart.value = me?.start_time ?? null
   orbatEdit.value = !!me?.orbat_edit
+  myUnitScope.value = me?.my_unit_scope ?? []
   await loadFeatures()
 }
 
@@ -404,6 +565,49 @@ const unitCardDrag = ref<{ x: number; y: number } | null>(null)
 // 選取換單位/取消選取時，讓卡片回到自動錨定（不沿用上一單位的手動位置）。
 watch(selectedId, () => {
   unitCardDrag.value = null
+})
+// #95 交戰事件 → 武器軌跡。只吃新到的事件（events 是累積緩衝，重看舊事件不該重畫）。
+let trackCursor = 0
+let trackTimer: ReturnType<typeof setInterval> | null = null
+watch(
+  () => stream.events.length,
+  (len) => {
+    if (len < trackCursor) trackCursor = 0 // 緩衝被裁切（MAX_EVENTS）→ 重置游標
+    for (const env of stream.events.slice(trackCursor)) {
+      const p = (env as { payload?: Record<string, unknown> }).payload ?? {}
+      if (p.event_type !== 'ENGAGEMENT_RESOLVED') continue
+      const status = String(p.status ?? '')
+      if (status === 'REJECTED') continue // 根本沒射出去，不畫
+      const from = trackPos(p.initiator_id as string | undefined)
+      const to = trackPos(p.target_id as string | undefined)
+      if (!from || !to) continue // 有一端看不到 → 不畫（迷霧下的正確行為）
+      weaponTracks.value.push({
+        key: `${p.initiator_id}-${p.target_id}-${env.seq ?? len}`,
+        from,
+        to,
+        status,
+        born: Date.now(),
+      })
+    }
+    trackCursor = len
+    // 有軌跡才起計時器（推進淡出 + 到期清除）；清空即停，避免閒置空轉。
+    if (weaponTracks.value.length && !trackTimer) {
+      trackTimer = setInterval(() => {
+        trackNow.value = Date.now()
+        weaponTracks.value = weaponTracks.value.filter((t) => trackNow.value - t.born < TRACK_TTL_MS)
+        if (!weaponTracks.value.length && trackTimer) {
+          clearInterval(trackTimer)
+          trackTimer = null
+        }
+      }, 200)
+    }
+  },
+)
+// 切換視角（#90）→ 重抓 units/intel（後端依 as_faction 套該陣營迷霧）；清掉屬於前一視角的選取。
+watch(viewpoint, async () => {
+  selectedId.value = null
+  targetUnitId.value = ''
+  await refresh()
 })
 // 卡片實際定位：拖曳過 → 手動座標；否則圖標右上方偏移，並夾在視窗內（卡片約 304×320）。
 const unitCardStyle = computed(() => {
@@ -546,12 +750,12 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
 // 點地圖上的單位符號：我方 → 選取指揮；他軍（有選取的我方單位時）→ 鎖為 ENGAGE 目標。
 function onUnitClick(e: { id: string; faction: string; kind: string }) {
   const isReal = realUnitIds.value.has(e.id)
-  const isMine = isReal && e.faction === myFaction.value
+  const isMine = isReal && isFriendly(e.faction)
   if (isMine) {
     selectUnit(e.id)
     return
   }
-  if (isReal && selectedId.value && e.faction !== myFaction.value) {
+  if (isReal && selectedId.value && !isFriendly(e.faction)) {
     orderType.value = 'ENGAGE'
     targetUnitId.value = e.id
     targeting.value = false
@@ -571,12 +775,16 @@ const ctxMenu = ref<{
   faction?: string
   kind?: string
   featureId?: string
+  vertexIndex?: number // #99 游標下的控制點索引（右鍵可刪點）
 } | null>(null)
 // #26 右鍵地圖物件選單動作：編輯（開編輯工具列並選取）/ 旋轉 / 刪除。
+// #99b：這裡同時「解鎖整形」——控制點與拖曳只在明確從此進入後才生效。
 function ctxEditFeature() {
   const id = ctxMenu.value?.featureId
   closeCtx()
-  if (id) onFeatureClick({ id })
+  if (!id) return
+  onFeatureClick({ id })
+  armReshape(id) // 必須在 onFeatureClick 之後：selectedFeatureId 的 watch 會清掉不相符的解鎖
 }
 async function ctxRotateFeature(deg: number) {
   const id = ctxMenu.value?.featureId
@@ -595,13 +803,13 @@ const ctxIsMine = computed(
   () =>
     !!ctxMenu.value?.unitId &&
     realUnitIds.value.has(ctxMenu.value.unitId) &&
-    ctxMenu.value.faction === myFaction.value,
+    isFriendly(ctxMenu.value.faction),
 )
 const ctxIsEnemy = computed(
   () =>
     !!ctxMenu.value?.unitId &&
     realUnitIds.value.has(ctxMenu.value.unitId) &&
-    ctxMenu.value.faction !== myFaction.value,
+    !isFriendly(ctxMenu.value.faction),
 )
 const ctxUnitName = computed(() => {
   const id = ctxMenu.value?.unitId
@@ -615,6 +823,8 @@ function onContextMenu(e: {
   unitId?: string
   faction?: string
   kind?: string
+  featureId?: string
+  vertexIndex?: number
 }) {
   // 繪圖/座標查詢時不彈選單（避免干擾）。
   if (drawActive.value || coordQuery.value) return
@@ -662,6 +872,8 @@ function ctxLockTarget() {
 }
 
 const selectedUnit = computed(() => realUnits.value.find((u) => u.id === selectedId.value) ?? null)
+// 固定單位（指揮部等）：不可下移動令（後端 validator 權威擋 ORDER_UNIT_FIXED；此為 UX 提示）。
+const selectedUnitFixed = computed(() => !!selectedUnit.value?.is_fixed)
 const targetUnit = computed(() => realUnits.value.find((u) => u.id === targetUnitId.value) ?? null)
 // 選取單位是否可編裝：需該局開放編裝，且（我為白軍/全知 或 該單位為本軍）。
 const selectedEditable = computed(
@@ -671,9 +883,136 @@ const selectedEditable = computed(
     (canControl.value || (!!myFaction.value && selectedUnit.value.faction === myFaction.value)),
 )
 
+// unit_scope：白軍/全知不限；scope 空＝整個陣營；否則只能下令範圍內單位（後端 validator 亦強制）。
+function inScope(u: UnitView): boolean {
+  return canControl.value || myUnitScope.value.length === 0 || myUnitScope.value.includes(u.id)
+}
+// 單位/下令小工具依陣營分組（可收合/展開）。
+const collapsedFactions = ref<Set<string>>(new Set())
+function toggleFactionGroup(f: string) {
+  const s = new Set(collapsedFactions.value)
+  if (s.has(f)) s.delete(f)
+  else s.add(f)
+  collapsedFactions.value = s
+}
+const unitsByFaction = computed(() => {
+  const groups = new Map<string, UnitView[]>()
+  for (const u of realUnits.value) {
+    const arr = groups.get(u.faction) ?? []
+    arr.push(u)
+    groups.set(u.faction, arr)
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([faction, units]) => ({ faction, units, power: factionPower(units) }))
+})
+
+// ---- 裝備管理（COP 專屬面板）：白軍編任一單位編裝 + 設各軍自編權限；或本軍（該局開放自編）----
+const equipMgr = ref(false)
+const equipUnitId = ref('')
+const orbatPerms = ref<string[]>([])
+const canManageEquip = computed(() => canControl.value || orbatEdit.value)
+// 可編裝單位：白軍見全部（依陣營分組）；一般角色僅本軍（且該局開放自編）。
+const equipEditableFactions = computed(() =>
+  canControl.value
+    ? unitsByFaction.value
+    : unitsByFaction.value.filter((g) => !!myFaction.value && g.faction === myFaction.value),
+)
+async function openEquipMgr() {
+  equipMgr.value = true
+  equipUnitId.value = ''
+  if (canControl.value) {
+    orbatPerms.value = (await fetchOrbatPermissions(sessionId.value).catch(() => ({ factions: [] })))
+      .factions
+  }
+}
+async function toggleOrbatPerm(f: string) {
+  const set = new Set(orbatPerms.value)
+  if (set.has(f)) set.delete(f)
+  else set.add(f)
+  const next = [...set]
+  try {
+    orbatPerms.value = (await setOrbatPermissions(sessionId.value, next)).factions
+    toasts.push({
+      severity: 'success',
+      title: `自編權限：${orbatPerms.value.join('、') || '（僅白軍）'}`,
+      timeoutMs: 2500,
+    })
+  } catch {
+    toasts.push({ severity: 'error', title: '設定自編權限失敗', timeoutMs: 3000 })
+  }
+}
+
 // ---- 地圖編輯器（stage ③b）----
 const canDraw = computed(() => canControl.value || !!myFaction.value)
 const drawActive = computed(() => drawKind.value !== null)
+
+// ---- 地圖狀態編輯（暫停下布局：拖放單位 + 繪障礙，完成再開始兵推）。限白軍/導演。----
+const mapEditMode = ref(false)
+const selectedUnitCount = ref(0) // 地圖狀態編輯多選數量（「已選 N 個」徽章）
+async function enterMapEdit() {
+  try {
+    await apiFetch(`/sessions/${sessionId.value}/control`, {
+      method: 'POST',
+      body: { action: 'PAUSE' },
+    })
+    mapEditMode.value = true
+    widgets.value.mapedit.open = true // 順帶開啟繪圖工具（障礙/建築）
+    focusWidget('mapedit')
+    toasts.push({
+      severity: 'info',
+      title: '地圖狀態編輯：已暫停推演',
+      detail: '拖曳單位調整位置、用地圖編輯繪製障礙/建築，完成後按「開始兵推」。',
+      timeoutMs: 6000,
+    })
+  } catch {
+    toasts.push({ severity: 'error', title: '進入編輯模式失敗（需白軍/導演權限）', timeoutMs: 4000 })
+  }
+}
+async function startWargame() {
+  try {
+    await apiFetch(`/sessions/${sessionId.value}/control`, {
+      method: 'POST',
+      body: { action: 'RESUME' },
+    })
+  } finally {
+    mapEditMode.value = false
+  }
+  toasts.push({ severity: 'success', title: '開始兵推', timeoutMs: 2500 })
+}
+async function onUnitMove(e: { id: string; lng: number; lat: number }) {
+  try {
+    await apiFetch(`/sessions/${sessionId.value}/units/${e.id}/reposition`, {
+      method: 'POST',
+      body: { lat: e.lat, lng: e.lng },
+    })
+  } catch {
+    toasts.push({ severity: 'error', title: '單位移動失敗', timeoutMs: 3000 })
+  }
+  // 無論成敗都重載（成功→定位、失敗→還原到 DB 權威位置）。
+  realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
+}
+// 地圖狀態編輯 · 多選整組移動：逐一 reposition（並行）後只重載一次。
+function onUnitsSelected(e: { count: number }) {
+  selectedUnitCount.value = e.count
+}
+async function onUnitsMove(e: { moves: { id: string; lng: number; lat: number }[] }) {
+  if (!e.moves.length) return
+  try {
+    await Promise.all(
+      e.moves.map((m) =>
+        apiFetch(`/sessions/${sessionId.value}/units/${m.id}/reposition`, {
+          method: 'POST',
+          body: { lat: m.lat, lng: m.lng },
+        }),
+      ),
+    )
+    toasts.push({ severity: 'success', title: `已移動 ${e.moves.length} 個單位`, timeoutMs: 2000 })
+  } catch {
+    toasts.push({ severity: 'error', title: '批次移動失敗（部分單位可能未套用）', timeoutMs: 3000 })
+  }
+  realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
+}
 // #12 元素顯隱：地圖只渲染未隱藏的特徵（清單仍列全部，供切換）。
 const shownFeatures = computed(() =>
   mapFeatures.value.filter((f) => !hiddenFeatureIds.value.includes(f.id)),
@@ -685,7 +1024,10 @@ const draftFc = computed(() => draftToFc(drawKind.value, draftCoords.value))
 const drawableKinds = computed(() => FEATURE_KINDS.filter((k) => k.value !== 'WEAPON_EMPLACEMENT'))
 
 async function loadFeatures() {
-  mapFeatures.value = await fetchMapFeatures(sessionId.value).catch(() => [])
+  // #92：帶視角 → 後端只回「共同 + 該陣營」的標註（過濾在後端，紅線 #3）。
+  mapFeatures.value = await fetchMapFeatures(sessionId.value, viewpoint.value || null).catch(
+    () => [],
+  )
   // 還原已持久化的地形裁切環（#43）：裁切射界存在 attributes.viewshed_ring，重新整理後仍在。
   const clips: Record<string, number[][]> = {}
   for (const f of mapFeatures.value) {
@@ -701,6 +1043,7 @@ async function ensureWeaponTemplates() {
 }
 function startDraw(kind: DraftKind, featureKind: string) {
   selectedFeatureId.value = null
+  armReshape(null) // #99b 開始繪製 → 收掉上一個物件的控制點
   drawFeatureKind.value = featureKind
   drawKind.value = kind
   draftCoords.value = []
@@ -732,6 +1075,7 @@ async function finishDraw() {
   const ring = isShape ? shapeToPolygon(drawKind.value, draftCoords.value) : null
   const attrs: Record<string, unknown> = {}
   if (drawColor.value) attrs.color = drawColor.value
+  if (drawWidth.value !== DEFAULT_FEATURE_WIDTH) attrs.width = drawWidth.value
   if (drawNotes.value.trim()) attrs.notes = drawNotes.value.trim()
   if (drawHeight.value != null) attrs.height_m = drawHeight.value
   if (drawSidc.value && drawKind.value === 'POINT') attrs.sidc = drawSidc.value
@@ -740,6 +1084,9 @@ async function finishDraw() {
     geometry_type: isShape ? 'POLYGON' : drawKind.value,
     geometry: isShape ? ring : drawKind.value === 'POINT' ? draftCoords.value[0] : draftCoords.value,
     label: drawLabel.value.trim() || tmpl?.name || null,
+    // #92 歸屬：套了陣營視角時，繪出的標註歸該陣營（否則全知繪製一律落 WHITE_CELL 共同層，
+    // 等於白軍替某軍畫的東西全體都看得到）。一般角色不帶，後端一律歸本軍。
+    owner_faction: viewpoint.value || null,
     weapon_template_id: isWeapon ? drawWeaponTemplate.value || null : null,
     influence_radius_m: isWeapon && Number.isFinite(range) ? range : null,
     attributes: Object.keys(attrs).length ? attrs : undefined,
@@ -769,6 +1116,8 @@ function onFeatureClick(e: { id: string }) {
   const a = (f?.attributes ?? {}) as Record<string, unknown>
   editFeatLabel.value = f?.label ?? ''
   editFeatColor.value = typeof a.color === 'string' ? a.color : ''
+  editFeatOwner.value = f?.owner_faction ?? ''
+  editFeatWidth.value = f ? featureLineWidth(f) : DEFAULT_FEATURE_WIDTH
   editFeatNotes.value = typeof a.notes === 'string' ? a.notes : ''
   editFeatHeight.value = typeof a.height_m === 'number' ? a.height_m : null
   editFeatSidc.value = typeof a.sidc === 'string' ? a.sidc : ''
@@ -844,6 +1193,93 @@ async function onClearTerrainClip(fid: string) {
     // 清除持久化失敗不擋操作；地圖已即時還原理想射界。
   }
 }
+/**
+ * #99 本使用者對選取圖形**有沒有編修權**（與後端 `_feature_for_edit` 同一條規則：
+ * 全知可編任一；否則只能編本軍的，**共同層 WHITE_CELL 標註對一般指揮官是唯讀**）。
+ * 在前端先 gate，才不會拖完才吃 403。有權 ≠ 現在可拖，見 `reshapeArmedId`。
+ */
+const mayEditSelectedFeature = computed(() => {
+  const f = selectedFeature.value
+  if (!f || !canDraw.value) return false
+  if (canControl.value) return true
+  return !!myFaction.value && f.owner_faction === myFaction.value
+})
+
+/**
+ * #99b 整形須先「解鎖」：只有經右鍵選單（或編輯面板按鈕）明確進入調整狀態的那一個圖形
+ * 才畫控制點、才吃拖曳。**單純點選不解鎖**——否則在圖上點一下再手滑就把標註拖歪了，
+ * 而地圖上點選是最頻繁的操作。換選別的圖形、取消選取、開始繪製都會自動上鎖。
+ */
+const reshapeArmedId = ref<string | null>(null)
+const canEditSelectedFeature = computed(
+  () => mayEditSelectedFeature.value && reshapeArmedId.value === selectedFeatureId.value,
+)
+function armReshape(id: string | null) {
+  reshapeArmedId.value = id
+}
+watch(selectedFeatureId, (id) => {
+  if (id !== reshapeArmedId.value) reshapeArmedId.value = null // 換對象/取消選取 → 自動上鎖
+})
+
+/**
+ * #99 整形落地：拖頂點/中點/本體後 PATCH 新幾何。
+ * 幾何一變舊裁切環就失效 → 同一 PATCH 清 `viewshed_ring`（與 onFeatureMove/rotateFeature 同紀律，#43）。
+ * **失敗也要 loadFeatures**：地圖上此刻顯示的是拖曳後的本地預覽，不重載就會停在一個伺服器沒接受的形狀。
+ */
+async function onFeatureReshape(e: { id: string; geometry: number[][] }) {
+  if (!e.geometry?.length) return
+  try {
+    await editMapFeature(sessionId.value, e.id, {
+      geometry: e.geometry,
+      attributes: { viewshed_ring: null },
+    })
+    clearTerrainClip(e.id)
+    await loadFeatures()
+  } catch (err) {
+    toasts.push({
+      severity: 'error',
+      title: '調整形狀失敗',
+      detail: (err as { message?: string }).message,
+      timeoutMs: 0,
+    })
+    await loadFeatures() // 還原成伺服器上的權威幾何
+  }
+}
+
+/**
+ * #99 刪除線/面的一個控制點。低於最少頂點數（線 2、面 3）則拒絕並說明——
+ * 硬刪下去會變成退化幾何（2 點的面 `toGeometry` 回 null，該標註會直接從地圖上消失）。
+ * 兩條入口共用：右鍵選單、Alt＋點控制點。
+ */
+async function deleteVertexAt(index: number, featureId?: string) {
+  const f = featureId
+    ? (mapFeatures.value.find((x) => x.id === featureId) ?? null)
+    : selectedFeature.value
+  if (!f) return
+  const ring = openRing((f.geometry as number[][]) ?? [])
+  const next = removeVertex(ring, index, f.geometry_type)
+  if (!next) {
+    toasts.push({
+      severity: 'warn',
+      title: '無法刪除控制點',
+      detail: `${f.geometry_type === 'POLYGON' ? '面' : '線'}至少需要 ${MIN_VERTICES[f.geometry_type] ?? 2} 個控制點`,
+      timeoutMs: 3000,
+    })
+    return
+  }
+  await onFeatureReshape({ id: f.id, geometry: next })
+}
+/** #99 右鍵控制點 → 刪除該頂點。 */
+async function ctxDeleteVertex() {
+  const idx = ctxMenu.value?.vertexIndex
+  closeCtx()
+  if (idx != null) await deleteVertexAt(idx)
+}
+/** #99c Alt＋點控制點 → 刪除該頂點（免開選單的快捷路徑）。 */
+async function onFeatureVertexDelete(e: { id: string; index: number }) {
+  await deleteVertexAt(e.index, e.id)
+}
+
 // 拖放移動點特徵（#11 B2）：MapCanvas emit 新座標 → PATCH 幾何 → 重載。
 async function onFeatureMove(e: { id: string; lng: number; lat: number }) {
   const f = mapFeatures.value.find((x) => x.id === e.id)
@@ -896,6 +1332,8 @@ async function saveFeatureEdit() {
   const attrs: Record<string, unknown> = { ...((f?.attributes ?? {}) as Record<string, unknown>) }
   if (editFeatColor.value) attrs.color = editFeatColor.value
   else delete attrs.color
+  if (editFeatWidth.value !== DEFAULT_FEATURE_WIDTH) attrs.width = editFeatWidth.value
+  else delete attrs.width
   if (editFeatNotes.value.trim()) attrs.notes = editFeatNotes.value.trim()
   else delete attrs.notes
   if (editFeatHeight.value != null) attrs.height_m = editFeatHeight.value
@@ -917,10 +1355,14 @@ async function saveFeatureEdit() {
     editFeatArc.value !== origArc.value
   if (arcChanged) attrs.viewshed_ring = null // 射界參數變動 → 一併清除持久化的裁切環
   try {
+    const ownerChanged =
+      canControl.value && !!editFeatOwner.value && editFeatOwner.value !== f?.owner_faction
     await editMapFeature(sessionId.value, fid, {
       label: editFeatLabel.value.trim() || null,
       influence_radius_m: editFeatRange.value,
       attributes: attrs,
+      // 僅全知且確實變更才送——一般角色帶此欄後端會 403，不該因為存個名稱就撞上。
+      ...(ownerChanged ? { owner_faction: editFeatOwner.value } : {}),
     })
     if (arcChanged) clearTerrainClip(fid)
     origRange.value = editFeatRange.value
@@ -1048,6 +1490,15 @@ function crossKindLabel(kind: string): string {
     { OBSTACLE: '障礙', BUILDING: '建築', TERRAIN: '地形' } as Record<string, string>
   )[kind] ?? kind
 }
+// #80：機動 profile 中文標籤（由編裝導出：徒步/輪型/履帶）。
+function mobilityLabel(profile: string): string {
+  return (
+    { FOOT: '徒步', WHEELED: '輪型', TRACKED: '履帶', BOAT: '舟艇', AIR: '空中' } as Record<
+      string,
+      string
+    >
+  )[profile] ?? profile
+}
 function clearMovePath() {
   moveWaypoints.value = []
   waypointMode.value = false
@@ -1075,6 +1526,16 @@ watch([selectedId, orderType], () => {
 
 async function submit() {
   if (!selectedId.value) return
+  // 固定單位（指揮部等）不可移動——前端先擋（後端 validator 為權威閘門，回 ORDER_UNIT_FIXED）。
+  if (orderType.value === 'MOVE' && selectedUnitFixed.value) {
+    toasts.push({
+      severity: 'warn',
+      title: '固定單位不可移動',
+      detail: `${selectedUnit.value?.designation ?? ''} 為固定單位（指揮部等），不接受移動令。`,
+      timeoutMs: 4000,
+    })
+    return
+  }
   message.value = ''
   precheck.value = null
   const payload =
@@ -1139,6 +1600,17 @@ async function cancel(id: string) {
 const streamEvents = computed(() =>
   stream.events.filter((e) => e.type === 'EVENT').slice(-20).reverse(),
 )
+// 勝負底定橫幅（O11.5/O11.7）：串流出現 SESSION_CONCLUDED 即顯示勝方。
+const victory = computed(() => {
+  const ev = stream.events.find(
+    (e) =>
+      e.type === 'EVENT'
+      && (e.payload as Record<string, unknown>)?.event_type === 'SESSION_CONCLUDED',
+  )
+  if (!ev) return null
+  const p = ev.payload as Record<string, unknown>
+  return { winners: (p.winners as string[]) ?? [], tick: Number(p.tick ?? 0) }
+})
 // 事件 → 可讀文字（ID→番號、交戰命中/未命中/戰損）。供戰況 feed 即時回饋（含多機同步）。
 function unitName(id?: unknown): string {
   const s = typeof id === 'string' ? id : ''
@@ -1200,11 +1672,14 @@ onMounted(async () => {
   if (!auth.user) await auth.fetchMe() // 直接開/重整 COP 時補抓使用者，讓角色相關入口（白軍控制台）正確顯示
   refresh()
   stream.connect(sessionId.value)
+  aiStatus.start() // #79 AI 決策狀態輪詢（思考中／倒數）
   if (import.meta.client) resyncTimer = setInterval(() => refresh(), 10_000)
 })
 onBeforeUnmount(() => {
   stream.disconnect()
+  aiStatus.stop()
   if (resyncTimer) clearInterval(resyncTimer)
+  if (trackTimer) clearInterval(trackTimer) // #95 軌跡淡出計時器
 })
 
 // 圖層/底圖偏好持久化（#3/#9）：載入 → 存檔（跨換頁/重整保留操作員的 COP 設定：
@@ -1338,21 +1813,68 @@ watch(
       <span class="count" data-testid="unit-count">單位 {{ ownUnits.length }}</span>
       <ClientOnly><SimClockBar :tick="stream.lastTick" :start-time="sessionStart" /></ClientOnly>
       <nav class="cop-nav">
+        <!-- 視角切換（#90）：僅全知角色。選陣營＝以該陣營之眼觀戰（後端套其戰場迷霧）。 -->
+        <label v-if="canControl" class="vp" :class="{ 'vp-on': !!viewpoint }">
+          <i class="pi pi-eye" />
+          <select
+            v-model="viewpoint"
+            data-testid="viewpoint"
+            :title="
+              viewpoint
+                ? `目前以 ${viewpoint} 視角觀戰：只看得到該陣營看得到的（含其偵測到的敵情）`
+                : '全局視角（全知）：看得到所有陣營的單位'
+            "
+          >
+            <option value="">全局視角（全知）</option>
+            <option v-for="f in sessionFactions" :key="f" :value="f">{{ f }} 視角</option>
+          </select>
+        </label>
+        <!-- 導覽鈕一律只留 icon（頂列空間留給地圖）；名稱與說明走 data-tip 的 hover 提示。
+             不用原生 title：延遲約 1 秒且樣式不受控，icon-only 之下等於沒有提示。 -->
+        <button
+          v-if="canControl && !mapEditMode"
+          class="icon-btn"
+          data-testid="nav-map-edit"
+          data-tip="地圖狀態編輯"
+          data-tip2="暫停推演、拖放單位、繪障礙，完成再開始"
+          aria-label="地圖狀態編輯"
+          @click="enterMapEdit"
+        >
+          <i class="pi pi-pencil" />
+        </button>
         <button
           v-if="canControl"
+          class="icon-btn"
           data-testid="nav-white-cell"
+          data-tip="白軍控制台"
+          data-tip2="時間控制、注入事件、視角"
+          aria-label="白軍控制台"
           @click="navigateTo(`/session/${sessionId}/white-cell`)"
         >
-          ⚙ 白軍控制台
+          <i class="pi pi-cog" />
+        </button>
+        <button
+          v-if="canManageEquip"
+          class="icon-btn"
+          data-testid="nav-equip-mgr"
+          data-tip="裝備管理"
+          data-tip2="編輯各單位配發的武器/裝備（白軍編任一；本軍需該局開放自編）"
+          aria-label="裝備管理"
+          @click="openEquipMgr"
+        >
+          <i class="pi pi-box" />
         </button>
         <div class="widget-menu">
           <button
+            class="icon-btn"
             data-testid="nav-widgets"
             :class="{ on: widgetMenuOpen }"
-            title="工具視窗（開啟/關閉小工具）"
+            data-tip="工具"
+            data-tip2="開啟/關閉小工具視窗"
+            aria-label="工具視窗"
             @click="widgetMenuOpen = !widgetMenuOpen"
           >
-            <i class="pi pi-th-large" /> 工具
+            <i class="pi pi-th-large" />
           </button>
           <template v-if="widgetMenuOpen">
             <div class="wm-backdrop" @click="widgetMenuOpen = false" />
@@ -1371,9 +1893,125 @@ watch(
             </div>
           </template>
         </div>
-        <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)"><i class="pi pi-chart-bar" /> AAR</button>
+        <button
+          v-if="canControl"
+          class="icon-btn"
+          data-testid="nav-autonomy"
+          data-tip="自主推演"
+          data-tip2="指派 AI 控制陣營"
+          aria-label="自主推演"
+          @click="navigateTo(`/session/${sessionId}/autonomy`)"
+        >
+          <i class="pi pi-bolt" />
+        </button>
+        <button
+          class="icon-btn"
+          data-testid="nav-aar"
+          data-tip="AAR"
+          data-tip2="戰後檢討報告"
+          aria-label="AAR 戰後檢討"
+          @click="navigateTo(`/session/${sessionId}/aar`)"
+        >
+          <i class="pi pi-chart-bar" />
+        </button>
       </nav>
     </header>
+    <div v-if="mapEditMode" class="mapedit-bar" data-testid="mapedit-bar">
+      <i class="pi pi-pencil" />
+      <span v-if="selectedUnitCount" class="meb-badge" data-testid="selected-count">已選 {{ selectedUnitCount }} 個</span>
+      <span class="meb-txt">
+        <strong>地圖狀態編輯（推演已暫停）</strong>——拖曳單位調整位置；<b>Shift＋點單位</b>可多選、<b>Shift＋空白處拖曳</b>可框選，再拖曳任一選取單位即整組移動；用「地圖編輯」工具繪障礙/建築。
+      </span>
+      <button class="meb-start" data-testid="start-wargame" @click="startWargame">
+        ▶ 開始兵推
+      </button>
+    </div>
+    <div v-if="victory" class="victory-banner" data-testid="victory-banner">
+      🏁 推演結束 —
+      <strong>{{ victory.winners.length ? `${victory.winners.join('、')} 獲勝` : '平手' }}</strong>
+      （tick {{ victory.tick }}）
+      <button class="vb-aar" @click="navigateTo(`/session/${sessionId}/aar`)">看 AAR →</button>
+    </div>
+    <!-- #79 AI 決策狀態列（思考中／下一次決策倒數）——僅在本局有 AI 陣營時顯示 -->
+    <div v-if="aiChips.length" class="ai-status-bar" data-testid="ai-status-bar">
+      <span class="asb-label"><i class="pi pi-bolt" /> AI 指揮</span>
+      <span
+        v-for="c in aiChips"
+        :key="c.faction"
+        class="asb-chip"
+        :class="c.state"
+        :data-testid="`ai-status-${c.faction}`"
+      >
+        <b class="asb-fac">{{ c.faction }}</b>
+        <span v-if="c.state === 'thinking'" class="asb-state"
+          ><i class="pi pi-spin pi-spinner" /> 思考中…</span
+        >
+        <span v-else-if="c.state === 'idle'" class="asb-state"
+          >下一次決策 <b>{{ c.countdown }}</b></span
+        >
+        <span v-else class="asb-state asb-off">離線</span>
+      </span>
+    </div>
+
+    <!-- 裝備管理面板：白軍編任一單位編裝 + 設各軍自編權限；本軍（開放自編）僅編本軍單位 -->
+    <div v-if="equipMgr" class="equip-overlay" data-testid="equip-mgr" @click.self="equipMgr = false">
+      <div class="equip-modal">
+        <div class="eq-hd">
+          <h3><i class="pi pi-box" /> 裝備管理</h3>
+          <button class="eq-x" data-testid="equip-close" @click="equipMgr = false"><i class="pi pi-times" /></button>
+        </div>
+
+        <div v-if="canControl" class="eq-perms" data-testid="equip-perms">
+          <div class="eq-perms-hd">各軍自編權限（開放後該陣營指揮官可自行編裝本軍單位）</div>
+          <div class="eq-perms-row">
+            <label
+              v-for="g in unitsByFaction"
+              :key="g.faction"
+              class="eq-perm"
+              :data-testid="`equip-perm-${g.faction}`"
+            >
+              <input
+                type="checkbox"
+                :checked="orbatPerms.includes(g.faction)"
+                @change="toggleOrbatPerm(g.faction)"
+              >
+              <span class="u-dot" :style="{ background: factionColor(g.faction) }" />{{ g.faction }}
+            </label>
+            <span v-if="!unitsByFaction.length" class="eq-hint">（本局尚無單位）</span>
+          </div>
+        </div>
+
+        <div class="eq-body">
+          <div class="eq-units" data-testid="equip-unit-list">
+            <div v-for="g in equipEditableFactions" :key="g.faction" class="eq-fac">
+              <div class="eq-fac-hd">
+                <span class="u-dot" :style="{ background: factionColor(g.faction) }" /><b>{{ g.faction }}</b>
+                <span class="dim">· {{ g.units.length }}</span>
+              </div>
+              <button
+                v-for="u in g.units"
+                :key="u.id"
+                class="eq-unit"
+                :class="{ sel: u.id === equipUnitId }"
+                data-testid="equip-unit"
+                @click="equipUnitId = u.id"
+              >
+                {{ u.designation }}
+              </button>
+            </div>
+            <p v-if="!equipEditableFactions.length" class="eq-hint">（無可編裝的單位）</p>
+          </div>
+          <div class="eq-editor">
+            <div v-if="equipUnitId" class="eq-editor-in">
+              <div class="eq-editor-hd">編裝 · {{ realUnits.find((u) => u.id === equipUnitId)?.designation ?? equipUnitId }}</div>
+              <UnitOrbatEditor :session-id="sessionId" :unit-id="equipUnitId" :can-edit="true" />
+            </div>
+            <p v-else class="eq-hint">← 選一個單位以編輯其武器/裝備配發</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="body">
       <!-- #12 停靠側欄容器（拖到最左/右緣的視窗落於此；空則以 :empty 隱藏）。 -->
       <div id="dock-left-col" class="dock-col left" />
@@ -1396,23 +2034,54 @@ watch(
         @focus="focusWidget('units')"
       >
         <div class="wsec-hd">單位（{{ realUnits.length }}）</div>
-        <ul class="units" data-testid="unit-list">
-          <li
-            v-for="u in realUnits"
-            :key="u.id"
-            :class="{ sel: u.id === selectedId }"
-            data-testid="unit-item"
-            @click="selectUnit(u.id)"
+        <div class="units" data-testid="unit-list">
+          <div
+            v-for="g in unitsByFaction"
+            :key="g.faction"
+            class="ufac"
+            data-testid="unit-faction-group"
           >
-            <span class="u-dot" :style="{ background: factionColor(u.faction) }" />
-            {{ u.designation }} · {{ u.faction }} ·
-            <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
-              {{ Math.round(liveHealth(u) ?? 100) }}%
-            </span>
-            <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
-          </li>
-          <li v-if="!realUnits.length" class="empty">（此 session 無可下令單位）</li>
-        </ul>
+            <button
+              class="ufac-hd"
+              data-testid="unit-faction-head"
+              :title="`${g.faction}：${g.units.length} 單位、戰力 ${Math.round(g.power.pct)}%`
+                + `（各單位效能以量體加權平均，總量體 ${Math.round(g.power.mass)}）`
+                + (g.power.ko ? `；已折損 ${g.power.ko} 個單位` : '')
+                + ' — 點擊收合/展開'"
+              @click="toggleFactionGroup(g.faction)"
+            >
+              <i class="pi" :class="collapsedFactions.has(g.faction) ? 'pi-chevron-right' : 'pi-chevron-down'" />
+              <span class="u-dot" :style="{ background: factionColor(g.faction) }" />
+              <b>{{ g.faction }}</b>
+              <span class="ufac-count">· {{ g.units.length }}</span>
+              <span
+                class="ufac-pow"
+                :style="{ color: healthColor(Math.round(g.power.pct)) }"
+                data-testid="unit-faction-power"
+              >{{ Math.round(g.power.pct) }}%</span>
+              <span v-if="g.power.ko" class="ufac-ko">✖{{ g.power.ko }}</span>
+            </button>
+            <ul v-show="!collapsedFactions.has(g.faction)" class="ufac-units">
+              <li
+                v-for="u in g.units"
+                :key="u.id"
+                :class="{ sel: u.id === selectedId, 'out-scope': !inScope(u) }"
+                :title="inScope(u) ? '' : '不在你的指揮範圍（此帳號僅獲授權指揮部分單位）'"
+                data-testid="unit-item"
+                @click="inScope(u) ? selectUnit(u.id) : null"
+              >
+                {{ u.designation }} ·
+                <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
+                  {{ Math.round(liveHealth(u) ?? 100) }}%
+                </span>
+                <span v-if="u.is_fixed" class="u-fixed" title="固定單位（指揮部等）：不可移動">🔒</span>
+                <span v-if="!inScope(u)" class="u-ban" title="不在指揮範圍">🚫</span>
+                <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="!realUnits.length" class="empty">（此 session 無可下令單位）</div>
+        </div>
 
         <div v-if="selectedId" class="order" data-testid="order-panel">
           <h3>下令 · <span class="selunit" data-testid="selected-unit">{{ selectedUnit?.designation ?? selectedId }}</span></h3>
@@ -1420,7 +2089,10 @@ watch(
             <option value="MOVE">移動</option>
             <option value="ENGAGE">交戰</option>
           </select>
-          <template v-if="orderType === 'MOVE'">
+          <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
+            🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
+          </p>
+          <template v-if="orderType === 'MOVE' && !selectedUnitFixed">
             <label class="precise">
               <input v-model="preciseMove" type="checkbox" data-testid="precise-move">
               精確移動（走到點擊處，不吸附六角格心）
@@ -1469,9 +2141,31 @@ watch(
               <div class="mv-row">
                 <span>距離 <b>{{ (movePreview.distance_m / 1000).toFixed(2) }} km</b></span>
                 <span>約 <b>{{ movePreview.duration_ticks }}</b> tick</span>
-                <span>油耗 <b>{{ movePreview.fuel_cost.toFixed(1) }}</b></span>
+                <span v-if="movePreview.fuel_cost > 0">油耗 <b>{{ movePreview.fuel_cost.toFixed(0) }}</b></span>
               </div>
-              <div v-if="movePreview.feasible" class="mv-ok">✓ 路徑暢通</div>
+              <!-- #80/#81：機動能力 + 實際速度（已含地形/坡度調變） -->
+              <div class="mv-row mv-sub">
+                <span :title="`機動 profile（由編裝導出）：${movePreview.mobility_profile}`">
+                  <i class="pi pi-forward" /> {{ mobilityLabel(movePreview.mobility_profile) }}
+                  <b>{{ movePreview.speed_kmh.toFixed(1) }}</b> km/h
+                </span>
+                <span v-if="movePreview.terrain_routed" class="mv-routed" title="已依地形 A* 繞開不可通行區（非直線）">
+                  <i class="pi pi-share-alt" /> 地形繞路
+                </span>
+              </div>
+              <!-- #84：油料是否夠走完全程 -->
+              <div v-if="movePreview.fuel_remaining > 0" class="mv-row mv-sub">
+                <span :class="{ 'mv-lowfuel': !movePreview.fuel_sufficient }">
+                  <i class="pi pi-bolt" /> 油料 <b>{{ movePreview.fuel_remaining.toFixed(0) }}</b>
+                  <template v-if="!movePreview.fuel_sufficient">（不足，將中途拋錨）</template>
+                </span>
+              </div>
+              <div v-if="movePreview.terrain_impassable" class="mv-forced" data-testid="move-impassable">
+                ⛔ 路徑穿越此單位<b>無法通行</b>的地形（{{ mobilityLabel(movePreview.mobility_profile) }}）——將於邊界停止
+              </div>
+              <div v-else-if="movePreview.feasible" class="mv-ok" title="此預覽僅檢查路徑上的已知障礙與地形；地形可達性於送出時再驗證">
+                ✓ 無障礙阻擋（地形可達性於送出時驗證）
+              </div>
               <div v-else class="mv-forced" data-testid="move-forced">
                 ⚠ 需強穿 {{ movePreview.crossings.length }} 處阻礙（隨機額外耗損）
                 <ul>
@@ -1495,7 +2189,7 @@ watch(
               <select v-model="weaponId" data-testid="engage-weapon">
                 <option :value="null">{{ weapons.length >= 2 ? '聯合火力（全武器一起打）' : '預設武器' }}</option>
                 <option v-for="w in weapons" :key="w.id" :value="w.id">
-                  {{ w.name }}<span v-if="w.ammo_remaining != null"> · 彈 {{ w.ammo_remaining }}</span>
+                  {{ w.name }}<span v-if="liveAmmo(w) != null"> · 彈 {{ liveAmmo(w) }}</span>
                 </option>
               </select>
               <!-- 聯合火力（未選單一武器且 ≥2 武器）：顯示將開火的武器組合 + 火力政策（P4）。 -->
@@ -1509,7 +2203,7 @@ watch(
                   <li v-for="w in weapons" :key="w.id">
                     <i class="pi pi-bullseye" /> {{ w.name }}
                     <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
-                    <span v-if="w.ammo_remaining != null" class="dim">· 彈 {{ w.ammo_remaining }}</span>
+                    <span v-if="liveAmmo(w) != null" class="dim">· 彈 {{ liveAmmo(w) }}</span>
                   </li>
                 </ul>
               </template>
@@ -1656,7 +2350,9 @@ watch(
             :feat-symbol-icons="featSymbol.icons"
             :influence-fc="influenceFc"
             :draft-fc="draftFc"
+            :weapon-track-fc="weaponTrackFc"
             :selected-feature-id="selectedFeatureId"
+            :feature-edit="canEditSelectedFeature"
             :draw-active="drawActive"
             :latlng-grid="latlngGrid"
             :mgrs-grid="mgrsGrid"
@@ -1667,11 +2363,17 @@ watch(
             :day-night="dayNight"
             :time-of-day="timeOfDay"
             :targeting="targeting"
+            :edit-units="mapEditMode"
+            @units-move="onUnitsMove"
+            @units-selected="onUnitsSelected"
             @map-click="onMapClick"
             @unit-click="onUnitClick"
             @select-screen-pos="onSelectScreenPos"
             @feature-click="onFeatureClick"
             @feature-move="onFeatureMove"
+            @feature-reshape="onFeatureReshape"
+            @feature-vertex-delete="onFeatureVertexDelete"
+            @unit-move="onUnitMove"
             @basemap-error="onBasemapError"
             @context-menu="onContextMenu"
           />
@@ -1743,9 +2445,18 @@ watch(
             data-testid="ctx-menu"
             :style="{ left: `${ctxMenu.x}px`, top: `${ctxMenu.y}px` }"
           >
-            <template v-if="ctxMenu?.featureId && canDraw">
+            <!-- #99 右鍵控制點：刪點優先於一般物件選單（游標下同時有頂點與圖形本體）。 -->
+            <template v-if="ctxMenu?.vertexIndex != null && canEditSelectedFeature">
+              <div class="ctx-title">控制點 #{{ ctxMenu.vertexIndex + 1 }}</div>
+              <button class="ctx-danger" data-testid="ctx-vertex-del" @click="ctxDeleteVertex">
+                <i class="pi pi-trash" /> 刪除控制點
+              </button>
+            </template>
+            <template v-else-if="ctxMenu?.featureId && canDraw">
               <div class="ctx-title">地圖物件</div>
-              <button data-testid="ctx-feat-edit" @click="ctxEditFeature"><i class="pi pi-pencil" /> 編輯</button>
+              <button data-testid="ctx-feat-edit" @click="ctxEditFeature">
+                <i class="pi pi-pencil" /> 編輯形狀 / 屬性
+              </button>
               <button data-testid="ctx-feat-rot-ccw" @click="ctxRotateFeature(-15)"><i class="pi pi-undo" /> 旋轉 15°</button>
               <button data-testid="ctx-feat-rot-cw" @click="ctxRotateFeature(15)"><i class="pi pi-refresh" /> 旋轉 15°</button>
               <button class="ctx-danger" data-testid="ctx-feat-del" @click="ctxDeleteFeature"><i class="pi pi-trash" /> 刪除</button>
@@ -1812,6 +2523,16 @@ watch(
                   <input v-model="drawColor" type="color">
                   顏色
                 </label>
+                <label class="me-h" title="線條粗細（點狀標註不適用）">
+                  線寬<input
+                    v-model.number="drawWidth"
+                    data-testid="draw-width"
+                    type="range"
+                    min="0.5"
+                    max="12"
+                    step="0.5"
+                  >{{ drawWidth }}
+                </label>
                 <label v-if="drawFeatureKind === 'OBSTACLE' || drawFeatureKind === 'BUILDING'" class="me-h">
                   高度<input v-model.number="drawHeight" type="number" min="0" step="0.5"> m
                 </label>
@@ -1854,6 +2575,22 @@ watch(
               >
                 <span class="fdot" :style="{ background: featureDisplayColor(f) }" />
                 <span class="fname">{{ f.label || f.kind }}</span>
+                <!-- #92 歸屬陣營：共同層標「共同」，否則以該陣營色點+代號標示 -->
+                <span
+                  class="fown"
+                  data-testid="feature-owner"
+                  :title="
+                    f.owner_faction === 'WHITE_CELL'
+                      ? '共同標註（全體可見）'
+                      : `${f.owner_faction} 的標註（僅該陣營與白軍可見）`
+                  "
+                >
+                  <template v-if="f.owner_faction === 'WHITE_CELL'">共同</template>
+                  <template v-else>
+                    <span class="u-dot" :style="{ background: factionColor(f.owner_faction) }" />
+                    {{ f.owner_faction }}
+                  </template>
+                </span>
                 <button
                   class="feye"
                   data-testid="feature-toggle-vis"
@@ -1868,13 +2605,65 @@ watch(
           <!-- 選取特徵的屬性編輯（#11）：名稱/顏色/備註/高度 → PATCH。 -->
           <div v-if="selectedFeature" class="me-edit" data-testid="feature-edit">
             <div class="me-sub">編輯：{{ selectedFeature.kind }}</div>
+            <!-- #99 整形操作說明（控制點是地圖上的互動，面板裡看不到 → 需明講怎麼用）。
+                 #99b 未解鎖時顯示上鎖狀態＋解鎖鈕，讓「為什麼拖不動」有答案。 -->
+            <div v-if="canEditSelectedFeature" class="me-hint" data-testid="reshape-hint">
+              <div class="me-hint-row">
+                <span>
+                  <template v-if="selectedFeature.geometry_type === 'POINT'">
+                    <i class="pi pi-arrows-alt" /> 調整中：直接拖曳圖示可移動位置
+                  </template>
+                  <template v-else>
+                    <i class="pi pi-arrows-alt" /> 調整中：拖白點改形狀 · 拖小圈可加點 · 拖線/面本身整體移動 ·
+                    <b>Alt＋點白點</b>或<b>右鍵白點</b>刪點
+                  </template>
+                </span>
+                <button class="me-lock" data-testid="reshape-lock" @click="armReshape(null)">
+                  <i class="pi pi-lock" /> 完成
+                </button>
+              </div>
+            </div>
+            <div
+              v-else-if="mayEditSelectedFeature"
+              class="me-hint me-hint-locked"
+              data-testid="reshape-locked"
+            >
+              <div class="me-hint-row">
+                <span><i class="pi pi-lock" /> 形狀已鎖定（避免誤觸）——右鍵此物件選「編輯形狀」</span>
+                <button
+                  class="me-lock"
+                  data-testid="reshape-unlock"
+                  @click="armReshape(selectedFeatureId)"
+                >
+                  <i class="pi pi-lock-open" /> 調整形狀
+                </button>
+              </div>
+            </div>
             <input v-model="editFeatLabel" class="me-in" data-testid="edit-feat-label" placeholder="名稱">
             <div class="me-row2">
               <label class="me-color"><input v-model="editFeatColor" type="color"> 顏色</label>
+              <label class="me-h" title="線條粗細">
+                線寬<input
+                  v-model.number="editFeatWidth"
+                  data-testid="edit-feat-width"
+                  type="range"
+                  min="0.5"
+                  max="12"
+                  step="0.5"
+                >{{ editFeatWidth }}
+              </label>
               <label v-if="selectedFeature.kind === 'OBSTACLE' || selectedFeature.kind === 'BUILDING'" class="me-h">
                 高度<input v-model.number="editFeatHeight" type="number" min="0" step="0.5"> m
               </label>
             </div>
+            <!-- #92 歸屬變更：僅全知可改（一般角色不顯示；後端亦擋 403）。 -->
+            <label v-if="canControl" class="me-own">
+              歸屬
+              <select v-model="editFeatOwner" data-testid="edit-feat-owner">
+                <option value="WHITE_CELL">共同（全體可見）</option>
+                <option v-for="f in sessionFactions" :key="f" :value="f">{{ f }}</option>
+              </select>
+            </label>
             <NatoSymbolSelect
               v-if="selectedFeature.geometry_type === 'POINT'"
               v-model="editFeatSidc"
@@ -2008,6 +2797,13 @@ watch(
               <dt>座標</dt>
               <dd>{{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}</dd>
             </div>
+            <div v-if="liveFuel(selectedId) != null" data-testid="unit-fuel">
+              <dt>油料</dt>
+              <dd :class="{ lowfuel: (liveFuel(selectedId) ?? 0) <= 0 }">
+                {{ (liveFuel(selectedId) ?? 0).toFixed(0) }}
+                <span v-if="(liveFuel(selectedId) ?? 0) <= 0" class="dim">· 拋錨（需補給）</span>
+              </dd>
+            </div>
           </dl>
           <div v-if="weapons.length && !showOrbat" class="card-weapons">
             <div class="card-sub">武器裝載</div>
@@ -2015,7 +2811,7 @@ watch(
               <li v-for="w in weapons" :key="w.id">
                 {{ w.name }}
                 <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
-                <span v-if="w.ammo_remaining != null" class="dim">· 彈 {{ w.ammo_remaining }}</span>
+                <span v-if="liveAmmo(w) != null" class="dim">· 彈 {{ liveAmmo(w) }}</span>
               </li>
             </ul>
           </div>
@@ -2043,6 +2839,242 @@ watch(
   height: 100vh;
   background: #0a1626;
   color: #e2e8f0;
+}
+.victory-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 1rem;
+  background: linear-gradient(90deg, rgba(29, 78, 216, 0.35), rgba(16, 185, 129, 0.25));
+  border-bottom: 1px solid #334155;
+  color: #f1f5f9;
+  font-size: 0.95rem;
+}
+/* #79 AI 決策狀態列 */
+.ai-status-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 1rem;
+  background: rgba(15, 23, 42, 0.7);
+  border-bottom: 1px solid #334155;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+.ai-status-bar .asb-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #93c5fd;
+  font-weight: 600;
+}
+.ai-status-bar .asb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.6);
+}
+.ai-status-bar .asb-chip.thinking {
+  border-color: #2563eb;
+  color: #bfdbfe;
+}
+.ai-status-bar .asb-chip.idle {
+  border-color: #475569;
+}
+.ai-status-bar .asb-chip.offline {
+  opacity: 0.55;
+}
+.ai-status-bar .asb-fac {
+  color: #f1f5f9;
+}
+.ai-status-bar .asb-off {
+  color: #94a3b8;
+}
+.mapedit-bar {
+  /* 置中浮動藥丸：避免被左右浮動工具視窗（z 15+）遮住兩端與「開始兵推」鈕。 */
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  max-width: min(760px, 94vw);
+  padding: 0.45rem 0.55rem 0.45rem 0.9rem;
+  background: rgba(69, 51, 8, 0.97);
+  border: 1px solid rgba(251, 191, 36, 0.6);
+  border-radius: 0.55rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  color: #fde68a;
+  font-size: 0.85rem;
+}
+.mapedit-bar .meb-txt {
+  flex: 1 1 auto;
+}
+.mapedit-bar .meb-badge {
+  flex: 0 0 auto;
+  background: #0e7490;
+  color: #cffafe;
+  border: 1px solid #22d3ee;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mapedit-bar .meb-start {
+  flex: 0 0 auto;
+  background: #16a34a;
+  border: none;
+  color: #fff;
+  border-radius: 0.35rem;
+  padding: 0.4rem 0.95rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mapedit-bar .meb-start:hover {
+  background: #15803d;
+}
+.equip-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.equip-modal {
+  width: min(760px, 94vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  color: #e2e8f0;
+  overflow: hidden;
+}
+.equip-modal .eq-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid #1e293b;
+}
+.equip-modal .eq-hd h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.equip-modal .eq-x {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.eq-perms {
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid #1e293b;
+  background: #0a1626;
+}
+.eq-perms-hd {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-bottom: 0.35rem;
+}
+.eq-perms-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.9rem;
+}
+.eq-perm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.eq-perm .u-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.eq-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.eq-units {
+  flex: 0 0 40%;
+  max-width: 16rem;
+  overflow-y: auto;
+  padding: 0.6rem;
+  border-right: 1px solid #1e293b;
+}
+.eq-fac-hd {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  margin: 0.4rem 0 0.2rem;
+}
+.eq-fac-hd .u-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.eq-unit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  margin: 0.15rem 0;
+  border: 1px solid #1e293b;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.eq-unit.sel {
+  border-color: #2563eb;
+  background: #172554;
+}
+.eq-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 0.7rem 0.9rem;
+}
+.eq-editor-hd {
+  font-size: 0.85rem;
+  color: #cbd5e1;
+  margin-bottom: 0.5rem;
+}
+.eq-hint {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+.victory-banner .vb-aar {
+  margin-left: auto;
+  background: #1d4ed8;
+  border: none;
+  color: #fff;
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.82rem;
 }
 .cop-bar {
   display: flex;
@@ -2173,8 +3205,81 @@ watch(
   color: #e2e8f0;
   cursor: pointer;
 }
+/* 視角切換（#90）：套了陣營視角時整顆變琥珀，提醒「你現在不是全知」。 */
+.vp {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  color: #94a3b8;
+}
+.vp select {
+  background: transparent;
+  border: 0;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.vp select option {
+  background: #0f172a;
+}
+.vp-on {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.vp-on select {
+  color: #f59e0b;
+  font-weight: 600;
+}
 .cop-nav button:hover {
   border-color: #2563eb;
+}
+/* 只留 icon 的導覽鈕：正方形、字級放大到讀得出圖形 */
+.cop-nav .icon-btn {
+  position: relative; /* hover 提示以此為定位基準 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+/* hover 提示：名稱（data-tip）+ 選填的補充說明（data-tip2）。
+   自繪而非原生 title——原生的約 1 秒才出現，icon-only 之下等於沒有提示。 */
+.cop-nav .icon-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  /* 靠按鈕右緣、往左長：導覽列本身靠右，置中對齊會讓最右邊幾顆的提示被視窗切掉。 */
+  right: 0;
+  z-index: 1002; /* 壓過工具選單彈出層（1001） */
+  max-width: 15rem;
+  width: max-content;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.3rem;
+  background: #0b1324;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: left;
+  white-space: pre-line; /* 名稱與補充說明以 \A 分行（見下方 [data-tip2] 規則） */
+  box-shadow: 0 6px 16px rgb(0 0 0 / 45%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+/* 有補充說明者：名稱一行、說明一行 */
+.cop-nav .icon-btn[data-tip2]::after {
+  content: attr(data-tip) '\A' attr(data-tip2);
+}
+.cop-nav .icon-btn:hover::after,
+.cop-nav .icon-btn:focus-visible::after {
+  opacity: 1;
 }
 .cop-nav button.on {
   border-color: #eab308;
@@ -2393,6 +3498,53 @@ watch(
   border-radius: 0.25rem;
   cursor: pointer;
 }
+/* 單位小工具依陣營分組（可收合/展開） */
+.ufac {
+  margin-bottom: 0.35rem;
+}
+.ufac-hd {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 0.3rem;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.ufac-hd:hover {
+  border-color: #334155;
+}
+.ufac-hd .pi {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+.ufac-count {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+/* 陣營戰力（量體加權）——靠右對齊，與各單位的效能%同一套色帶。 */
+.ufac-pow {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ufac-ko {
+  color: #ef4444;
+  font-size: 0.7rem;
+}
+.ufac-units {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0 0 0 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
 /* #27 指令列：對象 + 時間 + 狀態。 */
 .orders li {
   cursor: default;
@@ -2457,13 +3609,12 @@ watch(
   border-color: #2563eb;
   background: #172554;
 }
-.units li .u-dot {
+.ufac-hd .u-dot {
   display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
+  width: 0.6rem;
+  height: 0.6rem;
   border-radius: 50%;
-  margin-right: 0.35rem;
-  vertical-align: middle;
+  flex: none;
 }
 .units li .u-hp {
   font-variant-numeric: tabular-nums;
@@ -2474,6 +3625,31 @@ watch(
   color: #ef4444;
   font-size: 0.72rem;
   font-weight: 700;
+}
+.units li .u-fixed {
+  margin-left: 0.3rem;
+  font-size: 0.78rem;
+}
+.units li.out-scope {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.units li.out-scope:hover {
+  border-color: #1e293b;
+}
+.units li .u-ban {
+  margin-left: 0.3rem;
+  font-size: 0.72rem;
+}
+.order .fixed-note {
+  margin: 0.35rem 0;
+  padding: 0.35rem 0.5rem;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 0.3rem;
+  color: #fde68a;
+  font-size: 0.74rem;
+  line-height: 1.4;
 }
 .empty {
   color: #64748b;
@@ -2542,6 +3718,19 @@ watch(
 }
 .mvprev .mv-row b {
   color: #38bdf8;
+}
+.unit-card .lowfuel {
+  color: #f87171;
+}
+.mvprev .mv-sub {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.mvprev .mv-routed {
+  color: #7dd3fc;
+}
+.mvprev .mv-lowfuel {
+  color: #fbbf24;
 }
 .mvprev .mv-ok {
   margin-top: 0.25rem;
@@ -2765,6 +3954,23 @@ watch(
   font-size: 0.72rem;
   color: #94a3b8;
 }
+/* #92 歸屬變更下拉（僅全知可見）。 */
+.map-editor .me-own {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+.map-editor .me-own select {
+  flex: 1;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+  font-size: 0.72rem;
+}
 .map-editor .me-color input {
   width: 1.6rem;
   height: 1.3rem;
@@ -2814,6 +4020,42 @@ watch(
   border-top: 1px solid #1e293b;
   padding-top: 0.35rem;
   margin-bottom: 0.25rem;
+}
+/* #99 整形操作提示 / #99b 鎖定狀態 */
+.map-editor .me-hint {
+  color: #7dd3fc;
+  background: #0c2233;
+  border: 1px solid #164e63;
+  border-radius: 0.25rem;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  padding: 0.28rem 0.4rem;
+  margin-bottom: 0.3rem;
+}
+.map-editor .me-hint-locked {
+  color: #94a3b8;
+  background: #111827;
+  border-color: #334155;
+}
+.map-editor .me-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  justify-content: space-between;
+}
+.map-editor .me-lock {
+  flex: none;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.66rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.map-editor .me-lock:hover {
+  border-color: #2563eb;
 }
 .map-editor .me-clip {
   flex: 1;
@@ -2867,6 +4109,25 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* #92 標註歸屬陣營徽章：讓「這是誰畫的、誰看得到」一眼可辨。 */
+.map-editor .fown {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: none;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  color: #94a3b8;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+.map-editor .fown .u-dot {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
 }
 .map-editor .frm {
   border: none;

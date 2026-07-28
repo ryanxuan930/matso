@@ -6,6 +6,11 @@ AI_OFF → 迴路不啟動（紅軍由人操作，傳統兵推）；AI_BARE → 
 
 from __future__ import annotations
 
-from app.ai_loop.opfor import AiTurnResult, OpforDecider, run_opfor_turn
+from app.ai_loop.opfor import (
+    AiTurnResult,
+    OpforDecider,
+    run_faction_turn,
+    run_opfor_turn,
+)
 
-__all__ = ["AiTurnResult", "OpforDecider", "run_opfor_turn"]
+__all__ = ["AiTurnResult", "OpforDecider", "run_faction_turn", "run_opfor_turn"]

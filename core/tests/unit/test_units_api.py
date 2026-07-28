@@ -68,6 +68,22 @@ def test_white_cell_sees_all(session_factory: sessionmaker[Session]) -> None:
     assert ids == {world.blue_unit_id, world.red_unit_id}  # 全知見雙方
 
 
+def test_units_expose_is_fixed(session_factory: sessionmaker[Session]) -> None:
+    # 固定單位旗標透出 UnitView（供 COP 顯示鎖定 + 前端擋 MOVE）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        from app.models import TacticalUnit
+
+        unit = db.get(TacticalUnit, world.blue_unit_id)
+        assert unit is not None
+        unit.is_fixed = True
+        db.commit()
+    client = _client(session_factory)
+    r = client.get(f"/api/v1/sessions/{world.session_id}/units", headers=_auth(world))
+    body = {u["id"]: u for u in r.json()}
+    assert body[world.blue_unit_id]["is_fixed"] is True
+
+
 def test_non_participant_403(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     with session_factory() as db:  # 非參與者使用者
@@ -107,5 +123,34 @@ def test_non_white_cell_cannot_switch_viewpoint(session_factory: sessionmaker[Se
         f"/api/v1/sessions/{world.session_id}/units",
         params={"as_faction": "RED"},
         headers=_auth(world),  # 藍方 COMMANDER
+    )
+    assert r.status_code == 403
+
+
+def test_reposition_white_cell_ok(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/units/{world.blue_unit_id}/reposition",
+        json={"lat": 24.5, "lng": 121.5},
+        headers=_auth(world, white=True),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["lat"] == 24.5 and body["lng"] == 121.5
+    from app.models import TacticalUnit
+
+    with session_factory() as db:
+        u = db.get(TacticalUnit, world.blue_unit_id)
+        assert u is not None and u.current_lat == 24.5 and u.current_lng == 121.5
+
+
+def test_reposition_commander_forbidden(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/units/{world.blue_unit_id}/reposition",
+        json={"lat": 24.5, "lng": 121.5},
+        headers=_auth(world),  # 一般 COMMANDER（非全知）
     )
     assert r.status_code == 403

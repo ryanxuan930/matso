@@ -12,20 +12,30 @@ POST /api/v1/sessions/{id}/movement/preview
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import h3
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_movement_path_fn
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.errors import OrderValidationError, SessionNotFoundError
 from app.factions import WHITE_CELL
 from app.models import MapFeature, TacticalUnit, WargameSession
-from app.movement.attrition import estimate_route, obstacle_from_feature
-from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
+from app.movement.attrition import estimate_route, haversine_m, obstacle_from_feature
+from app.movement.fuel import load_unit_fuel
+from app.movement.mobility import resolve_unit_mobility
+from app.movement.mobility_matrix import step_cost
+from app.movement.params import (
+    TEMPO_ATTRITION_FACTOR,
+)
+from app.movement.router import plan_route
+from app.movement.terrain_sampler import build_terrain_cell_sampler
+from app.sim_params import load_sim_params
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["movement"])
@@ -41,6 +51,7 @@ class MovementPreviewRequest(BaseModel):
     to_h3: str | None = None
     to_lat: float | None = None
     to_lng: float | None = None
+    tempo: str = "NORMAL"  # #80：NORMAL / FORCED_MARCH（強行軍更快但更耗）
 
 
 class CrossingView(BaseModel):
@@ -55,10 +66,16 @@ class MovementPreviewView(BaseModel):
     distance_m: float
     duration_ticks: int
     fuel_cost: float
-    est_attrition: float  # 基礎（確定性）耗損；強穿隨機加成不在此
+    est_attrition: float  # 行軍（確定性）耗損；強穿隨機加成不在此
     feasible: bool
     forced: bool
     crossings: list[CrossingView]
+    mobility_profile: str = "FOOT"  # #80：由編裝導出的機動 profile
+    speed_kmh: float = 0.0  # #80/#81：有效速度（含 tempo、路徑平均地形調變），供 COP 顯示
+    terrain_impassable: bool = False  # #81：路徑是否穿越對此 profile 不可通行的地形
+    terrain_routed: bool = False  # #82：路徑是否為地形 A* 繞路（False＝直線，含不可達退回）
+    fuel_remaining: float = 0.0  # #84：單位目前剩餘油量（0＝徒步/無油料模型）
+    fuel_sufficient: bool = True  # #84：現有油量是否足以走完全程（否則中途會停駛）
 
 
 def _dest_lnglat(body: MovementPreviewRequest) -> tuple[float, float] | None:
@@ -79,6 +96,7 @@ def preview_movement(
     body: MovementPreviewRequest,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+    path_fn: object | None = Depends(get_movement_path_fn),
 ) -> MovementPreviewView:
     session = db.get(WargameSession, session_id)
     if session is None:
@@ -91,8 +109,9 @@ def preview_movement(
         raise OrderValidationError("單位尚無座標", error_code="MOVE_PREVIEW_NO_POS")
     start = (float(unit.current_lng), float(unit.current_lat))
 
-    # 路徑：自訂 waypoints 優先（首點若非起點則補上起點）；否則起點→目的地直線。
+    # 路徑：自訂 waypoints 優先（首點若非起點則補上起點）；否則 #82 地形路徑（不可達→直線）。
     waypoints: list[tuple[float, float]] = [start]
+    routed = False
     if body.waypoints:
         pts = [(float(p[0]), float(p[1])) for p in body.waypoints[:_MAX_WAYPOINTS] if len(p) >= 2]
         if pts and _close(pts[0], start):
@@ -104,7 +123,20 @@ def preview_movement(
             raise OrderValidationError(
                 "需提供 to_h3 / to_lat+to_lng 或 waypoints", error_code="MOVE_PREVIEW_NO_DEST"
             )
-        waypoints.append(dest)
+        # #82：預覽與執行共用同一規劃器 → 預覽路徑＝實際行進路徑（含任意點位精確起訖）。
+        if path_fn is not None:
+            route = plan_route(
+                path_fn,  # type: ignore[arg-type]
+                start_lat=start[1],
+                start_lng=start[0],
+                dest_lat=dest[1],
+                dest_lng=dest[0],
+                profile=resolve_unit_mobility(db, unit.id).profile,
+            )
+            waypoints.extend(route.waypoints)
+            routed = route.routed
+        else:
+            waypoints.append(dest)
 
     if len(waypoints) < 2:
         raise OrderValidationError("路徑至少需起訖兩點", error_code="MOVE_PREVIEW_SHORT")
@@ -130,16 +162,44 @@ def preview_movement(
         if obs is not None:
             obstacles.append(obs)
 
-    est = estimate_route(
-        waypoints, obstacles, speed_kmh=MOVE_SPEED_KMH, tick_rate_ms=MOVE_TICK_RATE_MS
+    # #80：per-unit 機動速度 + 行軍磨耗率（由編裝導出）。
+    tempo = body.tempo if body.tempo in ("NORMAL", "FORCED_MARCH") else "NORMAL"
+    # #93：預覽與執行必須讀同一份推演參數，否則「估計」與「實跑」再度分歧
+    # （SPEC_MOVEMENT 當初就是為了消滅這種不一致）。
+    sim_params = load_sim_params(db)
+    mob = resolve_unit_mobility(
+        db, unit.id, foot_xc_kmh=sim_params.foot_xc_kmh, foot_road_kmh=sim_params.foot_road_kmh
     )
+    speed_kmh = mob.speed_kmh(tempo=tempo)
+    attrition_per_km = sim_params.attrition_for(mob.profile) * TEMPO_ATTRITION_FACTOR.get(
+        tempo, 1.0
+    )
+    # #81：以路徑平均地形成本調變預覽速度，並標示是否穿越不可通行地形（terrain 不可用→不調）。
+    terrain_impassable = False
+    sampler = build_terrain_cell_sampler()
+    if sampler is not None:
+        cells = _route_cells(waypoints)
+        avg_cost, terrain_impassable = _route_terrain_cost(sampler, cells, mob.profile)
+        if avg_cost > 0:
+            speed_kmh /= avg_cost
+    # #84：油耗以**單位實際編裝**計（取代原本 1.0/km 佔位值）；並回報是否夠油走完全程。
+    unit_fuel = load_unit_fuel(db, unit.id)
+    est = estimate_route(
+        waypoints,
+        obstacles,
+        speed_kmh=speed_kmh,
+        tick_rate_ms=sim_params.tick_rate_ms,  # #93 與執行端同一份
+        attrition_per_km=attrition_per_km,
+        fuel_per_km=unit_fuel.burn_per_km,
+    )
+    fuel_sufficient = (not unit_fuel.needs_fuel) or est.fuel_cost <= unit_fuel.remaining
     return MovementPreviewView(
         path=[[lng, lat] for lng, lat in waypoints],
         distance_m=est.distance_m,
         duration_ticks=est.duration_ticks,
         fuel_cost=est.fuel_cost,
         est_attrition=est.base_attrition,
-        feasible=est.feasible,
+        feasible=est.feasible and not terrain_impassable,
         forced=est.forced,
         crossings=[
             CrossingView(
@@ -147,8 +207,53 @@ def preview_movement(
             )
             for c in est.crossings
         ],
+        mobility_profile=mob.profile,
+        speed_kmh=round(speed_kmh, 1),
+        terrain_impassable=terrain_impassable,
+        terrain_routed=routed,
+        fuel_remaining=round(unit_fuel.remaining, 1),
+        fuel_sufficient=fuel_sufficient,
     )
 
 
 def _close(a: tuple[float, float], b: tuple[float, float], eps: float = 1e-7) -> bool:
     return abs(a[0] - b[0]) < eps and abs(a[1] - b[1]) < eps
+
+
+_ROUTE_SAMPLE_KM = 0.3  # 沿路徑取樣地形的間距（約 res-8 hex 尺度）
+
+
+def _route_cells(waypoints: list[tuple[float, float]]) -> list[str]:
+    """沿路徑（[(lng,lat)…]）取樣經過的 hex（res 8，去重保序）。"""
+    seen: list[str] = []
+    known: set[str] = set()
+    for (lng0, lat0), (lng1, lat1) in pairwise(waypoints):
+        dist_km = haversine_m((lng0, lat0), (lng1, lat1)) / 1000.0
+        n = max(1, int(dist_km / _ROUTE_SAMPLE_KM))
+        for i in range(n + 1):
+            f = i / n
+            cell = h3.latlng_to_cell(lat0 + (lat1 - lat0) * f, lng0 + (lng1 - lng0) * f, 8)
+            if cell not in known:
+                known.add(cell)
+                seen.append(cell)
+    return seen
+
+
+def _route_terrain_cost(sampler, cells: list[str], profile: str) -> tuple[float, bool]:  # type: ignore[no-untyped-def]
+    """回 (路徑平均地形成本, 是否含不可通行)。取樣失敗 → (1.0, False)（不調預覽）。"""
+    try:
+        info = sampler(cells)
+    except Exception:
+        return 1.0, False
+    costs: list[float] = []
+    impassable = False
+    for c in cells:
+        ct = info.get(c)
+        if ct is None:
+            continue
+        sc = step_cost(profile, ct[0], ct[1])
+        if sc is None:
+            impassable = True
+        elif sc > 0:
+            costs.append(sc)
+    return (sum(costs) / len(costs) if costs else 1.0), impassable

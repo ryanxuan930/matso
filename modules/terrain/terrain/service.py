@@ -13,7 +13,7 @@ import grpc
 from matso_sdk._generated import terrain_pb2, terrain_pb2_grpc
 
 from terrain.dted import DtedMap
-from terrain.hexgrid import CellAttributes, HexGridCache
+from terrain.hexgrid import CellAttributes, HexGridBuilder, HexGridCache
 from terrain.los import Observer, check_los, get_viewshed
 from terrain.pathfind import get_path
 
@@ -36,6 +36,10 @@ class TerrainService(terrain_pb2_grpc.TerrainServiceServicer):
         self._dted = dted
         self._cache = cache
         self._res = viewshed_resolution
+        # #88 隨需補格：DTED 與快取同時可用時，讓快取在預建 bbox 外**當場算** cell，
+        # 避免 A* 把「沒預先算過」誤判為不可通行（長距離移動因此無法繞路）。
+        if cache is not None and dted is not None:
+            cache.with_builder(HexGridBuilder(dted))
 
     def _require_dted(self, context: grpc.ServicerContext) -> DtedMap:
         if self._dted is None:
@@ -115,4 +119,5 @@ def _cell_info(c: CellAttributes) -> terrain_pb2.CellInfo:
         terrain_class=str(c.terrain_class),
         water=c.water,
         mobility_cost=c.mobility_cost,
+        road_class=c.road_class,
     )

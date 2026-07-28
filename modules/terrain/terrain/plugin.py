@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import grpc
 from matso_sdk import HealthState, Manifest, MatsoPlugin, PluginKind
 from matso_sdk._generated import terrain_pb2_grpc
@@ -15,7 +17,11 @@ from matso_sdk._generated import terrain_pb2_grpc
 from terrain.config import TerrainSettings
 from terrain.dted import DtedMap
 from terrain.hexgrid import HexGridCache
+from terrain.landuse import read_landuse_index
+from terrain.roads import read_road_index
 from terrain.service import TerrainService
+
+_LOG = logging.getLogger("terrain.plugin")
 
 CONTRACT_VERSION = "0.1.0"
 _CAPABILITIES = ("GetElevation", "CheckLos", "GetPath", "GetCellBatch", "GetViewshed")
@@ -63,4 +69,15 @@ def build_from_settings(
     dted = DtedMap.try_open_default(settings)
     cache_path = settings.hex_cache_dir / f"res{resolution}.parquet"
     cache = HexGridCache.open(cache_path) if cache_path.is_file() else None
+    # #83 道路疊加：roads_res{N}.parquet 存在即載入（缺檔＝無道路資料，移動退回純越野）。
+    if cache is not None:
+        roads = read_road_index(settings.hex_cache_dir / f"roads_res{resolution}.parquet")
+        if roads:
+            cache.with_roads(roads)
+            _LOG.info("道路索引載入：%d 格有路（res %d）", len(roads), resolution)
+        # #89 土地利用：landuse_res{N}.parquet 存在即載入（缺檔＝terrain_class 維持坡度推導）。
+        landuse = read_landuse_index(settings.hex_cache_dir / f"landuse_res{resolution}.parquet")
+        if landuse:
+            cache.with_landuse(landuse)
+            _LOG.info("土地利用索引載入：%d 格（res %d）", len(landuse), resolution)
     return TerrainPlugin(dted, cache, resolution)

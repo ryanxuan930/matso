@@ -21,6 +21,7 @@ dependencies = [
   "pyjwt>=2.10", # JWT access/refresh token 簽發與驗證（O4.1）
   "pyyaml>=6.0", # 想定 package YAML 解析（scenario.loader；#7 API 執行期用）
   "jsonschema>=4.20", # 想定 bundle/schema 全量驗證（scenario.loader；#7 API 執行期用）
+  "matso-ai", # 自主推演 LlmFactionDecider（O11.2）：RoleManager/client/prompts + httpx（隨 matso-ai）
 ]
 
 [build-system]

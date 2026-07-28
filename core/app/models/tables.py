@@ -75,6 +75,11 @@ class WargameSession(Base):
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "orbatEditFactions", JSON, nullable=True
     )
+    # #98 陣營關係矩陣：三元組 [[a, b, "ALLIED"|"NEUTRAL"|"HOSTILE"], …]，對稱。
+    # None = 未宣告 → 全 HOSTILE 預設（既有局零遷移）。以 `factions.relations_from_triples` 讀取。
+    faction_relations: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
+        "factionRelations", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):
@@ -91,6 +96,8 @@ class TacticalUnit(Base):
     parent_id: Mapped[str | None] = mapped_column(
         "parentId", String(191), ForeignKey("TacticalUnit.id", ondelete="CASCADE")
     )
+    # 固定單位（指揮部/後勤/陣地）：不接受 MOVE 令、不被派去移動（劇本 ORBAT 設定，唯讀跟隨）。
+    is_fixed: Mapped[bool] = mapped_column("isFixed", Boolean, default=False)
     attributes: Mapped[dict] = mapped_column("attributes", JSON, default=dict)  # type: ignore[type-arg]
     current_lat: Mapped[float | None] = mapped_column("currentLat", Double)
     current_lng: Mapped[float | None] = mapped_column("currentLng", Double)
@@ -206,7 +213,8 @@ class SessionParticipant(Base):
     # faction＝想定定義字串 id（SPEC §12.1/ADR 006）；驗證於 app.factions
     faction: Mapped[str] = mapped_column("faction", String(191))
     role: Mapped[UserRole] = mapped_column("role", SAEnum(UserRole))
-    unit_scope: Mapped[dict] = mapped_column("unitScope", JSON)  # type: ignore[type-arg]
+    # unit_scope＝限指揮之單位 id 清單（JSON 陣列；空＝整個陣營）。以 Any 容納 JSON 值。
+    unit_scope: Mapped[Any] = mapped_column("unitScope", JSON, default=list)
 
 
 class Scenario(Base):

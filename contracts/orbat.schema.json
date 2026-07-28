@@ -25,7 +25,11 @@
           },
           "lat": { "type": "number", "minimum": -90, "maximum": 90 },
           "lng": { "type": "number", "minimum": -180, "maximum": 180 },
-          "parent": { "type": "string", "description": "上級單位 designation（同 orbat 內）" }
+          "parent": { "type": "string", "description": "上級單位 designation（同 orbat 內）" },
+          "fixed": {
+            "type": "boolean",
+            "description": "固定單位（指揮部/後勤/陣地等）：不接受 MOVE 令、不會被派去移動或機動交戰。預設 false。"
+          }
         }
       }
     }

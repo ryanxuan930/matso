@@ -214,6 +214,60 @@
 | O10.5 | 安全補完（refresh token 撤銷/rotation + migration [C5]；建局角色 gate [C8]；管理 audit log） | refresh 撤銷後不可換發；非授權角色不可開演習；每角色×端點矩陣仍綠 |
 | O10.6 | OCR/資產 & 觀測性（tesseract/PaddleOCR 模型檔 env 注入；GRASS r.viewshed release 對照 ≥98%；Prometheus/Grafana §20.3 指標 + 告警；CI node24 升級 + 覆蓋率工具） | 掃描 PDF OCR 進 staging；Grafana 推演健康儀表板；TICK_OVERRUN/plugin DOWN/AI 逾時率告警 |
 
+## O11 自主推演（規格：**SPEC_AUTONOMY.md**；落實並延伸 O10.3 AI 迴路↔kernel + O10.4 victory；多陣營 AI 自主對抗）
+
+> 給定想定 + 各陣營目標 → 每個 AI 陣營一條 async 決策 worker（固定心跳），讀霧化 COP → LLM 產令 → 護欄 G1–G6 → 落 VALIDATED → 確定性引擎執行 → 每週期判勝負 → 自動收場 + AAR。**N 陣營**（示範雙陣營，架構支援多陣營）；單模型角色/人格切換。紅線：AI 只產令不裁決物理、不寫熱狀態、護欄無 bypass、霧化只在後端、決定性走 ReplayClient。
+
+| 任務 | 內容 | 驗收重點 |
+|------|------|----------|
+| O11.1 | Faction COP context builder（`core/app/ai_loop/context.py`；霧化快照→prompt） | A 陣營 context 不含未偵測敵；可序列化餵 prompt |
+| O11.2 | 陣營泛化 + `LlmFactionDecider`（接 #54 Ollama；core 容器裝 matso_ai+httpx） | 藍/紅各得結構正確 orders；AI_BARE 引用空；單模型 adapter 切換=0 |
+| O11.3 | 護欄 G3 feasibility（包 run_precheck）+ 指令橋接 VALIDATED（OrderService.submit） | 不可行/越權令被 G3 剔除記 GUARDRAIL_INTERVENTION；合法令成 VALIDATED |
+| O11.4 | Kernel 決策排程器（每 AI 陣營 async 固定心跳 worker；非 pre_tick） | 多 AI session tick 不被 LLM 拖慢；AI 令非同步到位並執行（**第一個可展示里程碑**） |
+| O11.5 | 勝負引擎綁定 + 自動收場 + AAR（triggers.py DSL 評估 victory_conditions） | 達成條件自動終局出 AAR；時限判平/守方勝；結果入 Ledger |
+| O11.6 | 決定性重播（RecordingClient 錄／ReplayClient 重播接線） | 同想定+同錄音→同結局；現有 golden 6 綠不變 |
+| O11.7 | 前端自主主控台（設定：陣營指派/人格/目標/AI 模式；觀戰：COP+事件+AI 軌跡+護欄+目標進度；結果：勝負橫幅+AAR） | 一鍵起多 AI 自主推演並觀戰到收場；Playwright smoke |
+| O11.8 | 韌性收尾（LLM 逾時 fallback HOLD、指令速率上限、runaway 守衛、per-worker 觀測） | LLM 斷線時 sim 續跑；不產生無界指令 |
+
+---
+
+## 移動真實化（規格：**SPEC_MOVEMENT.md**；擴充 SPEC_FULL §4.3/§5.3 + O3.4；使用者回報）
+
+> 現況＝三套不一致移動模型（預覽/閘門/執行）：執行走**直線固定 40 km/h**、不分機動載具、不看地形、正常行軍零耗損。目標＝機動能力（機械化 vs 徒步）× 地形（類別/坡度/道路/涉水/障礙）× 行軍耗損的真實化，並收斂為單一速度模型與路由。**每 Phase 皆改變移動決定性輸出 → golden replay 重錄（預期）**。紅線：AI 只選目的地/節奏、不裁決物理；移動隨機走 `DeterministicRNG(stream="movement")`；契約先行。
+
+| 任務 | 內容 | 驗收重點 |
+|------|------|----------|
+| #80 (Phase A) | Seed mobility_class/速度到 EquipmentTemplate；`UnitMobilityResolver` 導出 per-unit profile+速度；執行器改讀 per-unit step_km（取代固定 40）；開啟行軍耗損（距離×地形難度×tempo）；AI 導出 profile（去硬寫 FOOT）+ context 加速度/單回合可達 + decider 指示 | 機械化 vs 徒步同距離 ETA 明顯不同（固定 seed）；長程行軍產生 MOVE_ATTRITION（非強穿）；AI MOVE 用導出 profile；預覽與執行速度一致；**golden 6 重錄綠** |
+| #81 (Phase B) | `v_eff` 逐 tick 依地形類別+坡度（mobility_matrix.step_cost）+ weather modifier 調變；不可通行段→停邊界+MOVE_BLOCKED；預覽 estimate_route 採同一速度模型（分段 ETA/耗損） | 同路線穿森林/山地/濕地/上坡明顯慢於開闊/平地（固定 seed 係數比較）；進不可通行地形停邊界+事件；預覽分段 ETA＝執行；**golden 6 重錄綠** |
+| #82 (Phase C) ✅路由核心 | 執行改走 get_path A* 路徑（繞開河/山/不可通行）；預覽/執行同一路由；**任意點位起終點**（非 hex 中心 → 首/末部分格幾何段，不吸附格心、停精確終點，SPEC §2.3）；不可達/超出格網→退回直線不誤拒 | ✅ 單位繞開河/山而非直穿；✅ **任意 lat/lng 起終點正確（停精確終點）**；✅ 預覽路徑＝執行路徑；✅ golden 6 未破。worklog: movement-phase-c.md |
+| #83 道路網／土地利用 ingestion（OSM） | **#82 未竟項**（資料已備：`/Volumes/M200/Maps/{taiwan.osm.pbf,taiwan_drive.graphml}`，容器已掛載於 `/data`）：terrain `terrain_class` 目前只由坡度+高程導出（URBAN/FOREST 需 OSM 土地利用）；`mobility_matrix` 無 `ROAD` class；`MATSO_ROAD_GRAPH_PATH`（taiwan_drive.graphml）標「尚未使用」。需 OSM PBF 匯入 → 土地利用分類 + 道路網 → 新增 ROAD 成本/加速 | 沿既成道路移動明顯快於越野；森林/市區由土地利用（非坡度）正確分類 |
+| #85 補給（加油）✅ | `ResupplySystem` 取代 NoOp logistics：補給車（LOGISTICS capacity.FUEL）2km 內對同陣營目標每 tick 撥交；超距等待不失敗；載運油存 `currentState.cargo_fuel`（惰性滿載）。AI 可下 RESUPPLY。**無契約變更**（協定/OrderType/schema 早已具備） | ✅ 拋錨→補給→重下 MOVE 可再動（e2e）；✅ 拒補他軍/非補給單位；✅ golden 6 未破。**未做：彈藥/水糧/電池撥交**。worklog: logistics-resupply-and-ui.md |
+| #86 移動真實化前端顯示 ✅ | 契約補 `MovementPreviewView` 6 欄（後端已回、契約漏宣告）；COP 預覽顯示機動 profile+實際速度、地形繞路、不可通行警告、油料不足警示；單位卡活油料列（0＝拋錨紅字） | ✅ preview API 回全欄；✅ COP 渲染無 console error；✅ 前端 lint/typecheck 綠 |
+| #84 油料消耗 ✅ | `EquipmentInstance.currentState.fuel`（惰性滿油，免 migration）；每 tick 夾距離→依實際位移扣油→寫回；油盡 `MOVE_HALTED_FUEL` 停駛（重下令才再動）；徒步不受限。預覽改用真油耗；AI 得知「剩餘行程 N km」 | ✅ 續航 340–480km（MBT/IFV/SP/MLRS）；✅ 油盡拋錨+事件；✅ golden 6 未破。**未做：補給加油（logistics 仍 NoOp）、前端油量顯示**。worklog: movement-fuel.md |
+| #88 hex 格網覆蓋擴大／on-demand ✅ | `HexGridCache` 可注入 `HexGridBuilder`：預建 bbox 外的 cell **當場由 DTED 算**並記憶化（未注入 builder → 維持舊 None 語義）；`TerrainService` 於 DTED+快取皆備時自動注入 | ✅ 實測預建外（高雄）取得真地形；✅ 台南→高雄 A* reachable 15 hops（原不可達）；✅ golden 6 未破。**未做：eta_ticks 真實化（刻意；core 為權威 ETA，避免重建第二套速度模型）**。worklog: hexgrid-ondemand.md |
+
+---
+
+## COP 視角／符號／設定／顯示（2026-07-28 使用者回報 7 項）
+
+> **盤點結論（動工前先查，避免重工）**：其中 4 項的後端／機制**早已存在**，缺的是接線或前端，
+> 故工作量差距很大（#96 半天、#93 需先做參數清冊）。紅線照舊：**fog 過濾只在後端**（#90 的
+> 視角切換必須走後端 `as_faction`，不可前端過濾）；契約先行；一次一張卡。
+
+| 任務 | 現況盤點 | 內容 | 驗收重點 |
+|------|----------|------|----------|
+| #98 陣營關係矩陣持久化（#91 的前置）✅ | `FactionRelations` 早已寫好、loader 也會建，**但建完就丟**——`WargameSession` 無欄位存。故 sweep 拿不到關係（盟軍互相偵測）、`orchestrator.py:159` 寫死全 HOSTILE（**AI 會打盟軍**）、前端無從得知（`cop.vue` 硬寫 HOSTILE） | `WargameSession.factionRelations Json?`（**可為 NULL＝未宣告＝全 HOSTILE，既有局零遷移**）；`to_triples`/`relations_from_triples`（寬容解析）；`session_store.load_session_relations` 單一入口；loader 開局寫入、clone 複製；sim_runtime 注入 sweep、orchestrator 改讀 | ✅ 遷移前備份 + 逐項核對（3/44/50 筆數不變、既有局皆 NULL）；✅ 宣告 BLUE↔YELLOW 為 ALLIED 後，兩方**互不成為 contact**，RED 仍看得到雙方；✅ 12 新測試、pytest 1079、schema-sync 141 欄。worklog: faction-relations-persistence.md |
+| #97 感測器接線（#90/#91 的前置） | **偵測程式碼全都寫好了**：`intel/sensor.py`（SensorProfile/detect_probability/fidelity）、`intel/sweep.py`（H3 k-ring 掃描、關係矩陣過濾、確定性）、`intel/store.py`（per-faction upsert）、`intel/sensor_system.py`（Kernel 接線層）皆已存在且有單元測試。**但 `sim_runtime.py:225` 仍是 `NoOpSensorSystem()`** → `IntelContact` 實測 0 筆。後果：一般陣營指揮官 COP **完全看不到敵人**；白軍則全部當友軍顯示 | 比照 #33 CommsSystem 取代 NoOp 的做法：新增 `engine/sensor_wiring.py`（`SensorResolver` 由裝備導出 SensorProfile + **內建基本目視**讓既有 session 免 seed 即可運作；`make_detect_env` 接地形 LOS + 天氣）→ sim_runtime 換上 `SensorSweepSystem`；RNG 走 `DeterministicRNG(seed, "sensors")` | 跑一局後 `IntelContact` 有資料且**分陣營**；`GET /intel` 各陣營所見不同；敵單位進入感測範圍才出現、超出後保留最後已知位置；**golden 6 不受影響**（golden 自己的 scenarios 用 NoOp，不走 sim_runtime） |
+| #90 COP 視角切換（全知者可套各陣營迷霧）✅ | 同左 | COP 加視角下拉（僅全知可見）：全局／各陣營；units+intel 皆帶 `as_faction`。**COP 原本根本沒呼叫 `/intel`**——敵情是拿 `/units` 反推的，故一般陣營角色恆為空、白軍等於用 ground truth；本卡改為一律取後端 fog 過濾後的 contacts。契約先行補上從未宣告的 `/intel` + `ContactView`。 | ✅ 下拉四項（全局＋BLUE/RED/YELLOW）且切換後不縮；✅ 切 RED → 單位清單只剩 RED 13，後端實收 `as_faction=RED`（units 與 intel 皆是）；✅ 地圖實測 **13 own + 22 contact**（＝RED 自有單位＋其偵測所得）；✅ 越權由既有 `test_commander_cannot_view_other_faction` 擋住。worklog: cop-viewpoint.md |
+| #91 友軍/敵軍 2525 affiliation 依關係矩陣 ✅ | 同左（前端符號機制與後端矩陣都已有，缺「觀測者對該陣營的關係」這個輸入） | 契約先行 +`/sessions/{id}/relations`（**只回以觀測者為中心的一列**，不洩漏第三方結盟）；cop.vue `relationOf`/`isFriendly` → contacts 帶真關係、友軍列入 `realAsOwn`、**友軍不可被鎖為交戰目標**。**連帶補上盟軍共享視圖**：sweep 一直假定「盟軍經共享視圖非偵測」但 units 從來是嚴格等值過濾，#98 後盟軍會既不在 units 也不在 contacts＝互相隱形。 | ✅ BLUE 視角實測地圖圖徵 own/BLUE aff=F ×13、**own/YELLOW aff=F ×10（盟軍）**、contact/RED aff=H ×13；✅ `/relations?as_faction=BLUE` 回 {BLUE:ALLIED, RED:HOSTILE, YELLOW:ALLIED}；✅ 未宣告關係的局維持只見己方（既有局零行為變更，有測試釘住）；✅ pytest 1084、golden 6 未破。worklog: friendly-enemy-symbology.md |
+| #92 地圖標註陣營歸屬與視角過濾 ✅ | 同左（後端欄位與可見性過濾早已完整） | 契約 +`as_faction` 於 listMapFeatures；後端視角過濾（僅全知，一般角色→403）；前端載入帶視角、**繪製時 owner_faction＝當前視角**（否則白軍替某軍畫的東西會落共同層而全體可見）、標註列加歸屬徽章（共同／陣營色點+代號） | ✅ API 實測：全局見 COMMON+BLUE-OP+RED-OP、BLUE 視角無 RED-OP、RED 視角無 BLUE-OP；✅ 測試交叉驗證「白軍 BLUE 視角所見＝BLUE 帳號登入所見」；✅ 瀏覽器徽章與切換收斂皆正確；✅ pytest 1086、golden 6 未破。worklog: map-feature-ownership.md |
+| #93 全域參數集中於系統設定 ✅P1（P2/P3 待續） | 同左 | **先產清冊** `docs/PARAMS.md`：分四層 H 熱更新／R 重啟該局／C 冷啟動／**P 需改程式**（P 層才是兵推行為那群，成本在讀取端改寫）。P1 把 P 層核心子集改成可讀設定：新 `sim_params.py`（frozen dataclass，**預設＝原常數**、壞值逐欄退預設）、契約補上**原本完全不在契約裡**的 `/system/config`、執行端於 runner 啟動讀一次（**進行中的局不受影響**）、**預覽端讀同一份**（否則預覽與實跑再度分歧）、設定頁「推演參數」區塊 | ✅ 14 測試（預設等同原常數、壞值逐欄退、往返一致）；✅ pytest 1110、**golden 6 未破**；✅ 容器實測 foot_xc 12→預覽 10.9km/h、改回 5→4.5km/h（比值符合），壞值 -999 退回 4000；✅ 驗完重設回預設。**未做**：P2 韌性/串流、P3 env 逐項標註需重啟、R 層尚未入 UI。worklog: sim-params.md |
+| #94 單位圖標上方顯示血量 ✅ | 同左 | 圖標上方血條（**canvas 生成 ImageData，免 glyphs**——同鎖頭徽章紀律，純離線/air-gapped 仍畫得出來；text-field 需 glyphs，無 tileUrl 時整層不出現）。以 5% 為桶（21 張圖而非 101）。**順帶修既有 bug**：白軍被登記為 `WHITE_CELL` 參與者時 `observerFaction` 取到保留字，導致沒有任何單位算我方 →「單位」恆為 0、地圖只剩敵情。 | ✅ 實測 36/36 單位有血條；注入 37/62/8/0 → 桶 35/60/10/0 正確；✅ 修正後表頭由「單位 0」變「單位 36」 |
+| #95 攻擊時繪製武器軌跡 ✅ | 同左 | 由**後端已裁決**的 ENGAGEMENT_RESOLVED 驅動；**座標不從事件帶**——`build_event_envelope` 不設 faction 受眾標籤，交戰事件目前是廣播給所有陣營，夾帶座標等於洩漏全場交戰位置。改由前端從已合法可見的圖徵解析端點，解析不到就不畫。HIT 亮橘實線／MISS 灰藍虛線／REJECTED 不畫；4 秒淡出。**零後端改動＝零 golden/迷霧風險**。一併修全局視角單位重複渲染（#90 引入：own 36 + contact 70 疊在一起） | ✅ 四種注入：HIT 畫(0.95)、MISS 畫(0.5)、目標不可見不畫、REJECTED 不畫；✅ 淡出 0.95→0.58→0.11→消失；✅ 截圖可見橘色軌跡與血條。**排查紀錄**：z7 下 34m 的軌跡因小於一像素被向量切圖丟棄（非 bug，z15 正常）。worklog: weapon-tracks.md |
+| #96 地圖編輯器線條粗細 ✅ | 同左 | `attributes.width`（Json 欄位 → 免 migration）；`mapfeat-line` 由寫死 2 改為 `['get','width']`；繪製與編輯面板各加線寬滑桿（0.5–12）；`featureLineWidth` 缺值退預設 2 → 既有標註維持原樣 | ✅ 圖層運算式確認為 `["get","width"]`；✅ 建 width=8 的線，圖徵屬性帶 width=8 |
+| #99 地圖物件整形（控制點編輯）✅ | 現況只能**整點拖曳點特徵**（#11 B2）與**繞質心旋轉**（#26）：線/面畫錯一個頂點就得刪掉重畫。後端 `PATCH …/map-features/{fid}` 早已收 `geometry`（欄位型別 `Any`）→ **零後端／零契約改動** | 選取線/面時顯示控制點：拖頂點改形狀、拖中點插入新頂點、拖圖形本體整體平移、右鍵控制點刪除（線≥2/面≥3 才准）。幾何純函數集中於 `useMapFeatures`；拖曳中本地預覽、放開才 PATCH，失敗一律重載回權威幾何。**順手修好 #11 B2 自始無效的點拖曳**：`featLayers` 在 onMounted 就 `filter(getLayer)`，但圖層要到 `map.on('load')` 才加 → 過濾成空陣列，那兩層的 mousedown 從沒註冊過 | ✅ 拖頂點只動該點、拖中點插在正確索引、拖本體同位移（皆以 GET 回讀伺服器幾何驗證）；✅ 首尾重合的環（`genCircle`）控制點 4 顆／4 相異位置，不「裂開」；✅ 刪點下限保護（線 2/面 3）+ toast；✅ 點特徵拖曳修復後座標落在放手處。worklog: feature-reshape.md |
+| #100 README 全系統文件 + SPEC_V2 差距分析 ✅ | 使用者提供 6 份兵推文獻（JCATS×3/NATO IST-160/MITRE JTLS 聯邦/MASA multi-site/INDSR 特刊全本），要求全系統解剖 + v2 開發藍圖（交 Opus 5 續開發） | workflow 13 agents（6 碼庫 mapper + 7 PDF reader）→ README.md（1556 行，逐檔用途與關係）+ SPEC_V2.md（900 行：35 項差距總表、WP-A~H 工作包、V2.0–2.2 路線圖、Non-Goals、agent 執行守則） | ✅ 兩檔完成；盤點重大發現（AI 敵情 ground truth／G4 空轉／TriggerChecker NoOp／fixed 旗標 roundtrip bug）皆入 SPEC_V2 差距表。worklog: docs-readme-specv2.md |
+
 ---
 
 ## 附錄：任務中斷與續作（額度用完時的保命機制）

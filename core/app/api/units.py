@@ -5,8 +5,12 @@ GET /api/v1/sessions/{id}/units —— 一般角色見己方單位；全知（�
 
 from __future__ import annotations
 
+import contextlib
+from functools import lru_cache
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,10 +18,13 @@ from app.adjudication import WeaponProfile
 from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
+from app.cache import make_redis
 from app.config import Settings
-from app.errors import AuthForbiddenError
+from app.errors import AuthForbiddenError, SessionNotFoundError
 from app.factions import validate_faction_id
+from app.factions.session_store import load_session_relations
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
+from app.state.live_position import push_pos_cmd
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["units"])
@@ -36,6 +43,7 @@ class UnitView(BaseModel):
     platform_count: int  # 平台/建制數
     personnel_current: int | None = None  # 當前人員數（顯示用）
     comms: str
+    is_fixed: bool = False  # 固定單位（指揮部等）：不可下 MOVE 令；COP 顯示鎖定標記
 
 
 class WeaponView(BaseModel):
@@ -65,6 +73,7 @@ def _view(u: TacticalUnit) -> UnitView:
         platform_count=_platform_count(u),
         personnel_current=u.personnel_current,
         comms=u.comms_status.value,
+        is_fixed=u.is_fixed,
     )
 
 
@@ -75,6 +84,23 @@ def _platform_count(u: TacticalUnit) -> int:
     if isinstance(u.personnel_current, int) and u.personnel_current >= 1:
         return u.personnel_current
     return 1
+
+
+def _visible_factions(db: Session, session_id: str, observer: str) -> list[str]:
+    """觀測者直接看得到的陣營＝**自己 + 盟軍**（#91 共享視圖）。
+
+    偵測 sweep 早就假定「己方與 ALLIED 不成 contact（盟軍經共享視圖，非偵測）」
+    （`intel/sweep.py`），但那個共享視圖從來沒實作——units 一直是嚴格 `== faction`。
+    #98 把關係矩陣接上後，盟軍變成既不在 units、也不在 contacts，等於互相隱形。此函式補上該視圖。
+
+    NEUTRAL/HOSTILE 不在此列：那些要靠偵測（`/intel`），看不看得到由 fog 決定。
+    """
+    observer = validate_faction_id(observer)
+    rel = load_session_relations(db, session_id)
+    factions = db.scalars(
+        select(TacticalUnit.faction).where(TacticalUnit.session_id == session_id).distinct()
+    ).all()
+    return [f for f in factions if f == observer or rel.is_allied(observer, f)]
 
 
 @router.get("/{session_id}/units", response_model=list[UnitView])
@@ -96,11 +122,13 @@ def list_units(
         # 視角切換（White Cell 控制台，O7.4）：僅全知可指定；非全知者禁止（防越權窺視）。
         if not omniscient:
             raise AuthForbiddenError("僅 White Cell 可切換視角")
-        stmt = stmt.where(TacticalUnit.faction == validate_faction_id(as_faction))
+        stmt = stmt.where(TacticalUnit.faction.in_(_visible_factions(db, session_id, as_faction)))
     elif not omniscient and not settings.stub_gateway:
         # 一般角色：faction 過濾下推 SQL（C12）；STUB_GATEWAY E2E affordance 放行全單位。
         assert participant is not None  # 非全知 → 必為參與者（上方已 require）
-        stmt = stmt.where(TacticalUnit.faction == participant.faction)
+        stmt = stmt.where(
+            TacticalUnit.faction.in_(_visible_factions(db, session_id, participant.faction))
+        )
     # else：全知且未指定視角 → 全部（god view）
 
     units = db.execute(stmt).scalars().all()
@@ -157,3 +185,42 @@ def list_unit_weapons(
             )
         )
     return out
+
+
+@lru_cache(maxsize=1)
+def _reposition_redis(url: str) -> Any:
+    return make_redis(url)
+
+
+class RepositionRequest(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+@router.post("/{session_id}/units/{unit_id}/reposition", response_model=UnitView)
+def reposition_unit(
+    session_id: str,
+    unit_id: str,
+    req: RepositionRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> UnitView:
+    """White Cell「地圖狀態編輯」：把單位直接放到新座標（拖放）。
+
+    座標寫入 DB（權威，供顯示/reconnect/seed）+ 推入活模擬座標命令通道（sim 迴圈 drain 套 hot；
+    暫停中編輯 → 開始兵推後第一 tick 生效）。限全知（統裁/白軍/管理）——編輯任一陣營位置是布局動作。
+    """
+    if not is_omniscient(user.role):
+        raise AuthForbiddenError("僅統裁/白軍/管理可編輯單位位置（地圖狀態編輯）")
+    unit = db.get(TacticalUnit, unit_id)
+    if unit is None or unit.session_id != session_id:
+        raise SessionNotFoundError("單位不存在於此 session")
+    unit.current_lat = req.lat
+    unit.current_lng = req.lng
+    db.commit()
+    # 命令通道失敗（無活 sim / redis 不可達）不讓 DB 編輯回滾；下次 seed 仍帶 DB 值。
+    with contextlib.suppress(Exception):
+        push_pos_cmd(_reposition_redis(settings.redis_url), session_id, unit_id, req.lat, req.lng)
+    db.refresh(unit)
+    return _view(unit)

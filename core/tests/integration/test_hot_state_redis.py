@@ -70,7 +70,9 @@ async def test_broadcaster_writes_ring_buffer(redis_client: redis.Redis, session
 
 async def test_broadcaster_skips_empty_diff(redis_client: redis.Redis, session_id: str) -> None:
     bc = RedisBroadcaster(redis_client, session_id)
-    await bc.publish(tick=0, diff={})
+    # 非心跳 tick（tick % _CLOCK_EVERY_TICKS != 0）+ 空 diff → 節流跳過（不寫 ring）。
+    # （tick 為 5 的倍數時會送 CLOCK 心跳，屬預期；見 _CLOCK_EVERY_TICKS。）
+    await bc.publish(tick=1, diff={})
     assert redis_client.exists(f"session:{session_id}:ring") == 0
 
 

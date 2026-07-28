@@ -6,11 +6,21 @@ POST /api/v1/sessions   建立 session（建立者成為 EXERCISE_DIRECTOR 參�
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, Depends, Response, status
 
-from app.api.deps import get_current_user, get_lobby_service
+from app.ai_loop.orchestrator import autonomy_config_key
+from app.api.deps import get_current_user, get_lobby_service, get_settings
 from app.auth.schemas import CurrentUser
-from app.lobby.schemas import CreateSessionRequest, EditSessionRequest, SessionSummary
+from app.cache import make_redis
+from app.config import Settings
+from app.lobby.schemas import (
+    CloneSessionRequest,
+    CreateSessionRequest,
+    EditSessionRequest,
+    SessionSummary,
+)
 from app.lobby.service import LobbyService
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["lobby"])
@@ -62,6 +72,25 @@ def unarchive_session(
 ) -> SessionSummary:
     """還原封存推演（#31）——移回進行中。限統裁/管理。"""
     return lobby.set_archived(user, session_id, False)
+
+
+@router.post("/{session_id}/clone", status_code=201, response_model=SessionSummary)
+def clone_session(
+    session_id: str,
+    req: CloneSessionRequest | None = None,
+    user: CurrentUser = Depends(get_current_user),
+    lobby: LobbyService = Depends(get_lobby_service),
+    settings: Settings = Depends(get_settings),
+) -> SessionSummary:
+    """複製一局為新推演（#79）——沿用部署/編裝/標註/名冊/AI 指派，另給新 RNG 種子。限統裁/管理。"""
+    summary = lobby.clone_session(user, session_id, req or CloneSessionRequest())
+    # AI 指派存 Redis（非 DB）→ 另複製一份到新局；掃描層起跑時讀取、自動接管 AI（沿用任務/心跳）。
+    with contextlib.suppress(Exception):
+        r = make_redis(settings.redis_url)
+        raw = r.get(autonomy_config_key(session_id))
+        if raw:
+            r.set(autonomy_config_key(summary.id), raw)
+    return summary
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

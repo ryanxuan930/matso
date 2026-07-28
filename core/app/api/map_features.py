@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -67,6 +67,8 @@ class MapFeatureEdit(BaseModel):
     influence_radius_m: float | None = None
     weapon_template_id: str | None = None
     attributes: dict[str, Any] | None = None
+    # 變更歸屬（WHITE_CELL＝共同層）。**僅全知可用**——見 edit_map_feature 的檢查。
+    owner_faction: str | None = None
 
 
 class TerrainFootprintRequest(BaseModel):
@@ -123,11 +125,20 @@ def _check_geometry_type(geometry_type: str) -> str:
 @router.get("/{session_id}/map-features", response_model=list[MapFeatureView])
 def list_map_features(
     session_id: str,
+    as_faction: str | None = Query(None, description="White Cell 視角：以某陣營視角看標註（#92）"),
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[MapFeatureView]:
     stmt = select(MapFeature).where(MapFeature.session_id == session_id)
-    if not is_omniscient(user.role):
+    omniscient = is_omniscient(user.role)
+    if as_faction is not None:
+        # 視角切換（#92）：僅全知可指定；與 units/intel 同紀律（不信任 client 帶的陣營）。
+        if not omniscient:
+            raise AuthForbiddenError("僅 White Cell 可切換視角")
+        stmt = stmt.where(
+            MapFeature.owner_faction.in_([WHITE_CELL, validate_faction_id(as_faction)])
+        )
+    elif not omniscient:
         participant = require_participant(db, user, session_id)
         # fog of war：共同（WHITE_CELL）+ 本軍標注（後端過濾）。
         stmt = stmt.where(MapFeature.owner_faction.in_([WHITE_CELL, participant.faction]))
@@ -206,6 +217,12 @@ def edit_map_feature(
         feat.weapon_template_id = edit.weapon_template_id
     if edit.attributes is not None:
         feat.attributes = {**(feat.attributes or {}), **edit.attributes}
+    if edit.owner_faction is not None:
+        # 轉移歸屬僅全知可為：一般角色若能改，等同可把標註轉給他軍、或逕自發布到共同層
+        # （WHITE_CELL）讓全體看見——那會繞過 fog of war。
+        if not is_omniscient(user.role):
+            raise AuthForbiddenError("僅 White Cell 可變更標註歸屬")
+        feat.owner_faction = validate_faction_id(edit.owner_faction)
     db.commit()
     return _view(feat)
 

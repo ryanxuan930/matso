@@ -18,13 +18,15 @@ from enum import StrEnum
 
 
 class Role(StrEnum):
-    """Phase 1 五角色（SPEC_FULL §9.1）。"""
+    """Phase 1 五角色（SPEC_FULL §9.1）+ 自主推演的陣營中性指揮官（O11.2）。"""
 
     STRATEGIC_PLANNER = "STRATEGIC_PLANNER"
     OPFOR_COMMANDER = "OPFOR_COMMANDER"
     AAR_ANALYST = "AAR_ANALYST"
     INTEL_OFFICER = "INTEL_OFFICER"
     WHITE_CELL_ASSISTANT = "WHITE_CELL_ASSISTANT"
+    # 自主推演（SPEC_AUTONOMY §4）：陣營中性指揮官——身分/準則由 briefing 注入，單一模型服務 N 陣營。
+    FACTION_COMMANDER = "FACTION_COMMANDER"
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,15 @@ ROLE_REGISTRY: dict[Role, RoleConfig] = {
         system_prompt=_PLACEHOLDER + "身為紅軍指揮官，依紅軍準則對戰場變化決策並產令。",
         adapter="opfor-v1",
         priority=100,  # 對抗即時性最高
+        output_schema_ref="opfor_decision",
+    ),
+    Role.FACTION_COMMANDER: RoleConfig(
+        role=Role.FACTION_COMMANDER,
+        system_prompt=_PLACEHOLDER + "身為 briefing 指定陣營的指揮官，依態勢與任務目標決策並產令。",
+        # 自主推演走單一本機模型（無 LoRA）；LlmFactionDecider 以 adapter="base" 定址該模型，
+        # 陣營差異由 briefing（context）注入，故所有陣營共用同一 adapter → 切換成本 0。
+        adapter="commander-v1",
+        priority=100,  # 與 OPFOR 同級（對抗即時性）
         output_schema_ref="opfor_decision",
     ),
     Role.STRATEGIC_PLANNER: RoleConfig(

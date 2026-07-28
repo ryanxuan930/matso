@@ -90,8 +90,40 @@ def get_gateway() -> PhysicsGateway:
     return TerrainGatewayAdapter(TerrainClient(_default_channel()))
 
 
+def get_movement_path_fn() -> object | None:
+    """移動地形路徑查詢器（#82，供預覽端）。STUB_GATEWAY → None（直線）。
+
+    以 DI 提供，讓測試可覆寫為 None——預覽單元測試因此不依賴 terrain 服務是否啟動（決定性）。
+    """
+    if get_settings().stub_gateway:
+        return None
+    from app.movement.terrain_sampler import build_terrain_path_fn
+
+    return build_terrain_path_fn()
+
+
+@lru_cache(maxsize=1)
+def _order_redis() -> object:
+    """下令端唯讀 redis client（讀活模擬當前 tick 以戳記 issued_at_tick）。"""
+    from app.cache import make_redis
+
+    return make_redis(get_settings().redis_url)
+
+
+def _live_tick(session_id: str) -> int:
+    """讀本 session 當前 sim tick（廣播器每 tick 寫入 `session:{id}:tick`）。無值→0。"""
+    try:
+        raw = _order_redis().get(f"session:{session_id}:tick")  # type: ignore[attr-defined]
+        return int(raw) if raw is not None else 0
+    except (ValueError, TypeError, ConnectionError):
+        return 0
+
+
 def get_order_service(
+    session_id: str,
     db: Session = Depends(get_db),
     gateway: PhysicsGateway = Depends(get_gateway),
 ) -> OrderService:
-    return OrderService(db, gateway)
+    # session_id 由路徑 `/sessions/{session_id}/orders` 注入；tick_source 讓下令戳記真實 sim tick
+    # （否則永遠 0 → 指令全部顯示 T0、無法依下令時間排序）。
+    return OrderService(db, gateway, tick_source=lambda: _live_tick(session_id))

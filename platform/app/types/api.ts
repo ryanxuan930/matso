@@ -182,6 +182,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 複製一局為新推演（沿用單位部署/編裝/地圖標註/參與者/AI 指派；新 RNG 種子）——限統裁/管理 */
+        post: operations["cloneSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/ai-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 本局各陣營 AI 決策心跳狀態（思考中／下一次決策倒數）——faction-scoped（一般角色僅見己方） */
+        get: operations["getAiStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/lifecycle": {
         parameters: {
             query?: never;
@@ -239,6 +277,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 全域系統設定（AI/LLM + **推演參數** + 唯讀部署資訊）。限管理/統裁。 */
+        get: operations["getSystemConfig"];
+        /** @description 更新可編輯設定。AI/LLM 為**熱更新**（下次使用即生效）；`sim` 推演參數於 **session runner 啟動時**讀取 → 進行中的推演局不受影響（不會半場改變物理規則）， 新局或該局重跑才套用。移動**預覽**則立即反映（預覽本就是「現在下令會怎樣」）。 */
+        put: operations["putSystemConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/relations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description **以觀測者為中心**的陣營關係（#91）：回「我對其他各陣營」的關係，供前端決定 2525 affiliation（友/中/敵）。刻意不回完整矩陣——第三方之間的結盟關係不是觀測者必然知道的事。 全知未指定 as_faction（全局視角）→ observer 為 null、relations 為空（全局視角不套敵我著色）。 */
+        get: operations["getFactionRelations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/intel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description faction-scoped 敵情（fog of war）：一般角色見自身陣營的偵測結果；全知不帶參數＝god view （全部陣營的 contacts），帶 as_faction＝以該陣營視角查。**已依 fidelity 去識別化** （target_unit_id 這類 ground truth 永不下發）。 */
+        get: operations["listIntel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/participants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 一局的參與者名冊 + 可指派陣營。限統裁/白軍/管理（或本局統裁參與者）。 */
+        get: operations["listParticipants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/participants/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description 指派/更新某帳號的參與陣營與角色（upsert）。限統裁/白軍/管理。 */
+        put: operations["assignParticipant"];
+        post?: never;
+        /** @description 移除某帳號的參與資格。限統裁/白軍/管理；不可移除最後一位統裁。 */
+        delete: operations["removeParticipant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/units/{uid}/weapons": {
         parameters: {
             query?: never;
@@ -290,7 +424,8 @@ export interface paths {
         /** @description 更新武器/裝備範本屬性（限統裁/管理；影響全域目錄） */
         put: operations["updateEquipmentTemplate"];
         post?: never;
-        delete?: never;
+        /** @description 刪除武器/裝備範本（限統裁/管理；使用中→422 拒刪，避免孤兒編裝） */
+        delete: operations["deleteEquipmentTemplate"];
         options?: never;
         head?: never;
         patch?: never;
@@ -348,7 +483,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍） */
+        /** @description 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍）。 帶 as_faction（#92）＝以該陣營視角過濾（共同 + 該軍），與 units/intel 同紀律。 */
         get: operations["listMapFeatures"];
         put?: never;
         /** @description 新增地圖標註/工事（全知可指定 owner_faction；否則本軍） */
@@ -670,7 +805,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -745,12 +880,42 @@ export interface components {
              * @default false
              */
             orbat_edit: boolean;
+            /** @description 呼叫者限指揮之單位子集（空＝整個陣營；COP 下令面板灰化範圍外） */
+            my_unit_scope?: string[];
         };
         /** @description 編輯已開推演設定（#16）——限統裁/管理 */
         EditSessionRequest: {
             name?: string | null;
             /** @description 想定世界初始日期時間 ISO8601（空字串＝清除） */
             world_start_time?: string | null;
+        };
+        /** @description 複製一局為新推演（沿用部署/編裝/參與者/AI 指派，另給新 RNG 種子） */
+        CloneSessionRequest: {
+            /** @description 新局名稱（省略＝來源名 +「（副本）」） */
+            name?: string | null;
+        };
+        /** @description 一個陣營的 AI 決策心跳狀態（供 COP「思考中／下一次決策倒數」） */
+        AiFactionStatus: {
+            faction: string;
+            /**
+             * @description thinking＝正打 LLM；idle＝等下一次心跳；offline＝worker 未上線/逾時
+             * @enum {string}
+             */
+            state: "thinking" | "idle" | "offline";
+            /** @description 距下一次決策的秒數（idle 時 >0；thinking/offline 為 null） */
+            seconds_until_next?: number | null;
+            /** @description 決策心跳（秒） */
+            heartbeat_s?: number | null;
+            /** @description 本次思考已歷時秒數（thinking 時） */
+            thinking_since_s?: number | null;
+            /** @description 上一次決策落單數 */
+            last_submitted?: number | null;
+            /** @description 累計決策週期數 */
+            cycles?: number | null;
+        };
+        /** @description 本局各陣營 AI 決策狀態（faction-scoped：一般角色僅見己方；全知見全部） */
+        AiStatusView: {
+            factions: components["schemas"]["AiFactionStatus"][];
         };
         UnitView: {
             id: string;
@@ -770,6 +935,8 @@ export interface components {
             /** @description 當前人員數（顯示用，可空） */
             personnel_current?: number | null;
             comms: string;
+            /** @description 固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記 */
+            is_fixed?: boolean;
         };
         /** @description 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種 */
         WeaponView: {
@@ -781,6 +948,34 @@ export interface components {
             min_range_m: number;
             ammo_types: string[];
             ammo_remaining?: number | null;
+        };
+        /** @description 推演參與者名冊條目——哪個帳號以哪個陣營/角色參與（決定操控/查看範圍） */
+        SessionParticipantView: {
+            user_id: string;
+            username: string;
+            faction: components["schemas"]["Faction"];
+            role: components["schemas"]["UserRole"];
+            /** @description 限指揮之單位 id 子集（空＝整個陣營） */
+            unit_scope?: string[];
+        };
+        /** @description 名冊 unit_scope 選擇用的單位（供限縮至特定單位） */
+        RosterUnit: {
+            id: string;
+            designation: string;
+            faction: components["schemas"]["Faction"];
+        };
+        /** @description 一局的參與者名冊 + 可指派陣營 + 單位清單（供 unit_scope 選擇） */
+        ParticipantRoster: {
+            participants: components["schemas"]["SessionParticipantView"][];
+            /** @description 可指派陣營（本局單位陣營 + WHITE_CELL） */
+            factions: string[];
+            units: components["schemas"]["RosterUnit"][];
+        };
+        AssignParticipantRequest: {
+            faction: components["schemas"]["Faction"];
+            role: components["schemas"]["UserRole"];
+            /** @description 限指揮之單位 id 子集（空/省略＝整個陣營） */
+            unit_scope?: string[];
         };
         /** @description 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄 */
         EquipmentTemplateView: {
@@ -821,6 +1016,87 @@ export interface components {
             category: string;
             base_stats: Record<string, never>;
         };
+        /** @description 推演參數（#93）。**未設定時等同原硬編碼常數**，故既有推演局與 golden replay 不受影響。 改動只在 session runner 啟動時讀取 → 進行中的局不受影響。 */
+        SimParamsView: {
+            /** @description 徒步越野速度 km/h（預設 5.0） */
+            foot_xc_kmh: number;
+            /** @description 徒步沿道路速度 km/h（預設 6.5） */
+            foot_road_kmh: number;
+            /** @description 無法由編裝導出機動時的後備速度 km/h（預設 40） */
+            vehicle_fallback_kmh: number;
+            /** @description 每公里行軍耗損（戰力點/km），依機動 profile（FOOT/WHEELED/TRACKED） */
+            march_attrition: {
+                [key: string]: number;
+            };
+            /** @description 補給撥交距離 km（預設 2.0） */
+            resupply_range_km: number;
+            /** @description 無感測裝備時的內建目視距離 m（預設 4000） */
+            intrinsic_optical_range_m: number;
+            /** @description 偵測掃描間隔 tick（預設 5） */
+            sensor_interval_ticks: number;
+            /** @description 1 tick 的模擬時間 ms（預設 60000＝1 分） */
+            tick_rate_ms: number;
+            /** @description 真實節奏壓縮比（預設 120＝約 0.5s/tick） */
+            pace_compression: number;
+            /** @description 通聯狀態重算間隔 tick（預設 5） */
+            comms_interval_ticks: number;
+            /** @description AI 決策心跳秒數預設（該局 autonomy 設定優先） */
+            ai_heartbeat_s: number;
+            /** @description 單一 AI worker 累計落單上限（runaway 守衛） */
+            ai_max_orders: number;
+        };
+        /** @description 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。 */
+        SystemConfigEdit: {
+            /** @enum {string} */
+            ai_mode: "AI_OFF" | "AI_BARE" | "AI_FULL";
+            llm_base_url: string;
+            llm_model: string;
+            /** @description null＝保留原值；""＝清除 */
+            llm_api_key?: string | null;
+            sim?: components["schemas"]["SimParamsView"];
+        };
+        SystemConfigView: {
+            /** @description AI/LLM 設定（熱更新） */
+            ai: Record<string, never>;
+            sim: components["schemas"]["SimParamsView"];
+            /** @description 部署層資訊（由容器 env 決定，**需重啟對應服務**才能改；此處僅檢視） */
+            readonly: Record<string, never>;
+        };
+        /** @description 以觀測者為中心的陣營關係（#91）。未宣告的配對一律回 HOSTILE（§12.1 預設）。 */
+        FactionRelationsView: {
+            /** @description 觀測者陣營；全知的全局視角為 null（無單一觀測者） */
+            observer: string | null;
+            /** @description 「觀測者 → 該陣營」的關係；observer 為 null 時為空物件 */
+            relations: {
+                [key: string]: "ALLIED" | "NEUTRAL" | "HOSTILE";
+            };
+            /** @description 本局所有陣營 id（供 UI 列舉；不含 WHITE_CELL） */
+            factions: string[];
+        };
+        /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 */
+        ContactView: {
+            /** @description 觀測方的 IntelContact id（非目標 unit id） */
+            contact_id: string;
+            /**
+             * @description 情報等級
+             * @enum {string}
+             */
+            fidelity: "DETECTED" | "CLASSIFIED" | "IDENTIFIED";
+            /** @description 最後觀測到的 sim tick */
+            last_seen_tick: number;
+            /** @description 最後已知緯度 */
+            lat: number;
+            /** @description 最後已知經度 */
+            lng: number;
+            /** @description 定位誤差半徑（m）；等級愈高愈小 */
+            error_radius_m: number;
+            /** @description CLASSIFIED 以上才揭露（unit_level） */
+            unit_type?: string | null;
+            /** @description IDENTIFIED 才揭露 */
+            designation?: string | null;
+            /** @description IDENTIFIED 才揭露敵我 */
+            faction?: string | null;
+        };
         /** @description 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面） */
         MapFeatureView: {
             id: string;
@@ -856,6 +1132,8 @@ export interface components {
             influence_radius_m?: number | null;
             weapon_template_id?: string | null;
             attributes?: Record<string, never> | null;
+            /** @description 變更歸屬陣營（WHITE_CELL＝共同層，全體可見）。**僅全知可用**——一般角色帶此欄→403， 以免自己把標註轉給他軍或逕自發布到共同層而繞過 fog。 */
+            owner_faction?: string | null;
         };
         /** @description 武器射向/雷達扇區的地形裁切請求（#11） */
         TerrainFootprintRequest: {
@@ -922,6 +1200,36 @@ export interface components {
             /** @description 是否需強穿至少一個阻礙 */
             forced: boolean;
             crossings: components["schemas"]["MovementCrossing"][];
+            /**
+             * @description 由編裝導出的機動 profile（#80）：FOOT/WHEELED/TRACKED
+             * @default FOOT
+             */
+            mobility_profile: string;
+            /**
+             * @description 此單位有效速度（含 tempo 與路徑平均地形調變，#80/#81）
+             * @default 0
+             */
+            speed_kmh: number;
+            /**
+             * @description 路徑是否穿越對此 profile 不可通行的地形（#81）
+             * @default false
+             */
+            terrain_impassable: boolean;
+            /**
+             * @description 路徑是否為地形 A* 繞路（#82；false＝直線）
+             * @default false
+             */
+            terrain_routed: boolean;
+            /**
+             * @description 單位目前剩餘油量（#84；0＝徒步/無油料模型）
+             * @default 0
+             */
+            fuel_remaining: number;
+            /**
+             * @description 現有油量是否足以走完全程（#84；否則中途拋錨）
+             * @default true
+             */
+            fuel_sufficient: boolean;
         };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
@@ -1465,6 +1773,72 @@ export interface operations {
             };
         };
     };
+    cloneSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CloneSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Cloned */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description Not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAiStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiStatusView"];
+                };
+            };
+            /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     sessionLifecycle: {
         parameters: {
             query?: never;
@@ -1530,6 +1904,269 @@ export interface operations {
             };
             /** @description Not a participant */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSystemConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemConfigView"];
+                };
+            };
+            /** @description 權限不足 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    putSystemConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SystemConfigEdit"];
+            };
+        };
+        responses: {
+            /** @description Config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemConfigView"];
+                };
+            };
+            /** @description 權限不足 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 參數不合法 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getFactionRelations: {
+        parameters: {
+            query?: {
+                /** @description White Cell 視角切換——以該陣營為觀測者；一般角色帶他陣營→403 */
+                as_faction?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Relations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FactionRelationsView"];
+                };
+            };
+            /** @description 非參與者，或一般角色試圖以他陣營為觀測者 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listIntel: {
+        parameters: {
+            query?: {
+                /** @description White Cell 視角切換——查某陣營的敵情；一般角色帶他陣營→403 */
+                as_faction?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contacts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactView"][];
+                };
+            };
+            /** @description 非參與者，或一般角色試圖查他陣營情報 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listParticipants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Roster */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParticipantRoster"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    assignParticipant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignParticipantRequest"];
+            };
+        };
+        responses: {
+            /** @description Assigned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionParticipantView"];
+                };
+            };
+            /** @description Invalid faction/role */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User/session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removeParticipant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1667,6 +2304,44 @@ export interface operations {
                 };
             };
             /** @description base_stats invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteEquipmentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found / in use */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1815,7 +2490,10 @@ export interface operations {
     };
     listMapFeatures: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description White Cell 視角切換——以該陣營視角看標註；一般角色帶他陣營→403 */
+                as_faction?: string;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["SessionId"];

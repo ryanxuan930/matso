@@ -152,6 +152,97 @@ def test_delete_session_with_children(session_factory: sessionmaker[Session]) ->
         assert not db.execute(_select(TacticalUnit).where(TacticalUnit.session_id == sid)).first()
 
 
+def test_clone_session_copies_units_equipment_and_new_seed(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """#79：複製一局 → 新局帶單位/裝備/部署 verbatim，且 master_seed 互異（新 RNG）。"""
+    from sqlalchemy import select as _select
+
+    from app.models import (
+        EquipmentInstance,
+        EquipmentTemplate,
+        TacticalUnit,
+        UnitLevel,
+        WargameSession,
+    )
+
+    seed_user(session_factory)
+    client = make_client(session_factory)
+    h = auth_header(login(client)["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "母局"}, headers=h).json()["id"]
+    with session_factory() as db:
+        hq = TacticalUnit(
+            session_id=sid,
+            designation="HQ",
+            unit_level=UnitLevel.COMPANY,
+            faction="BLUE",
+            is_fixed=True,
+            current_lat=24.1,
+            current_lng=120.8,
+            current_strength=63.0,  # 已交戰減損：verbatim 應原樣帶過
+        )
+        db.add(hq)
+        db.flush()
+        sub = TacticalUnit(
+            session_id=sid,
+            designation="P1",
+            unit_level=UnitLevel.PLATOON,
+            faction="BLUE",
+            parent_id=hq.id,
+        )
+        db.add(sub)
+        db.flush()
+        tmpl = EquipmentTemplate(name="R", category="KINETIC", base_stats={})
+        db.add(tmpl)
+        db.flush()
+        db.add(
+            EquipmentInstance(
+                template_id=tmpl.id, owner_id=sub.id, current_state={"ammo": 40}, quantity=7
+            )
+        )
+        db.commit()
+        src_seed = db.get(WargameSession, sid).master_seed  # type: ignore[union-attr]
+
+    r = client.post(f"/api/v1/sessions/{sid}/clone", json={"name": "第二輪"}, headers=h)
+    assert r.status_code == 201, r.text
+    new_id = r.json()["id"]
+    assert new_id != sid and r.json()["name"] == "第二輪"
+
+    with session_factory() as db:
+        new_units = list(
+            db.execute(_select(TacticalUnit).where(TacticalUnit.session_id == new_id)).scalars()
+        )
+        assert {u.designation for u in new_units} == {"HQ", "P1"}
+        new_hq = next(u for u in new_units if u.designation == "HQ")
+        new_p1 = next(u for u in new_units if u.designation == "P1")
+        # 部署/固定/戰力 verbatim（含已減損戰力）。
+        assert new_hq.is_fixed is True
+        assert new_hq.current_lat == 24.1 and new_hq.current_lng == 120.8
+        assert new_hq.current_strength == 63.0
+        # parent 於新局內重新連結（指向新 HQ，非舊）。
+        assert new_p1.parent_id == new_hq.id
+        # 裝備 verbatim（含數量與彈藥）。
+        eq = list(
+            db.execute(
+                _select(EquipmentInstance).where(EquipmentInstance.owner_id == new_p1.id)
+            ).scalars()
+        )
+        assert len(eq) == 1 and eq[0].quantity == 7 and eq[0].current_state == {"ammo": 40}
+        # 新 master_seed（新一輪獨立 RNG）。
+        assert db.get(WargameSession, new_id).master_seed != src_seed  # type: ignore[union-attr]
+
+
+def test_clone_requires_director(session_factory: sessionmaker[Session]) -> None:
+    """#79：非本局統裁/管理者不可複製。"""
+    seed_user(session_factory, username="alice", role=UserRole.COMMANDER)
+    seed_user(session_factory, username="mallory", role=UserRole.COMMANDER)
+    client = make_client(session_factory)
+    a = auth_header(login(client, "alice")["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "alice 的局"}, headers=a).json()["id"]
+    m = auth_header(login(client, "mallory")["access_token"])
+    assert client.post(f"/api/v1/sessions/{sid}/clone", headers=m).status_code == 403
+
+
 def test_non_director_cannot_delete(session_factory: sessionmaker[Session]) -> None:
     """非本局統裁/管理者不可封存或刪除（#31）。"""
     seed_user(session_factory, username="alice", role=UserRole.COMMANDER)

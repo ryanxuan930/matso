@@ -14,8 +14,22 @@ import {
 import { hexCellsForBounds } from '~/composables/useHexGrid'
 import { buildLatLngGrid, buildMgrsLabels } from '~/composables/useCoordGrid'
 import { cellToBoundary, cellToLatLng, latLngToCell } from 'h3-js'
-import { type Contact, type OwnUnit, buildUnitFeatures } from '~/composables/useUnits'
-import { symbolImage } from '~/composables/useMilsymbol'
+import {
+  HP_BAR_PREFIX,
+  HP_BAR_STEP,
+  type Contact,
+  type OwnUnit,
+  buildUnitFeatures,
+} from '~/composables/useUnits'
+import {
+  HP_BAR_PIXEL_RATIO,
+  LOCK_BADGE_ID,
+  LOCK_BADGE_PIXEL_RATIO,
+  hpBarImage,
+  lockBadgeImage,
+  symbolImage,
+} from '~/composables/useMilsymbol'
+import { insertVertex, midpoints, moveVertex, openRing, translateRing } from '~/composables/useMapFeatures'
 
 const emit = defineEmits<{
   mapClick: [{ lng: number; lat: number; h3: string }]
@@ -33,9 +47,18 @@ const emit = defineEmits<{
       faction?: string
       kind?: string
       featureId?: string // #26 游標下的地圖標註/工事
+      vertexIndex?: number // #99 游標下的控制點索引（供「刪除控制點」）
     },
   ]
   featureMove: [{ id: string; lng: number; lat: number }] // 拖放移動點特徵（#11 B2）
+  // #99 整形：拖頂點/中點/本體後的新幾何（存放格式的開放環 [[lng,lat],…]）。
+  featureReshape: [{ id: string; geometry: number[][] }]
+  // #99c 刪除控制點（Alt＋點控制點）。刪不刪得成由上層判（最少頂點數 + 提示）。
+  featureVertexDelete: [{ id: string; index: number }]
+  unitMove: [{ id: string; lng: number; lat: number }] // 地圖狀態編輯：拖放單位到新座標
+  // 地圖狀態編輯（多選）：一次移動多個單位（Shift 多選 / 框選後整組拖曳）到各自新座標。
+  unitsMove: [{ moves: { id: string; lng: number; lat: number }[] }]
+  unitsSelected: [{ count: number }] // 多選數量變更（供「已選 N 個」徽章）
   // 選取單位的螢幕座標（供 Unit 資訊卡懸浮於圖標旁；地圖平移/縮放即時更新；無選取→null）。
   selectScreenPos: [{ x: number; y: number } | null]
 }>()
@@ -79,9 +102,15 @@ const props = withDefaults(
     featSymbolIcons?: { key: string; sidc: string }[] // 需生成的 milsymbol icon 規格（#11）
     influenceFc?: Fc // 影響範圍圓
     draftFc?: Fc // 繪製中草稿
+    weaponTrackFc?: Fc // #95 武器軌跡（顯示用；由已裁決的交戰事件驅動）
     selectedFeatureId?: string | null // 選取的標註（高亮）
+    // #99 選取的標註可被本使用者整形（拖頂點/中點/本體）→ 顯示控制點。
+    // 由上層以「有繪製權 ∧ 對此標註有編修權」算出：後端 `_feature_for_edit` 只讓全知或本軍改，
+    // 在這裡就 gate 住，才不會讓人拖了半天才吃 403。
+    featureEdit?: boolean
     drawActive?: boolean // 繪圖模式：地圖點擊視為加頂點（不選單位/標註）
     targeting?: boolean // 設定目標中（#3）：游標改十字準星，提示「點地圖選落點/目標」
+    editUnits?: boolean // 地圖狀態編輯：單位可拖放到新座標（White Cell 布局）
     latlngGrid?: boolean // 經緯度網格（#9）
     mgrsGrid?: boolean // MGRS 標記（#9）
     gridStepDeg?: number // 網格密度（度，#9）
@@ -123,9 +152,12 @@ const props = withDefaults(
     featSymbolIcons: () => [],
     influenceFc: () => ({ type: 'FeatureCollection', features: [] }),
     draftFc: () => ({ type: 'FeatureCollection', features: [] }),
+    weaponTrackFc: () => ({ type: 'FeatureCollection', features: [] }),
     selectedFeatureId: null,
+    featureEdit: false,
     drawActive: false,
     targeting: false,
+    editUnits: false,
     latlngGrid: false,
     mgrsGrid: false,
     gridStepDeg: 0.5,
@@ -162,10 +194,15 @@ const basemapSources = buildBasemapSources({
   onlineBasemaps: _cfg.onlineBasemaps as boolean,
 })
 let basemapErrorHandled = false // 每次切底圖重置，避免 404 洪水重複 emit
+// style 尚未 load 完成前不得增刪圖層：addSource/addLayer 會丟 "Style is not done loading"，
+// 且 getStyle() 回 undefined。此時略過即可——load handler 會以當下最新的 basemapId 再套一次，
+// 故載入中的切換不會遺失。**不可改用 map.isStyleLoaded()**：它是「fully loaded」語意，任何來源
+// 尚在載瓦片時也回 false（實測加完 source 的下一拍即為 false），會誤擋正常的切底圖。
+let styleReady = false
 
 /** 移除現有底圖（raster 'basemap' 或 vector 'basemap-*' 圖層）+ 來源。 */
 function removeBasemap() {
-  if (!map) return
+  if (!map || !styleReady) return
   const ids = (map.getStyle().layers ?? [])
     .map((l) => l.id)
     .filter((id) => id === 'basemap' || id.startsWith('basemap-'))
@@ -175,7 +212,7 @@ function removeBasemap() {
 
 /** 套用底圖來源：raster → 單一 raster 層；vector → OpenMapTiles 深色圖層組（皆置於 graticule 之下）。 */
 function applyBasemap(id: string) {
-  if (!map) return
+  if (!map || !styleReady) return // 見 styleReady 註解：load 後會以最新值再套一次
   basemapErrorHandled = false // 重新武裝回退偵測
   removeBasemap()
   const src = basemapSources.find((s) => s.id === id)
@@ -209,8 +246,31 @@ const container = ref<HTMLDivElement | null>(null)
 const loaded = ref(false)
 let map: MapLibreMap | null = null
 let dragFeatId: string | null = null // 拖放移動中的點特徵 id（#11 B2）
+let dragUnitId: string | null = null // 拖放移動中的單位 id（地圖狀態編輯）
+// 地圖狀態編輯 · 多選：選取單位集合 + 整組拖曳/框選狀態。
+const selectedUnitIds = new Set<string>()
+let groupDrag: { start: { lng: number; lat: number }; origs: { id: string; lng: number; lat: number }[] } | null = null
+let boxStart: { x: number; y: number } | null = null
+let rubberBand: HTMLDivElement | null = null // 框選矩形（螢幕座標 overlay）
 // 拖曳事件的結構化型別（避免引入 maplibre 具名事件型別）。
 type _LngLatEvt = { lngLat: { lng: number; lat: number } }
+type _PointEvt = { point: { x: number; y: number }; lngLat: { lng: number; lat: number }; originalEvent: MouseEvent; preventDefault: () => void }
+
+// 多選高亮環 filter：只畫在 selectedUnitIds 內的單位。
+function _multiSelFilter(): unknown[] {
+  return ['in', ['get', 'id'], ['literal', Array.from(selectedUnitIds)]]
+}
+function refreshMultiSelect(): void {
+  if (map?.getLayer('unit-multiselect-ring')) {
+    map.setFilter('unit-multiselect-ring', _multiSelFilter() as never)
+  }
+  emit('unitsSelected', { count: selectedUnitIds.size })
+}
+function clearMultiSelect(): void {
+  if (!selectedUnitIds.size) return
+  selectedUnitIds.clear()
+  refreshMultiSelect()
+}
 function onFeatDragMove(e: _LngLatEvt): void {
   if (!dragFeatId || !map) return
   ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData({
@@ -229,6 +289,129 @@ function onFeatDrop(e: _LngLatEvt): void {
   emit('featureMove', { id, lng: e.lngLat.lng, lat: e.lngLat.lat })
 }
 
+// ---- #99 整形（控制點編輯）----
+// 頂點多於此數就不畫中點：圓形存放環有 48 個頂點，再加 48 顆中點會糊成一片。
+const MAX_MIDPOINT_VERTS = 24
+type _RingSel = { id: string; gtype: 'LINE' | 'POLYGON'; ring: number[][] }
+// 拖曳中的整形狀態（頂點拖曳／本體平移共用；null＝未在整形）。
+let reshape: _RingSel | null = null
+let dragVertIdx = -1 // 拖曳中的頂點索引（-1＝在拖本體）
+let bodyDragStart: { lng: number; lat: number; ring: number[][] } | null = null
+
+/** 由已渲染的 featureFc 取出選取圖形的開放環（POINT 走既有整點拖曳，回 null）。 */
+function selectedRing(): _RingSel | null {
+  const id = props.selectedFeatureId
+  if (!id) return null
+  for (const raw of (props.featureFc?.features ?? []) as unknown[]) {
+    const f = raw as { properties?: { id?: unknown }; geometry?: { type?: string; coordinates?: unknown } }
+    if (String(f?.properties?.id ?? '') !== String(id)) continue
+    const g = f.geometry
+    if (g?.type === 'LineString') {
+      return { id: String(id), gtype: 'LINE', ring: openRing(g.coordinates as number[][]) }
+    }
+    if (g?.type === 'Polygon') {
+      const ring = ((g.coordinates as number[][][]) ?? [])[0] ?? []
+      return { id: String(id), gtype: 'POLYGON', ring: openRing(ring) }
+    }
+    return null
+  }
+  return null
+}
+
+/** 控制點 GeoJSON：實頂點（mid=false）+ 邊中點（mid=true，拖了就插新頂點）。 */
+function vertexFc(sel: _RingSel | null): Fc {
+  if (!sel || !props.featureEdit || props.drawActive) return _EMPTY_FEAT_FC
+  const feats: unknown[] = sel.ring.map((c, i) => ({
+    type: 'Feature',
+    properties: { i, mid: false },
+    geometry: { type: 'Point', coordinates: c },
+  }))
+  if (sel.ring.length <= MAX_MIDPOINT_VERTS) {
+    for (const m of midpoints(sel.ring, sel.gtype === 'POLYGON')) {
+      feats.push({
+        type: 'Feature',
+        properties: { i: m.i, mid: true },
+        geometry: { type: 'Point', coordinates: m.pt },
+      })
+    }
+  }
+  return { type: 'FeatureCollection', features: feats }
+}
+
+function syncVertices(): void {
+  ;(map?.getSource(VERT_SRC) as GeoJSONSource | undefined)?.setData(
+    vertexFc(reshape ?? selectedRing()) as never,
+  )
+}
+
+/**
+ * 整形拖曳中的即時預覽：只覆寫該圖形的幾何，其餘照 props 原樣。
+ * 放開後由上層 PATCH→重載，props 一變 syncFeatures 就以權威幾何收斂；PATCH 失敗時上層亦重載，
+ * 故不會停在拖歪的形狀上。
+ */
+function previewReshape(): void {
+  const src = map?.getSource(FEAT_SRC) as GeoJSONSource | undefined
+  const rs = reshape
+  if (!src || !rs) return
+  const feats = ((props.featureFc?.features ?? []) as unknown[]).map((raw) => {
+    const f = raw as { properties?: { id?: unknown } }
+    if (String(f?.properties?.id ?? '') !== rs.id) return raw
+    const geometry =
+      rs.gtype === 'POLYGON'
+        ? { type: 'Polygon', coordinates: [[...rs.ring, rs.ring[0]!]] }
+        : { type: 'LineString', coordinates: rs.ring }
+    return { ...(raw as object), geometry }
+  })
+  src.setData({ type: 'FeatureCollection', features: feats } as never)
+}
+
+/** 結束整形：還原游標/事件，把新幾何交給上層（存放格式＝開放環）。重入安全（rs 為 null 即不 emit）。 */
+function endReshape(): void {
+  const rs = reshape
+  reshape = null
+  dragVertIdx = -1
+  bodyDragStart = null
+  if (map) map.getCanvas().style.cursor = ''
+  map?.off('mousemove', onVertexDragMove)
+  map?.off('mousemove', onBodyDragMove)
+  window.removeEventListener('mouseup', endReshape)
+  if (rs) emit('featureReshape', { id: rs.id, geometry: rs.ring })
+}
+
+/**
+ * 保險絲：`map.once('mouseup')` 只收得到「canvas 容器上」的放開。
+ * 浮動小工具就疊在地圖上，把控制點拖到工具視窗上方才放手是很常見的——
+ * 沒有這條 window 級 fallback，整形狀態會卡住、圖形之後一直跟著游標跑。
+ * 容器上的放開會冒泡到 window，故正常情況兩者都觸發，由 endReshape 的重入保護吸收。
+ */
+function armReshapeFallback(): void {
+  window.addEventListener('mouseup', endReshape)
+}
+
+function onVertexDragMove(e: _LngLatEvt): void {
+  if (!reshape || dragVertIdx < 0) return
+  reshape = { ...reshape, ring: moveVertex(reshape.ring, dragVertIdx, [e.lngLat.lng, e.lngLat.lat]) }
+  previewReshape()
+  syncVertices()
+}
+function onVertexDrop(e: _LngLatEvt): void {
+  if (!reshape) return
+  onVertexDragMove(e) // 以放開處為最終位置
+  endReshape()
+}
+function onBodyDragMove(e: _LngLatEvt): void {
+  if (!reshape || !bodyDragStart) return
+  const d = bodyDragStart
+  reshape = { ...reshape, ring: translateRing(d.ring, e.lngLat.lng - d.lng, e.lngLat.lat - d.lat) }
+  previewReshape()
+  syncVertices()
+}
+function onBodyDrop(e: _LngLatEvt): void {
+  if (!reshape) return
+  onBodyDragMove(e)
+  endReshape()
+}
+
 const HEX_SRC = 'hexgrid'
 const GRAT_SRC = 'graticule'
 const HILLSHADE_SRC = 'hillshade'
@@ -236,9 +419,11 @@ const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
 const DEST_SRC = 'move-dest'
 const MOVE_PATH_SRC = 'move-path' // #28 移動路徑預覽（線 + 強穿標記）
+const TRACK_SRC = 'weapon-tracks' // #95 武器軌跡（短暫顯示後淡出）
 const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
 const FEAT_SYM_SRC = 'mapfeatsym' // 帶北約符號的點特徵（#11）
 const FEAT_DRAG_SRC = 'mapfeatdrag' // 拖放移動預覽（#11 B2）
+const VERT_SRC = 'mapfeatverts' // #99 選取圖形的控制點（頂點 + 邊中點）
 const INFL_SRC = 'mapinfluence' // 影響範圍圓
 const DRAFT_SRC = 'mapdraft' // 繪製中草稿
 const FEAT_NONE = '__matso_feat_none__'
@@ -273,6 +458,8 @@ function syncFeatures() {
   ;(map?.getSource(FEAT_SRC) as GeoJSONSource | undefined)?.setData((props.featureFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(INFL_SRC) as GeoJSONSource | undefined)?.setData((props.influenceFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(DRAFT_SRC) as GeoJSONSource | undefined)?.setData((props.draftFc ?? _EMPTY_FEAT_FC) as never)
+  ;(map?.getSource(TRACK_SRC) as GeoJSONSource | undefined)?.setData((props.weaponTrackFc ?? _EMPTY_FEAT_FC) as never)
+  syncVertices() // #99 幾何/選取變動 → 控制點跟著重算
   // 北約符號點特徵（#11）：生成/快取 milsymbol icon（去重）→ setData。
   if (map) {
     for (const spec of props.featSymbolIcons ?? []) {
@@ -449,10 +636,33 @@ function setLayerVisibility(id: string, visible: boolean) {
   if (map?.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
 }
 
+/** 選取拖曳用：所有單位當前座標（我方 + 敵情 contact）——編輯模式白軍可調任一陣營單位。 */
+function allUnitPositions(): { id: string; lng: number; lat: number }[] {
+  const out: { id: string; lng: number; lat: number }[] = []
+  for (const u of props.ownUnits) out.push({ id: u.id, lng: u.lng, lat: u.lat })
+  for (const c of props.contacts) out.push({ id: c.contactId, lng: c.lng, lat: c.lat })
+  return out
+}
+
 /** 依 props 的單位/contact 重建 symbol 特徵：生成/快取 milsymbol icon（去重 addImage）→ setData。 */
-function syncUnits() {
+function syncUnits(posOverride?: Map<string, { lng: number; lat: number }>) {
   if (!map) return
-  const { collection, icons } = buildUnitFeatures(props.ownUnits, props.contacts, props.currentTick)
+  // 整組拖曳即時跟隨：以覆寫座標重建，讓真圖標 + 高亮環跟著游標移動（暫停中無 STATE_DIFF 覆蓋）。
+  // 我方 + 敵情 contact 皆套覆寫（編輯模式可同時拖曳兩陣營單位）。
+  const ov = posOverride && posOverride.size ? posOverride : null
+  const own = ov
+    ? props.ownUnits.map((u) => {
+        const o = ov.get(u.id)
+        return o ? { ...u, lng: o.lng, lat: o.lat } : u
+      })
+    : props.ownUnits
+  const contacts = ov
+    ? props.contacts.map((c) => {
+        const o = ov.get(c.contactId)
+        return o ? { ...c, lng: o.lng, lat: o.lat } : c
+      })
+    : props.contacts
+  const { collection, icons } = buildUnitFeatures(own, contacts, props.currentTick)
   for (const spec of icons) {
     if (map.hasImage(spec.key)) continue
     const img = symbolImage(spec.key, spec.sidc, spec.options)
@@ -496,6 +706,7 @@ onMounted(async () => {
 
   map.on('load', () => {
     if (!map) return
+    styleReady = true // 自此可安全增刪圖層；下方 applyBasemap 會補套載入中被略過的切換
     map.addSource(GRAT_SRC, { type: 'geojson', data: buildGraticule() })
     map.addLayer({
       id: 'graticule',
@@ -650,7 +861,8 @@ onMounted(async () => {
       type: 'line',
       source: FEAT_SRC,
       filter: ['match', ['geometry-type'], ['LineString', 'Polygon'], true, false],
-      paint: { 'line-color': ['get', 'color'], 'line-width': 2 },
+      // #96 線寬資料驅動（attributes.width；缺值由 featureLineWidth 給預設 2）。
+      paint: { 'line-color': ['get', 'color'], 'line-width': ['get', 'width'] },
     })
     map.addLayer({
       id: 'mapfeat-point',
@@ -712,6 +924,32 @@ onMounted(async () => {
         'circle-color': 'rgba(0,0,0,0)',
         'circle-stroke-color': '#ffffff',
         'circle-stroke-width': 2.5,
+      },
+    })
+    // #99 控制點：中點（空心小點＝可拖出新頂點）在下，實頂點（實心白方點）在上。
+    map.addSource(VERT_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'mapfeat-midpoint',
+      type: 'circle',
+      source: VERT_SRC,
+      filter: ['==', ['get', 'mid'], true],
+      paint: {
+        'circle-radius': 4,
+        'circle-color': 'rgba(255,255,255,0.35)',
+        'circle-stroke-color': '#22d3ee',
+        'circle-stroke-width': 1.5,
+      },
+    })
+    map.addLayer({
+      id: 'mapfeat-vertex',
+      type: 'circle',
+      source: VERT_SRC,
+      filter: ['!=', ['get', 'mid'], true],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#ffffff',
+        'circle-stroke-color': '#0ea5e9',
+        'circle-stroke-width': 2,
       },
     })
     // 特徵名稱標籤（#11；需 glyphs → 僅 tileUrl 時加）。
@@ -801,6 +1039,21 @@ onMounted(async () => {
         'line-opacity': 0.9,
       },
     })
+    // #95 武器軌跡：射手→目標直線，HIT 亮橘、MISS 灰藍虛線；透明度由 feature 帶（淡出）。
+    // **純顯示**：由後端已裁決的 ENGAGEMENT_RESOLVED 驅動，不參與任何判定。
+    map.addSource(TRACK_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'weapon-track',
+      type: 'line',
+      source: TRACK_SRC,
+      layout: { 'line-cap': 'round' },
+      paint: {
+        'line-color': ['match', ['get', 'status'], 'HIT', '#fb923c', '#94a3b8'],
+        'line-width': ['match', ['get', 'status'], 'HIT', 2.6, 1.4],
+        'line-opacity': ['get', 'opacity'],
+        'line-dasharray': ['match', ['get', 'status'], 'HIT', ['literal', [1, 0]], ['literal', [2, 2]]],
+      },
+    })
     map.addLayer({
       id: 'move-path-cross',
       type: 'circle',
@@ -859,12 +1112,66 @@ onMounted(async () => {
         ],
       },
     })
+    // 地圖狀態編輯 · 多選高亮環（青色）：繞在被 Shift 多選/框選的單位外圈，置於符號層下方。
+    map.addLayer({
+      id: 'unit-multiselect-ring',
+      type: 'circle',
+      source: UNITS_SRC,
+      filter: _multiSelFilter() as never,
+      paint: {
+        'circle-radius': 18,
+        'circle-color': 'rgba(34,211,238,0.14)',
+        'circle-stroke-color': '#22d3ee',
+        'circle-stroke-width': 2.5,
+      },
+    })
     map.addLayer({
       id: 'units',
       type: 'symbol',
       source: UNITS_SRC,
       layout: {
         'icon-image': ['get', 'icon'],
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: { 'icon-opacity': ['get', 'opacity'] },
+    })
+    // 血條（#94）：圖標上方一條，離線免 glyphs（同鎖頭徽章的做法，見 useMilsymbol）。
+    // 我方/友軍常駐；contact 僅在後端有給血量時才有（未偵獲細節時不會有 hpIcon → 不畫）。
+    for (let pct = 0; pct <= 100; pct += HP_BAR_STEP) {
+      const id = `${HP_BAR_PREFIX}${pct}`
+      if (map.hasImage(id)) continue
+      const img = hpBarImage(pct)
+      if (img) map.addImage(id, img, { pixelRatio: HP_BAR_PIXEL_RATIO })
+    }
+    map.addLayer({
+      id: 'unit-hp-bar',
+      type: 'symbol',
+      source: UNITS_SRC,
+      filter: ['has', 'hpIcon'],
+      minzoom: 8, // 與血量環同步：拉遠時單位密集，血條會糊成一片
+      layout: {
+        'icon-image': ['get', 'hpIcon'],
+        'icon-offset': [0, -26], // 置於符號上方（符號 24px，pixelRatio 2）
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: { 'icon-opacity': ['get', 'opacity'] },
+    })
+    // 固定單位鎖頭徽章（指揮部等）：canvas 生成 ImageData（離線免 glyphs），疊在符號右上角。
+    // 只我方（kind='own' + fixed）——不洩漏敵方編成（fog of war）。
+    const lockImg = lockBadgeImage()
+    if (lockImg && !map.hasImage(LOCK_BADGE_ID)) {
+      map.addImage(LOCK_BADGE_ID, lockImg, { pixelRatio: LOCK_BADGE_PIXEL_RATIO })
+    }
+    map.addLayer({
+      id: 'unit-fixed-lock',
+      type: 'symbol',
+      source: UNITS_SRC,
+      filter: ['all', ['==', ['get', 'kind'], 'own'], ['==', ['get', 'fixed'], true]],
+      layout: {
+        'icon-image': LOCK_BADGE_ID,
+        'icon-offset': [10, -10], // 右上角（icon 座標；正 y 朝下）
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },
@@ -897,6 +1204,18 @@ onMounted(async () => {
       emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
       return
     }
+    // #99c 點在控制點上 → 一律視為點在該圖形上。控制點畫在線/面之上，但線只有兩三像素寬，
+    // 點擊命中測試常常「打在控制點上卻沒打到線」→ 落到最後的 mapClick → 上層把選取清掉
+    // → 控制點在按下去的瞬間整組消失。實測就是這樣把整形狀態弄丟的。
+    const vertLayers = ['mapfeat-vertex', 'mapfeat-midpoint'].filter((l) => map?.getLayer(l))
+    if (
+      vertLayers.length &&
+      map?.queryRenderedFeatures(e.point, { layers: vertLayers })?.length &&
+      props.selectedFeatureId
+    ) {
+      emit('featureClick', { id: props.selectedFeatureId }) // 維持選取（同 id → 不會取消整形解鎖）
+      return
+    }
     const hit = map?.queryRenderedFeatures(e.point, { layers: ['units'] })?.[0]
     const p = hit?.properties
     if (p && p.id != null) {
@@ -909,6 +1228,8 @@ onMounted(async () => {
       emit('featureClick', { id: String(fhit.properties.id) })
       return
     }
+    // 編輯模式下點空白（未按 Shift）→ 清空多選。
+    if (props.editUnits && !e.originalEvent.shiftKey) clearMultiSelect()
     emit('mapClick', { lng: e.lngLat.lng, lat: e.lngLat.lat, h3: latLngToCell(e.lngLat.lat, e.lngLat.lng, 8) })
   })
   // 滑過單位符號時游標變手指（可點示意）；設定目標中則維持十字準星（#3）。
@@ -917,15 +1238,21 @@ onMounted(async () => {
   // Unit 資訊卡懸浮：地圖移動/縮放時即時更新選取單位的螢幕座標（#Fix C）。
   map.on('move', emitSelectPos)
   // 拖放移動點特徵（#11 B2）：在選取的點特徵上按下 → 拖曳 → 放開，emit 新座標由上層 PATCH。
-  const featLayers = () =>
-    ['mapfeat-point', 'mapfeat-symbol'].filter((l) => map?.getLayer(l))
+  // **不可在這裡 filter getLayer**（#99 修）：本區在 onMounted 同步跑，而圖層是在 `map.on('load')`
+  // 裡才加的——註冊當下 getLayer 一律 undefined，過濾完就是空陣列，等於這兩層的 mousedown
+  // **從來沒被註冊過**（實測 _delegatedListeners.mousedown 只有 units/fill/line，點特徵拖不動）。
+  // maplibre 的委派監聽器是在「事件發生時」才查圖層，對尚未存在的圖層註冊是安全的。
+  const featLayers = () => ['mapfeat-point', 'mapfeat-symbol']
   const onFeatDown = (e: {
     features?: { properties?: { id?: unknown; gtype?: unknown } | null }[]
+    originalEvent?: MouseEvent
     preventDefault: () => void
   }) => {
     const props0 = e.features?.[0]?.properties
     const id = props0?.id
     if (!id || String(id) !== String(props.selectedFeatureId)) return // 只拖選取者
+    if (e.originalEvent && e.originalEvent.button !== 0) return // 右鍵要留給選單
+    if (!props.featureEdit) return // #99 無編修權就別讓人拖了才吃 403
     if (props0?.gtype && props0.gtype !== 'POINT') return // 僅點特徵可拖
     e.preventDefault() // 阻止地圖平移
     dragFeatId = String(id)
@@ -942,6 +1269,236 @@ onMounted(async () => {
       if (map && !dragFeatId && !props.targeting) map.getCanvas().style.cursor = ''
     })
   }
+  // ---- #99 整形：拖控制點改形狀、拖圖形本體整體平移 ----
+  const onVertexDown = (e: {
+    features?: { properties?: { i?: unknown; mid?: unknown } | null }[]
+    lngLat: { lng: number; lat: number }
+    originalEvent?: MouseEvent
+    preventDefault: () => void
+  }) => {
+    if (!props.featureEdit || props.drawActive || !map) return
+    // 只有左鍵才起拖：右鍵是叫選單用的，不擋掉的話「右鍵刪點」會先被當成一次微幅拖曳，
+    // 送出一筆無意義的幾何 PATCH（滑鼠若在按下與放開間動了一兩個像素，還會真的把點挪走）。
+    if (e.originalEvent && e.originalEvent.button !== 0) return
+    const sel = selectedRing()
+    const p = e.features?.[0]?.properties
+    if (!sel || !p) return
+    const idx = Number(p.i)
+    if (!Number.isFinite(idx)) return
+    // Alt＋點控制點＝刪點（右鍵選單之外的快捷路徑）。
+    // 最少頂點檢查與提示留在上層做——那裡才有 toast。
+    if (e.originalEvent?.altKey) {
+      e.preventDefault()
+      // 中點不是實頂點、無從刪起：**直接忽略**。若讓它落回下面的插點流程，
+      // 「Alt＝刪點」按在小圈上反而會多一個點，與使用者的預期正好相反。
+      if (p.mid !== true) emit('featureVertexDelete', { id: sel.id, index: idx })
+      return
+    }
+    e.preventDefault() // 阻止地圖平移
+    if (p.mid === true) {
+      // 中點：先插入實頂點，接著拖的就是這顆新頂點（Google/Leaflet 慣例）。
+      reshape = { ...sel, ring: insertVertex(sel.ring, idx, [e.lngLat.lng, e.lngLat.lat]) }
+      dragVertIdx = idx + 1
+    } else {
+      reshape = sel
+      dragVertIdx = idx
+    }
+    map.getCanvas().style.cursor = 'grabbing'
+    map.on('mousemove', onVertexDragMove)
+    map.once('mouseup', onVertexDrop)
+    armReshapeFallback()
+  }
+  for (const l of ['mapfeat-vertex', 'mapfeat-midpoint']) {
+    map.on('mousedown', l, onVertexDown)
+    map.on('mouseenter', l, () => {
+      if (map && !reshape && props.featureEdit) map.getCanvas().style.cursor = 'grab'
+    })
+    map.on('mouseleave', l, () => {
+      if (map && !reshape && !props.targeting) map.getCanvas().style.cursor = ''
+    })
+  }
+  // 拖圖形本體＝整體平移；限選取者，否則在圖上任何線/面按下都不能平移地圖了。
+  const onBodyDown = (e: {
+    features?: { properties?: { id?: unknown } | null }[]
+    point: { x: number; y: number }
+    lngLat: { lng: number; lat: number }
+    originalEvent?: MouseEvent
+    preventDefault: () => void
+  }) => {
+    if (!props.featureEdit || props.drawActive || !map) return
+    if (e.originalEvent && e.originalEvent.button !== 0) return // 右鍵要留給選單
+    // **控制點優先**：控制點畫在線/面之上，同一次 mousedown 兩個委派監聽器都會收到。
+    // 不在此擋掉的話，拖頂點會變成整體平移（實測：三個頂點同時位移）。
+    // 用命中查詢而非「註冊順序」來決定優先權——順序是隱性契約，改天調換註冊位置就再度失效。
+    const onHandle = map.queryRenderedFeatures(e.point, {
+      layers: ['mapfeat-vertex', 'mapfeat-midpoint'].filter((l) => map?.getLayer(l)),
+    })
+    if (onHandle.length) return
+    const id = e.features?.[0]?.properties?.id
+    if (id == null || String(id) !== String(props.selectedFeatureId)) return
+    const sel = selectedRing()
+    if (!sel) return
+    e.preventDefault()
+    reshape = sel
+    dragVertIdx = -1
+    bodyDragStart = { lng: e.lngLat.lng, lat: e.lngLat.lat, ring: sel.ring }
+    map.getCanvas().style.cursor = 'grabbing'
+    map.on('mousemove', onBodyDragMove)
+    map.once('mouseup', onBodyDrop)
+    armReshapeFallback()
+  }
+  const onBodyEnter = (e: { features?: { properties?: { id?: unknown } | null }[] }) => {
+    // 只有選取者能拖 → 只在游標下的就是選取者時才給「可移動」暗示。
+    const id = e.features?.[0]?.properties?.id
+    if (!map || reshape || props.targeting || !props.featureEdit) return
+    if (id != null && String(id) === String(props.selectedFeatureId)) {
+      map.getCanvas().style.cursor = 'move'
+    }
+  }
+  for (const l of ['mapfeat-fill', 'mapfeat-line']) {
+    map.on('mousedown', l, onBodyDown)
+    map.on('mouseenter', l, onBodyEnter)
+    map.on('mouseleave', l, () => {
+      if (map && !reshape && !props.targeting) map.getCanvas().style.cursor = ''
+    })
+  }
+  // 地圖狀態編輯：editUnits 模式下拖放單位到新座標（重用 FEAT_DRAG_SRC 作落點預覽點）。
+  const onUnitDragMove = (e: _LngLatEvt): void => {
+    if (!dragUnitId || !map) return
+    ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] },
+    } as never)
+  }
+  const onUnitDrop = (e: _LngLatEvt): void => {
+    if (!dragUnitId || !map) return
+    const id = dragUnitId
+    dragUnitId = null
+    map.getCanvas().style.cursor = ''
+    map.off('mousemove', onUnitDragMove)
+    ;(map.getSource(FEAT_DRAG_SRC) as GeoJSONSource | undefined)?.setData(_EMPTY_FEAT_FC as never)
+    emit('unitMove', { id, lng: e.lngLat.lng, lat: e.lngLat.lat })
+  }
+  // 整組拖曳（多選）：以按下處為錨，各選取單位依相同經緯位移平移；真圖標 + 高亮環即時跟隨游標。
+  const _groupOverride = (e: _LngLatEvt): Map<string, { lng: number; lat: number }> => {
+    const dLng = e.lngLat.lng - groupDrag!.start.lng
+    const dLat = e.lngLat.lat - groupDrag!.start.lat
+    return new Map(groupDrag!.origs.map((o) => [o.id, { lng: o.lng + dLng, lat: o.lat + dLat }]))
+  }
+  const onGroupDragMove = (e: _LngLatEvt): void => {
+    if (!groupDrag || !map) return
+    syncUnits(_groupOverride(e)) // 圖標跟著游標
+  }
+  const onGroupDrop = (e: _LngLatEvt): void => {
+    if (!groupDrag || !map) return
+    const ov = _groupOverride(e)
+    const moves = [...ov.entries()].map(([id, p]) => ({ id, lng: p.lng, lat: p.lat }))
+    groupDrag = null
+    map.getCanvas().style.cursor = ''
+    map.off('mousemove', onGroupDragMove)
+    syncUnits(ov) // 保持在放開位置，待 cop reposition→refetch 後 props watch 以權威座標重繪（不回彈）
+    if (moves.length) emit('unitsMove', { moves })
+  }
+  const startGroupDrag = (e: _LngLatEvt): void => {
+    const origs = allUnitPositions().filter((u) => selectedUnitIds.has(u.id))
+    if (!origs.length || !map) return
+    groupDrag = { start: { lng: e.lngLat.lng, lat: e.lngLat.lat }, origs }
+    map.getCanvas().style.cursor = 'grabbing'
+    map.on('mousemove', onGroupDragMove)
+    map.once('mouseup', onGroupDrop)
+  }
+  const onUnitDown = (e: {
+    features?: { properties?: { id?: unknown } | null }[]
+    preventDefault: () => void
+    originalEvent?: MouseEvent
+    lngLat?: { lng: number; lat: number }
+  }) => {
+    if (!props.editUnits) return // 僅編輯模式可拖曳單位
+    if (e.originalEvent?.shiftKey) return // Shift 多選由下方通用 mousedown 處理（避免雙重切換）
+    const id = e.features?.[0]?.properties?.id
+    if (id == null) return
+    const sid = String(id)
+    e.preventDefault() // 阻止地圖平移
+    // 拖曳已多選的成員 → 整組移動；否則清空多選、單獨拖曳此單位（原行為）。
+    if (selectedUnitIds.has(sid) && selectedUnitIds.size > 1 && e.lngLat) {
+      startGroupDrag({ lngLat: e.lngLat })
+      return
+    }
+    clearMultiSelect()
+    dragUnitId = sid
+    if (map) map.getCanvas().style.cursor = 'grabbing'
+    map?.on('mousemove', onUnitDragMove)
+    map?.once('mouseup', onUnitDrop)
+  }
+  map.on('mousedown', 'units', onUnitDown)
+  // 框選（匡選）：編輯模式下 Shift+於空白處拖曳 → 矩形選取範圍內單位（累加至多選）。
+  const onBoxMove = (e: _PointEvt): void => {
+    if (!boxStart || !rubberBand) return
+    const a = boxStart
+    const b = e.point
+    rubberBand.style.left = `${Math.min(a.x, b.x)}px`
+    rubberBand.style.top = `${Math.min(a.y, b.y)}px`
+    rubberBand.style.width = `${Math.abs(a.x - b.x)}px`
+    rubberBand.style.height = `${Math.abs(a.y - b.y)}px`
+    rubberBand.style.display = 'block'
+  }
+  const onBoxUp = (e: _PointEvt): void => {
+    if (!boxStart || !map) return
+    const a = boxStart
+    boxStart = null
+    map.off('mousemove', onBoxMove)
+    map.dragPan.enable()
+    if (rubberBand) rubberBand.style.display = 'none'
+    const b = e.point
+    if (Math.abs(a.x - b.x) < 3 && Math.abs(a.y - b.y) < 3) return // 幾乎沒動→視為點擊，不選
+    const minX = Math.min(a.x, b.x)
+    const maxX = Math.max(a.x, b.x)
+    const minY = Math.min(a.y, b.y)
+    const maxY = Math.max(a.y, b.y)
+    for (const u of allUnitPositions()) {
+      const pt = map.project([u.lng, u.lat])
+      if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) selectedUnitIds.add(u.id)
+    }
+    refreshMultiSelect()
+  }
+  map.on('mousedown', (e: _PointEvt) => {
+    if (!props.editUnits || !map) return
+    if (!e.originalEvent.shiftKey) return // 所有 Shift 互動集中於此（平移仍是無 Shift 拖曳）
+    // Shift+點單位 → 加入/移除多選（改在通用 mousedown 處理，不依賴會被 boxZoom 干擾的 layer 事件）。
+    const hit = map.queryRenderedFeatures(e.point, { layers: ['units'] })[0]
+    const hitId = hit?.properties?.id
+    if (hitId != null) {
+      const sid = String(hitId)
+      if (selectedUnitIds.has(sid)) selectedUnitIds.delete(sid)
+      else selectedUnitIds.add(sid)
+      refreshMultiSelect()
+      e.preventDefault()
+      return
+    }
+    // Shift+空白處拖曳 → 框選矩形。
+    boxStart = e.point
+    map.dragPan.disable()
+    e.preventDefault()
+    if (!rubberBand) {
+      rubberBand = document.createElement('div')
+      // inline 樣式：div 掛在地圖容器（非 scoped Vue 元素），scoped CSS 不會套用。
+      rubberBand.style.cssText =
+        'position:absolute;border:1.5px solid #22d3ee;background:rgba(34,211,238,0.12);' +
+        'pointer-events:none;z-index:5;display:none;'
+      map.getContainer().appendChild(rubberBand)
+    }
+    rubberBand.style.left = `${e.point.x}px`
+    rubberBand.style.top = `${e.point.y}px`
+    rubberBand.style.width = '0px'
+    rubberBand.style.height = '0px'
+    rubberBand.style.display = 'block'
+    map.on('mousemove', onBoxMove)
+    map.once('mouseup', onBoxUp)
+  })
+  map.on('mouseenter', 'units', () => {
+    if (map && props.editUnits && !dragUnitId) map.getCanvas().style.cursor = 'move'
+  })
   // 右鍵選單（#3）：阻止瀏覽器選單，emit 螢幕座標 + 經緯 + 游標下單位（供 ATAK 式移動/攻擊）。
   map.on('contextmenu', (e) => {
     const hit = map?.queryRenderedFeatures(e.point, { layers: ['units'] })?.[0]
@@ -950,6 +1507,11 @@ onMounted(async () => {
       (l) => map?.getLayer(l),
     )
     const fhit = flayers.length ? map?.queryRenderedFeatures(e.point, { layers: flayers })?.[0] : null
+    // #99 右鍵控制點 → 帶索引，供上層「刪除控制點」（刪點的最少頂點檢查與提示在上層）。
+    const vhit = map?.getLayer('mapfeat-vertex')
+      ? map.queryRenderedFeatures(e.point, { layers: ['mapfeat-vertex'] })?.[0]
+      : null
+    const vi = Number(vhit?.properties?.i)
     emit('contextMenu', {
       x: e.point.x,
       y: e.point.y,
@@ -959,6 +1521,7 @@ onMounted(async () => {
         ? { unitId: String(p.id), faction: String(p.faction ?? ''), kind: String(p.kind ?? '') }
         : {}),
       ...(fhit?.properties?.id != null ? { featureId: String(fhit.properties.id) } : {}),
+      ...(props.featureEdit && Number.isFinite(vi) ? { vertexIndex: vi } : {}),
     })
   })
 })
@@ -970,8 +1533,10 @@ function applyTargetingCursor() {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('mouseup', endReshape) // #99 拖曳中被卸載也不留 listener
   map?.remove()
   map = null
+  styleReady = false
 })
 
 watch(
@@ -1001,6 +1566,7 @@ watch(
     () => props.featSymbolIcons,
     () => props.influenceFc,
     () => props.draftFc,
+    () => props.weaponTrackFc,
   ],
   syncFeatures,
   { deep: true },
@@ -1009,6 +1575,18 @@ watch([() => props.latlngGrid, () => props.mgrsGrid, () => props.gridStepDeg], r
 watch([() => props.hexMaxRes, () => props.hexLimitKm], refreshHex)
 watch([() => props.dayNight, () => props.timeOfDay], applyDayNight)
 watch(() => props.targeting, applyTargetingCursor) // #3 十字準星
+// 地圖狀態編輯：進入時停用 MapLibre 內建 boxZoom（Shift+拖曳預設是縮放框，會攔截多選/框選、
+// 干擾 Shift 事件）；離開時還原並清空多選（避免殘留高亮環）。
+watch(
+  () => props.editUnits,
+  (on) => {
+    if (map) {
+      if (on) map.boxZoom.disable()
+      else map.boxZoom.enable()
+    }
+    if (!on) clearMultiSelect()
+  },
+)
 watch(() => props.queryPoint, syncQuery)
 watch(
   () => props.selectedFeatureId,
@@ -1021,8 +1599,11 @@ watch(
         ['==', ['geometry-type'], 'Point'],
         ['==', ['get', 'id'], v ?? FEAT_NONE],
       ])
+    syncVertices() // #99 換選取對象 → 控制點跟著換（無選取→清空）
   },
 )
+// #99 失去編修權或進入繪製模式 → 立即收掉控制點（vertexFc 已含此判斷）。
+watch([() => props.featureEdit, () => props.drawActive], syncVertices)
 watch(() => props.layerOpacity, applyAllOpacity, { deep: true }) // #9 透明度
 watch(() => props.layerOrder, applyOrder, { deep: true }) // #9 套疊順序
 watch([() => props.contourMajor, () => props.contourMinor], applyContourFilters) // #8 等高線間距

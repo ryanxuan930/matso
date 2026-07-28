@@ -26,6 +26,17 @@ export function factionColor(faction: string, palette: Record<string, string> = 
   return _FALLBACK_COLORS[h % _FALLBACK_COLORS.length]!
 }
 
+// ---- 血條桶號（#94）----
+// 圖標上方血條以 5% 為一桶：肉眼分辨不出 1% 差異，卻能把 addImage 從 101 次降到 21 次。
+// 純算部分放這裡（本模組無任何相依）；canvas 繪製在 useMilsymbol。
+export const HP_BAR_PREFIX = 'unit-hp-bar-'
+export const HP_BAR_STEP = 5
+
+/** 血量 → 桶號（0/5/…/100）。圖層 icon-image 與 addImage 共用同一套鍵。 */
+export function hpBucket(pct: number): number {
+  return Math.round(Math.min(100, Math.max(0, pct)) / HP_BAR_STEP) * HP_BAR_STEP
+}
+
 /** 關係 → 2525 affiliation 字母：ALLIED=F(友)、NEUTRAL=N(中)、HOSTILE=H(敵)。 */
 export function affiliationForRelation(rel: Relation): string {
   return rel === 'ALLIED' ? 'F' : rel === 'NEUTRAL' ? 'N' : 'H'
@@ -41,6 +52,7 @@ export interface OwnUnit {
   comms: CommsState
   lastReportedTick: number
   health?: number // 0–100 HP（僅我方；供地圖血量環 + 資訊卡 #5）。fog of war：contact 無血量。
+  isFixed?: boolean // 固定單位（指揮部等）：地圖符號加鎖頭徽章（只我方；不洩漏敵方編成）。
 }
 
 /** 編制層級 → 中文（兵-伍-班-排…，#5.3；與想定編輯器同義）。 */
@@ -160,6 +172,7 @@ export interface UnitFeature {
     opacity: number
     kind: 'own' | 'contact'
     health?: number
+    fixed?: boolean // 固定單位（指揮部等）：驅動地圖鎖頭徽章層（只我方）
   }
   geometry: { type: 'Point'; coordinates: [number, number] }
 }
@@ -193,12 +206,19 @@ export function buildUnitFeatures(
     opacity: number,
     kind: 'own' | 'contact',
     health?: number,
+    fixed?: boolean,
   ) => {
     const key = iconKey(sidc, options)
     if (!iconMap.has(key)) iconMap.set(key, { key, sidc, options })
     features.push({
       type: 'Feature',
-      properties: { id, faction, icon: key, opacity, kind, ...(health != null ? { health } : {}) },
+      properties: {
+        id, faction, icon: key, opacity, kind,
+        ...(health != null ? { health } : {}),
+        // #94 血條圖標鍵：以 5% 為桶（見 hpBucket），讓圖層直接 ['get','hpIcon'] 取圖。
+        ...(health != null ? { hpIcon: `${HP_BAR_PREFIX}${hpBucket(health)}` } : {}),
+        ...(fixed ? { fixed: true } : {}),
+      },
       geometry: { type: 'Point', coordinates: [lng, lat] },
     })
   }
@@ -208,7 +228,7 @@ export function buildUnitFeatures(
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
-    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health)
+    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health, u.isFixed)
   }
   for (const c of contacts) {
     const options: SymbolOpts =

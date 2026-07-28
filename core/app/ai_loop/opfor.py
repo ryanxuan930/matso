@@ -94,3 +94,8 @@ def run_opfor_turn(
         fallback_used=True,
         attempts=max_retries + 1,
     )
+
+
+# 自主推演（SPEC_AUTONOMY §4）：迴路本身與陣營無關（只依賴注入的 decider/context），故對外
+# 以陣營中性名 `run_faction_turn` 呈現；`run_opfor_turn` 保留為相容別名（事件驅動 OPFOR 路徑）。
+run_faction_turn = run_opfor_turn

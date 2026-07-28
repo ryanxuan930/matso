@@ -126,6 +126,40 @@ def test_relations_declared_allied(tmp_path: Path) -> None:
     assert sc_loaded.relations.relation("RED", "YELLOW") is Relation.HOSTILE  # 未宣告→HOSTILE
 
 
+def test_fixed_unit_loads_and_persists(tmp_path: Path) -> None:
+    # 固定單位（指揮部等）：orbat `fixed: true` → ScenarioUnit.fixed 且落地 TacticalUnit.is_fixed。
+    sc = _base_scenario()
+    sc["factions"] = [{"id": "BLUE"}]
+    sc["files"] = {"orbat": {"BLUE": "orbat/blue.yaml"}}
+    orbat = {
+        "faction": "BLUE",
+        "units": [
+            {"designation": "HQ", "unit_level": "COMPANY", "fixed": True},
+            {"designation": "P1", "unit_level": "PLATOON"},  # fixed 預設 False
+        ],
+    }
+    _write_pkg(tmp_path, sc, {"blue.yaml": orbat})
+    loaded = load_scenario_package(tmp_path)
+    by_desig = {u.designation: u for u in loaded.units}
+    assert by_desig["HQ"].fixed is True
+    assert by_desig["P1"].fixed is False
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    with factory() as db:
+        sid = create_session_from_scenario(db, loaded, master_seed=7)
+    with factory() as db:
+        units = {
+            u.designation: u
+            for u in db.execute(
+                select(TacticalUnit).where(TacticalUnit.session_id == sid)
+            ).scalars()
+        }
+        assert units["HQ"].is_fixed is True
+        assert units["P1"].is_fixed is False
+
+
 def test_create_session_from_scenario_builds_units_and_parents() -> None:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)

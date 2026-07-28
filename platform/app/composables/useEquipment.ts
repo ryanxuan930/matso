@@ -20,6 +20,22 @@ export function createEquipmentTemplate(body: TemplateEdit): Promise<EquipmentTe
 export function updateEquipmentTemplate(tid: string, body: TemplateEdit): Promise<EquipmentTemplate> {
   return apiFetch<EquipmentTemplate>(`/equipment-templates/${tid}`, { method: 'PUT', body })
 }
+export async function deleteEquipmentTemplate(tid: string): Promise<void> {
+  await apiFetch<unknown>(`/equipment-templates/${tid}`, { method: 'DELETE' })
+}
+// 各軍自編權限（白軍開放哪些陣營可自行編裝）——限白軍讀寫。
+export function fetchOrbatPermissions(sessionId: string): Promise<{ factions: string[] }> {
+  return apiFetch<{ factions: string[] }>(`/sessions/${sessionId}/orbat-permissions`)
+}
+export function setOrbatPermissions(
+  sessionId: string,
+  factions: string[],
+): Promise<{ factions: string[] }> {
+  return apiFetch<{ factions: string[] }>(`/sessions/${sessionId}/orbat-permissions`, {
+    method: 'PUT',
+    body: { factions },
+  })
+}
 export function fetchUnitEquipment(sessionId: string, unitId: string): Promise<EquipmentInstance[]> {
   return apiFetch<EquipmentInstance[]>(`/sessions/${sessionId}/units/${unitId}/equipment`)
 }

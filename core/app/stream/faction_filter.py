@@ -26,8 +26,17 @@ def is_white_cell(role: UserRole) -> bool:
 
 
 def is_visible(envelope: dict[str, Any], faction: str, omniscient: bool) -> bool:
-    """envelope 是否應送給此 faction 的 client。全知 → 全收；否則僅收己方受眾或無受眾標籤者。"""
+    """envelope 是否應送給此 faction 的 client。全知 → 全收；否則僅收己方受眾或無受眾標籤者。
+
+    兩種受眾標籤：
+    - `faction`：單一受眾（API 端 `publish_event` 用）。
+    - `factions`：受眾清單（Kernel 事件用——一次交戰同時關乎射手與目標兩方）。
+    兩者皆無 → 全域事件（如 SESSION_CONCLUDED），所有人可見。
+    """
     if omniscient:
         return True
+    audience_list = envelope.get("factions")
+    if isinstance(audience_list, list):
+        return faction in audience_list
     audience = envelope.get("faction")
     return audience is None or audience == faction

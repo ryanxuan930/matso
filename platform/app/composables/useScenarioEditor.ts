@@ -15,10 +15,11 @@ export interface EditorUnit {
   lat?: number
   lng?: number
   parent?: string
+  fixed?: boolean // 固定單位（指揮部等）：不接受 MOVE 令、不會被派去移動或機動交戰
 }
 export interface EditorRelation { a: string; b: string; relation: RelationValue }
 export interface EditorMsel { id: string; once: boolean; trigger: Condition; inject: InjectAction }
-export interface EditorVictory { faction: string; condition: Record<string, unknown> }
+export interface EditorVictory { faction: string; condition: Condition }
 
 export interface ScenarioModel {
   name: string
@@ -44,7 +45,9 @@ export function emptyScenario(): ScenarioModel {
     relations: [{ a: 'BLUE', b: 'RED', relation: 'HOSTILE' }],
     units: [],
     msel: [],
-    victoryConditions: [],
+    // 想定規格要求至少一條勝負條件（victory_conditions minItems=1）；預設「藍軍於紅軍被殲滅時獲勝」，
+    // 使新想定可直接存檔，使用者再依需求增修。
+    victoryConditions: [{ faction: 'BLUE', condition: { type: 'faction_eliminated', faction: 'RED' } }],
   }
 }
 
@@ -84,6 +87,7 @@ export function exportScenario(m: ScenarioModel): {
             ...(u.lat !== undefined ? { lat: u.lat } : {}),
             ...(u.lng !== undefined ? { lng: u.lng } : {}),
             ...(u.parent ? { parent: u.parent } : {}),
+            ...(u.fixed ? { fixed: true } : {}),
           })),
       },
     ]),
@@ -111,6 +115,7 @@ export function importScenario(bundle: {
         lat: u.lat as number | undefined,
         lng: u.lng as number | undefined,
         parent: u.parent as string | undefined,
+        fixed: u.fixed as boolean | undefined,
       })
     }
   }

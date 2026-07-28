@@ -11,6 +11,7 @@ dependencies = [
   "pyarrow>=18.0", # parquet 快取讀寫
   "matso-sdk", # MatsoPlugin base + gRPC stubs（O2.5 插件化）
   "grpcio>=1.68", # gRPC server（TerrainService）
+  "osmium>=4.3", # #89 OSM PBF 土地利用解析（僅離線預計算用；服務執行期不需要）
 ]
 
 [build-system]

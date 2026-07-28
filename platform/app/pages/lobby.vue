@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import type { components } from '~/types/api'
 import { apiFetch } from '~/composables/useApi'
+import {
+  ASSIGNABLE_ROLES,
+  PARTICIPANT_ROLE_LABELS,
+  assignParticipant,
+  fetchAllUsers,
+  fetchRoster,
+  removeParticipant,
+  type ParticipantRoster,
+  type UserView,
+} from '~/composables/useParticipants'
 
 type SessionSummary = components['schemas']['SessionSummary']
 
@@ -118,6 +128,114 @@ async function doDelete() {
   }
 }
 
+// #79 複製推演為新局——沿用部署/編裝/名冊/AI 指派，新 RNG 種子。限統裁/管理。
+const cloning = ref<SessionSummary | null>(null)
+const cloneName = ref('')
+const cloneBusy = ref(false)
+function openClone(s: SessionSummary) {
+  cloning.value = s
+  cloneName.value = `${s.name}（副本）`
+}
+async function doClone() {
+  const s = cloning.value
+  if (!s) return
+  cloneBusy.value = true
+  try {
+    const created = await apiFetch<SessionSummary>(`/sessions/${s.id}/clone`, {
+      method: 'POST',
+      body: { name: cloneName.value.trim() || null },
+    })
+    cloning.value = null
+    await refresh()
+    await navigateTo(`/session/${created.id}/cop`) // 直接進新局 COP
+  } finally {
+    cloneBusy.value = false
+  }
+}
+
+// 參與者名冊——指派帳號↔陣營↔角色（決定誰能操控/查看哪個陣營）。限統裁/管理。
+const rosterFor = ref<SessionSummary | null>(null)
+const roster = ref<ParticipantRoster | null>(null)
+const allUsers = ref<UserView[]>([])
+const rosterErr = ref('')
+const rosterBusy = ref(false)
+const addUserId = ref('')
+const addFaction = ref('')
+const addRole = ref('COMMANDER')
+const ROLE_LABELS = PARTICIPANT_ROLE_LABELS
+const ROLE_OPTIONS = ASSIGNABLE_ROLES
+// 已在名冊中的帳號不重複列於「新增」下拉。
+const assignableUsers = computed(() => {
+  const inRoster = new Set((roster.value?.participants ?? []).map((p) => p.user_id))
+  return allUsers.value.filter((u) => !inRoster.has(u.id))
+})
+async function openRoster(s: SessionSummary) {
+  rosterFor.value = s
+  roster.value = null
+  rosterErr.value = ''
+  addUserId.value = ''
+  addRole.value = 'COMMANDER'
+  try {
+    const [r, us] = await Promise.all([fetchRoster(s.id), fetchAllUsers()])
+    roster.value = r
+    allUsers.value = us
+    addFaction.value = r.factions[0] ?? ''
+  } catch (e) {
+    rosterErr.value = `載入名冊失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+  }
+}
+async function doAssign() {
+  if (!rosterFor.value || !addUserId.value || !addFaction.value) return
+  rosterBusy.value = true
+  rosterErr.value = ''
+  try {
+    await assignParticipant(rosterFor.value.id, addUserId.value, addFaction.value, addRole.value)
+    roster.value = await fetchRoster(rosterFor.value.id)
+    addUserId.value = ''
+  } catch (e) {
+    rosterErr.value = `指派失敗：${(e as { code?: string; message?: string }).message ?? (e as { code?: string }).code ?? 'UNKNOWN'}`
+  } finally {
+    rosterBusy.value = false
+  }
+}
+async function doReassign(userId: string, faction: string, role: string, unitScope: string[] = []) {
+  if (!rosterFor.value) return
+  rosterBusy.value = true
+  rosterErr.value = ''
+  try {
+    await assignParticipant(rosterFor.value.id, userId, faction, role, unitScope)
+    roster.value = await fetchRoster(rosterFor.value.id)
+  } catch (e) {
+    rosterErr.value = `更新失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+  } finally {
+    rosterBusy.value = false
+  }
+}
+// unit_scope（限指揮特定單位子集）——展開/收合的列 + 該陣營單位清單 + 切換。
+const scopeEditFor = ref('')
+function unitsOfFaction(faction: string) {
+  return (roster.value?.units ?? []).filter((u) => u.faction === faction)
+}
+function toggleScopeUnit(p: { user_id: string; faction: string; role: string; unit_scope?: string[] }, unitId: string) {
+  const cur = new Set(p.unit_scope ?? [])
+  if (cur.has(unitId)) cur.delete(unitId)
+  else cur.add(unitId)
+  doReassign(p.user_id, p.faction, p.role, [...cur])
+}
+async function doRemoveParticipant(userId: string) {
+  if (!rosterFor.value) return
+  rosterBusy.value = true
+  rosterErr.value = ''
+  try {
+    await removeParticipant(rosterFor.value.id, userId)
+    roster.value = await fetchRoster(rosterFor.value.id)
+  } catch (e) {
+    rosterErr.value = `移除失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+  } finally {
+    rosterBusy.value = false
+  }
+}
+
 async function onLogout() {
   auth.logout()
   await navigateTo('/login')
@@ -153,6 +271,12 @@ onMounted(async () => {
           href="/accounts"
           data-testid="nav-accounts"
         >帳號管理</a>
+        <a
+          v-if="canEditScenario"
+          class="help"
+          href="/system-settings"
+          data-testid="nav-system-settings"
+        >系統設定</a>
         <span v-if="auth.user" data-testid="current-user">{{ auth.user.username }}（{{ auth.user.role }}）</span>
         <button data-testid="logout" @click="onLogout">登出</button>
       </div>
@@ -194,10 +318,25 @@ onMounted(async () => {
           <button
             v-if="canEditScenario"
             class="edit-btn"
+            data-testid="roster-session"
+            title="參與者（指派帳號↔陣營↔角色）"
+            @click.stop="openRoster(s)"
+          ><i class="pi pi-users" /></button>
+          <button
+            v-if="canEditScenario"
+            class="edit-btn"
             data-testid="edit-session"
             title="編輯設定"
             @click.stop="openEdit(s)"
           ><i class="pi pi-cog" /></button>
+          <button
+            v-if="canEditScenario"
+            class="edit-btn"
+            data-testid="clone-session"
+            title="複製為新局（沿用部署/編裝/AI 指派，建議開打前複製）"
+            :disabled="busyId === s.id"
+            @click.stop="openClone(s)"
+          ><i class="pi pi-copy" /></button>
           <button
             v-if="canEditScenario"
             class="edit-btn"
@@ -243,6 +382,89 @@ onMounted(async () => {
       <p v-else-if="showHistory" class="hist-empty" data-testid="history-empty">（無封存推演）</p>
     </section>
 
+    <!-- 參與者名冊——指派帳號↔陣營↔角色（決定操控/查看範圍） -->
+    <div v-if="rosterFor" class="modal-overlay" data-testid="roster-modal" @click.self="rosterFor = null">
+      <div class="modal roster-modal">
+        <h3>參與者 · {{ rosterFor.name }}</h3>
+        <p class="modal-hint">指派帳號到陣營與角色：指揮官/參謀＝可操控該陣營；觀察員＝只查看；白軍/統裁＝全知。</p>
+        <p v-if="rosterErr" class="modal-err" data-testid="roster-err">{{ rosterErr }}</p>
+
+        <ul v-if="roster" class="roster-list" data-testid="roster-list">
+          <li v-for="p in roster.participants" :key="p.user_id" class="roster-row-wrap" data-testid="roster-item">
+            <div class="roster-row">
+              <span class="r-user">{{ p.username }}</span>
+              <select
+                :value="p.faction"
+                class="r-sel"
+                data-testid="roster-faction"
+                :disabled="rosterBusy"
+                @change="doReassign(p.user_id, ($event.target as HTMLSelectElement).value, p.role, [])"
+              >
+                <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
+              </select>
+              <select
+                :value="p.role"
+                class="r-sel"
+                data-testid="roster-role"
+                :disabled="rosterBusy"
+                @change="doReassign(p.user_id, p.faction, ($event.target as HTMLSelectElement).value, p.unit_scope ?? [])"
+              >
+                <option v-for="rr in ROLE_OPTIONS" :key="rr" :value="rr">{{ ROLE_LABELS[rr] ?? rr }}</option>
+              </select>
+              <button
+                v-if="unitsOfFaction(p.faction).length"
+                class="edit-btn"
+                data-testid="roster-scope-toggle"
+                :title="`限指揮單位（${(p.unit_scope ?? []).length ? (p.unit_scope ?? []).length + ' 個' : '全部'}）`"
+                @click="scopeEditFor = scopeEditFor === p.user_id ? '' : p.user_id"
+              >
+                <i class="pi pi-crosshairs" />
+                <span class="scope-badge">{{ (p.unit_scope ?? []).length || '全' }}</span>
+              </button>
+              <button
+                class="edit-btn danger"
+                data-testid="roster-remove"
+                title="移除參與資格"
+                :disabled="rosterBusy"
+                @click="doRemoveParticipant(p.user_id)"
+              ><i class="pi pi-times" /></button>
+            </div>
+            <div v-if="scopeEditFor === p.user_id" class="scope-panel" data-testid="roster-scope-panel">
+              <span class="scope-hint">限指揮單位（不勾＝整個 {{ p.faction }} 陣營）：</span>
+              <label v-for="u in unitsOfFaction(p.faction)" :key="u.id" class="scope-unit">
+                <input
+                  type="checkbox"
+                  :checked="(p.unit_scope ?? []).includes(u.id)"
+                  :disabled="rosterBusy"
+                  @change="toggleScopeUnit(p, u.id)"
+                >{{ u.designation }}
+              </label>
+            </div>
+          </li>
+          <li v-if="!roster.participants.length" class="roster-empty">（尚無參與者）</li>
+        </ul>
+        <p v-else class="modal-hint">載入中…</p>
+
+        <div v-if="roster" class="roster-add" data-testid="roster-add">
+          <select v-model="addUserId" class="r-sel" data-testid="roster-add-user">
+            <option value="">＋ 選帳號…</option>
+            <option v-for="u in assignableUsers" :key="u.id" :value="u.id">{{ u.username }}（{{ u.role }}）</option>
+          </select>
+          <select v-model="addFaction" class="r-sel" data-testid="roster-add-faction">
+            <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
+          </select>
+          <select v-model="addRole" class="r-sel" data-testid="roster-add-role">
+            <option v-for="rr in ROLE_OPTIONS" :key="rr" :value="rr">{{ ROLE_LABELS[rr] ?? rr }}</option>
+          </select>
+          <button data-testid="roster-assign" :disabled="!addUserId || rosterBusy" @click="doAssign">指派</button>
+        </div>
+
+        <div class="modal-btns">
+          <button class="ghost" data-testid="roster-close" @click="rosterFor = null">關閉</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 編輯已開推演設定（#16） -->
     <div v-if="editing" class="modal-overlay" data-testid="edit-session-modal" @click.self="editing = null">
       <div class="modal">
@@ -256,6 +478,23 @@ onMounted(async () => {
         <div class="modal-btns">
           <button class="ghost" @click="editing = null">取消</button>
           <button data-testid="save-session-edit" @click="saveEdit">儲存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- #79 複製為新局 -->
+    <div v-if="cloning" class="modal-overlay" data-testid="clone-modal" @click.self="cloning = null">
+      <div class="modal">
+        <h3>複製推演為新局</h3>
+        <p class="modal-hint">
+          沿用「<b>{{ cloning.name }}</b>」目前的單位部署、編裝、地圖標註、參與者名冊與 AI 指派，
+          另開一局並給新的隨機種子。<br>
+          提示：於<b>開打前</b>複製即為純淨初始局；若已交戰，將沿用當下的座標與戰力。
+        </p>
+        <label>新局名稱 <input v-model="cloneName" data-testid="clone-name" @keyup.enter="doClone"></label>
+        <div class="modal-btns">
+          <button class="ghost" @click="cloning = null">取消</button>
+          <button data-testid="clone-confirm" :disabled="cloneBusy" @click="doClone">建立副本</button>
         </div>
       </div>
     </div>
@@ -490,5 +729,88 @@ ul {
   background: transparent;
   border: 1px solid #334155;
   color: #e2e8f0;
+}
+/* 參與者名冊 */
+.roster-modal {
+  width: 30rem;
+}
+.roster-list {
+  gap: 0.35rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.roster-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.scope-badge {
+  font-size: 0.7rem;
+  margin-left: 0.15rem;
+}
+.scope-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.7rem;
+  padding: 0.35rem 0.5rem;
+  margin-left: 0.5rem;
+  border-left: 2px solid #334155;
+  background: #0a1626;
+  border-radius: 0.25rem;
+}
+.scope-hint {
+  flex-basis: 100%;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+.scope-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+.roster-row .r-user {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+.r-sel {
+  flex: 0 0 auto;
+  max-width: 9.5rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+}
+.roster-empty {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+.roster-add {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid #1e293b;
+  padding-top: 0.6rem;
+}
+.roster-add .r-sel {
+  flex: 1 1 auto;
+  min-width: 6rem;
+}
+.roster-add button {
+  flex: 0 0 auto;
 }
 </style>

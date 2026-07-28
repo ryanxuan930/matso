@@ -86,6 +86,7 @@ components:
                 - ORDER_PERMISSION_DENIED
                 - ORDER_INVALID_TRANSITION
                 - ORDER_UNIT_NO_POSITION
+                - ORDER_UNIT_FIXED
                 - ORDER_UNREACHABLE
                 - ORDER_TARGET_NOT_FOUND
                 - ORDER_NO_LOS
@@ -180,12 +181,36 @@ components:
         world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（#16/#6 日照） }
         archived_at: { type: [string, "null"], description: 封存時間 ISO8601（#31；有值＝已封存） }
         orbat_edit: { type: boolean, default: false, description: 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編） }
+        my_unit_scope: { type: array, items: { type: string }, description: 呼叫者限指揮之單位子集（空＝整個陣營；COP 下令面板灰化範圍外） }
     EditSessionRequest:
       type: object
       description: 編輯已開推演設定（#16）——限統裁/管理
       properties:
         name: { type: [string, "null"], minLength: 1 }
         world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（空字串＝清除） }
+    CloneSessionRequest:
+      type: object
+      description: 複製一局為新推演（沿用部署/編裝/參與者/AI 指派，另給新 RNG 種子）
+      properties:
+        name: { type: [string, "null"], minLength: 1, description: 新局名稱（省略＝來源名 +「（副本）」） }
+    AiFactionStatus:
+      type: object
+      description: 一個陣營的 AI 決策心跳狀態（供 COP「思考中／下一次決策倒數」）
+      required: [faction, state]
+      properties:
+        faction: { type: string }
+        state: { type: string, enum: [thinking, idle, offline], description: thinking＝正打 LLM；idle＝等下一次心跳；offline＝worker 未上線/逾時 }
+        seconds_until_next: { type: [number, "null"], description: 距下一次決策的秒數（idle 時 >0；thinking/offline 為 null） }
+        heartbeat_s: { type: [number, "null"], description: 決策心跳（秒） }
+        thinking_since_s: { type: [number, "null"], description: 本次思考已歷時秒數（thinking 時） }
+        last_submitted: { type: [integer, "null"], description: 上一次決策落單數 }
+        cycles: { type: [integer, "null"], description: 累計決策週期數 }
+    AiStatusView:
+      type: object
+      description: 本局各陣營 AI 決策狀態（faction-scoped：一般角色僅見己方；全知見全部）
+      required: [factions]
+      properties:
+        factions: { type: array, items: { $ref: "#/components/schemas/AiFactionStatus" } }
     UnitView:
       type: object
       required: [id, designation, unit_level, faction, health, comms]
@@ -202,6 +227,7 @@ components:
         platform_count: { type: integer, description: "平台/建制數（每次命中僅損一個平台份量）" }
         personnel_current: { type: [integer, "null"], description: "當前人員數（顯示用，可空）" }
         comms: { type: string }
+        is_fixed: { type: boolean, description: "固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記" }
     WeaponView:
       type: object
       description: 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種
@@ -215,6 +241,39 @@ components:
         min_range_m: { type: number }
         ammo_types: { type: array, items: { type: string } }
         ammo_remaining: { type: [integer, "null"] }
+    SessionParticipantView:
+      type: object
+      description: 推演參與者名冊條目——哪個帳號以哪個陣營/角色參與（決定操控/查看範圍）
+      required: [user_id, username, faction, role]
+      properties:
+        user_id: { type: string }
+        username: { type: string }
+        faction: { $ref: "#/components/schemas/Faction" }
+        role: { $ref: "#/components/schemas/UserRole" }
+        unit_scope: { type: array, items: { type: string }, description: "限指揮之單位 id 子集（空＝整個陣營）" }
+    RosterUnit:
+      type: object
+      description: 名冊 unit_scope 選擇用的單位（供限縮至特定單位）
+      required: [id, designation, faction]
+      properties:
+        id: { type: string }
+        designation: { type: string }
+        faction: { $ref: "#/components/schemas/Faction" }
+    ParticipantRoster:
+      type: object
+      description: 一局的參與者名冊 + 可指派陣營 + 單位清單（供 unit_scope 選擇）
+      required: [participants, factions, units]
+      properties:
+        participants: { type: array, items: { $ref: "#/components/schemas/SessionParticipantView" } }
+        factions: { type: array, items: { type: string }, description: "可指派陣營（本局單位陣營 + WHITE_CELL）" }
+        units: { type: array, items: { $ref: "#/components/schemas/RosterUnit" } }
+    AssignParticipantRequest:
+      type: object
+      required: [faction, role]
+      properties:
+        faction: { $ref: "#/components/schemas/Faction" }
+        role: { $ref: "#/components/schemas/UserRole" }
+        unit_scope: { type: array, items: { type: string }, description: "限指揮之單位 id 子集（空/省略＝整個陣營）" }
     EquipmentTemplateView:
       type: object
       description: 裝備範本（武器/感測/通聯…）——編裝編輯器的可配發目錄
@@ -250,6 +309,85 @@ components:
         name: { type: string, minLength: 1 }
         category: { type: string, description: KINETIC / SENSOR / COMMS / LOGISTICS / DRONE }
         base_stats: { type: object }
+    SimParamsView:
+      type: object
+      description: >-
+        推演參數（#93）。**未設定時等同原硬編碼常數**，故既有推演局與 golden replay 不受影響。
+        改動只在 session runner 啟動時讀取 → 進行中的局不受影響。
+      required:
+        [foot_xc_kmh, foot_road_kmh, vehicle_fallback_kmh, march_attrition,
+         resupply_range_km, intrinsic_optical_range_m, sensor_interval_ticks,
+         tick_rate_ms, pace_compression, comms_interval_ticks, ai_heartbeat_s, ai_max_orders]
+      properties:
+        foot_xc_kmh: { type: number, description: 徒步越野速度 km/h（預設 5.0） }
+        foot_road_kmh: { type: number, description: 徒步沿道路速度 km/h（預設 6.5） }
+        vehicle_fallback_kmh: { type: number, description: 無法由編裝導出機動時的後備速度 km/h（預設 40） }
+        march_attrition:
+          type: object
+          additionalProperties: { type: number }
+          description: 每公里行軍耗損（戰力點/km），依機動 profile（FOOT/WHEELED/TRACKED）
+        resupply_range_km: { type: number, description: 補給撥交距離 km（預設 2.0） }
+        intrinsic_optical_range_m: { type: number, description: 無感測裝備時的內建目視距離 m（預設 4000） }
+        sensor_interval_ticks: { type: integer, description: 偵測掃描間隔 tick（預設 5） }
+        tick_rate_ms: { type: integer, description: 1 tick 的模擬時間 ms（預設 60000＝1 分） }
+        pace_compression: { type: number, description: 真實節奏壓縮比（預設 120＝約 0.5s/tick） }
+        comms_interval_ticks: { type: integer, description: 通聯狀態重算間隔 tick（預設 5） }
+        ai_heartbeat_s: { type: number, description: AI 決策心跳秒數預設（該局 autonomy 設定優先） }
+        ai_max_orders: { type: integer, description: 單一 AI worker 累計落單上限（runaway 守衛） }
+    SystemConfigEdit:
+      type: object
+      description: 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。
+      required: [ai_mode, llm_base_url, llm_model]
+      properties:
+        ai_mode: { type: string, enum: [AI_OFF, AI_BARE, AI_FULL] }
+        llm_base_url: { type: string }
+        llm_model: { type: string }
+        llm_api_key: { type: [string, "null"], description: null＝保留原值；""＝清除 }
+        sim: { $ref: "#/components/schemas/SimParamsView" }
+    SystemConfigView:
+      type: object
+      required: [ai, sim, readonly]
+      properties:
+        ai:
+          type: object
+          description: AI/LLM 設定（熱更新）
+        sim: { $ref: "#/components/schemas/SimParamsView" }
+        readonly:
+          type: object
+          description: 部署層資訊（由容器 env 決定，**需重啟對應服務**才能改；此處僅檢視）
+    FactionRelationsView:
+      type: object
+      description: 以觀測者為中心的陣營關係（#91）。未宣告的配對一律回 HOSTILE（§12.1 預設）。
+      required: [observer, relations, factions]
+      properties:
+        observer:
+          type: [string, "null"]
+          description: 觀測者陣營；全知的全局視角為 null（無單一觀測者）
+        relations:
+          type: object
+          additionalProperties: { type: string, enum: [ALLIED, NEUTRAL, HOSTILE] }
+          description: 「觀測者 → 該陣營」的關係；observer 為 null 時為空物件
+        factions:
+          type: array
+          items: { type: string }
+          description: 本局所有陣營 id（供 UI 列舉；不含 WHITE_CELL）
+    ContactView:
+      type: object
+      description: >-
+        敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id，
+        不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露，
+        未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。
+      required: [contact_id, fidelity, last_seen_tick, lat, lng, error_radius_m]
+      properties:
+        contact_id: { type: string, description: 觀測方的 IntelContact id（非目標 unit id） }
+        fidelity: { type: string, enum: [DETECTED, CLASSIFIED, IDENTIFIED], description: 情報等級 }
+        last_seen_tick: { type: integer, description: 最後觀測到的 sim tick }
+        lat: { type: number, description: 最後已知緯度 }
+        lng: { type: number, description: 最後已知經度 }
+        error_radius_m: { type: number, description: 定位誤差半徑（m）；等級愈高愈小 }
+        unit_type: { type: [string, "null"], description: CLASSIFIED 以上才揭露（unit_level） }
+        designation: { type: [string, "null"], description: IDENTIFIED 才揭露 }
+        faction: { type: [string, "null"], description: IDENTIFIED 才揭露敵我 }
     MapFeatureView:
       type: object
       description: 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面）
@@ -286,6 +424,11 @@ components:
         influence_radius_m: { type: [number, "null"] }
         weapon_template_id: { type: [string, "null"] }
         attributes: { type: [object, "null"] }
+        owner_faction:
+          type: [string, "null"]
+          description: >-
+            變更歸屬陣營（WHITE_CELL＝共同層，全體可見）。**僅全知可用**——一般角色帶此欄→403，
+            以免自己把標註轉給他軍或逕自發布到共同層而繞過 fog。
     TerrainFootprintRequest:
       type: object
       description: 武器射向/雷達扇區的地形裁切請求（#11）
@@ -338,6 +481,12 @@ components:
         feasible: { type: boolean, description: 無強穿＝可行 }
         forced: { type: boolean, description: 是否需強穿至少一個阻礙 }
         crossings: { type: array, items: { $ref: "#/components/schemas/MovementCrossing" } }
+        mobility_profile: { type: string, default: FOOT, description: "由編裝導出的機動 profile（#80）：FOOT/WHEELED/TRACKED" }
+        speed_kmh: { type: number, default: 0, description: "此單位有效速度（含 tempo 與路徑平均地形調變，#80/#81）" }
+        terrain_impassable: { type: boolean, default: false, description: "路徑是否穿越對此 profile 不可通行的地形（#81）" }
+        terrain_routed: { type: boolean, default: false, description: "路徑是否為地形 A* 繞路（#82；false＝直線）" }
+        fuel_remaining: { type: number, default: 0, description: "單位目前剩餘油量（#84；0＝徒步/無油料模型）" }
+        fuel_sufficient: { type: boolean, default: true, description: "現有油量是否足以走完全程（#84；否則中途拋錨）" }
     EquipmentStateEdit:
       type: object
       required: [current_state]
@@ -596,6 +745,37 @@ paths:
       responses:
         "200": { description: Restored, content: { application/json: { schema: { $ref: "#/components/schemas/SessionSummary" } } } }
         "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/clone:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    post:
+      operationId: cloneSession
+      security: [{ bearerAuth: [] }]
+      description: 複製一局為新推演（沿用單位部署/編裝/地圖標註/參與者/AI 指派；新 RNG 種子）——限統裁/管理
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CloneSessionRequest" }
+      responses:
+        "201":
+          description: Cloned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionSummary" }
+        "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/ai-status:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getAiStatus
+      security: [{ bearerAuth: [] }]
+      description: 本局各陣營 AI 決策心跳狀態（思考中／下一次決策倒數）——faction-scoped（一般角色僅見己方）
+      responses:
+        "200":
+          description: AI status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiStatusView" }
+        "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/lifecycle:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     post:
@@ -624,6 +804,128 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/UnitView" } }
         "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /system/config:
+    get:
+      operationId: getSystemConfig
+      security: [{ bearerAuth: [] }]
+      description: 全域系統設定（AI/LLM + **推演參數** + 唯讀部署資訊）。限管理/統裁。
+      responses:
+        "200":
+          description: Config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemConfigView" }
+        "403": { description: 權限不足, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    put:
+      operationId: putSystemConfig
+      security: [{ bearerAuth: [] }]
+      description: >-
+        更新可編輯設定。AI/LLM 為**熱更新**（下次使用即生效）；`sim` 推演參數於
+        **session runner 啟動時**讀取 → 進行中的推演局不受影響（不會半場改變物理規則），
+        新局或該局重跑才套用。移動**預覽**則立即反映（預覽本就是「現在下令會怎樣」）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SystemConfigEdit" }
+      responses:
+        "200":
+          description: Config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemConfigView" }
+        "403": { description: 權限不足, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: 參數不合法, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/relations:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getFactionRelations
+      security: [{ bearerAuth: [] }]
+      description: >-
+        **以觀測者為中心**的陣營關係（#91）：回「我對其他各陣營」的關係，供前端決定 2525
+        affiliation（友/中/敵）。刻意不回完整矩陣——第三方之間的結盟關係不是觀測者必然知道的事。
+        全知未指定 as_faction（全局視角）→ observer 為 null、relations 為空（全局視角不套敵我著色）。
+      parameters:
+        - name: as_faction
+          in: query
+          required: false
+          schema: { type: string }
+          description: White Cell 視角切換——以該陣營為觀測者；一般角色帶他陣營→403
+      responses:
+        "200":
+          description: Relations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FactionRelationsView" }
+        "403": { description: 非參與者，或一般角色試圖以他陣營為觀測者, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/intel:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listIntel
+      security: [{ bearerAuth: [] }]
+      description: >-
+        faction-scoped 敵情（fog of war）：一般角色見自身陣營的偵測結果；全知不帶參數＝god view
+        （全部陣營的 contacts），帶 as_faction＝以該陣營視角查。**已依 fidelity 去識別化**
+        （target_unit_id 這類 ground truth 永不下發）。
+      parameters:
+        - name: as_faction
+          in: query
+          required: false
+          schema: { type: string }
+          description: White Cell 視角切換——查某陣營的敵情；一般角色帶他陣營→403
+      responses:
+        "200":
+          description: Contacts
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ContactView" } }
+        "403": { description: 非參與者，或一般角色試圖查他陣營情報, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/participants:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listParticipants
+      security: [{ bearerAuth: [] }]
+      description: 一局的參與者名冊 + 可指派陣營。限統裁/白軍/管理（或本局統裁參與者）。
+      responses:
+        "200":
+          description: Roster
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ParticipantRoster" }
+        "403": { description: Forbidden, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/participants/{userId}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: assignParticipant
+      security: [{ bearerAuth: [] }]
+      description: 指派/更新某帳號的參與陣營與角色（upsert）。限統裁/白軍/管理。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssignParticipantRequest" }
+      responses:
+        "200":
+          description: Assigned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionParticipantView" }
+        "400": { description: Invalid faction/role, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: Forbidden, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: User/session not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: removeParticipant
+      security: [{ bearerAuth: [] }]
+      description: 移除某帳號的參與資格。限統裁/白軍/管理；不可移除最後一位統裁。
+      responses:
+        "204": { description: Removed }
+        "403": { description: Forbidden, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/units/{uid}/weapons:
     parameters:
       - { $ref: "#/components/parameters/SessionId" }
@@ -686,6 +988,14 @@ paths:
               schema: { $ref: "#/components/schemas/EquipmentTemplateView" }
         "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { description: base_stats invalid, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteEquipmentTemplate
+      security: [{ bearerAuth: [] }]
+      description: 刪除武器/裝備範本（限統裁/管理；使用中→422 拒刪，避免孤兒編裝）
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not admin, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Not found / in use, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/units/{uid}/equipment:
     parameters:
       - { $ref: "#/components/parameters/SessionId" }
@@ -750,7 +1060,15 @@ paths:
     get:
       operationId: listMapFeatures
       security: [{ bearerAuth: [] }]
-      description: 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍）
+      description: >-
+        地圖標註/工事（fog of war：全知全見，否則共同 + 本軍）。
+        帶 as_faction（#92）＝以該陣營視角過濾（共同 + 該軍），與 units/intel 同紀律。
+      parameters:
+        - name: as_faction
+          in: query
+          required: false
+          schema: { type: string }
+          description: White Cell 視角切換——以該陣營視角看標註；一般角色帶他陣營→403
       responses:
         "200":
           description: Features
