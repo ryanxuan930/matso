@@ -778,10 +778,13 @@ const ctxMenu = ref<{
   vertexIndex?: number // #99 游標下的控制點索引（右鍵可刪點）
 } | null>(null)
 // #26 右鍵地圖物件選單動作：編輯（開編輯工具列並選取）/ 旋轉 / 刪除。
+// #99b：這裡同時「解鎖整形」——控制點與拖曳只在明確從此進入後才生效。
 function ctxEditFeature() {
   const id = ctxMenu.value?.featureId
   closeCtx()
-  if (id) onFeatureClick({ id })
+  if (!id) return
+  onFeatureClick({ id })
+  armReshape(id) // 必須在 onFeatureClick 之後：selectedFeatureId 的 watch 會清掉不相符的解鎖
 }
 async function ctxRotateFeature(deg: number) {
   const id = ctxMenu.value?.featureId
@@ -1040,6 +1043,7 @@ async function ensureWeaponTemplates() {
 }
 function startDraw(kind: DraftKind, featureKind: string) {
   selectedFeatureId.value = null
+  armReshape(null) // #99b 開始繪製 → 收掉上一個物件的控制點
   drawFeatureKind.value = featureKind
   drawKind.value = kind
   draftCoords.value = []
@@ -1190,15 +1194,31 @@ async function onClearTerrainClip(fid: string) {
   }
 }
 /**
- * #99 選取的圖形本使用者能否整形（決定要不要畫控制點）。
- * 與後端 `_feature_for_edit` 同一條規則：全知可編任一；否則只能編本軍的
- * （**共同層 WHITE_CELL 標註對一般指揮官是唯讀的**）。在前端先 gate，才不會拖完才吃 403。
+ * #99 本使用者對選取圖形**有沒有編修權**（與後端 `_feature_for_edit` 同一條規則：
+ * 全知可編任一；否則只能編本軍的，**共同層 WHITE_CELL 標註對一般指揮官是唯讀**）。
+ * 在前端先 gate，才不會拖完才吃 403。有權 ≠ 現在可拖，見 `reshapeArmedId`。
  */
-const canEditSelectedFeature = computed(() => {
+const mayEditSelectedFeature = computed(() => {
   const f = selectedFeature.value
   if (!f || !canDraw.value) return false
   if (canControl.value) return true
   return !!myFaction.value && f.owner_faction === myFaction.value
+})
+
+/**
+ * #99b 整形須先「解鎖」：只有經右鍵選單（或編輯面板按鈕）明確進入調整狀態的那一個圖形
+ * 才畫控制點、才吃拖曳。**單純點選不解鎖**——否則在圖上點一下再手滑就把標註拖歪了，
+ * 而地圖上點選是最頻繁的操作。換選別的圖形、取消選取、開始繪製都會自動上鎖。
+ */
+const reshapeArmedId = ref<string | null>(null)
+const canEditSelectedFeature = computed(
+  () => mayEditSelectedFeature.value && reshapeArmedId.value === selectedFeatureId.value,
+)
+function armReshape(id: string | null) {
+  reshapeArmedId.value = id
+}
+watch(selectedFeatureId, (id) => {
+  if (id !== reshapeArmedId.value) reshapeArmedId.value = null // 換對象/取消選取 → 自動上鎖
 })
 
 /**
@@ -1795,37 +1815,52 @@ watch(
             <option v-for="f in sessionFactions" :key="f" :value="f">{{ f }} 視角</option>
           </select>
         </label>
+        <!-- 導覽鈕一律只留 icon（頂列空間留給地圖）；名稱與說明走 data-tip 的 hover 提示。
+             不用原生 title：延遲約 1 秒且樣式不受控，icon-only 之下等於沒有提示。 -->
         <button
           v-if="canControl && !mapEditMode"
+          class="icon-btn"
           data-testid="nav-map-edit"
-          title="地圖狀態編輯：暫停推演、拖放單位、繪障礙，完成再開始"
+          data-tip="地圖狀態編輯"
+          data-tip2="暫停推演、拖放單位、繪障礙，完成再開始"
+          aria-label="地圖狀態編輯"
           @click="enterMapEdit"
         >
-          <i class="pi pi-pencil" /> 地圖狀態編輯
+          <i class="pi pi-pencil" />
         </button>
         <button
           v-if="canControl"
+          class="icon-btn"
           data-testid="nav-white-cell"
+          data-tip="白軍控制台"
+          data-tip2="時間控制、注入事件、視角"
+          aria-label="白軍控制台"
           @click="navigateTo(`/session/${sessionId}/white-cell`)"
         >
-          ⚙ 白軍控制台
+          <i class="pi pi-cog" />
         </button>
         <button
           v-if="canManageEquip"
+          class="icon-btn"
           data-testid="nav-equip-mgr"
-          title="裝備管理：編輯各單位配發的武器/裝備（白軍編任一；本軍需該局開放自編）"
+          data-tip="裝備管理"
+          data-tip2="編輯各單位配發的武器/裝備（白軍編任一；本軍需該局開放自編）"
+          aria-label="裝備管理"
           @click="openEquipMgr"
         >
-          <i class="pi pi-box" /> 裝備管理
+          <i class="pi pi-box" />
         </button>
         <div class="widget-menu">
           <button
+            class="icon-btn"
             data-testid="nav-widgets"
             :class="{ on: widgetMenuOpen }"
-            title="工具視窗（開啟/關閉小工具）"
+            data-tip="工具"
+            data-tip2="開啟/關閉小工具視窗"
+            aria-label="工具視窗"
             @click="widgetMenuOpen = !widgetMenuOpen"
           >
-            <i class="pi pi-th-large" /> 工具
+            <i class="pi pi-th-large" />
           </button>
           <template v-if="widgetMenuOpen">
             <div class="wm-backdrop" @click="widgetMenuOpen = false" />
@@ -1846,13 +1881,25 @@ watch(
         </div>
         <button
           v-if="canControl"
+          class="icon-btn"
           data-testid="nav-autonomy"
-          title="自主推演：指派 AI 控制陣營"
+          data-tip="自主推演"
+          data-tip2="指派 AI 控制陣營"
+          aria-label="自主推演"
           @click="navigateTo(`/session/${sessionId}/autonomy`)"
         >
-          <i class="pi pi-bolt" /> 自主推演
+          <i class="pi pi-bolt" />
         </button>
-        <button data-testid="nav-aar" @click="navigateTo(`/session/${sessionId}/aar`)"><i class="pi pi-chart-bar" /> AAR</button>
+        <button
+          class="icon-btn"
+          data-testid="nav-aar"
+          data-tip="AAR"
+          data-tip2="戰後檢討報告"
+          aria-label="AAR 戰後檢討"
+          @click="navigateTo(`/session/${sessionId}/aar`)"
+        >
+          <i class="pi pi-chart-bar" />
+        </button>
       </nav>
     </header>
     <div v-if="mapEditMode" class="mapedit-bar" data-testid="mapedit-bar">
@@ -2392,7 +2439,9 @@ watch(
             </template>
             <template v-else-if="ctxMenu?.featureId && canDraw">
               <div class="ctx-title">地圖物件</div>
-              <button data-testid="ctx-feat-edit" @click="ctxEditFeature"><i class="pi pi-pencil" /> 編輯</button>
+              <button data-testid="ctx-feat-edit" @click="ctxEditFeature">
+                <i class="pi pi-pencil" /> 編輯形狀 / 屬性
+              </button>
               <button data-testid="ctx-feat-rot-ccw" @click="ctxRotateFeature(-15)"><i class="pi pi-undo" /> 旋轉 15°</button>
               <button data-testid="ctx-feat-rot-cw" @click="ctxRotateFeature(15)"><i class="pi pi-refresh" /> 旋轉 15°</button>
               <button class="ctx-danger" data-testid="ctx-feat-del" @click="ctxDeleteFeature"><i class="pi pi-trash" /> 刪除</button>
@@ -2541,14 +2590,38 @@ watch(
           <!-- 選取特徵的屬性編輯（#11）：名稱/顏色/備註/高度 → PATCH。 -->
           <div v-if="selectedFeature" class="me-edit" data-testid="feature-edit">
             <div class="me-sub">編輯：{{ selectedFeature.kind }}</div>
-            <!-- #99 整形操作說明（控制點是地圖上的互動，面板裡看不到 → 需明講怎麼用）。 -->
+            <!-- #99 整形操作說明（控制點是地圖上的互動，面板裡看不到 → 需明講怎麼用）。
+                 #99b 未解鎖時顯示上鎖狀態＋解鎖鈕，讓「為什麼拖不動」有答案。 -->
             <div v-if="canEditSelectedFeature" class="me-hint" data-testid="reshape-hint">
-              <template v-if="selectedFeature.geometry_type === 'POINT'">
-                <i class="pi pi-arrows-alt" /> 直接拖曳圖示可移動位置
-              </template>
-              <template v-else>
-                <i class="pi pi-arrows-alt" /> 拖白點改形狀 · 拖小圈可加點 · 拖線/面本身整體移動 · 右鍵白點刪點
-              </template>
+              <div class="me-hint-row">
+                <span>
+                  <template v-if="selectedFeature.geometry_type === 'POINT'">
+                    <i class="pi pi-arrows-alt" /> 調整中：直接拖曳圖示可移動位置
+                  </template>
+                  <template v-else>
+                    <i class="pi pi-arrows-alt" /> 調整中：拖白點改形狀 · 拖小圈可加點 · 拖線/面本身整體移動 · 右鍵白點刪點
+                  </template>
+                </span>
+                <button class="me-lock" data-testid="reshape-lock" @click="armReshape(null)">
+                  <i class="pi pi-lock" /> 完成
+                </button>
+              </div>
+            </div>
+            <div
+              v-else-if="mayEditSelectedFeature"
+              class="me-hint me-hint-locked"
+              data-testid="reshape-locked"
+            >
+              <div class="me-hint-row">
+                <span><i class="pi pi-lock" /> 形狀已鎖定（避免誤觸）——右鍵此物件選「編輯形狀」</span>
+                <button
+                  class="me-lock"
+                  data-testid="reshape-unlock"
+                  @click="armReshape(selectedFeatureId)"
+                >
+                  <i class="pi pi-lock-open" /> 調整形狀
+                </button>
+              </div>
             </div>
             <input v-model="editFeatLabel" class="me-in" data-testid="edit-feat-label" placeholder="名稱">
             <div class="me-row2">
@@ -3146,6 +3219,51 @@ watch(
 }
 .cop-nav button:hover {
   border-color: #2563eb;
+}
+/* 只留 icon 的導覽鈕：正方形、字級放大到讀得出圖形 */
+.cop-nav .icon-btn {
+  position: relative; /* hover 提示以此為定位基準 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+/* hover 提示：名稱（data-tip）+ 選填的補充說明（data-tip2）。
+   自繪而非原生 title——原生的約 1 秒才出現，icon-only 之下等於沒有提示。 */
+.cop-nav .icon-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  /* 靠按鈕右緣、往左長：導覽列本身靠右，置中對齊會讓最右邊幾顆的提示被視窗切掉。 */
+  right: 0;
+  z-index: 1002; /* 壓過工具選單彈出層（1001） */
+  max-width: 15rem;
+  width: max-content;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.3rem;
+  background: #0b1324;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: left;
+  white-space: pre-line; /* 名稱與補充說明以 \A 分行（見下方 [data-tip2] 規則） */
+  box-shadow: 0 6px 16px rgb(0 0 0 / 45%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+/* 有補充說明者：名稱一行、說明一行 */
+.cop-nav .icon-btn[data-tip2]::after {
+  content: attr(data-tip) '\A' attr(data-tip2);
+}
+.cop-nav .icon-btn:hover::after,
+.cop-nav .icon-btn:focus-visible::after {
+  opacity: 1;
 }
 .cop-nav button.on {
   border-color: #eab308;
@@ -3887,7 +4005,7 @@ watch(
   padding-top: 0.35rem;
   margin-bottom: 0.25rem;
 }
-/* #99 整形操作提示 */
+/* #99 整形操作提示 / #99b 鎖定狀態 */
 .map-editor .me-hint {
   color: #7dd3fc;
   background: #0c2233;
@@ -3897,6 +4015,31 @@ watch(
   line-height: 1.35;
   padding: 0.28rem 0.4rem;
   margin-bottom: 0.3rem;
+}
+.map-editor .me-hint-locked {
+  color: #94a3b8;
+  background: #111827;
+  border-color: #334155;
+}
+.map-editor .me-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  justify-content: space-between;
+}
+.map-editor .me-lock {
+  flex: none;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.66rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.map-editor .me-lock:hover {
+  border-color: #2563eb;
 }
 .map-editor .me-clip {
   flex: 1;
