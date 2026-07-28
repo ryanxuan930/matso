@@ -38,7 +38,10 @@ import {
   fetchMovementPreview,
   fetchTerrainFootprint,
   influenceToFc,
+  MIN_VERTICES,
   type MovementPreview,
+  openRing,
+  removeVertex,
   rotatePoints,
   shapeToPolygon,
   type DraftKind,
@@ -772,6 +775,7 @@ const ctxMenu = ref<{
   faction?: string
   kind?: string
   featureId?: string
+  vertexIndex?: number // #99 游標下的控制點索引（右鍵可刪點）
 } | null>(null)
 // #26 右鍵地圖物件選單動作：編輯（開編輯工具列並選取）/ 旋轉 / 刪除。
 function ctxEditFeature() {
@@ -816,6 +820,8 @@ function onContextMenu(e: {
   unitId?: string
   faction?: string
   kind?: string
+  featureId?: string
+  vertexIndex?: number
 }) {
   // 繪圖/座標查詢時不彈選單（避免干擾）。
   if (drawActive.value || coordQuery.value) return
@@ -1183,6 +1189,63 @@ async function onClearTerrainClip(fid: string) {
     // 清除持久化失敗不擋操作；地圖已即時還原理想射界。
   }
 }
+/**
+ * #99 選取的圖形本使用者能否整形（決定要不要畫控制點）。
+ * 與後端 `_feature_for_edit` 同一條規則：全知可編任一；否則只能編本軍的
+ * （**共同層 WHITE_CELL 標註對一般指揮官是唯讀的**）。在前端先 gate，才不會拖完才吃 403。
+ */
+const canEditSelectedFeature = computed(() => {
+  const f = selectedFeature.value
+  if (!f || !canDraw.value) return false
+  if (canControl.value) return true
+  return !!myFaction.value && f.owner_faction === myFaction.value
+})
+
+/**
+ * #99 整形落地：拖頂點/中點/本體後 PATCH 新幾何。
+ * 幾何一變舊裁切環就失效 → 同一 PATCH 清 `viewshed_ring`（與 onFeatureMove/rotateFeature 同紀律，#43）。
+ * **失敗也要 loadFeatures**：地圖上此刻顯示的是拖曳後的本地預覽，不重載就會停在一個伺服器沒接受的形狀。
+ */
+async function onFeatureReshape(e: { id: string; geometry: number[][] }) {
+  if (!e.geometry?.length) return
+  try {
+    await editMapFeature(sessionId.value, e.id, {
+      geometry: e.geometry,
+      attributes: { viewshed_ring: null },
+    })
+    clearTerrainClip(e.id)
+    await loadFeatures()
+  } catch (err) {
+    toasts.push({
+      severity: 'error',
+      title: '調整形狀失敗',
+      detail: (err as { message?: string }).message,
+      timeoutMs: 0,
+    })
+    await loadFeatures() // 還原成伺服器上的權威幾何
+  }
+}
+
+/** #99 右鍵控制點 → 刪除該頂點；會讓圖形低於最少頂點數則拒絕並說明（線≥2、面≥3）。 */
+async function ctxDeleteVertex() {
+  const idx = ctxMenu.value?.vertexIndex
+  const f = selectedFeature.value
+  closeCtx()
+  if (idx == null || !f) return
+  const ring = openRing((f.geometry as number[][]) ?? [])
+  const next = removeVertex(ring, idx, f.geometry_type)
+  if (!next) {
+    toasts.push({
+      severity: 'warn',
+      title: '無法刪除控制點',
+      detail: `${f.geometry_type === 'POLYGON' ? '面' : '線'}至少需要 ${MIN_VERTICES[f.geometry_type] ?? 2} 個控制點`,
+      timeoutMs: 3000,
+    })
+    return
+  }
+  await onFeatureReshape({ id: f.id, geometry: next })
+}
+
 // 拖放移動點特徵（#11 B2）：MapCanvas emit 新座標 → PATCH 幾何 → 重載。
 async function onFeatureMove(e: { id: string; lng: number; lat: number }) {
   const f = mapFeatures.value.find((x) => x.id === e.id)
@@ -2228,6 +2291,7 @@ watch(
             :draft-fc="draftFc"
             :weapon-track-fc="weaponTrackFc"
             :selected-feature-id="selectedFeatureId"
+            :feature-edit="canEditSelectedFeature"
             :draw-active="drawActive"
             :latlng-grid="latlngGrid"
             :mgrs-grid="mgrsGrid"
@@ -2246,6 +2310,7 @@ watch(
             @select-screen-pos="onSelectScreenPos"
             @feature-click="onFeatureClick"
             @feature-move="onFeatureMove"
+            @feature-reshape="onFeatureReshape"
             @unit-move="onUnitMove"
             @basemap-error="onBasemapError"
             @context-menu="onContextMenu"
@@ -2318,7 +2383,14 @@ watch(
             data-testid="ctx-menu"
             :style="{ left: `${ctxMenu.x}px`, top: `${ctxMenu.y}px` }"
           >
-            <template v-if="ctxMenu?.featureId && canDraw">
+            <!-- #99 右鍵控制點：刪點優先於一般物件選單（游標下同時有頂點與圖形本體）。 -->
+            <template v-if="ctxMenu?.vertexIndex != null && canEditSelectedFeature">
+              <div class="ctx-title">控制點 #{{ ctxMenu.vertexIndex + 1 }}</div>
+              <button class="ctx-danger" data-testid="ctx-vertex-del" @click="ctxDeleteVertex">
+                <i class="pi pi-trash" /> 刪除控制點
+              </button>
+            </template>
+            <template v-else-if="ctxMenu?.featureId && canDraw">
               <div class="ctx-title">地圖物件</div>
               <button data-testid="ctx-feat-edit" @click="ctxEditFeature"><i class="pi pi-pencil" /> 編輯</button>
               <button data-testid="ctx-feat-rot-ccw" @click="ctxRotateFeature(-15)"><i class="pi pi-undo" /> 旋轉 15°</button>
@@ -2469,6 +2541,15 @@ watch(
           <!-- 選取特徵的屬性編輯（#11）：名稱/顏色/備註/高度 → PATCH。 -->
           <div v-if="selectedFeature" class="me-edit" data-testid="feature-edit">
             <div class="me-sub">編輯：{{ selectedFeature.kind }}</div>
+            <!-- #99 整形操作說明（控制點是地圖上的互動，面板裡看不到 → 需明講怎麼用）。 -->
+            <div v-if="canEditSelectedFeature" class="me-hint" data-testid="reshape-hint">
+              <template v-if="selectedFeature.geometry_type === 'POINT'">
+                <i class="pi pi-arrows-alt" /> 直接拖曳圖示可移動位置
+              </template>
+              <template v-else>
+                <i class="pi pi-arrows-alt" /> 拖白點改形狀 · 拖小圈可加點 · 拖線/面本身整體移動 · 右鍵白點刪點
+              </template>
+            </div>
             <input v-model="editFeatLabel" class="me-in" data-testid="edit-feat-label" placeholder="名稱">
             <div class="me-row2">
               <label class="me-color"><input v-model="editFeatColor" type="color"> 顏色</label>
@@ -3805,6 +3886,17 @@ watch(
   border-top: 1px solid #1e293b;
   padding-top: 0.35rem;
   margin-bottom: 0.25rem;
+}
+/* #99 整形操作提示 */
+.map-editor .me-hint {
+  color: #7dd3fc;
+  background: #0c2233;
+  border: 1px solid #164e63;
+  border-radius: 0.25rem;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  padding: 0.28rem 0.4rem;
+  margin-bottom: 0.3rem;
 }
 .map-editor .me-clip {
   flex: 1;

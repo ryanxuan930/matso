@@ -29,6 +29,7 @@ import {
   lockBadgeImage,
   symbolImage,
 } from '~/composables/useMilsymbol'
+import { insertVertex, midpoints, moveVertex, openRing, translateRing } from '~/composables/useMapFeatures'
 
 const emit = defineEmits<{
   mapClick: [{ lng: number; lat: number; h3: string }]
@@ -46,9 +47,12 @@ const emit = defineEmits<{
       faction?: string
       kind?: string
       featureId?: string // #26 游標下的地圖標註/工事
+      vertexIndex?: number // #99 游標下的控制點索引（供「刪除控制點」）
     },
   ]
   featureMove: [{ id: string; lng: number; lat: number }] // 拖放移動點特徵（#11 B2）
+  // #99 整形：拖頂點/中點/本體後的新幾何（存放格式的開放環 [[lng,lat],…]）。
+  featureReshape: [{ id: string; geometry: number[][] }]
   unitMove: [{ id: string; lng: number; lat: number }] // 地圖狀態編輯：拖放單位到新座標
   // 地圖狀態編輯（多選）：一次移動多個單位（Shift 多選 / 框選後整組拖曳）到各自新座標。
   unitsMove: [{ moves: { id: string; lng: number; lat: number }[] }]
@@ -98,6 +102,10 @@ const props = withDefaults(
     draftFc?: Fc // 繪製中草稿
     weaponTrackFc?: Fc // #95 武器軌跡（顯示用；由已裁決的交戰事件驅動）
     selectedFeatureId?: string | null // 選取的標註（高亮）
+    // #99 選取的標註可被本使用者整形（拖頂點/中點/本體）→ 顯示控制點。
+    // 由上層以「有繪製權 ∧ 對此標註有編修權」算出：後端 `_feature_for_edit` 只讓全知或本軍改，
+    // 在這裡就 gate 住，才不會讓人拖了半天才吃 403。
+    featureEdit?: boolean
     drawActive?: boolean // 繪圖模式：地圖點擊視為加頂點（不選單位/標註）
     targeting?: boolean // 設定目標中（#3）：游標改十字準星，提示「點地圖選落點/目標」
     editUnits?: boolean // 地圖狀態編輯：單位可拖放到新座標（White Cell 布局）
@@ -144,6 +152,7 @@ const props = withDefaults(
     draftFc: () => ({ type: 'FeatureCollection', features: [] }),
     weaponTrackFc: () => ({ type: 'FeatureCollection', features: [] }),
     selectedFeatureId: null,
+    featureEdit: false,
     drawActive: false,
     targeting: false,
     editUnits: false,
@@ -278,6 +287,129 @@ function onFeatDrop(e: _LngLatEvt): void {
   emit('featureMove', { id, lng: e.lngLat.lng, lat: e.lngLat.lat })
 }
 
+// ---- #99 整形（控制點編輯）----
+// 頂點多於此數就不畫中點：圓形存放環有 48 個頂點，再加 48 顆中點會糊成一片。
+const MAX_MIDPOINT_VERTS = 24
+type _RingSel = { id: string; gtype: 'LINE' | 'POLYGON'; ring: number[][] }
+// 拖曳中的整形狀態（頂點拖曳／本體平移共用；null＝未在整形）。
+let reshape: _RingSel | null = null
+let dragVertIdx = -1 // 拖曳中的頂點索引（-1＝在拖本體）
+let bodyDragStart: { lng: number; lat: number; ring: number[][] } | null = null
+
+/** 由已渲染的 featureFc 取出選取圖形的開放環（POINT 走既有整點拖曳，回 null）。 */
+function selectedRing(): _RingSel | null {
+  const id = props.selectedFeatureId
+  if (!id) return null
+  for (const raw of (props.featureFc?.features ?? []) as unknown[]) {
+    const f = raw as { properties?: { id?: unknown }; geometry?: { type?: string; coordinates?: unknown } }
+    if (String(f?.properties?.id ?? '') !== String(id)) continue
+    const g = f.geometry
+    if (g?.type === 'LineString') {
+      return { id: String(id), gtype: 'LINE', ring: openRing(g.coordinates as number[][]) }
+    }
+    if (g?.type === 'Polygon') {
+      const ring = ((g.coordinates as number[][][]) ?? [])[0] ?? []
+      return { id: String(id), gtype: 'POLYGON', ring: openRing(ring) }
+    }
+    return null
+  }
+  return null
+}
+
+/** 控制點 GeoJSON：實頂點（mid=false）+ 邊中點（mid=true，拖了就插新頂點）。 */
+function vertexFc(sel: _RingSel | null): Fc {
+  if (!sel || !props.featureEdit || props.drawActive) return _EMPTY_FEAT_FC
+  const feats: unknown[] = sel.ring.map((c, i) => ({
+    type: 'Feature',
+    properties: { i, mid: false },
+    geometry: { type: 'Point', coordinates: c },
+  }))
+  if (sel.ring.length <= MAX_MIDPOINT_VERTS) {
+    for (const m of midpoints(sel.ring, sel.gtype === 'POLYGON')) {
+      feats.push({
+        type: 'Feature',
+        properties: { i: m.i, mid: true },
+        geometry: { type: 'Point', coordinates: m.pt },
+      })
+    }
+  }
+  return { type: 'FeatureCollection', features: feats }
+}
+
+function syncVertices(): void {
+  ;(map?.getSource(VERT_SRC) as GeoJSONSource | undefined)?.setData(
+    vertexFc(reshape ?? selectedRing()) as never,
+  )
+}
+
+/**
+ * 整形拖曳中的即時預覽：只覆寫該圖形的幾何，其餘照 props 原樣。
+ * 放開後由上層 PATCH→重載，props 一變 syncFeatures 就以權威幾何收斂；PATCH 失敗時上層亦重載，
+ * 故不會停在拖歪的形狀上。
+ */
+function previewReshape(): void {
+  const src = map?.getSource(FEAT_SRC) as GeoJSONSource | undefined
+  const rs = reshape
+  if (!src || !rs) return
+  const feats = ((props.featureFc?.features ?? []) as unknown[]).map((raw) => {
+    const f = raw as { properties?: { id?: unknown } }
+    if (String(f?.properties?.id ?? '') !== rs.id) return raw
+    const geometry =
+      rs.gtype === 'POLYGON'
+        ? { type: 'Polygon', coordinates: [[...rs.ring, rs.ring[0]!]] }
+        : { type: 'LineString', coordinates: rs.ring }
+    return { ...(raw as object), geometry }
+  })
+  src.setData({ type: 'FeatureCollection', features: feats } as never)
+}
+
+/** 結束整形：還原游標/事件，把新幾何交給上層（存放格式＝開放環）。重入安全（rs 為 null 即不 emit）。 */
+function endReshape(): void {
+  const rs = reshape
+  reshape = null
+  dragVertIdx = -1
+  bodyDragStart = null
+  if (map) map.getCanvas().style.cursor = ''
+  map?.off('mousemove', onVertexDragMove)
+  map?.off('mousemove', onBodyDragMove)
+  window.removeEventListener('mouseup', endReshape)
+  if (rs) emit('featureReshape', { id: rs.id, geometry: rs.ring })
+}
+
+/**
+ * 保險絲：`map.once('mouseup')` 只收得到「canvas 容器上」的放開。
+ * 浮動小工具就疊在地圖上，把控制點拖到工具視窗上方才放手是很常見的——
+ * 沒有這條 window 級 fallback，整形狀態會卡住、圖形之後一直跟著游標跑。
+ * 容器上的放開會冒泡到 window，故正常情況兩者都觸發，由 endReshape 的重入保護吸收。
+ */
+function armReshapeFallback(): void {
+  window.addEventListener('mouseup', endReshape)
+}
+
+function onVertexDragMove(e: _LngLatEvt): void {
+  if (!reshape || dragVertIdx < 0) return
+  reshape = { ...reshape, ring: moveVertex(reshape.ring, dragVertIdx, [e.lngLat.lng, e.lngLat.lat]) }
+  previewReshape()
+  syncVertices()
+}
+function onVertexDrop(e: _LngLatEvt): void {
+  if (!reshape) return
+  onVertexDragMove(e) // 以放開處為最終位置
+  endReshape()
+}
+function onBodyDragMove(e: _LngLatEvt): void {
+  if (!reshape || !bodyDragStart) return
+  const d = bodyDragStart
+  reshape = { ...reshape, ring: translateRing(d.ring, e.lngLat.lng - d.lng, e.lngLat.lat - d.lat) }
+  previewReshape()
+  syncVertices()
+}
+function onBodyDrop(e: _LngLatEvt): void {
+  if (!reshape) return
+  onBodyDragMove(e)
+  endReshape()
+}
+
 const HEX_SRC = 'hexgrid'
 const GRAT_SRC = 'graticule'
 const HILLSHADE_SRC = 'hillshade'
@@ -289,6 +421,7 @@ const TRACK_SRC = 'weapon-tracks' // #95 武器軌跡（短暫顯示後淡出）
 const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
 const FEAT_SYM_SRC = 'mapfeatsym' // 帶北約符號的點特徵（#11）
 const FEAT_DRAG_SRC = 'mapfeatdrag' // 拖放移動預覽（#11 B2）
+const VERT_SRC = 'mapfeatverts' // #99 選取圖形的控制點（頂點 + 邊中點）
 const INFL_SRC = 'mapinfluence' // 影響範圍圓
 const DRAFT_SRC = 'mapdraft' // 繪製中草稿
 const FEAT_NONE = '__matso_feat_none__'
@@ -324,6 +457,7 @@ function syncFeatures() {
   ;(map?.getSource(INFL_SRC) as GeoJSONSource | undefined)?.setData((props.influenceFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(DRAFT_SRC) as GeoJSONSource | undefined)?.setData((props.draftFc ?? _EMPTY_FEAT_FC) as never)
   ;(map?.getSource(TRACK_SRC) as GeoJSONSource | undefined)?.setData((props.weaponTrackFc ?? _EMPTY_FEAT_FC) as never)
+  syncVertices() // #99 幾何/選取變動 → 控制點跟著重算
   // 北約符號點特徵（#11）：生成/快取 milsymbol icon（去重）→ setData。
   if (map) {
     for (const spec of props.featSymbolIcons ?? []) {
@@ -790,6 +924,32 @@ onMounted(async () => {
         'circle-stroke-width': 2.5,
       },
     })
+    // #99 控制點：中點（空心小點＝可拖出新頂點）在下，實頂點（實心白方點）在上。
+    map.addSource(VERT_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'mapfeat-midpoint',
+      type: 'circle',
+      source: VERT_SRC,
+      filter: ['==', ['get', 'mid'], true],
+      paint: {
+        'circle-radius': 4,
+        'circle-color': 'rgba(255,255,255,0.35)',
+        'circle-stroke-color': '#22d3ee',
+        'circle-stroke-width': 1.5,
+      },
+    })
+    map.addLayer({
+      id: 'mapfeat-vertex',
+      type: 'circle',
+      source: VERT_SRC,
+      filter: ['!=', ['get', 'mid'], true],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#ffffff',
+        'circle-stroke-color': '#0ea5e9',
+        'circle-stroke-width': 2,
+      },
+    })
     // 特徵名稱標籤（#11；需 glyphs → 僅 tileUrl 時加）。
     if (hasGlyphs) {
       map.addLayer({
@@ -1064,8 +1224,11 @@ onMounted(async () => {
   // Unit 資訊卡懸浮：地圖移動/縮放時即時更新選取單位的螢幕座標（#Fix C）。
   map.on('move', emitSelectPos)
   // 拖放移動點特徵（#11 B2）：在選取的點特徵上按下 → 拖曳 → 放開，emit 新座標由上層 PATCH。
-  const featLayers = () =>
-    ['mapfeat-point', 'mapfeat-symbol'].filter((l) => map?.getLayer(l))
+  // **不可在這裡 filter getLayer**（#99 修）：本區在 onMounted 同步跑，而圖層是在 `map.on('load')`
+  // 裡才加的——註冊當下 getLayer 一律 undefined，過濾完就是空陣列，等於這兩層的 mousedown
+  // **從來沒被註冊過**（實測 _delegatedListeners.mousedown 只有 units/fill/line，點特徵拖不動）。
+  // maplibre 的委派監聽器是在「事件發生時」才查圖層，對尚未存在的圖層註冊是安全的。
+  const featLayers = () => ['mapfeat-point', 'mapfeat-symbol']
   const onFeatDown = (e: {
     features?: { properties?: { id?: unknown; gtype?: unknown } | null }[]
     preventDefault: () => void
@@ -1073,6 +1236,7 @@ onMounted(async () => {
     const props0 = e.features?.[0]?.properties
     const id = props0?.id
     if (!id || String(id) !== String(props.selectedFeatureId)) return // 只拖選取者
+    if (!props.featureEdit) return // #99 無編修權就別讓人拖了才吃 403
     if (props0?.gtype && props0.gtype !== 'POINT') return // 僅點特徵可拖
     e.preventDefault() // 阻止地圖平移
     dragFeatId = String(id)
@@ -1087,6 +1251,84 @@ onMounted(async () => {
     })
     map.on('mouseleave', l, () => {
       if (map && !dragFeatId && !props.targeting) map.getCanvas().style.cursor = ''
+    })
+  }
+  // ---- #99 整形：拖控制點改形狀、拖圖形本體整體平移 ----
+  const onVertexDown = (e: {
+    features?: { properties?: { i?: unknown; mid?: unknown } | null }[]
+    lngLat: { lng: number; lat: number }
+    preventDefault: () => void
+  }) => {
+    if (!props.featureEdit || props.drawActive || !map) return
+    const sel = selectedRing()
+    const p = e.features?.[0]?.properties
+    if (!sel || !p) return
+    const idx = Number(p.i)
+    if (!Number.isFinite(idx)) return
+    e.preventDefault() // 阻止地圖平移
+    if (p.mid === true) {
+      // 中點：先插入實頂點，接著拖的就是這顆新頂點（Google/Leaflet 慣例）。
+      reshape = { ...sel, ring: insertVertex(sel.ring, idx, [e.lngLat.lng, e.lngLat.lat]) }
+      dragVertIdx = idx + 1
+    } else {
+      reshape = sel
+      dragVertIdx = idx
+    }
+    map.getCanvas().style.cursor = 'grabbing'
+    map.on('mousemove', onVertexDragMove)
+    map.once('mouseup', onVertexDrop)
+    armReshapeFallback()
+  }
+  for (const l of ['mapfeat-vertex', 'mapfeat-midpoint']) {
+    map.on('mousedown', l, onVertexDown)
+    map.on('mouseenter', l, () => {
+      if (map && !reshape && props.featureEdit) map.getCanvas().style.cursor = 'grab'
+    })
+    map.on('mouseleave', l, () => {
+      if (map && !reshape && !props.targeting) map.getCanvas().style.cursor = ''
+    })
+  }
+  // 拖圖形本體＝整體平移；限選取者，否則在圖上任何線/面按下都不能平移地圖了。
+  const onBodyDown = (e: {
+    features?: { properties?: { id?: unknown } | null }[]
+    point: { x: number; y: number }
+    lngLat: { lng: number; lat: number }
+    preventDefault: () => void
+  }) => {
+    if (!props.featureEdit || props.drawActive || !map) return
+    // **控制點優先**：控制點畫在線/面之上，同一次 mousedown 兩個委派監聽器都會收到。
+    // 不在此擋掉的話，拖頂點會變成整體平移（實測：三個頂點同時位移）。
+    // 用命中查詢而非「註冊順序」來決定優先權——順序是隱性契約，改天調換註冊位置就再度失效。
+    const onHandle = map.queryRenderedFeatures(e.point, {
+      layers: ['mapfeat-vertex', 'mapfeat-midpoint'].filter((l) => map?.getLayer(l)),
+    })
+    if (onHandle.length) return
+    const id = e.features?.[0]?.properties?.id
+    if (id == null || String(id) !== String(props.selectedFeatureId)) return
+    const sel = selectedRing()
+    if (!sel) return
+    e.preventDefault()
+    reshape = sel
+    dragVertIdx = -1
+    bodyDragStart = { lng: e.lngLat.lng, lat: e.lngLat.lat, ring: sel.ring }
+    map.getCanvas().style.cursor = 'grabbing'
+    map.on('mousemove', onBodyDragMove)
+    map.once('mouseup', onBodyDrop)
+    armReshapeFallback()
+  }
+  const onBodyEnter = (e: { features?: { properties?: { id?: unknown } | null }[] }) => {
+    // 只有選取者能拖 → 只在游標下的就是選取者時才給「可移動」暗示。
+    const id = e.features?.[0]?.properties?.id
+    if (!map || reshape || props.targeting || !props.featureEdit) return
+    if (id != null && String(id) === String(props.selectedFeatureId)) {
+      map.getCanvas().style.cursor = 'move'
+    }
+  }
+  for (const l of ['mapfeat-fill', 'mapfeat-line']) {
+    map.on('mousedown', l, onBodyDown)
+    map.on('mouseenter', l, onBodyEnter)
+    map.on('mouseleave', l, () => {
+      if (map && !reshape && !props.targeting) map.getCanvas().style.cursor = ''
     })
   }
   // 地圖狀態編輯：editUnits 模式下拖放單位到新座標（重用 FEAT_DRAG_SRC 作落點預覽點）。
@@ -1234,6 +1476,11 @@ onMounted(async () => {
       (l) => map?.getLayer(l),
     )
     const fhit = flayers.length ? map?.queryRenderedFeatures(e.point, { layers: flayers })?.[0] : null
+    // #99 右鍵控制點 → 帶索引，供上層「刪除控制點」（刪點的最少頂點檢查與提示在上層）。
+    const vhit = map?.getLayer('mapfeat-vertex')
+      ? map.queryRenderedFeatures(e.point, { layers: ['mapfeat-vertex'] })?.[0]
+      : null
+    const vi = Number(vhit?.properties?.i)
     emit('contextMenu', {
       x: e.point.x,
       y: e.point.y,
@@ -1243,6 +1490,7 @@ onMounted(async () => {
         ? { unitId: String(p.id), faction: String(p.faction ?? ''), kind: String(p.kind ?? '') }
         : {}),
       ...(fhit?.properties?.id != null ? { featureId: String(fhit.properties.id) } : {}),
+      ...(props.featureEdit && Number.isFinite(vi) ? { vertexIndex: vi } : {}),
     })
   })
 })
@@ -1254,6 +1502,7 @@ function applyTargetingCursor() {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('mouseup', endReshape) // #99 拖曳中被卸載也不留 listener
   map?.remove()
   map = null
   styleReady = false
@@ -1319,8 +1568,11 @@ watch(
         ['==', ['geometry-type'], 'Point'],
         ['==', ['get', 'id'], v ?? FEAT_NONE],
       ])
+    syncVertices() // #99 換選取對象 → 控制點跟著換（無選取→清空）
   },
 )
+// #99 失去編修權或進入繪製模式 → 立即收掉控制點（vertexFc 已含此判斷）。
+watch([() => props.featureEdit, () => props.drawActive], syncVertices)
 watch(() => props.layerOpacity, applyAllOpacity, { deep: true }) // #9 透明度
 watch(() => props.layerOrder, applyOrder, { deep: true }) // #9 套疊順序
 watch([() => props.contourMajor, () => props.contourMinor], applyContourFilters) // #8 等高線間距

@@ -145,6 +145,69 @@ export function rotatePoints(points: number[][], deg: number): number[][] {
   })
 }
 
+// ---- #99 圖形整形（控制點編輯）：以下皆為純函數，索引數學集中於此 ----
+/** 各幾何型別的最少頂點數——低於此數就不是該圖形了（面塌成線、線塌成點）。 */
+export const MIN_VERTICES: Record<string, number> = { LINE: 2, POLYGON: 3 }
+
+/**
+ * 去掉尾端與首點重合的頂點，回「開放環」（存放格式）。
+ *
+ * **有兩處會產生重合尾點**：`featuresToFc` 對 POLYGON 補的閉合點，以及 `genCircle` 自己就繞了整圈
+ * （`i <= steps` 含頭尾）。若不去重，同一位置會疊兩顆控制點——拖走其中一顆、另一顆留在原地，
+ * 圖形看起來就「裂開」。故控制點與存回的幾何一律走開放環。
+ */
+export function openRing(coords: number[][]): number[][] {
+  const out = coords.slice()
+  while (out.length > 1) {
+    const a = out[0]!
+    const b = out[out.length - 1]!
+    if (Math.abs(a[0]! - b[0]!) < 1e-12 && Math.abs(a[1]! - b[1]!) < 1e-12) out.pop()
+    else break
+  }
+  return out
+}
+
+/** 在 index 之後插入一點（拖中點控制點＝新增頂點）。 */
+export function insertVertex(ring: number[][], index: number, pt: number[]): number[][] {
+  const out = ring.slice()
+  out.splice(index + 1, 0, pt)
+  return out
+}
+
+/** 移動單一頂點。 */
+export function moveVertex(ring: number[][], index: number, pt: number[]): number[][] {
+  if (index < 0 || index >= ring.length) return ring
+  const out = ring.slice()
+  out[index] = pt
+  return out
+}
+
+/** 刪除頂點；會使圖形低於 `MIN_VERTICES` → 回 null（由呼叫端提示，不硬刪成壞幾何）。 */
+export function removeVertex(ring: number[][], index: number, gtype: string): number[][] | null {
+  const min = MIN_VERTICES[gtype] ?? 2
+  if (ring.length <= min || index < 0 || index >= ring.length) return null
+  const out = ring.slice()
+  out.splice(index, 1)
+  return out
+}
+
+/** 整體平移（拖圖形本體）。經緯度直接位移——短距離拖曳下與投影平移差異不可見。 */
+export function translateRing(ring: number[][], dLng: number, dLat: number): number[][] {
+  return ring.map((p) => [p[0]! + dLng, p[1]! + dLat])
+}
+
+/** 相鄰頂點的中點（`i`＝前一個頂點的索引，供 `insertVertex`）。closed→含「末→首」那段。 */
+export function midpoints(ring: number[][], closed: boolean): { i: number; pt: number[] }[] {
+  const out: { i: number; pt: number[] }[] = []
+  const last = closed ? ring.length - 1 : ring.length - 2
+  for (let i = 0; i <= last; i++) {
+    const a = ring[i]!
+    const b = ring[(i + 1) % ring.length]!
+    out.push({ i, pt: [(a[0]! + b[0]!) / 2, (a[1]! + b[1]!) / 2] })
+  }
+  return out
+}
+
 /** 兩對角點 → 軸對齊矩形環（POLYGON 單環，未閉合；#11）。 */
 export function rectRing(a: number[], b: number[]): number[][] {
   const [x0, x1] = [Math.min(a[0]!, b[0]!), Math.max(a[0]!, b[0]!)]

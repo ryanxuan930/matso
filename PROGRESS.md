@@ -194,6 +194,11 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ### 既有 backlog
 
+- **[#99 後續]** `MapFeatureEdit.geometry` 型別是 `Any`、後端不驗證形狀——前端擋住最少頂點數（線 2/面 3），
+  但直接打 API 仍能存出退化幾何（例如 2 點的 POLYGON，`toGeometry` 會回 null 導致該標註在地圖上消失）。
+  要補的是 geometry_type × 點數/座標範圍的伺服端驗證。
+- **[#99 後續]** 圓形存成 POLYGON，拖控制點後就成了任意多邊形（同 Google 編輯多邊形的行為）。
+  若要「拖控制點只改半徑」，需把圓改存成圓心+半徑的參數化幾何（涉及儲存格式，另開卡）。
 - **[O2.1 realdata ✅ 已驗證]** 真檔 `/Volumes/M200/Maps/TW_ALL.tif`（1GB）SLA benchmark 已通過（冷啟動<30s、p99<5ms）。真檔 nodata=0.0、無 overview。
 - **[O2.3 待辦]** 真檔無 overview 金字塔——viewshed 降採樣需要時，以 gdaladdo 建外部 .ovr 或調整採樣。
 - **[O2.3 GRASS 對照 release-gated]** modules/terrain/tests/grass_compare/ 骨架完成（確定性抽樣可測）；`_grass_visibility`（docker osgeo/grass-gis r.viewshed 呼叫 + raster↔點取樣）為 release 前必完成的 TODO。CI 自動 skip（grass marker）。
