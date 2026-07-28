@@ -25,7 +25,11 @@
         "order_type": { "enum": ["MOVE", "ENGAGE", "RECON", "RESUPPLY", "POSTURE", "HOLD"] },
         "target_h3": { "type": "string" },
         "target_unit_id": { "type": "string" },
-        "posture": { "type": "string" }
+        "posture": { "type": "string" },
+        "fire_policy": {
+          "description": "聯合兵種火力政策（SPEC_EXTEND P3；ENGAGE 選填，未指定＝FREE）。僅戰術意圖，物理由引擎裁決。",
+          "enum": ["FREE", "SMALL_ARMS_ONLY", "ANTI_ARMOR_HOLD"]
+        }
       }
     },
     "opfor_decision": {

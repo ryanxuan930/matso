@@ -166,6 +166,45 @@ def test_omniscient_non_participant_allowed(
         assert w["type"] == "WELCOME" and w["payload"]["faction"] == "WHITE_CELL"
 
 
+def test_ws_releases_db_connection_during_stream(
+    tmp_path: object, fake_ring: FakeStrictRedis
+) -> None:
+    """回歸（連線洩漏）：WS 認證後即歸還 DB 連線，串流期間池中連線仍可被其他請求取得。
+
+    以 pool_size=1 / overflow=0 的獨立 QueuePool 引擎驗證：若認證用的 session 隨 WS 生命週期
+    長握（修復前行為），串流進行中再取一條連線會逾時；修復後應立即成功。
+    """
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import QueuePool
+
+    from app.models import Base
+
+    dbfile = f"{tmp_path}/leak.db"  # type: ignore[str-bytes-safe]
+    engine = create_engine(
+        f"sqlite:///{dbfile}",
+        connect_args={"check_same_thread": False},
+        poolclass=QueuePool,
+        pool_size=1,
+        max_overflow=0,
+        pool_timeout=3,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+    uid = seed_user(factory)
+    _seed_participant(factory, uid)
+    _fill_ring(fake_ring, [1])
+    client = _client(factory)
+
+    with client.websocket_connect(_url(_token(uid))) as ws:
+        ws.send_json({"last_seq": None})
+        assert ws.receive_json()["type"] == "WELCOME"  # 串流迴圈已啟動
+        # 串流進行中：唯一的池連線必須可被取得（認證連線已還）——洩漏時此處會 pool 逾時。
+        with factory() as probe:
+            assert probe.execute(text("SELECT 1")).scalar() == 1
+
+
 def test_faction_filter_drops_other_faction_backfill(
     session_factory: sessionmaker[Session], fake_ring: FakeStrictRedis
 ) -> None:

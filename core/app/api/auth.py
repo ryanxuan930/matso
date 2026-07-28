@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, Response
 
 from app.api.deps import get_auth_service, get_current_user
 from app.auth.schemas import (
-    AccessToken,
     CurrentUser,
     LoginRequest,
     RefreshRequest,
@@ -28,8 +27,9 @@ def login(req: LoginRequest, auth: AuthService = Depends(get_auth_service)) -> T
     return auth.authenticate(req.username, req.password)
 
 
-@router.post("/refresh", response_model=AccessToken)
-def refresh(req: RefreshRequest, auth: AuthService = Depends(get_auth_service)) -> AccessToken:
+@router.post("/refresh", response_model=TokenPair)
+def refresh(req: RefreshRequest, auth: AuthService = Depends(get_auth_service)) -> TokenPair:
+    # 滑動續期：回傳新的 access + refresh 對（見 AuthService.refresh）。
     return auth.refresh(req.refresh_token)
 
 

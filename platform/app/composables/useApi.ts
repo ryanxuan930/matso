@@ -2,7 +2,6 @@ import type { CookieRef } from '#app'
 import type { components } from '~/types/api'
 
 type TokenPair = components['schemas']['TokenPair']
-type AccessToken = components['schemas']['AccessToken']
 
 export interface ApiError {
   status: number
@@ -66,14 +65,15 @@ export async function apiFetch<T>(path: string, opts: Parameters<typeof $fetch>[
     return await call(access.value)
   } catch (err) {
     const apiErr = toApiError(err)
-    // access 過期且有 refresh → 換發後重試一次
+    // access 過期且有 refresh → 換發後重試一次（滑動續期：同時更新 refresh，延長 session 視窗）
     if (apiErr.status === 401 && apiErr.code === 'AUTH_TOKEN_EXPIRED' && refresh.value) {
       try {
-        const refreshed = await $fetch<AccessToken>(apiUrl('/auth/refresh'), {
+        const refreshed = await $fetch<TokenPair>(apiUrl('/auth/refresh'), {
           method: 'POST',
           body: { refresh_token: refresh.value },
         })
         access.value = refreshed.access_token
+        refresh.value = refreshed.refresh_token
         return await call(access.value)
       } catch {
         access.value = null
@@ -84,16 +84,17 @@ export async function apiFetch<T>(path: string, opts: Parameters<typeof $fetch>[
   }
 }
 
-/** 主動以 refresh token 換一枚新 access token（WS 連線前確保 token 新鮮，避免短 TTL 競態）。 */
+/** 主動以 refresh token 換一枚新 token 對（WS 連線前確保 token 新鮮；滑動續期同時更新 refresh）。 */
 export async function refreshAccessToken(): Promise<boolean> {
   const { access, refresh } = useAuthTokens()
   if (!refresh.value) return false
   try {
-    const r = await $fetch<AccessToken>(apiUrl('/auth/refresh'), {
+    const r = await $fetch<TokenPair>(apiUrl('/auth/refresh'), {
       method: 'POST',
       body: { refresh_token: refresh.value },
     })
     access.value = r.access_token
+    refresh.value = r.refresh_token
     return true
   } catch {
     return false

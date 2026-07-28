@@ -17,6 +17,7 @@ from app.adjudication.engagement import (
     Target,
     resolve_engagement,
 )
+from app.adjudication.seed_equipment import ensure_weapon_templates, seed_session_equipment
 from app.adjudication.seed_weapons import SEED_WEAPONS
 from app.adjudication.weapon import WeaponProfile
 
@@ -32,8 +33,10 @@ __all__ = [
     "Shooter",
     "Target",
     "WeaponProfile",
+    "ensure_weapon_templates",
     "resolve_aggregate_tick",
     "resolve_engagement",
     "resolve_multiway_tick",
+    "seed_session_equipment",
     "should_aggregate",
 ]

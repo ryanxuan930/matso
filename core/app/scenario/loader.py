@@ -110,6 +110,76 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
     )
 
 
+def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
+    """由編輯器匯出的 **記憶體 bundle**（非檔案）載入並全量驗證 → LoadedScenario（O7 持久化 / #7）。
+
+    bundle = {scenario:{…}, orbat:{faction:{faction,units:[…]}}, msel?:{events:[…]}}。
+    與 load_scenario_package 共用驗證；供 POST /scenarios 存檔前驗證與 create-from-scenario 使用。
+    """
+    sc = bundle.get("scenario")
+    if not isinstance(sc, dict):
+        raise ScenarioError("bundle: scenario 缺少或格式錯誤")
+    _validate_schema(sc, "scenario.schema.json", "scenario")
+    faction_ids = _validate_factions(sc["factions"])
+    relations = _build_relations(sc.get("relations", []), faction_ids)
+    _validate_victory(sc["victory_conditions"], faction_ids)
+    units = _units_from_orbat_dict(bundle.get("orbat") or {}, faction_ids)
+    msel = _msel_from_dict(bundle.get("msel"))
+    colors = {f["id"]: f["color"] for f in sc["factions"] if "color" in f}
+    return LoadedScenario(
+        name=sc["name"],
+        version=sc["version"],
+        mode=sc["mode"],
+        bbox=list(sc["bbox"]),
+        tick_rate_ms=sc["tick_rate_ms"],
+        hex_resolution=sc.get("hex_resolution", 8),
+        aggregate_adjudication_level=sc.get("aggregate_adjudication_level", "BATTALION"),
+        faction_ids=faction_ids,
+        faction_colors=colors,
+        relations=relations,
+        units=units,
+        msel=msel,
+        victory_conditions=list(sc["victory_conditions"]),
+        raw=sc,
+    )
+
+
+def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> list[ScenarioUnit]:
+    units: list[ScenarioUnit] = []
+    for faction, ob in orbat.items():
+        if faction not in faction_ids:
+            raise ScenarioError(f"orbat: 未宣告的陣營：{faction}")
+        _validate_schema(ob, "orbat.schema.json", f"orbat[{faction}]")
+        if ob["faction"] != faction:
+            raise ScenarioError(f"orbat[{faction}]: faction 不符（{ob['faction']} != {faction}）")
+        designations = {u["designation"] for u in ob["units"]}
+        for j, u in enumerate(ob["units"]):
+            parent = u.get("parent")
+            if parent is not None and parent not in designations:
+                raise ScenarioError(f"orbat[{faction}].units[{j}].parent: 未知上級單位：{parent}")
+            units.append(
+                ScenarioUnit(
+                    faction=faction,
+                    designation=u["designation"],
+                    unit_level=u["unit_level"],
+                    lat=u.get("lat"),
+                    lng=u.get("lng"),
+                    parent=parent,
+                )
+            )
+    return units
+
+
+def _msel_from_dict(data: dict[str, Any] | None) -> list[MselEntry]:
+    if not data or not data.get("events"):
+        return []
+    _validate_schema(data, "msel.schema.json", "msel")
+    return [
+        MselEntry(id=e["id"], trigger=e["trigger"], inject=e["inject"], once=e.get("once", True))
+        for e in data["events"]
+    ]
+
+
 def _load_msel(root: Path, rel_path: str | None) -> list[MselEntry]:
     if not rel_path or not (root / rel_path).exists():
         return []
@@ -126,16 +196,25 @@ def _load_msel(root: Path, rel_path: str | None) -> list[MselEntry]:
     ]
 
 
-def create_session_from_scenario(db: Session, loaded: LoadedScenario, *, master_seed: int) -> str:
+def create_session_from_scenario(
+    db: Session,
+    loaded: LoadedScenario,
+    *,
+    master_seed: int,
+    scenario_id: str | None = None,
+    seed_default_equipment: bool = False,
+) -> str:
     """依載入的想定開局：建 WargameSession + TacticalUnits（含 parent 連結）。回 session id。
 
     relations 熱狀態載入與 kernel 綁定屬部署層/O7.4；本函式只落地 session 與單位。
+    scenario_id：連結到已存的 Scenario 列（#7 create-from-scenario）；None 則不連結。
+    seed_default_equipment=True：為每個單位配發預設武器（供資料驅動的 ENGAGE 武器/彈種選擇）。
     """
     from app.models import SessionMode, TacticalUnit, WargameSession
 
     session = WargameSession(
         name=loaded.name,
-        scenario_id=None,
+        scenario_id=scenario_id,
         master_seed=master_seed,
         mode=SessionMode(loaded.mode),
         current_weather={},
@@ -162,6 +241,10 @@ def create_session_from_scenario(db: Session, loaded: LoadedScenario, *, master_
             by_designation[(u.faction, u.designation)].parent_id = by_designation[
                 (u.faction, u.parent)
             ].id
+    if seed_default_equipment:
+        from app.adjudication import seed_session_equipment
+
+        seed_session_equipment(db, session.id)
     db.commit()
     return session.id
 

@@ -40,6 +40,24 @@ export interface OwnUnit {
   unitType?: string
   comms: CommsState
   lastReportedTick: number
+  health?: number // 0–100 HP（僅我方；供地圖血量環 + 資訊卡 #5）。fog of war：contact 無血量。
+}
+
+/** 編制層級 → 中文（兵-伍-班-排…，#5.3；與想定編輯器同義）。 */
+export const UNIT_LEVEL_LABELS: Record<string, string> = {
+  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', PLATOON: '排', COMPANY: '連',
+  BATTALION: '營', BRIGADE: '旅', DIVISION: '師', CORPS: '軍', THEATER: '戰區',
+}
+export function unitLevelLabel(l?: string): string {
+  return (l && UNIT_LEVEL_LABELS[l]) || l || '—'
+}
+/** 通聯狀態 → 中文。 */
+export function commsLabel(c?: string): string {
+  return c === 'ONLINE' ? '即時通聯' : c === 'DEGRADED' ? '通聯不良' : c === 'OFFLINE' ? '失聯' : c || '—'
+}
+/** 血量 → 顏色帶（綠/琥珀/紅）——地圖血量環與資訊卡共用。 */
+export function healthColor(pct: number): string {
+  return pct < 34 ? '#ef4444' : pct < 67 ? '#f59e0b' : '#22c55e'
 }
 
 /** 敵方 contact（INTEL_UPDATE 餵入；ContactView 投影，已去識別化）。 */
@@ -54,6 +72,7 @@ export interface Contact {
   lastSeenTick: number
   faction?: string // IDENTIFIED 才揭露（後端去識別化）——用於顏色與 affiliation
   relation?: Relation // 觀測者對該 contact 陣營的關係（IDENTIFIED 時已知）
+  health?: number // 敵情血量（活模擬 STATE_DIFF ground truth）——供地圖血量環/摧毀顯示
 }
 
 // 少數 2525C function ID（SPEC 未細列，取常見兵種；DETECTED 未知 → 通用）。
@@ -110,6 +129,11 @@ export function isGhost(u: OwnUnit): boolean {
   return u.comms === 'OFFLINE'
 }
 
+/** 被摧毀（health≤0）的單位淡化顯示（乘 0.3），讓戰損在地圖上一望即知（補充 2a）。 */
+export function destroyedFade(health: number | undefined, base: number): number {
+  return health != null && health <= 0 ? base * 0.3 : base
+}
+
 // ---------------- GeoJSON 特徵 + icon 規格（供 MapLibre symbol 層） ----------------
 
 export type SymbolOpts = Record<string, string>
@@ -127,7 +151,16 @@ export interface IconSpec {
 
 export interface UnitFeature {
   type: 'Feature'
-  properties: { icon: string; opacity: number; kind: 'own' | 'contact' }
+  // id/faction 供地圖點選命中與高亮（選取藍環 / 目標紅環）與 ENGAGE 目標鎖定（O4.5 UX 改版）。
+  // health 僅我方（供血量環 #5）；contact 依 fog of war 不帶血量。
+  properties: {
+    id: string
+    faction: string
+    icon: string
+    opacity: number
+    kind: 'own' | 'contact'
+    health?: number
+  }
   geometry: { type: 'Point'; coordinates: [number, number] }
 }
 
@@ -151,18 +184,21 @@ export function buildUnitFeatures(
   const iconMap = new Map<string, IconSpec>()
 
   const push = (
+    id: string,
+    faction: string,
     sidc: string,
     options: SymbolOpts,
     lng: number,
     lat: number,
     opacity: number,
     kind: 'own' | 'contact',
+    health?: number,
   ) => {
     const key = iconKey(sidc, options)
     if (!iconMap.has(key)) iconMap.set(key, { key, sidc, options })
     features.push({
       type: 'Feature',
-      properties: { icon: key, opacity, kind },
+      properties: { id, faction, icon: key, opacity, kind, ...(health != null ? { health } : {}) },
       geometry: { type: 'Point', coordinates: [lng, lat] },
     })
   }
@@ -172,7 +208,7 @@ export function buildUnitFeatures(
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
-    push(sidcForOwnUnit(u), options, u.lng, u.lat, ownUnitOpacity(u.comms), 'own')
+    push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health)
   }
   for (const c of contacts) {
     const options: SymbolOpts =
@@ -180,7 +216,7 @@ export function buildUnitFeatures(
     // IDENTIFIED 且已知陣營 → 以該陣營顏色渲染（三方混戰時區分不同敵對陣營）。
     if (c.faction) options.fillColor = factionColor(c.faction, palette)
     const opacity = stalenessOpacity(Math.max(0, currentTick - c.lastSeenTick))
-    push(sidcForContact(c), options, c.lng, c.lat, opacity, 'contact')
+    push(c.contactId, c.faction ?? '', sidcForContact(c), options, c.lng, c.lat, destroyedFade(c.health, opacity), 'contact', c.health)
   }
 
   return { collection: { type: 'FeatureCollection', features }, icons: [...iconMap.values()] }

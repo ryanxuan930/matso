@@ -74,6 +74,27 @@ class AuthForbiddenError(MatsoError):
     http_status = 403
 
 
+class UserConflictError(MatsoError):
+    """帳號管理衝突（#32）——如帳號名已存在、或操作違反防呆（不可刪自己/最後管理員）。"""
+
+    error_code = "USER_CONFLICT"
+    http_status = 409
+
+
+class UserNotFoundError(MatsoError):
+    """帳號管理：目標帳號不存在（#32）。"""
+
+    error_code = "USER_NOT_FOUND"
+    http_status = 404
+
+
+class ScenarioInvalidError(MatsoError):
+    """想定 bundle 驗證失敗（#7 存檔/開局前全量驗證）。訊息含精確路徑。"""
+
+    error_code = "SCENARIO_INVALID"
+    http_status = 422
+
+
 class ScenarioNotFoundError(MatsoError):
     error_code = "SCENARIO_NOT_FOUND"
     http_status = 404

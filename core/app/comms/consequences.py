@@ -80,6 +80,33 @@ def can_receive_command(state: LinkState) -> bool:
     return state is not LinkState.OFFLINE
 
 
+def order_admissible(
+    state: LinkState,
+    issued_tick: int,
+    now_tick: int,
+    degraded_delay_ticks: int = DEFAULT_DEGRADED_DELAY_TICKS,
+) -> bool:
+    """「新指令」是否於此 tick 送達可執行（供執行期 admit 閘門，§6.2）。
+
+    OFFLINE → 收不到（False，指令保留待通信恢復）；DEGRADED → 延遲 N ticks 後才送達；
+    ONLINE → 即時。以 issued_tick 與 now_tick 差判延遲（決定性，不用時鐘）。
+    """
+    delivery = command_delivery(state, degraded_delay_ticks)
+    if not delivery.accepted:
+        return False
+    return (now_tick - issued_tick) >= delivery.delay_ticks
+
+
+def parse_link_state(value: object) -> LinkState:
+    """把熱狀態的 comms_state 字串轉 LinkState；缺失/非法 → ONLINE（樂觀預設，見降級哲學）。"""
+    if isinstance(value, LinkState):
+        return value
+    try:
+        return LinkState(str(value)) if value else LinkState.ONLINE
+    except ValueError:
+        return LinkState.ONLINE
+
+
 def position_report_frozen(state: LinkState) -> bool:
     """OFFLINE 單位位置對己方 COP 凍結為最後回報點（fog of war 對己方也成立）。"""
     return state is LinkState.OFFLINE

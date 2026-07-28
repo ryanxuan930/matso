@@ -26,6 +26,9 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
   const lastSeq = ref<number | null>(null)
   const events = ref<Envelope[]>([])
   const faction = ref<string | null>(null)
+  const lastTick = ref<number | null>(null) // 最新 sim tick（供 COP 系統牆鐘顯示，#4；rollback 後可非單調）
+  // 活模擬（O10.1）：STATE_DIFF 累積的 per-unit 最新欄位（lat/lng/health…）→ COP 據此即時移動圖標。
+  const unitPatches = ref<Record<string, Record<string, unknown>>>({})
 
   let ws: WebSocket | null = null
   let sessionId = ''
@@ -37,6 +40,7 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
     if (import.meta.server) return // WebSocket 僅 client
     sessionId = id
     closedByUser = false
+    unitPatches.value = {} // 換 session 清空舊位置
     open()
   }
 
@@ -72,6 +76,8 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
   }
 
   async function handleMessage(env: Envelope): Promise<void> {
+    // 最新 sim tick（任何帶 tick 的 envelope 都更新；取最新值而非最大，rollback 會使 tick 回退）。
+    if (typeof env.tick === 'number') lastTick.value = env.tick
     switch (env.type) {
       case 'WELCOME':
         status.value = 'live'
@@ -84,6 +90,23 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
         await apiFetch(`/sessions/${sessionId}/state`).catch(() => undefined)
         lastSeq.value = null
         break
+      case 'CLOCK':
+        // 閒置心跳：頂層 tick 已於上方更新牆鐘；seq 取單調最大，不塞入事件列。
+        if (typeof env.seq === 'number') {
+          lastSeq.value = lastSeq.value === null ? env.seq : Math.max(lastSeq.value, env.seq)
+        }
+        break
+      case 'STATE_DIFF': {
+        if (typeof env.seq === 'number') {
+          lastSeq.value = lastSeq.value === null ? env.seq : Math.max(lastSeq.value, env.seq)
+        }
+        // 套用單位變動欄位（含 lat/lng）→ COP 即時移動圖標（不塞入事件列，保持事件流乾淨）。
+        const units = (env.payload?.units ?? []) as Array<{ id: string } & Record<string, unknown>>
+        for (const u of units) {
+          unitPatches.value[u.id] = { ...unitPatches.value[u.id], ...u }
+        }
+        break
+      }
       default:
         // lastSeq 取單調最大（C3：雙寫入者下 ring 可能短暫亂序，避免 lastSeq 回退致重連重收）。
         if (typeof env.seq === 'number') {
@@ -109,5 +132,5 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
     status.value = 'closed'
   }
 
-  return { status, lastSeq, events, faction, connect, disconnect }
+  return { status, lastSeq, lastTick, events, faction, unitPatches, connect, disconnect }
 })

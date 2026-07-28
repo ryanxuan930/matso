@@ -130,6 +130,8 @@ class Kernel:
         # 同步 driver（SQLAlchemy/redis-py）以 to_thread 執行，避免阻塞 event loop
         # （HOW_TO §3.1；O1.7/R9）。逐一 await → 順序不變 → 決定性不受影響。
         written = await asyncio.to_thread(self._event_sink.append, self._session_id, events)
+        # 推裁決事件到 WS 戰況 feed（過濾吵雜/診斷型別；玩家即時看到交戰結果）。
+        await self._broadcaster.publish_events(events)
         # 廣播本 tick 的熱狀態增量（只含變動欄位）。子系統的狀態寫入路徑於 O3.4 接上，
         # 現階段 diff 可能為空——廣播空 diff 由 broadcaster 自行略過。
         await self._broadcaster.publish(now.tick, self._hot_state.drain_diff())

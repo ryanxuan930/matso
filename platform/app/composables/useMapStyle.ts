@@ -5,31 +5,169 @@ export const TAIWAN_CENTER: [number, number] = [121.0, 23.7] // [lng, lat]
 export const DEFAULT_ZOOM = 7
 
 /**
- * 建離線自足的 MapLibre 樣式（O4.2）。
- *
- * **離線第一**：一定含 background 層 → 無網路 / 無 tile server 也能渲染。不引用任何外部
- * CDN 的 style/glyphs/sprite（air-gapped，SPEC §12/§20）。無文字層 → 不需 glyphs。
- * tileUrl 有設時才加基礎底圖 raster 來源（斷網時 MapLibre 靜默忽略載不到的瓦片，仍顯背景）。
- *
- * hex / graticule / hillshade 等層由 MapCanvas 動態加為 GeoJSON / raster 來源（可開關）。
+ * 建離線自足的 MapLibre 樣式（O4.2）——**只含 background**。底圖（街道/衛星/軍用）由 MapCanvas
+ * 依 basemap 來源動態加為 raster 層（可抽換），不寫死於 style；斷網 / 無底圖時仍顯背景。
+ * 不引用任何外部 CDN 的 style/glyphs/sprite（air-gapped，SPEC §12/§20）。
  */
-export function buildOfflineStyle(tileUrl: string): StyleSpecification {
-  const sources: StyleSpecification['sources'] = {}
-  const layers: StyleSpecification['layers'] = [
-    { id: 'background', type: 'background', paint: { 'background-color': '#0a1626' } },
-  ]
-
-  if (tileUrl) {
-    sources.basemap = {
-      type: 'raster',
-      tiles: [`${tileUrl}/styles/basic-preview/{z}/{x}/{y}.png`],
-      tileSize: 256,
-      attribution: 'OpenMapTiles（本地離線 tileserver）',
-    }
-    layers.push({ id: 'basemap', type: 'raster', source: 'basemap' })
+export function buildOfflineStyle(glyphs?: string): StyleSpecification {
+  return {
+    version: 8,
+    name: 'matso-offline',
+    // 地圖文字標籤（MGRS/經緯格網/等高線高度）需 glyphs；由 tileserver 提供（air-gapped，本地 Noto Sans）。
+    // 無 tileUrl（純離線）時省略 → 無標籤，其餘照常。
+    ...(glyphs ? { glyphs } : {}),
+    sources: {},
+    layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#0a1626' } }],
   }
+}
 
-  return { version: 8, name: 'matso-offline', sources, layers }
+// ---------------- 可抽換底圖來源（#2；未來可接軍方街道 / 衛星影像）----------------
+
+/**
+ * 底圖來源定義。`offline`＝純離線格線（無瓦片）；`raster`＝XYZ 瓦片模板（街道 / 衛星 / 軍用影像）。
+ * 全部由設定注入（runtimeConfig.public），故未來接軍方資料只需加設定、不動程式碼。
+ */
+export interface BasemapSource {
+  id: string
+  label: string
+  type: 'offline' | 'raster' | 'vector'
+  tiles?: string[]
+  tileSize?: number
+  minzoom?: number
+  maxzoom?: number
+  attribution?: string
+}
+
+/**
+ * OpenMapTiles 向量圖層 → 深色無文字樣式（無 symbol 層 → 不需 glyphs，air-gapped）。
+ * 回傳的圖層皆引用 sourceId；MapCanvas 以 'basemap-' 前綴管理增刪。與 COP 深色底一致。
+ */
+export function openMapTilesDarkLayers(sourceId: string): StyleSpecification['layers'] {
+  const s = sourceId
+  return [
+    { id: 'basemap-landcover', type: 'fill', source: s, 'source-layer': 'landcover', paint: { 'fill-color': '#14291d', 'fill-opacity': 0.6 } },
+    { id: 'basemap-landuse', type: 'fill', source: s, 'source-layer': 'landuse', paint: { 'fill-color': '#182430', 'fill-opacity': 0.5 } },
+    { id: 'basemap-park', type: 'fill', source: s, 'source-layer': 'park', paint: { 'fill-color': '#153021', 'fill-opacity': 0.5 } },
+    { id: 'basemap-water', type: 'fill', source: s, 'source-layer': 'water', paint: { 'fill-color': '#0d2c47' } },
+    { id: 'basemap-waterway', type: 'line', source: s, 'source-layer': 'waterway', paint: { 'line-color': '#123a5a', 'line-width': 1 } },
+    { id: 'basemap-transportation', type: 'line', source: s, 'source-layer': 'transportation', paint: { 'line-color': '#3a4f66', 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.3, 12, 1.6] } },
+    { id: 'basemap-building', type: 'fill', source: s, 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': '#243141', 'fill-opacity': 0.7 } },
+    { id: 'basemap-boundary', type: 'line', source: s, 'source-layer': 'boundary', paint: { 'line-color': '#4a5a6a', 'line-width': 0.6, 'line-dasharray': [2, 2] } },
+  ]
+}
+
+// ---------------- COP 圖層管理：透明度（乘上各子層 base）+ 套疊順序（#9） ----------------
+
+export type OpacityProp = 'raster-opacity' | 'fill-opacity' | 'line-opacity'
+export interface LayerMember {
+  id: string
+  prop: OpacityProp
+  base: number // 設計基準透明度；UI 滑桿為 0–1 乘數（100%＝原設計外觀，向下淡化）
+}
+
+/**
+ * 可調透明度＋套疊順序的疊加圖層群。units/rings/graticule 釘住（不列入）；
+ * basemap 子層動態（依 raster/vector），由 basemapOpacityMembers() 解析。
+ */
+export const OVERLAY_LAYER_GROUPS: { key: string; label: string; members: LayerMember[] }[] = [
+  { key: 'hillshade', label: '地形陰影', members: [{ id: 'hillshade', prop: 'raster-opacity', base: 0.5 }] },
+  {
+    key: 'contour',
+    label: '等高線',
+    members: [
+      { id: 'contours-line-major', prop: 'line-opacity', base: 0.8 },
+      { id: 'contours-line-minor', prop: 'line-opacity', base: 0.5 },
+    ],
+  },
+  {
+    key: 'hex',
+    label: '六角網格',
+    members: [
+      { id: 'hexgrid-fill', prop: 'fill-opacity', base: 0.06 },
+      { id: 'hexgrid-line', prop: 'line-opacity', base: 0.5 },
+    ],
+  },
+]
+
+/** basemap 子層的 opacity paint + base（vector 深色樣式，值須與 openMapTilesDarkLayers 一致）。 */
+export function basemapOpacityMembers(type: 'raster' | 'vector' | 'offline'): LayerMember[] {
+  if (type === 'raster') return [{ id: 'basemap', prop: 'raster-opacity', base: 1 }]
+  if (type === 'vector')
+    return [
+      { id: 'basemap-landcover', prop: 'fill-opacity', base: 0.6 },
+      { id: 'basemap-landuse', prop: 'fill-opacity', base: 0.5 },
+      { id: 'basemap-park', prop: 'fill-opacity', base: 0.5 },
+      { id: 'basemap-water', prop: 'fill-opacity', base: 1 },
+      { id: 'basemap-waterway', prop: 'line-opacity', base: 1 },
+      { id: 'basemap-transportation', prop: 'line-opacity', base: 1 },
+      { id: 'basemap-building', prop: 'fill-opacity', base: 0.7 },
+      { id: 'basemap-boundary', prop: 'line-opacity', base: 1 },
+    ]
+  return []
+}
+
+/** 疊加層預設套疊順序（上→下）。basemap 恆在最下（不列入 reorder）。 */
+export const DEFAULT_OVERLAY_ORDER = ['hex', 'contour', 'hillshade']
+
+export interface BasemapConfig {
+  tileUrl?: string // 本地 tileserver（街道，OpenMapTiles）
+  satelliteUrl?: string // 衛星 raster XYZ 模板（商用 / 軍用影像）
+  basemaps?: BasemapSource[] // 額外自訂來源（NUXT_PUBLIC_BASEMAPS，JSON）——軍方接入的抽換點
+  onlineBasemaps?: boolean // 啟用 Google/Esri 線上光柵底圖（需外網，非 air-gapped）
+}
+
+/** 恆有的離線來源（無瓦片時的可靠回退）。 */
+export const OFFLINE_SOURCE: BasemapSource = { id: 'offline', label: '離線格線', type: 'offline' }
+
+/**
+ * 線上 XYZ 光柵底圖（**需外網，非 air-gapped**；由 onlineBasemaps 開關，預設關）。
+ * 注意 Esri 走 {z}/{y}/{x} 順序（與 Google/OSM 的 {z}/{x}/{y} 不同）。
+ */
+export const ONLINE_RASTER_SOURCES: BasemapSource[] = [
+  { id: 'google-satellite', label: 'Google 衛星', type: 'raster', tileSize: 256, maxzoom: 20,
+    tiles: ['https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'], attribution: '© Google' },
+  { id: 'google-hybrid', label: 'Google 混合', type: 'raster', tileSize: 256, maxzoom: 20,
+    tiles: ['https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'], attribution: '© Google' },
+  { id: 'esri-satellite', label: 'Esri 衛星', type: 'raster', tileSize: 256, maxzoom: 19,
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    attribution: '© Esri, Maxar, Earthstar Geographics' },
+  { id: 'esri-topo', label: 'Esri 地形街道', type: 'raster', tileSize: 256, maxzoom: 19,
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}'],
+    attribution: '© Esri' },
+]
+
+/**
+ * 由設定組出底圖來源清單：離線 + 街道（tileUrl）+ 衛星（satelliteUrl）+ 自訂（basemaps）。
+ * 清單順序即 UI 切換順序；離線恆在首（預設）。
+ */
+export function buildBasemapSources(cfg: BasemapConfig): BasemapSource[] {
+  const out: BasemapSource[] = [OFFLINE_SOURCE]
+  if (cfg.tileUrl) {
+    // 街道＝本地 tileserver 的 OpenMapTiles **向量**瓦片（tileserver-gl-light 可服務；深色無文字樣式）。
+    out.push({
+      id: 'street',
+      label: '街道',
+      type: 'vector',
+      // tileserver-gl-light 以 mbtiles 內部名（OpenMapTiles schema = 'v3'）服務向量瓦片。
+      tiles: [`${cfg.tileUrl}/data/v3/{z}/{x}/{y}.pbf`],
+      minzoom: 0,
+      maxzoom: 14,
+      attribution: '© OpenMapTiles © OpenStreetMap contributors',
+    })
+  }
+  if (cfg.satelliteUrl) {
+    out.push({
+      id: 'satellite',
+      label: '衛星',
+      type: 'raster',
+      tiles: [cfg.satelliteUrl],
+      tileSize: 256,
+      attribution: '衛星影像',
+    })
+  }
+  if (cfg.onlineBasemaps) out.push(...ONLINE_RASTER_SOURCES) // Google/Esri（需外網）
+  for (const b of cfg.basemaps ?? []) out.push(b) // 軍方 / 自訂來源
+  return out
 }
 
 export interface LineFeatureCollection {

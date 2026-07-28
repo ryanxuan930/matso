@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import pytest
 from _order_fakes import FakeGateway, OrderWorld, seed_world
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.errors import IllegalOrderTransitionError, OrderNotFoundError, PrecheckFailedError
+from app.errors import OrderNotFoundError, PrecheckFailedError
 from app.models.enums import OrderStatus
 from app.models.tables import Order
 from app.orders.schemas import OrderRequest, OrderType
@@ -33,6 +34,34 @@ def test_submit_feasible_persists_validated(session_factory: sessionmaker[Sessio
         stored = db.get(Order, resp.id)
         assert stored is not None and stored.status is OrderStatus.VALIDATED
         assert stored.precheck["feasible"] is True  # 預檢快照落庫
+
+
+def test_duplicate_submit_returns_existing_not_new(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # 補充 2d：同單位 + 同型別 + 同 payload 的未終結指令重複下達 → 回既有、不新增（先到先處理）。
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        service = OrderService(db, FakeGateway(reachable=True))
+        first = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
+        second = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
+        assert second.id == first.id  # 重複被忽略，回既有指令
+        count = len(db.execute(select(Order)).scalars().all())
+        assert count == 1  # 只落庫一筆
+
+
+def test_different_payload_is_not_duplicate(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        service = OrderService(db, FakeGateway(reachable=True))
+        service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
+        other = OrderRequest(
+            unit_id=world.blue_unit_id,
+            order_type=OrderType.MOVE,
+            payload={"to_h3": "8a2a1072b5affff", "mobility_profile": "FOOT"},  # 不同目標
+        )
+        service.submit(world.session_id, other, world.blue_issuer_id)
+        assert len(db.execute(select(Order)).scalars().all()) == 2  # 非重複 → 兩筆
 
 
 def test_submit_infeasible_persists_rejected_and_raises(
@@ -79,12 +108,13 @@ def test_cancel_unknown_order(session_factory: sessionmaker[Session]) -> None:
         OrderService(db, FakeGateway()).cancel(world.session_id, "nope", "BLUE", False)
 
 
-def test_cannot_cancel_executing(session_factory: sessionmaker[Session]) -> None:
+def test_cancel_executing_order_freezes_in_place(session_factory: sessionmaker[Session]) -> None:
+    # 取消執行中的移動＝就地凍結（#15）：狀態機允許 EXECUTING→CANCELLED，移動系統遂不再推進該單位。
     world = seed_world(session_factory)
     with session_factory() as db:
         service = OrderService(db, FakeGateway(reachable=True))
         created = service.submit(world.session_id, _move_req(world), world.blue_issuer_id)
         db.get(Order, created.id).status = OrderStatus.EXECUTING  # type: ignore[union-attr]
         db.commit()
-        with pytest.raises(IllegalOrderTransitionError):
-            service.cancel(world.session_id, created.id, "BLUE", False)
+        cancelled = service.cancel(world.session_id, created.id, "BLUE", False)
+        assert cancelled.status is OrderStatus.CANCELLED

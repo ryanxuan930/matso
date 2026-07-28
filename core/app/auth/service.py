@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.hashing import dummy_verify, verify_password
-from app.auth.schemas import AccessToken, CurrentUser, TokenPair
+from app.auth.schemas import CurrentUser, TokenPair
 from app.auth.tokens import JwtCodec, TokenType
 from app.config import Settings
 from app.errors import AuthInvalidCredentialsError, AuthInvalidTokenError
@@ -33,17 +33,19 @@ class AuthService:
             raise AuthInvalidCredentialsError("帳號或密碼錯誤")
         return self._issue_pair(user)
 
-    def refresh(self, refresh_token: str) -> AccessToken:
-        """以有效 refresh token 換發新 access token。"""
+    def refresh(self, refresh_token: str) -> TokenPair:
+        """以有效 refresh token 換發新 token 對（**滑動續期**）。
+
+        同時換發新的 access + refresh——只要使用者持續操作（每 <access TTL 觸發一次 refresh），
+        refresh 視窗就一直往後延，session 不因 refresh 到期而中斷（使用者要求：除非登出/關頁，
+        否則一直延長）。安全註記：舊 refresh 未撤銷前仍有效至其原到期（撤銷屬 O10.5/C5）。
+        """
         claims = self._codec.decode(refresh_token, TokenType.REFRESH)
         # refresh 有效但帳號可能已刪除
         user = self._db.get(User, claims.subject)
         if user is None:
             raise AuthInvalidTokenError("token 對應的帳號不存在")
-        access = self._codec.issue(
-            user.id, user.role.value, TokenType.ACCESS, self._settings.access_token_ttl_s
-        )
-        return AccessToken(access_token=access, expires_in=self._settings.access_token_ttl_s)
+        return self._issue_pair(user)
 
     def current_user(self, access_token: str) -> CurrentUser:
         """驗證 access token → 目前使用者（供 get_current_user 依賴）。"""

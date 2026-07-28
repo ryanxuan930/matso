@@ -1,6 +1,10 @@
-"""FastAPI 進入點。healthz + auth/lobby（O4.1）+ Order pipeline（O3.1）；其餘依里程碑逐步實作。"""
+"""FastAPI 進入點。healthz + auth/lobby（O4.1）+ Order pipeline（O3.1）+ 活模擬（O10.1）。"""
 
+import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,21 +14,54 @@ from app.api import (
     aar_router,
     auth_router,
     control_router,
+    equipment_router,
     inject_router,
     install_error_handlers,
     intel_router,
     lobby_router,
+    map_features_router,
+    movement_router,
+    orbat_router,
     orders_router,
+    scenarios_router,
     units_router,
+    users_router,
     ws_router,
 )
 from app.config import Settings
+from app.sim_runtime import SimManager
 
 _settings = Settings()
-app = FastAPI(title="MATSO Core Orchestrator", version=__version__)
 
 # 正式部署（MATSO_ENV=production）對不安全設定 fail-fast（CODE_REVIEW C13）。
 _settings.ensure_production_safe()
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """活模擬執行期（O10.1）：讓 MOVE 指令執行、單位移動、STATE_DIFF 廣播。
+
+    E2E/測試（STUB_GATEWAY=1）不啟動——避免與「送出後取消 VALIDATED 指令」等流程相衝，
+    且測試不需真 Redis。正式/開發（無 stub）啟動 SimManager 掃描迴圈。
+    """
+    manager: SimManager | None = None
+    task: asyncio.Task[None] | None = None
+    if not _settings.stub_gateway:
+        manager = SimManager(redis_url=_settings.redis_url)
+        task = asyncio.create_task(manager.run())
+        logging.getLogger("app").info("Sim runtime 已啟動（活模擬 O10.1）")
+    try:
+        yield
+    finally:
+        if manager is not None:
+            await manager.stop()
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+app = FastAPI(title="MATSO Core Orchestrator", version=__version__, lifespan=_lifespan)
 
 if _settings.jwt_secret_is_default:
     logging.getLogger("app").warning(
@@ -47,8 +84,14 @@ app.add_middleware(
 install_error_handlers(app)
 app.include_router(auth_router)
 app.include_router(lobby_router)
+app.include_router(orbat_router)
+app.include_router(equipment_router)
+app.include_router(map_features_router)
+app.include_router(movement_router)
 app.include_router(orders_router)
+app.include_router(scenarios_router)
 app.include_router(units_router)
+app.include_router(users_router)
 app.include_router(intel_router)
 app.include_router(inject_router)
 app.include_router(control_router)

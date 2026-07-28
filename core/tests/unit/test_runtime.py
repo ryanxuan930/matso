@@ -111,6 +111,27 @@ async def test_run_paced_should_stop(build_noop_kernel: Callable[..., Kernel]) -
     assert count == 2
 
 
+async def test_run_paced_pause_freezes_ticks(
+    build_noop_kernel: Callable[..., Kernel],
+) -> None:
+    # 新 #6：should_pause 為 True 時凍結——不推進 tick，僅輪詢；解除後才跑滿 ticks。
+    kernel = build_noop_kernel()
+    pacer = TickPacer(tick_rate_ms=1000)
+    sleeps = {"n": 0}
+    paused = {"v": True}
+
+    async def fake_sleep(_s: float) -> None:
+        sleeps["n"] += 1
+        if sleeps["n"] >= 3:
+            paused["v"] = False  # 三次輪詢後解除暫停
+
+    count = await run_paced(
+        kernel, pacer, ticks=2, sleep=fake_sleep, should_pause=lambda: paused["v"]
+    )
+    assert count == 2  # 解除後才跑滿 2 tick
+    assert sleeps["n"] == 5  # 3 次暫停輪詢 + 2 次 tick 後 sleep
+
+
 async def test_run_paced_requires_termination_condition(
     build_noop_kernel: Callable[..., Kernel],
 ) -> None:

@@ -22,3 +22,19 @@ export function symbolImage(key: string, sidc: string, options: SymbolOpts): Ima
   cache.set(key, img)
   return img
 }
+
+// SIDC → PNG data URL（供 <img> 內嵌預覽，如北約符號選單）。快取避免重複生成。
+const urlCache = new Map<string, string>()
+export function symbolDataUrl(sidc: string, size = 26): string {
+  const key = `${sidc}@${size}`
+  const hit = urlCache.get(key)
+  if (hit) return hit
+  try {
+    const sym = new ms.Symbol(sidc, { size })
+    const url = sym.asCanvas().toDataURL('image/png')
+    urlCache.set(key, url)
+    return url
+  } catch {
+    return ''
+  }
+}

@@ -1,5 +1,6 @@
 // 想定編輯器模型 + 匯出/匯入（O7.3，SPEC §11.2）——純函數，roundtrip 可測。
 // 匯出為 JSON（yaml.safe_load 可讀，與後端 loader 相容）；後端 dump/load roundtrip 另有 Python 測試。
+import type { Condition, InjectAction } from '~/composables/useConditionDsl'
 
 export type RelationValue = 'ALLIED' | 'NEUTRAL' | 'HOSTILE'
 export type UnitLevel =
@@ -16,7 +17,7 @@ export interface EditorUnit {
   parent?: string
 }
 export interface EditorRelation { a: string; b: string; relation: RelationValue }
-export interface EditorMsel { id: string; trigger: Record<string, unknown>; inject: Record<string, unknown> }
+export interface EditorMsel { id: string; once: boolean; trigger: Condition; inject: InjectAction }
 export interface EditorVictory { faction: string; condition: Record<string, unknown> }
 
 export interface ScenarioModel {
@@ -87,7 +88,9 @@ export function exportScenario(m: ScenarioModel): {
       },
     ]),
   )
-  const msel = { events: m.msel.map((e) => ({ id: e.id, trigger: e.trigger, inject: e.inject })) }
+  const msel = {
+    events: m.msel.map((e) => ({ id: e.id, once: e.once, trigger: e.trigger, inject: e.inject })),
+  }
   return { scenario, orbat, msel }
 }
 
@@ -95,6 +98,7 @@ export function exportScenario(m: ScenarioModel): {
 export function importScenario(bundle: {
   scenario: Record<string, unknown>
   orbat?: Record<string, { faction: string; units: Array<Record<string, unknown>> }>
+  msel?: { events?: Array<{ id: string; once?: boolean; trigger: Condition; inject: InjectAction }> }
 }): ScenarioModel {
   const s = bundle.scenario
   const units: EditorUnit[] = []
@@ -110,6 +114,13 @@ export function importScenario(bundle: {
       })
     }
   }
+  // 由 bundle.msel.events 重建 EditorMsel[]（once 缺省 → true，對齊後端 loader）。
+  const msel: EditorMsel[] = (bundle.msel?.events ?? []).map((e) => ({
+    id: e.id,
+    once: e.once ?? true,
+    trigger: e.trigger,
+    inject: e.inject,
+  }))
   return {
     name: s.name as string,
     version: s.version as string,
@@ -119,7 +130,7 @@ export function importScenario(bundle: {
     factions: (s.factions as EditorFaction[]).map((f) => ({ id: f.id, color: f.color })),
     relations: ((s.relations as Array<[string, string, RelationValue]>) ?? []).map(([a, b, relation]) => ({ a, b, relation })),
     units,
-    msel: [],
+    msel,
     victoryConditions: ((s.victory_conditions as EditorVictory[]) ?? []),
   }
 }

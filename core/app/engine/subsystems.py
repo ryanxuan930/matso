@@ -77,6 +77,9 @@ class Broadcaster(Protocol):
     """增量狀態推播（O1.4 Redis diff / O4.3 WebSocket）。diff 為本 tick 的 per-unit 變動欄位。"""
 
     async def publish(self, tick: int, diff: SessionDiff) -> None: ...
+    async def publish_events(self, events: Sequence[LedgerEvent]) -> None:
+        """把本 tick 的裁決事件推到 WS 事件流（戰況事件 feed）。預設 no-op；Redis 實作覆寫。"""
+        return None
 
 
 @runtime_checkable
@@ -139,6 +142,9 @@ class NoOpTriggerChecker:
 
 class NoOpBroadcaster:
     async def publish(self, tick: int, diff: SessionDiff) -> None:
+        return None
+
+    async def publish_events(self, events: Sequence[LedgerEvent]) -> None:
         return None
 
 

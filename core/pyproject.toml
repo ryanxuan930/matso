@@ -19,6 +19,8 @@ dependencies = [
   "h3>=4.1", # 單位座標 → hex（Order 物理預檢的移動起點，O3.1）
   "argon2-cffi>=23.1", # 密碼 Argon2id 雜湊（O4.1 認證，SPEC §12）
   "pyjwt>=2.10", # JWT access/refresh token 簽發與驗證（O4.1）
+  "pyyaml>=6.0", # 想定 package YAML 解析（scenario.loader；#7 API 執行期用）
+  "jsonschema>=4.20", # 想定 bundle/schema 全量驗證（scenario.loader；#7 API 執行期用）
 ]
 
 [build-system]
