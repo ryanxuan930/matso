@@ -46,6 +46,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: platform/package-lock.json
+      # lock 由 npm 11 產生；node 22 內建 npm 10 對 optional peer 的 lock 語意不同會 EUSAGE
+      # （同 platform/Dockerfile 的既有處理——@nuxt/cli 下 @bomb.sh/tab 的 optional peers 觸發）。
+      - run: npm install -g npm@11
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
@@ -185,6 +188,8 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: platform/package-lock.json
+      # 同 frontend job：npm 10 讀 npm 11 lock 會 EUSAGE，先對齊（同 platform/Dockerfile）。
+      - run: npm install -g npm@11
       - name: Install frontend deps
         working-directory: platform
         run: npm ci
