@@ -1034,6 +1034,16 @@ export interface components {
             intrinsic_optical_range_m: number;
             /** @description 偵測掃描間隔 tick（預設 5） */
             sensor_interval_ticks: number;
+            /** @description 1 tick 的模擬時間 ms（預設 60000＝1 分） */
+            tick_rate_ms: number;
+            /** @description 真實節奏壓縮比（預設 120＝約 0.5s/tick） */
+            pace_compression: number;
+            /** @description 通聯狀態重算間隔 tick（預設 5） */
+            comms_interval_ticks: number;
+            /** @description AI 決策心跳秒數預設（該局 autonomy 設定優先） */
+            ai_heartbeat_s: number;
+            /** @description 單一 AI worker 累計落單上限（runaway 守衛） */
+            ai_max_orders: number;
         };
         /** @description 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。 */
         SystemConfigEdit: {

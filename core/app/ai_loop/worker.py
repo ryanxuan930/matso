@@ -243,6 +243,7 @@ async def run_faction_worker(
     *,
     should_stop: Callable[[], bool],
     heartbeat_s: float = _DEFAULT_HEARTBEAT_S,
+    max_total_orders: int = _MAX_TOTAL_ORDERS,  # #93 可調 runaway 上限
     on_cycle: Callable[[DecisionOutcome], None] | None = None,
     status_sink: Callable[[dict[str, Any]], None] | None = None,
     now: Callable[[], float] = time.time,
@@ -305,13 +306,13 @@ async def run_faction_worker(
             )
             if on_cycle is not None:
                 on_cycle(outcome)
-            if total_submitted > _MAX_TOTAL_ORDERS:
+            if total_submitted > max_total_orders:
                 _LOG.warning(
                     "AI worker runaway 守衛觸發：session=%s faction=%s 累計落單 %d 超上限 %d，停止",
                     deps.session_id,
                     deps.faction,
                     total_submitted,
-                    _MAX_TOTAL_ORDERS,
+                    max_total_orders,
                 )
                 return
         except asyncio.CancelledError:

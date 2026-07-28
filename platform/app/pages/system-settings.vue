@@ -277,6 +277,28 @@ onMounted(async () => {
               <small>1 tick ＝ 1 分模擬時間；愈密愈吃 DB</small>
             </label>
           </div>
+          <h3 class="sim-h3">節奏與自主推演</h3>
+          <div class="grid2">
+            <label>Tick 長度（ms 模擬時間）
+              <input v-model.number="sim.tick_rate_ms" type="number" min="1000" step="1000">
+              <small>60000 ＝ 1 tick 為 1 分鐘</small>
+            </label>
+            <label>真實節奏壓縮比
+              <input v-model.number="sim.pace_compression" type="number" min="1" step="10">
+              <small>120 ＝ 約 0.5 秒跑一個 tick；愈大跑愈快</small>
+            </label>
+            <label>通聯重算間隔（tick）
+              <input v-model.number="sim.comms_interval_ticks" type="number" min="1" step="1">
+            </label>
+            <label>AI 決策心跳（秒）
+              <input v-model.number="sim.ai_heartbeat_s" type="number" min="1" step="5">
+              <small>該局自主推演設定若有指定則優先</small>
+            </label>
+            <label>AI 落單上限（單一 worker）
+              <input v-model.number="sim.ai_max_orders" type="number" min="1" step="50">
+              <small>runaway 守衛：超過即停該 worker</small>
+            </label>
+          </div>
           <h3 class="sim-h3">行軍耗損（戰力點 / 公里）</h3>
           <div class="grid2">
             <label v-for="(_v, profile) in sim.march_attrition" :key="profile">
@@ -289,17 +311,20 @@ onMounted(async () => {
         <!-- 系統資訊（唯讀） -->
         <section class="card" data-testid="system-info">
           <h2>系統資訊（唯讀）</h2>
-          <p class="hint">下列由容器啟動 ENV / 掛載決定，於此僅檢視；變更需改部署設定並重啟對應服務。</p>
+          <p class="hint">
+            下列由容器啟動 ENV / 掛載決定，<strong>於此僅檢視</strong>——改了要動 <code>ops/compose</code>
+            的設定並重啟對應服務（在畫面上改也無處落地）。各項後方標示需重啟的服務。
+          </p>
           <dl class="ro">
-            <div><dt>部署環境</dt><dd>{{ cfg.readonly.env }}</dd></div>
+            <div><dt>部署環境<span class="ro-svc">需重啟 core</span></dt><dd>{{ cfg.readonly.env }}</dd></div>
             <div>
               <dt>AI 模式環境預設（fallback）</dt>
               <dd>{{ cfg.readonly.ai_mode_env_default }}<span class="ro-note">← 僅未於上方設定時採用</span></dd>
             </div>
-            <div><dt>Terrain gRPC</dt><dd>{{ cfg.readonly.terrain_grpc_target }}</dd></div>
-            <div><dt>Weather gRPC</dt><dd>{{ cfg.readonly.weather_grpc_target }}</dd></div>
-            <div><dt>Redis</dt><dd>{{ cfg.readonly.redis_url }}</dd></div>
-            <div><dt>物理 Stub Gateway</dt><dd>{{ cfg.readonly.stub_gateway ? '啟用（E2E）' : '停用' }}</dd></div>
+            <div><dt>Terrain gRPC<span class="ro-svc">需重啟 core</span></dt><dd>{{ cfg.readonly.terrain_grpc_target }}</dd></div>
+            <div><dt>Weather gRPC<span class="ro-svc">需重啟 core</span></dt><dd>{{ cfg.readonly.weather_grpc_target }}</dd></div>
+            <div><dt>Redis<span class="ro-svc">需重啟 core</span></dt><dd>{{ cfg.readonly.redis_url }}</dd></div>
+            <div><dt>物理 Stub Gateway<span class="ro-svc">需重啟 core</span></dt><dd>{{ cfg.readonly.stub_gateway ? '啟用（E2E）' : '停用' }}</dd></div>
           </dl>
           <p class="hint">
             地形 DTED 資料路徑（<code>MATSO_DTED_PATH</code>）與地圖瓦片由 terrain / tileserver 容器的
@@ -526,5 +551,15 @@ h1 {
   margin: 1rem 0 0.5rem;
   font-size: 0.9rem;
   color: #cbd5e1;
+}
+/* #93 P3：唯讀項後標示需重啟哪個服務，避免以為改了就會生效。 */
+.ro-svc {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  color: #64748b;
+  font-size: 0.65rem;
+  font-weight: 400;
 }
 </style>

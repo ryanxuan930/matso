@@ -29,6 +29,7 @@ from app.guardrails.modes import resolve_ai_mode
 from app.models.enums import AiMode, UserRole
 from app.models.tables import SessionParticipant, SystemConfiguration, User
 from app.orders.precheck import PhysicsGateway
+from app.sim_params import load_sim_params
 from app.state.hot_state import HotStateStore
 
 _LOG = logging.getLogger("app.ai_orchestrator")
@@ -159,7 +160,10 @@ def start_ai_workers(
     # 未宣告的局仍回全 HOSTILE 預設 → 既有行為不變。
     with db_factory() as db:
         relations = load_session_relations(db, session_id)
-    heartbeat = float(cfg.get("heartbeat_s") or 45.0)
+    # #93：預設心跳改讀全域設定（該局 ai_config 若有指定仍優先）。
+    with db_factory() as db:
+        _sim = load_sim_params(db)
+    heartbeat = float(cfg.get("heartbeat_s") or _sim.ai_heartbeat_s)
 
     tasks: list[asyncio.Task[None]] = []
     for faction, fc_raw in factions_cfg.items():
@@ -188,6 +192,7 @@ def start_ai_workers(
                     deps,
                     should_stop=should_stop,
                     heartbeat_s=heartbeat,
+                    max_total_orders=_sim.ai_max_orders,  # #93 可調 runaway 上限
                     status_sink=_make_status_sink(redis_client, session_id, str(faction)),
                 )
             )

@@ -65,6 +65,13 @@ class SimParams:
     # --- 偵測 ---
     intrinsic_optical_range_m: float = 4000.0
     sensor_interval_ticks: int = 5
+    # --- 節奏（R 層：runner 啟動時綁定）---
+    tick_rate_ms: int = _mp.MOVE_TICK_RATE_MS
+    pace_compression: float = 120.0
+    comms_interval_ticks: int = 5
+    # --- AI 自主推演 ---
+    ai_heartbeat_s: float = 45.0
+    ai_max_orders: int = 500
 
     def attrition_for(self, profile: str) -> float:
         """該機動 profile 的每公里基礎磨耗（未定義的 profile 退回 params 的預設）。"""
@@ -83,11 +90,14 @@ def parse_sim_params(raw: object) -> SimParams:
     if isinstance(raw_attr, dict):
         for profile, default in _mp.MARCH_ATTRITION_PER_KM.items():
             attrition[profile] = _non_negative(raw_attr.get(profile), default)
-    interval_raw = raw.get("sensor_interval_ticks")
-    try:
-        interval = int(interval_raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        interval = DEFAULTS.sensor_interval_ticks
+
+    def _int(key: str, fallback: int, minimum: int = 1) -> int:
+        try:
+            return max(minimum, int(raw[key]))
+        except (KeyError, TypeError, ValueError):
+            return fallback
+
+    interval = _int("sensor_interval_ticks", DEFAULTS.sensor_interval_ticks)
     return SimParams(
         foot_xc_kmh=_positive(raw.get("foot_xc_kmh"), DEFAULTS.foot_xc_kmh),
         foot_road_kmh=_positive(raw.get("foot_road_kmh"), DEFAULTS.foot_road_kmh),
@@ -100,6 +110,11 @@ def parse_sim_params(raw: object) -> SimParams:
             raw.get("intrinsic_optical_range_m"), DEFAULTS.intrinsic_optical_range_m
         ),
         sensor_interval_ticks=max(1, interval),
+        tick_rate_ms=_int("tick_rate_ms", DEFAULTS.tick_rate_ms, minimum=1000),
+        pace_compression=_positive(raw.get("pace_compression"), DEFAULTS.pace_compression),
+        comms_interval_ticks=_int("comms_interval_ticks", DEFAULTS.comms_interval_ticks),
+        ai_heartbeat_s=_positive(raw.get("ai_heartbeat_s"), DEFAULTS.ai_heartbeat_s),
+        ai_max_orders=_int("ai_max_orders", DEFAULTS.ai_max_orders),
     )
 
 
@@ -113,6 +128,11 @@ def to_config(p: SimParams) -> dict[str, Any]:
         "resupply_range_km": p.resupply_range_km,
         "intrinsic_optical_range_m": p.intrinsic_optical_range_m,
         "sensor_interval_ticks": p.sensor_interval_ticks,
+        "tick_rate_ms": p.tick_rate_ms,
+        "pace_compression": p.pace_compression,
+        "comms_interval_ticks": p.comms_interval_ticks,
+        "ai_heartbeat_s": p.ai_heartbeat_s,
+        "ai_max_orders": p.ai_max_orders,
     }
 
 

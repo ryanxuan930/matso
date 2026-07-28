@@ -316,7 +316,8 @@ components:
         改動只在 session runner 啟動時讀取 → 進行中的局不受影響。
       required:
         [foot_xc_kmh, foot_road_kmh, vehicle_fallback_kmh, march_attrition,
-         resupply_range_km, intrinsic_optical_range_m, sensor_interval_ticks]
+         resupply_range_km, intrinsic_optical_range_m, sensor_interval_ticks,
+         tick_rate_ms, pace_compression, comms_interval_ticks, ai_heartbeat_s, ai_max_orders]
       properties:
         foot_xc_kmh: { type: number, description: 徒步越野速度 km/h（預設 5.0） }
         foot_road_kmh: { type: number, description: 徒步沿道路速度 km/h（預設 6.5） }
@@ -328,6 +329,11 @@ components:
         resupply_range_km: { type: number, description: 補給撥交距離 km（預設 2.0） }
         intrinsic_optical_range_m: { type: number, description: 無感測裝備時的內建目視距離 m（預設 4000） }
         sensor_interval_ticks: { type: integer, description: 偵測掃描間隔 tick（預設 5） }
+        tick_rate_ms: { type: integer, description: 1 tick 的模擬時間 ms（預設 60000＝1 分） }
+        pace_compression: { type: number, description: 真實節奏壓縮比（預設 120＝約 0.5s/tick） }
+        comms_interval_ticks: { type: integer, description: 通聯狀態重算間隔 tick（預設 5） }
+        ai_heartbeat_s: { type: number, description: AI 決策心跳秒數預設（該局 autonomy 設定優先） }
+        ai_max_orders: { type: integer, description: 單一 AI worker 累計落單上限（runaway 守衛） }
     SystemConfigEdit:
       type: object
       description: 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。

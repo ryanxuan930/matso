@@ -203,7 +203,7 @@ class SimManager:
             relations = await asyncio.to_thread(load_session_relations, engage_db, session_id)
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
-            sim_clock = SimClock(tick_rate_ms=_TICK_RATE_MS)
+            sim_clock = SimClock(tick_rate_ms=sim_params.tick_rate_ms)  # #93 可調節奏
             kernel = Kernel(
                 session_id=session_id,
                 clock=sim_clock,
@@ -223,7 +223,7 @@ class SimManager:
                     session_id=session_id,
                     session_factory=self._factory,
                     hot_state=hot,
-                    tick_rate_ms=_TICK_RATE_MS,
+                    tick_rate_ms=sim_params.tick_rate_ms,
                     speed_kmh=_UNIT_SPEED_KMH,
                     rng=DeterministicRNG(seed, "movement"),  # #28 強穿隨機耗損
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
@@ -242,10 +242,11 @@ class SimManager:
                     relations=relations,  # #98 盟軍不互相成為 contact
                     interval_ticks=sim_params.sensor_interval_ticks,  # #93 可調掃描頻率
                 ),
-                comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 5 tick 重算鏈路狀態
+                comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 N tick 重算鏈路狀態
                     session_id=session_id,
                     session_factory=self._factory,
                     hot_state=hot,
+                    interval_ticks=sim_params.comms_interval_ticks,  # #93 可調
                 ),
                 logistics=ResupplySystem(  # #85 補給：RESUPPLY 令加油（取代 NoOp）
                     session_id=session_id,
@@ -260,7 +261,7 @@ class SimManager:
                 hot_state=hot,
                 wall_clock=PerfCounterClock(),
             )
-            pacer = TickPacer(_TICK_RATE_MS, compression=_PACE_COMPRESSION)
+            pacer = TickPacer(sim_params.tick_rate_ms, compression=sim_params.pace_compression)
             # White Cell 暫停旗標（新 #6）：control 端點 PAUSE 設 Redis 鍵、RESUME 清除；
             # 迴圈輪詢此鍵 → 暫停時凍結活模擬。
             pause_key = session_pause_key(session_id)

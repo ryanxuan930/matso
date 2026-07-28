@@ -31,7 +31,6 @@ from app.movement.fuel import load_unit_fuel
 from app.movement.mobility import resolve_unit_mobility
 from app.movement.mobility_matrix import step_cost
 from app.movement.params import (
-    MOVE_TICK_RATE_MS,
     TEMPO_ATTRITION_FACTOR,
 )
 from app.movement.router import plan_route
@@ -189,7 +188,7 @@ def preview_movement(
         waypoints,
         obstacles,
         speed_kmh=speed_kmh,
-        tick_rate_ms=MOVE_TICK_RATE_MS,
+        tick_rate_ms=sim_params.tick_rate_ms,  # #93 與執行端同一份
         attrition_per_km=attrition_per_km,
         fuel_per_km=unit_fuel.burn_per_km,
     )
