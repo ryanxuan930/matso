@@ -309,6 +309,46 @@ components:
         name: { type: string, minLength: 1 }
         category: { type: string, description: KINETIC / SENSOR / COMMS / LOGISTICS / DRONE }
         base_stats: { type: object }
+    SimParamsView:
+      type: object
+      description: >-
+        推演參數（#93）。**未設定時等同原硬編碼常數**，故既有推演局與 golden replay 不受影響。
+        改動只在 session runner 啟動時讀取 → 進行中的局不受影響。
+      required:
+        [foot_xc_kmh, foot_road_kmh, vehicle_fallback_kmh, march_attrition,
+         resupply_range_km, intrinsic_optical_range_m, sensor_interval_ticks]
+      properties:
+        foot_xc_kmh: { type: number, description: 徒步越野速度 km/h（預設 5.0） }
+        foot_road_kmh: { type: number, description: 徒步沿道路速度 km/h（預設 6.5） }
+        vehicle_fallback_kmh: { type: number, description: 無法由編裝導出機動時的後備速度 km/h（預設 40） }
+        march_attrition:
+          type: object
+          additionalProperties: { type: number }
+          description: 每公里行軍耗損（戰力點/km），依機動 profile（FOOT/WHEELED/TRACKED）
+        resupply_range_km: { type: number, description: 補給撥交距離 km（預設 2.0） }
+        intrinsic_optical_range_m: { type: number, description: 無感測裝備時的內建目視距離 m（預設 4000） }
+        sensor_interval_ticks: { type: integer, description: 偵測掃描間隔 tick（預設 5） }
+    SystemConfigEdit:
+      type: object
+      description: 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。
+      required: [ai_mode, llm_base_url, llm_model]
+      properties:
+        ai_mode: { type: string, enum: [AI_OFF, AI_BARE, AI_FULL] }
+        llm_base_url: { type: string }
+        llm_model: { type: string }
+        llm_api_key: { type: [string, "null"], description: null＝保留原值；""＝清除 }
+        sim: { $ref: "#/components/schemas/SimParamsView" }
+    SystemConfigView:
+      type: object
+      required: [ai, sim, readonly]
+      properties:
+        ai:
+          type: object
+          description: AI/LLM 設定（熱更新）
+        sim: { $ref: "#/components/schemas/SimParamsView" }
+        readonly:
+          type: object
+          description: 部署層資訊（由容器 env 決定，**需重啟對應服務**才能改；此處僅檢視）
     FactionRelationsView:
       type: object
       description: 以觀測者為中心的陣營關係（#91）。未宣告的配對一律回 HOSTILE（§12.1 預設）。
@@ -758,6 +798,38 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/UnitView" } }
         "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /system/config:
+    get:
+      operationId: getSystemConfig
+      security: [{ bearerAuth: [] }]
+      description: 全域系統設定（AI/LLM + **推演參數** + 唯讀部署資訊）。限管理/統裁。
+      responses:
+        "200":
+          description: Config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemConfigView" }
+        "403": { description: 權限不足, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    put:
+      operationId: putSystemConfig
+      security: [{ bearerAuth: [] }]
+      description: >-
+        更新可編輯設定。AI/LLM 為**熱更新**（下次使用即生效）；`sim` 推演參數於
+        **session runner 啟動時**讀取 → 進行中的推演局不受影響（不會半場改變物理規則），
+        新局或該局重跑才套用。移動**預覽**則立即反映（預覽本就是「現在下令會怎樣」）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SystemConfigEdit" }
+      responses:
+        "200":
+          description: Config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemConfigView" }
+        "403": { description: 權限不足, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: 參數不合法, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/relations:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

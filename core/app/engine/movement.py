@@ -37,8 +37,9 @@ from app.movement.fuel import UnitFuel, burn_fuel, load_unit_fuel
 from app.movement.mobility import UnitMobility, resolve_unit_mobility
 from app.movement.mobility_matrix import road_speed_factor
 from app.movement.mobility_matrix import step_cost as _terrain_step_cost
-from app.movement.params import TEMPO_ATTRITION_FACTOR, march_attrition_per_km
+from app.movement.params import TEMPO_ATTRITION_FACTOR
 from app.movement.router import PathFn, plan_route
+from app.sim_params import SimParams
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
@@ -106,11 +107,14 @@ class UnitMovementSystem:
         terrain_sampler: TerrainSampler | None = None,
         weather_mobility: float = 1.0,
         path_fn: PathFn | None = None,
+        sim_params: SimParams | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
         self._hot_state = hot_state
         self._tick_rate_ms = tick_rate_ms
+        # #93 推演參數（於 runner 啟動時載入一次）；None → 預設＝原硬編碼行為。
+        self._params = sim_params or SimParams()
         # 後備每 tick 步距（無法由編裝導出機動時）；#80 起改為 per-unit（見 _step_sync admit）。
         self._step_km = speed_kmh * tick_rate_ms / _MS_PER_H
         # 強穿耗損的隨機來源（stream="movement"）；None 則停用（既有測試不注入）。
@@ -520,7 +524,7 @@ class UnitMovementSystem:
         dist_km = route_distance_m(route) / 1000.0
         if dist_km <= 0.0:
             return None
-        per_km = march_attrition_per_km(mob.profile)
+        per_km = self._params.attrition_for(mob.profile)
         tempo_mult = TEMPO_ATTRITION_FACTOR.get(tempo, 1.0)
         loss = min(dist_km * per_km * tempo_mult, before * _MARCH_LOSS_CAP_PCT)
         if loss <= 0.0:

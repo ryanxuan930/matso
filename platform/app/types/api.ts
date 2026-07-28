@@ -277,6 +277,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 全域系統設定（AI/LLM + **推演參數** + 唯讀部署資訊）。限管理/統裁。 */
+        get: operations["getSystemConfig"];
+        /** @description 更新可編輯設定。AI/LLM 為**熱更新**（下次使用即生效）；`sim` 推演參數於 **session runner 啟動時**讀取 → 進行中的推演局不受影響（不會半場改變物理規則）， 新局或該局重跑才套用。移動**預覽**則立即反映（預覽本就是「現在下令會怎樣」）。 */
+        put: operations["putSystemConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/relations": {
         parameters: {
             query?: never;
@@ -997,6 +1015,42 @@ export interface components {
             /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
             category: string;
             base_stats: Record<string, never>;
+        };
+        /** @description 推演參數（#93）。**未設定時等同原硬編碼常數**，故既有推演局與 golden replay 不受影響。 改動只在 session runner 啟動時讀取 → 進行中的局不受影響。 */
+        SimParamsView: {
+            /** @description 徒步越野速度 km/h（預設 5.0） */
+            foot_xc_kmh: number;
+            /** @description 徒步沿道路速度 km/h（預設 6.5） */
+            foot_road_kmh: number;
+            /** @description 無法由編裝導出機動時的後備速度 km/h（預設 40） */
+            vehicle_fallback_kmh: number;
+            /** @description 每公里行軍耗損（戰力點/km），依機動 profile（FOOT/WHEELED/TRACKED） */
+            march_attrition: {
+                [key: string]: number;
+            };
+            /** @description 補給撥交距離 km（預設 2.0） */
+            resupply_range_km: number;
+            /** @description 無感測裝備時的內建目視距離 m（預設 4000） */
+            intrinsic_optical_range_m: number;
+            /** @description 偵測掃描間隔 tick（預設 5） */
+            sensor_interval_ticks: number;
+        };
+        /** @description 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。 */
+        SystemConfigEdit: {
+            /** @enum {string} */
+            ai_mode: "AI_OFF" | "AI_BARE" | "AI_FULL";
+            llm_base_url: string;
+            llm_model: string;
+            /** @description null＝保留原值；""＝清除 */
+            llm_api_key?: string | null;
+            sim?: components["schemas"]["SimParamsView"];
+        };
+        SystemConfigView: {
+            /** @description AI/LLM 設定（熱更新） */
+            ai: Record<string, never>;
+            sim: components["schemas"]["SimParamsView"];
+            /** @description 部署層資訊（由容器 env 決定，**需重啟對應服務**才能改；此處僅檢視） */
+            readonly: Record<string, never>;
         };
         /** @description 以觀測者為中心的陣營關係（#91）。未宣告的配對一律回 HOSTILE（§12.1 預設）。 */
         FactionRelationsView: {
@@ -1840,6 +1894,77 @@ export interface operations {
             };
             /** @description Not a participant */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSystemConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemConfigView"];
+                };
+            };
+            /** @description 權限不足 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    putSystemConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SystemConfigEdit"];
+            };
+        };
+        responses: {
+            /** @description Config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemConfigView"];
+                };
+            };
+            /** @description 權限不足 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 參數不合法 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

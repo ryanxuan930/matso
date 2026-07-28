@@ -33,10 +33,10 @@ from app.movement.mobility_matrix import step_cost
 from app.movement.params import (
     MOVE_TICK_RATE_MS,
     TEMPO_ATTRITION_FACTOR,
-    march_attrition_per_km,
 )
 from app.movement.router import plan_route
 from app.movement.terrain_sampler import build_terrain_cell_sampler
+from app.sim_params import load_sim_params
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["movement"])
@@ -165,9 +165,16 @@ def preview_movement(
 
     # #80：per-unit 機動速度 + 行軍磨耗率（由編裝導出）。
     tempo = body.tempo if body.tempo in ("NORMAL", "FORCED_MARCH") else "NORMAL"
-    mob = resolve_unit_mobility(db, unit.id)
+    # #93：預覽與執行必須讀同一份推演參數，否則「估計」與「實跑」再度分歧
+    # （SPEC_MOVEMENT 當初就是為了消滅這種不一致）。
+    sim_params = load_sim_params(db)
+    mob = resolve_unit_mobility(
+        db, unit.id, foot_xc_kmh=sim_params.foot_xc_kmh, foot_road_kmh=sim_params.foot_road_kmh
+    )
     speed_kmh = mob.speed_kmh(tempo=tempo)
-    attrition_per_km = march_attrition_per_km(mob.profile) * TEMPO_ATTRITION_FACTOR.get(tempo, 1.0)
+    attrition_per_km = sim_params.attrition_for(mob.profile) * TEMPO_ATTRITION_FACTOR.get(
+        tempo, 1.0
+    )
     # #81：以路徑平均地形成本調變預覽速度，並標示是否穿越不可通行地形（terrain 不可用→不調）。
     terrain_impassable = False
     sampler = build_terrain_cell_sampler()

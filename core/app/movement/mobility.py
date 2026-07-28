@@ -63,8 +63,27 @@ class UnitMobility:
 FOOT = UnitMobility(profile="FOOT", road_kmh=FOOT_ROAD_KMH, xc_kmh=FOOT_XC_KMH)
 
 
-def mobility_from_stats(stats_list: list[dict[str, Any]]) -> UnitMobility:
-    """由一組裝備 base_stats 導出機動能力（純函數，供批次/單筆共用）。無自走載具 → FOOT。"""
+def foot_mobility(xc_kmh: float | None = None, road_kmh: float | None = None) -> UnitMobility:
+    """徒步機動（#93 可調）。未給 → 用 params 的預設，與過去完全相同。"""
+    if xc_kmh is None and road_kmh is None:
+        return FOOT
+    return UnitMobility(
+        profile="FOOT",
+        road_kmh=road_kmh if road_kmh is not None else FOOT_ROAD_KMH,
+        xc_kmh=xc_kmh if xc_kmh is not None else FOOT_XC_KMH,
+    )
+
+
+def mobility_from_stats(
+    stats_list: list[dict[str, Any]],
+    *,
+    foot_xc_kmh: float | None = None,
+    foot_road_kmh: float | None = None,
+) -> UnitMobility:
+    """由一組裝備 base_stats 導出機動能力（純函數，供批次/單筆共用）。無自走載具 → FOOT。
+
+    `foot_*`（#93）：徒步基準速度覆寫；未給則用 params 預設（行為與過去相同）。
+    """
     self_movers: list[dict[str, Any]] = []
     for stats in stats_list:
         mob = stats.get("mobility") if isinstance(stats, dict) else None
@@ -73,7 +92,7 @@ def mobility_from_stats(stats_list: list[dict[str, Any]]) -> UnitMobility:
         if mob.get("can_self_move") and mob.get("mobility_class") in _SELF_MOVE_CLASSES:
             self_movers.append(mob)
     if not self_movers:
-        return FOOT
+        return foot_mobility(foot_xc_kmh, foot_road_kmh)
     # 取最優先可用等級（TRACKED 優先於 WHEELED）。
     chosen = next(
         cls for cls in _SELF_MOVE_CLASSES if any(m["mobility_class"] == cls for m in self_movers)
@@ -84,7 +103,7 @@ def mobility_from_stats(stats_list: list[dict[str, Any]]) -> UnitMobility:
     xc = min(float(m.get("max_cross_country_speed_kmh") or 0.0) for m in pool)
     # 速度資料缺漏（seed 不全）→ 退回 FOOT，避免 0 速度卡死。
     if road <= 0.0 and xc <= 0.0:
-        return FOOT
+        return foot_mobility(foot_xc_kmh, foot_road_kmh)
     # #84 油料：同 profile 的自走載具**合計**油耗與滿油量（整個車隊一起燒油）。
     burn = sum(_fuel_burn_per_km(m, xc) for m in pool)
     capacity = sum(float(m.get("fuel_capacity") or 0.0) for m in pool)
@@ -130,12 +149,31 @@ def _stats_for_units(db: Session, unit_ids: list[str]) -> dict[str, list[dict[st
     return out
 
 
-def resolve_unit_mobility(db: Session, unit_id: str) -> UnitMobility:
+def resolve_unit_mobility(
+    db: Session,
+    unit_id: str,
+    *,
+    foot_xc_kmh: float | None = None,
+    foot_road_kmh: float | None = None,
+) -> UnitMobility:
     """單一單位的機動能力（由其編裝導出）。無自走載具/無編裝 → FOOT。"""
-    return mobility_from_stats(_stats_for_units(db, [unit_id]).get(unit_id, []))
+    return mobility_from_stats(
+        _stats_for_units(db, [unit_id]).get(unit_id, []),
+        foot_xc_kmh=foot_xc_kmh,
+        foot_road_kmh=foot_road_kmh,
+    )
 
 
-def resolve_session_mobility(db: Session, unit_ids: list[str]) -> dict[str, UnitMobility]:
+def resolve_session_mobility(
+    db: Session,
+    unit_ids: list[str],
+    *,
+    foot_xc_kmh: float | None = None,
+    foot_road_kmh: float | None = None,
+) -> dict[str, UnitMobility]:
     """批次導出多單位機動能力（供 AI context load_unit_meta，一次查詢）。"""
     stats = _stats_for_units(db, unit_ids)
-    return {uid: mobility_from_stats(sl) for uid, sl in stats.items()}
+    return {
+        uid: mobility_from_stats(sl, foot_xc_kmh=foot_xc_kmh, foot_road_kmh=foot_road_kmh)
+        for uid, sl in stats.items()
+    }

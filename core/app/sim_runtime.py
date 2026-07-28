@@ -44,6 +44,7 @@ from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.movement.terrain_sampler import build_terrain_cell_sampler, build_terrain_path_fn
 from app.runtime import PerfCounterClock, TickPacer, run_paced
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
+from app.sim_params import load_sim_params
 from app.state.broadcaster import RedisBroadcaster
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
@@ -200,6 +201,8 @@ class SimManager:
             sensor_resolver = await asyncio.to_thread(SensorResolver, engage_db, session_id)
             # #98 該局的陣營關係矩陣（未宣告→全 HOSTILE，與過去語義相同）。
             relations = await asyncio.to_thread(load_session_relations, engage_db, session_id)
+            # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
+            sim_params = await asyncio.to_thread(load_sim_params, engage_db)
             sim_clock = SimClock(tick_rate_ms=_TICK_RATE_MS)
             kernel = Kernel(
                 session_id=session_id,
@@ -225,6 +228,7 @@ class SimManager:
                     rng=DeterministicRNG(seed, "movement"),  # #28 強穿隨機耗損
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
                     path_fn=build_terrain_path_fn(),  # #82 A* 繞路（不可達→直線）
+                    sim_params=sim_params,  # #93 可調速度/耗損
                 ),
                 # #97 偵測（取代 NoOp）：每 tick 掃描 → 落 per-faction contacts
                 sensors=SensorSweepSystem(
@@ -236,6 +240,7 @@ class SimManager:
                     faction_for=sensor_resolver.faction_for,
                     env_for=make_detect_env(_engage_gateway(), _weather_snapshot()),
                     relations=relations,  # #98 盟軍不互相成為 contact
+                    interval_ticks=sim_params.sensor_interval_ticks,  # #93 可調掃描頻率
                 ),
                 comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 5 tick 重算鏈路狀態
                     session_id=session_id,
@@ -246,6 +251,7 @@ class SimManager:
                     session_id=session_id,
                     session_factory=self._factory,
                     hot_state=hot,
+                    sim_params=sim_params,  # #93 可調補給距離
                 ),
                 trigger_checker=NoOpTriggerChecker(),
                 # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）。

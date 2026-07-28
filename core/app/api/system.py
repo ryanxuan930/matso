@@ -33,6 +33,7 @@ from app.config import Settings
 from app.errors import AuthForbiddenError, OrderValidationError
 from app.models.enums import AiMode
 from app.models.tables import SystemConfiguration
+from app.sim_params import parse_sim_params, to_config
 from app.stream.faction_filter import is_omniscient
 from matso_ai.inference.client import chat_completions_url
 
@@ -82,16 +83,22 @@ class AiConfigEdit(BaseModel):
     llm_model: str = ""
     # None＝不變（避免每次都要重打 key）；空字串＝清除。
     llm_api_key: str | None = None
+    # #93 推演參數；None＝不動（只改 AI/LLM 時不必整包重送）。
+    sim: dict[str, Any] | None = None
 
 
 class SystemConfigView(BaseModel):
     ai: dict[str, Any]
+    sim: dict[str, Any]
     readonly: dict[str, Any]
 
 
 def _view(db: Session, settings: Settings) -> SystemConfigView:
-    ai = _ai_cfg(_singleton(db))
+    cfg = _singleton(db)
+    ai = _ai_cfg(cfg)
+    ic = cfg.integration_config if isinstance(cfg.integration_config, dict) else {}
     return SystemConfigView(
+        sim=to_config(parse_sim_params(ic.get("sim"))),
         ai={
             "ai_mode": ai.get("mode") or settings.ai_mode,
             "llm_base_url": ai.get("llm_base_url") or os.environ.get("OPENAI_BASE_URL", ""),
@@ -143,6 +150,9 @@ def put_config(
     if edit.llm_api_key is not None:  # None＝保留原值；"" ＝清除
         ai["llm_api_key"] = edit.llm_api_key
     ic["ai"] = ai
+    if edit.sim is not None:
+        # 逐欄驗證後回寫正規化結果（壞值退預設，不讓不合法的數字進到裁決）。
+        ic["sim"] = to_config(parse_sim_params(edit.sim))
     cfg.integration_config = ic
     cfg.updated_at = datetime.now()  # type: ignore[assignment]
     db.commit()

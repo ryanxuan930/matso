@@ -21,6 +21,7 @@ from app.engine.movement import _haversine_km
 from app.models import Order, OrderStatus, TacticalUnit
 from app.models.tables import EquipmentInstance, EquipmentTemplate
 from app.movement.fuel import load_supply_cargo, load_unit_fuel, refuel
+from app.sim_params import SimParams
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
@@ -82,10 +83,13 @@ class ResupplySystem:
         session_id: str,
         session_factory: sessionmaker,  # type: ignore[type-arg]
         hot_state: HotStateStore,
+        sim_params: SimParams | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
         self._hot_state = hot_state
+        # #93：補給距離可調（None → 預設 RESUPPLY_RANGE_KM，行為與過去相同）。
+        self._params = sim_params or SimParams()
 
     async def consume(self, now: SimTime) -> list[LedgerEvent]:
         return await asyncio.to_thread(self._consume_sync, now)
@@ -145,7 +149,7 @@ class ResupplySystem:
             float(target.current_lat or 0.0),
             float(target.current_lng or 0.0),
         )
-        if dist > RESUPPLY_RANGE_KM:
+        if dist > self._params.resupply_range_km:
             if o.status == OrderStatus.VALIDATED:
                 o.status = OrderStatus.EXECUTING  # 標記已受理，等補給車接近
             return None

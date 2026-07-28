@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { components } from '~/types/api'
 // 系統設定（#54）——全系統通用參數。AI 模式 + LLM 後端可編輯（存 DB）；ENV/容器層參數唯讀檢視。
 // 限統裁/白軍/管理（後端 RBAC 亦把關）。
 import { apiFetch } from '~/composables/useApi'
@@ -20,7 +21,10 @@ interface SysConfig {
     stub_gateway: boolean
     ai_loop_wired: boolean
   }
+  sim: SimParams
 }
+// #93 推演參數（契約 SimParamsView）——改了會改變推演物理，故獨立一區並標明生效時機。
+type SimParams = components['schemas']['SimParamsView']
 
 const AI_MODE_LABEL: Record<string, string> = {
   AI_OFF: '關閉（傳統兵推，各陣營由人操作）',
@@ -50,6 +54,9 @@ const testing = ref(false)
 const testMsg = ref('')
 const testOk = ref<boolean | null>(null)
 
+// #93 推演參數編輯狀態（載入時由後端帶入預設）。
+const sim = ref<SimParams | null>(null)
+
 function applyConfig(c: SysConfig) {
   cfg.value = c
   aiMode.value = c.ai.ai_mode
@@ -57,6 +64,7 @@ function applyConfig(c: SysConfig) {
   llmModel.value = c.ai.llm_model
   apiKeyAlreadySet.value = c.ai.llm_api_key_set
   llmApiKey.value = ''
+  sim.value = c.sim ? { ...c.sim, march_attrition: { ...c.sim.march_attrition } } : null
 }
 
 async function load() {
@@ -83,6 +91,7 @@ async function save() {
     }
     // 只有使用者填了才送 api_key（空＝保留原值）。
     if (llmApiKey.value) body.llm_api_key = llmApiKey.value
+    if (sim.value) body.sim = sim.value
     applyConfig(await apiFetch<SysConfig>('/system/config', { method: 'PUT', body }))
     saveMsg.value = '已儲存'
   } catch (e) {
@@ -235,6 +244,46 @@ onMounted(async () => {
             ⓘ AI 決策迴路尚未接入活執行期 Kernel——此設定目前供「連線測試」與未來 AI 自動推演使用；
             現階段活模擬不會據此自動下令。
           </p>
+        </section>
+
+        <!-- #93 推演參數（可編輯；改的是兵推物理，故獨立一區並標明生效時機） -->
+        <section v-if="sim" class="card" data-testid="sim-params">
+          <h2>推演參數</h2>
+          <p class="hint">
+            這些會<strong>改變推演的物理規則</strong>（速度、耗損、補給距離、偵測）。
+            <strong>進行中的推演局不受影響</strong>——執行端於該局啟動時讀取一次，
+            要套用新值需該局重跑（封存/複製為新局）。移動<strong>預覽</strong>則立即反映。
+          </p>
+          <div class="grid2">
+            <label>徒步越野速度（km/h）
+              <input v-model.number="sim.foot_xc_kmh" data-testid="sim-foot-xc" type="number" min="0.1" step="0.5">
+            </label>
+            <label>徒步沿道路速度（km/h）
+              <input v-model.number="sim.foot_road_kmh" data-testid="sim-foot-road" type="number" min="0.1" step="0.5">
+            </label>
+            <label>後備車輛速度（km/h）
+              <input v-model.number="sim.vehicle_fallback_kmh" type="number" min="0.1" step="1">
+              <small>無法由編裝導出機動時採用</small>
+            </label>
+            <label>補給撥交距離（km）
+              <input v-model.number="sim.resupply_range_km" data-testid="sim-resupply" type="number" min="0.1" step="0.5">
+            </label>
+            <label>內建目視距離（m）
+              <input v-model.number="sim.intrinsic_optical_range_m" type="number" min="1" step="100">
+              <small>單位未配感測裝備時的基本偵察能力</small>
+            </label>
+            <label>偵測掃描間隔（tick）
+              <input v-model.number="sim.sensor_interval_ticks" type="number" min="1" step="1">
+              <small>1 tick ＝ 1 分模擬時間；愈密愈吃 DB</small>
+            </label>
+          </div>
+          <h3 class="sim-h3">行軍耗損（戰力點 / 公里）</h3>
+          <div class="grid2">
+            <label v-for="(_v, profile) in sim.march_attrition" :key="profile">
+              {{ profile }}
+              <input v-model.number="sim.march_attrition[profile]" type="number" min="0" step="0.01">
+            </label>
+          </div>
         </section>
 
         <!-- 系統資訊（唯讀） -->
@@ -448,5 +497,34 @@ h1 {
   color: #64748b;
   font-size: 0.7rem;
   margin-left: 0.4rem;
+}
+/* #93 推演參數：兩欄格線，與既有 card 表單風格一致。 */
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem 1rem;
+}
+.grid2 label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+.grid2 input {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+}
+.grid2 small {
+  color: #64748b;
+  font-size: 0.72rem;
+}
+.sim-h3 {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.9rem;
+  color: #cbd5e1;
 }
 </style>
