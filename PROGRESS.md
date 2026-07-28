@@ -124,6 +124,16 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## Backlog / 發現的問題
 
+### 🗺️ MapCanvas `applyBasemap` 於 style 載入前觸發（2026-07-28，查底圖問題時順帶發現；未修）
+每次進 COP 主控台 console 必有一則 `TypeError: Cannot read properties of undefined (reading 'layers')`。
+成因：`cop.vue:1421` 從 localStorage 還原底圖偏好時改寫 `basemap`，觸發
+`MapCanvas.vue:1218` 的 `watch(() => props.basemapId, applyBasemap)`；此時 map 尚未 `load`，
+`map.getStyle()` 回 undefined → `removeBasemap()`（`MapCanvas.vue:180`）讀 `.layers` 爆掉。
+**目前無實害**：`map.on('load')` 稍後會用最終值再呼叫一次 `applyBasemap`，故畫面正確。
+**但**若偏好還原晚於 load、或使用者在載入中切底圖，該次切換會靜默失效。
+修法：`removeBasemap`/`applyBasemap` 開頭加 `if (!map || !map.isStyleLoaded()) return`，
+並在 `load` handler 內補套一次目前的 `basemapId`（已有）。屬前端小卡，未開卡號。
+
 ### 🚚 移動真實化（2026-07-24，使用者回報；大塊，需自成任務）
 **現況＝三套不一致的移動模型**（使用者親測發現）：
 1. **預覽** `api/movement.preview` → `estimate_route`：直線 + 手繪障礙穿越（幾何）→ 常顯「路徑暢通」。
