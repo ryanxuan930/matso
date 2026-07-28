@@ -7,8 +7,16 @@ export type MapFeature = components['schemas']['MapFeatureView']
 export type DraftKind = 'POINT' | 'LINE' | 'POLYGON' | 'CIRCLE' | 'RECTANGLE'
 
 // ---- CRUD ----
-export function fetchMapFeatures(sessionId: string): Promise<MapFeature[]> {
-  return apiFetch<MapFeature[]>(`/sessions/${sessionId}/map-features`)
+/**
+ * 取標註。`asFaction`（#92）：**僅全知可用**——以該陣營視角看（共同 + 該軍）；
+ * 一般角色帶他陣營→後端 403。過濾一律在後端（紅線 #3）。
+ */
+export function fetchMapFeatures(
+  sessionId: string,
+  asFaction?: string | null,
+): Promise<MapFeature[]> {
+  const q = asFaction ? `?as_faction=${encodeURIComponent(asFaction)}` : ''
+  return apiFetch<MapFeature[]>(`/sessions/${sessionId}/map-features${q}`)
 }
 export interface FeatureCreate {
   kind: string

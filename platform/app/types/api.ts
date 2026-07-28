@@ -465,7 +465,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍） */
+        /** @description 地圖標註/工事（fog of war：全知全見，否則共同 + 本軍）。 帶 as_faction（#92）＝以該陣營視角過濾（共同 + 該軍），與 units/intel 同紀律。 */
         get: operations["listMapFeatures"];
         put?: never;
         /** @description 新增地圖標註/工事（全知可指定 owner_faction；否則本軍） */
@@ -2353,7 +2353,10 @@ export interface operations {
     };
     listMapFeatures: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description White Cell 視角切換——以該陣營視角看標註；一般角色帶他陣營→403 */
+                as_faction?: string;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["SessionId"];

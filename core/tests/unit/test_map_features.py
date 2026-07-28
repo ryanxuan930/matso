@@ -90,6 +90,45 @@ def test_fog_of_war_hides_enemy_annotations(session_factory: sessionmaker[Sessio
     assert all(f["label"] != "RED-OP" for f in r.json())
 
 
+def test_viewpoint_filters_annotations_like_the_faction_sees_them(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """#92：白軍切某陣營視角 → 只見「共同 + 該陣營」，與該陣營帳號登入所見一致。"""
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+    client.post(_base(world), json={**_POINT, "label": "COMMON"}, headers=_white(world))
+    for faction in ("BLUE", "RED"):
+        client.post(
+            _base(world),
+            json={**_POINT, "owner_faction": faction, "label": f"{faction}-OP"},
+            headers=_white(world),
+        )
+
+    # 全局視角：全部看得到
+    god = {f["label"] for f in client.get(_base(world), headers=_white(world)).json()}
+    assert god == {"COMMON", "BLUE-OP", "RED-OP"}
+
+    # BLUE 視角：共同 + BLUE，看不到 RED
+    blue = {
+        f["label"]
+        for f in client.get(f"{_base(world)}?as_faction=BLUE", headers=_white(world)).json()
+    }
+    assert blue == {"COMMON", "BLUE-OP"}
+
+    # 與 BLUE 帳號實際登入所見一致
+    assert blue == {f["label"] for f in client.get(_base(world), headers=_cmdr(world)).json()}
+
+
+def test_commander_cannot_use_viewpoint(session_factory: sessionmaker[Session]) -> None:
+    """一般角色不得以他陣營視角看標註（與 units/intel/relations 同紀律）。"""
+    world = seed_world(session_factory)
+    client = _client(session_factory)
+
+    r = client.get(f"{_base(world)}?as_faction=RED", headers=_cmdr(world))
+
+    assert r.status_code == 403
+
+
 def test_edit_delete_permission(session_factory: sessionmaker[Session]) -> None:
     world = seed_world(session_factory)
     client = _client(session_factory)

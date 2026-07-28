@@ -921,7 +921,10 @@ const draftFc = computed(() => draftToFc(drawKind.value, draftCoords.value))
 const drawableKinds = computed(() => FEATURE_KINDS.filter((k) => k.value !== 'WEAPON_EMPLACEMENT'))
 
 async function loadFeatures() {
-  mapFeatures.value = await fetchMapFeatures(sessionId.value).catch(() => [])
+  // #92：帶視角 → 後端只回「共同 + 該陣營」的標註（過濾在後端，紅線 #3）。
+  mapFeatures.value = await fetchMapFeatures(sessionId.value, viewpoint.value || null).catch(
+    () => [],
+  )
   // 還原已持久化的地形裁切環（#43）：裁切射界存在 attributes.viewshed_ring，重新整理後仍在。
   const clips: Record<string, number[][]> = {}
   for (const f of mapFeatures.value) {
@@ -976,6 +979,9 @@ async function finishDraw() {
     geometry_type: isShape ? 'POLYGON' : drawKind.value,
     geometry: isShape ? ring : drawKind.value === 'POINT' ? draftCoords.value[0] : draftCoords.value,
     label: drawLabel.value.trim() || tmpl?.name || null,
+    // #92 歸屬：套了陣營視角時，繪出的標註歸該陣營（否則全知繪製一律落 WHITE_CELL 共同層，
+    // 等於白軍替某軍畫的東西全體都看得到）。一般角色不帶，後端一律歸本軍。
+    owner_faction: viewpoint.value || null,
     weapon_template_id: isWeapon ? drawWeaponTemplate.value || null : null,
     influence_radius_m: isWeapon && Number.isFinite(range) ? range : null,
     attributes: Object.keys(attrs).length ? attrs : undefined,
@@ -2318,6 +2324,22 @@ watch(
               >
                 <span class="fdot" :style="{ background: featureDisplayColor(f) }" />
                 <span class="fname">{{ f.label || f.kind }}</span>
+                <!-- #92 歸屬陣營：共同層標「共同」，否則以該陣營色點+代號標示 -->
+                <span
+                  class="fown"
+                  data-testid="feature-owner"
+                  :title="
+                    f.owner_faction === 'WHITE_CELL'
+                      ? '共同標註（全體可見）'
+                      : `${f.owner_faction} 的標註（僅該陣營與白軍可見）`
+                  "
+                >
+                  <template v-if="f.owner_faction === 'WHITE_CELL'">共同</template>
+                  <template v-else>
+                    <span class="u-dot" :style="{ background: factionColor(f.owner_faction) }" />
+                    {{ f.owner_faction }}
+                  </template>
+                </span>
                 <button
                   class="feye"
                   data-testid="feature-toggle-vis"
@@ -3686,6 +3708,25 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* #92 標註歸屬陣營徽章：讓「這是誰畫的、誰看得到」一眼可辨。 */
+.map-editor .fown {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: none;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  color: #94a3b8;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+.map-editor .fown .u-dot {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
 }
 .map-editor .frm {
   border: none;
