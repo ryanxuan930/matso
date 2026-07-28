@@ -26,6 +26,7 @@ from app.api import (
     orbat_router,
     orders_router,
     participants_router,
+    relations_router,
     scenarios_router,
     system_router,
     units_router,
@@ -104,6 +105,7 @@ app.include_router(system_router)
 app.include_router(units_router)
 app.include_router(users_router)
 app.include_router(intel_router)
+app.include_router(relations_router)
 app.include_router(inject_router)
 app.include_router(control_router)
 app.include_router(aar_router)

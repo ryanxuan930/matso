@@ -277,6 +277,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/relations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description **以觀測者為中心**的陣營關係（#91）：回「我對其他各陣營」的關係，供前端決定 2525 affiliation（友/中/敵）。刻意不回完整矩陣——第三方之間的結盟關係不是觀測者必然知道的事。 全知未指定 as_faction（全局視角）→ observer 為 null、relations 為空（全局視角不套敵我著色）。 */
+        get: operations["getFactionRelations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/intel": {
         parameters: {
             query?: never;
@@ -978,6 +997,17 @@ export interface components {
             /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
             category: string;
             base_stats: Record<string, never>;
+        };
+        /** @description 以觀測者為中心的陣營關係（#91）。未宣告的配對一律回 HOSTILE（§12.1 預設）。 */
+        FactionRelationsView: {
+            /** @description 觀測者陣營；全知的全局視角為 null（無單一觀測者） */
+            observer: string | null;
+            /** @description 「觀測者 → 該陣營」的關係；observer 為 null 時為空物件 */
+            relations: {
+                [key: string]: "ALLIED" | "NEUTRAL" | "HOSTILE";
+            };
+            /** @description 本局所有陣營 id（供 UI 列舉；不含 WHITE_CELL） */
+            factions: string[];
         };
         /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 */
         ContactView: {
@@ -1807,6 +1837,40 @@ export interface operations {
                 };
             };
             /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getFactionRelations: {
+        parameters: {
+            query?: {
+                /** @description White Cell 視角切換——以該陣營為觀測者；一般角色帶他陣營→403 */
+                as_faction?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Relations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FactionRelationsView"];
+                };
+            };
+            /** @description 非參與者，或一般角色試圖以他陣營為觀測者 */
             403: {
                 headers: {
                     [name: string]: unknown;

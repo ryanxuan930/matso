@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import type { Contact, OwnUnit } from '~/composables/useUnits'
+import type { Contact, OwnUnit, Relation } from '~/composables/useUnits'
 import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composables/useUnits'
 import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
 import type { components } from '~/types/api'
 import type { ApiError } from '~/composables/useApi'
 import type { ContactView } from '~/composables/useIntel'
-import { fetchIntel, toContact } from '~/composables/useIntel'
+import { fetchIntel, fetchRelations, toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
 import { buildBasemapSources } from '~/composables/useMapStyle'
 import {
@@ -232,6 +232,8 @@ const intelContacts = ref<ContactView[]>([]) // 後端 fog 過濾後的敵情（
 // **不在前端過濾**——值只是帶給後端的 as_faction，實際可見性由後端決定（紅線 #3）。
 const viewpoint = ref<string>('')
 const sessionFactions = ref<string[]>([]) // 視角下拉選項（全局視角時取得，切視角後不縮）
+// #91 觀測者對各陣營的關係（後端以觀測者為中心給，不含第三方之間的結盟）。
+const factionRelations = ref<Record<string, string>>({})
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
 const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
@@ -383,10 +385,29 @@ function factionPower(units: UnitView[]): { pct: number; mass: number; ko: numbe
 // 觀測者陣營（#90）：白軍/管理員切了視角＝以該陣營之眼觀戰；否則為自身陣營。
 // 未選視角的純白軍為空字串＝全局 god view。#91/#92 皆以此為「我方」的判準。
 const observerFaction = computed(() => viewpoint.value || myFaction.value)
+
+/**
+ * 觀測者對某陣營的關係（#91）——2525 affiliation 的唯一依據。
+ *
+ * 己方恆 ALLIED；其餘查後端給的關係列。**未宣告 → HOSTILE**（SPEC §12.1 預設，
+ * 與後端 `FactionRelations` 同一語義；不在前端另立一套判敵規則）。
+ * faction 為 undefined（contact 未達 IDENTIFIED，敵我尚未揭露）→ 亦回 HOSTILE 保守標敵。
+ */
+function relationOf(faction?: string | null): Relation {
+  if (!faction) return 'HOSTILE'
+  if (faction === observerFaction.value) return 'ALLIED'
+  const r = factionRelations.value[faction]
+  return r === 'ALLIED' || r === 'NEUTRAL' ? r : 'HOSTILE'
+}
+/** 我方＋友軍（#91 共享視圖）：這些陣營的單位以 Friendly 外型呈現、且可被指揮判定沿用。 */
+function isFriendly(faction?: string | null): boolean {
+  return !observerFaction.value || relationOf(faction) === 'ALLIED'
+}
 // observerFaction 未知（純白軍全局視角）時，全部以友軍呈現以便至少可見。
+// #91：我方**與友軍（ALLIED）**皆列此（後端 units 已回共享視圖，此處符號一致以 Friendly 呈現）。
 const realAsOwn = computed<OwnUnit[]>(() =>
   realUnits.value
-    .filter((u) => !observerFaction.value || u.faction === observerFaction.value)
+    .filter((u) => isFriendly(u.faction))
     .map((u) => ({
       id: u.id,
       faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
@@ -405,11 +426,8 @@ const realAsOwn = computed<OwnUnit[]>(() =>
  * 現在一律以後端 fog 過濾後的 contacts 為準（未偵獲就是看不到），位置為最後已知。
  */
 const realAsContacts = computed<Contact[]>(() =>
-  intelContacts.value.map((c) =>
-    // relation 目前一律保守標敵：該局關係矩陣執行期尚不可得（見 #91）；faction 亦僅
-    // IDENTIFIED 才揭露。待關係矩陣接上後改為依觀測者關係決定 affiliation。
-    toContact(c, () => 'HOSTILE'),
-  ),
+  // #91：affiliation 依觀測者對該陣營的關係決定（未達 IDENTIFIED 時 faction 未揭露 → 保守標敵）。
+  intelContacts.value.map((c) => toContact(c, relationOf)),
 )
 // 固定示範一個 OFFLINE 虛影（fog of war demo，O4.4）
 const GHOST: OwnUnit = {
@@ -443,12 +461,16 @@ const contacts = computed<Contact[]>(() => [
 // 可作 ENGAGE 目標的真單位（他軍）——供下拉與地圖點選鎖定共用。
 const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
 const engageTargets = computed(() =>
-  realUnits.value.filter((u) => u.id !== selectedId.value && u.faction !== observerFaction.value),
+  realUnits.value.filter((u) => u.id !== selectedId.value && !isFriendly(u.faction)),
 )
 
 async function refresh() {
   realUnits.value = await fetchUnits(sessionId.value, viewpoint.value || null).catch(() => [])
   intelContacts.value = await fetchIntel(sessionId.value, viewpoint.value || null).catch(() => [])
+  // #91 關係矩陣：決定友/中/敵符號。取不到 → 空物件 → relationOf 退回 HOSTILE（保守標敵）。
+  factionRelations.value = await fetchRelations(sessionId.value, viewpoint.value || null)
+    .then((r) => r.relations ?? {})
+    .catch(() => ({}))
   // 視角下拉的選項來源：只在全局視角時更新（切了視角後 /units 只回該陣營，會把清單縮成一項）。
   if (!viewpoint.value) {
     sessionFactions.value = [...new Set(realUnits.value.map((u) => u.faction))].sort()
@@ -631,12 +653,12 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
 // 點地圖上的單位符號：我方 → 選取指揮；他軍（有選取的我方單位時）→ 鎖為 ENGAGE 目標。
 function onUnitClick(e: { id: string; faction: string; kind: string }) {
   const isReal = realUnitIds.value.has(e.id)
-  const isMine = isReal && e.faction === observerFaction.value
+  const isMine = isReal && isFriendly(e.faction)
   if (isMine) {
     selectUnit(e.id)
     return
   }
-  if (isReal && selectedId.value && e.faction !== observerFaction.value) {
+  if (isReal && selectedId.value && !isFriendly(e.faction)) {
     orderType.value = 'ENGAGE'
     targetUnitId.value = e.id
     targeting.value = false
@@ -680,13 +702,13 @@ const ctxIsMine = computed(
   () =>
     !!ctxMenu.value?.unitId &&
     realUnitIds.value.has(ctxMenu.value.unitId) &&
-    ctxMenu.value.faction === observerFaction.value,
+    isFriendly(ctxMenu.value.faction),
 )
 const ctxIsEnemy = computed(
   () =>
     !!ctxMenu.value?.unitId &&
     realUnitIds.value.has(ctxMenu.value.unitId) &&
-    ctxMenu.value.faction !== observerFaction.value,
+    !isFriendly(ctxMenu.value.faction),
 )
 const ctxUnitName = computed(() => {
   const id = ctxMenu.value?.unitId

@@ -7,6 +7,19 @@ import type { components } from '~/types/api'
 import type { Contact, Fidelity, Relation } from '~/composables/useUnits'
 
 export type ContactView = components['schemas']['ContactView']
+export type FactionRelationsView = components['schemas']['FactionRelationsView']
+
+/**
+ * 取「觀測者對各陣營」的關係（#91）——決定 2525 affiliation（友/中/敵）的唯一依據。
+ * 後端刻意只回以觀測者為中心的一列，不含第三方之間的結盟。
+ */
+export function fetchRelations(
+  sessionId: string,
+  asFaction?: string | null,
+): Promise<FactionRelationsView> {
+  const q = asFaction ? `?as_faction=${encodeURIComponent(asFaction)}` : ''
+  return apiFetch<FactionRelationsView>(`/sessions/${sessionId}/relations${q}`)
+}
 
 /**
  * 取 faction-scoped 敵情。

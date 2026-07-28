@@ -22,6 +22,7 @@ from app.cache import make_redis
 from app.config import Settings
 from app.errors import AuthForbiddenError, SessionNotFoundError
 from app.factions import validate_faction_id
+from app.factions.session_store import load_session_relations
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.state.live_position import push_pos_cmd
 from app.stream.faction_filter import is_omniscient
@@ -85,6 +86,23 @@ def _platform_count(u: TacticalUnit) -> int:
     return 1
 
 
+def _visible_factions(db: Session, session_id: str, observer: str) -> list[str]:
+    """觀測者直接看得到的陣營＝**自己 + 盟軍**（#91 共享視圖）。
+
+    偵測 sweep 早就假定「己方與 ALLIED 不成 contact（盟軍經共享視圖，非偵測）」
+    （`intel/sweep.py`），但那個共享視圖從來沒實作——units 一直是嚴格 `== faction`。
+    #98 把關係矩陣接上後，盟軍變成既不在 units、也不在 contacts，等於互相隱形。此函式補上該視圖。
+
+    NEUTRAL/HOSTILE 不在此列：那些要靠偵測（`/intel`），看不看得到由 fog 決定。
+    """
+    observer = validate_faction_id(observer)
+    rel = load_session_relations(db, session_id)
+    factions = db.scalars(
+        select(TacticalUnit.faction).where(TacticalUnit.session_id == session_id).distinct()
+    ).all()
+    return [f for f in factions if f == observer or rel.is_allied(observer, f)]
+
+
 @router.get("/{session_id}/units", response_model=list[UnitView])
 def list_units(
     session_id: str,
@@ -104,11 +122,13 @@ def list_units(
         # 視角切換（White Cell 控制台，O7.4）：僅全知可指定；非全知者禁止（防越權窺視）。
         if not omniscient:
             raise AuthForbiddenError("僅 White Cell 可切換視角")
-        stmt = stmt.where(TacticalUnit.faction == validate_faction_id(as_faction))
+        stmt = stmt.where(TacticalUnit.faction.in_(_visible_factions(db, session_id, as_faction)))
     elif not omniscient and not settings.stub_gateway:
         # 一般角色：faction 過濾下推 SQL（C12）；STUB_GATEWAY E2E affordance 放行全單位。
         assert participant is not None  # 非全知 → 必為參與者（上方已 require）
-        stmt = stmt.where(TacticalUnit.faction == participant.faction)
+        stmt = stmt.where(
+            TacticalUnit.faction.in_(_visible_factions(db, session_id, participant.faction))
+        )
     # else：全知且未指定視角 → 全部（god view）
 
     units = db.execute(stmt).scalars().all()

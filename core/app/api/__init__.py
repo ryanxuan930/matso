@@ -14,6 +14,7 @@ from app.api.movement import router as movement_router
 from app.api.orbat import router as orbat_router
 from app.api.orders import router as orders_router
 from app.api.participants import router as participants_router
+from app.api.relations import router as relations_router
 from app.api.scenarios import router as scenarios_router
 from app.api.system import router as system_router
 from app.api.units import router as units_router
@@ -35,6 +36,7 @@ __all__ = [
     "orbat_router",
     "orders_router",
     "participants_router",
+    "relations_router",
     "scenarios_router",
     "system_router",
     "units_router",
