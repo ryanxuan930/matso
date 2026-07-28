@@ -35,10 +35,9 @@ from app.engine.kernel import Kernel
 from app.engine.logistics import ResupplySystem
 from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
-from app.engine.subsystems import (
-    NoOpSensorSystem,
-    NoOpTriggerChecker,
-)
+from app.engine.sensor_wiring import SensorResolver, make_detect_env
+from app.engine.subsystems import NoOpTriggerChecker
+from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.movement.terrain_sampler import build_terrain_cell_sampler, build_terrain_path_fn
@@ -196,6 +195,8 @@ class SimManager:
             resolver, seed = await asyncio.to_thread(
                 self._prepare_engage, engage_db, session_id, hot
             )
+            # #97 偵測：單位→感測器規格/陣營的解析（一次建好快取，sweep 每 tick 查）。
+            sensor_resolver = await asyncio.to_thread(SensorResolver, engage_db, session_id)
             sim_clock = SimClock(tick_rate_ms=_TICK_RATE_MS)
             kernel = Kernel(
                 session_id=session_id,
@@ -222,7 +223,16 @@ class SimManager:
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
                     path_fn=build_terrain_path_fn(),  # #82 A* 繞路（不可達→直線）
                 ),
-                sensors=NoOpSensorSystem(),
+                # #97 偵測（取代 NoOp）：每 tick 掃描 → 落 per-faction contacts
+                sensors=SensorSweepSystem(
+                    db=engage_db,
+                    session_id=session_id,
+                    hot_state=hot,
+                    rng=DeterministicRNG(seed, "sensors"),
+                    sensor_for=sensor_resolver.sensor_for,
+                    faction_for=sensor_resolver.faction_for,
+                    env_for=make_detect_env(_engage_gateway(), _weather_snapshot()),
+                ),
                 comms=CommsSystem(  # #33 通訊子系統（取代 NoOp）：每 5 tick 重算鏈路狀態
                     session_id=session_id,
                     session_factory=self._factory,
