@@ -173,10 +173,15 @@ const basemapSources = buildBasemapSources({
   onlineBasemaps: _cfg.onlineBasemaps as boolean,
 })
 let basemapErrorHandled = false // 每次切底圖重置，避免 404 洪水重複 emit
+// style 尚未 load 完成前不得增刪圖層：addSource/addLayer 會丟 "Style is not done loading"，
+// 且 getStyle() 回 undefined。此時略過即可——load handler 會以當下最新的 basemapId 再套一次，
+// 故載入中的切換不會遺失。**不可改用 map.isStyleLoaded()**：它是「fully loaded」語意，任何來源
+// 尚在載瓦片時也回 false（實測加完 source 的下一拍即為 false），會誤擋正常的切底圖。
+let styleReady = false
 
 /** 移除現有底圖（raster 'basemap' 或 vector 'basemap-*' 圖層）+ 來源。 */
 function removeBasemap() {
-  if (!map) return
+  if (!map || !styleReady) return
   const ids = (map.getStyle().layers ?? [])
     .map((l) => l.id)
     .filter((id) => id === 'basemap' || id.startsWith('basemap-'))
@@ -186,7 +191,7 @@ function removeBasemap() {
 
 /** 套用底圖來源：raster → 單一 raster 層；vector → OpenMapTiles 深色圖層組（皆置於 graticule 之下）。 */
 function applyBasemap(id: string) {
-  if (!map) return
+  if (!map || !styleReady) return // 見 styleReady 註解：load 後會以最新值再套一次
   basemapErrorHandled = false // 重新武裝回退偵測
   removeBasemap()
   const src = basemapSources.find((s) => s.id === id)
@@ -553,6 +558,7 @@ onMounted(async () => {
 
   map.on('load', () => {
     if (!map) return
+    styleReady = true // 自此可安全增刪圖層；下方 applyBasemap 會補套載入中被略過的切換
     map.addSource(GRAT_SRC, { type: 'geojson', data: buildGraticule() })
     map.addLayer({
       id: 'graticule',
@@ -1200,6 +1206,7 @@ function applyTargetingCursor() {
 onBeforeUnmount(() => {
   map?.remove()
   map = null
+  styleReady = false
 })
 
 watch(

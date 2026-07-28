@@ -344,6 +344,34 @@ function liveHealth(u: UnitView): number | undefined {
   return (typeof p?.health === 'number' ? p.health : u.health) ?? undefined
 }
 
+/**
+ * 單位量體＝加權平均的權重。用滿編戰力（TO&E 分母，與規模同單位）；
+ * 缺值退平台/建制數，再缺退 1（此時等同未加權平均）。
+ */
+function unitMass(u: UnitView): number {
+  const m = u.authorized_strength ?? u.platform_count ?? 1
+  return m > 0 ? m : 1
+}
+
+/**
+ * 陣營戰力＝各單位作戰效能%以量體加權平均（Σ 量體×效能 ÷ Σ 量體）。
+ * 一個連跌到 50% 不該和一個營跌到 50% 等重，故不用單純平均。
+ * **被摧毀單位仍計入分母**（量體照算、效能 0）——否則全滅的陣營會顯示 100%。
+ */
+function factionPower(units: UnitView[]): { pct: number; mass: number; ko: number } {
+  let weighted = 0
+  let mass = 0
+  let ko = 0
+  for (const u of units) {
+    const w = unitMass(u)
+    const h = Math.min(100, Math.max(0, liveHealth(u) ?? 100))
+    if (h <= 0) ko += 1
+    weighted += w * h
+    mass += w
+  }
+  return { pct: mass > 0 ? weighted / mass : 0, mass, ko }
+}
+
 // 真單位依「我方 / 他軍」分流渲染：我方＝友軍符號（可選取指揮）；他軍＝敵情符號（可鎖為攻擊目標）。
 // myFaction 未知（純白軍全知）時，全部以友軍呈現以便至少可見。
 const realAsOwn = computed<OwnUnit[]>(() =>
@@ -733,7 +761,7 @@ const unitsByFaction = computed(() => {
   }
   return [...groups.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([faction, units]) => ({ faction, units }))
+    .map(([faction, units]) => ({ faction, units, power: factionPower(units) }))
 })
 
 // ---- 裝備管理（COP 專屬面板）：白軍編任一單位編裝 + 設各軍自編權限；或本軍（該局開放自編）----
@@ -1726,13 +1754,22 @@ watch(
             <button
               class="ufac-hd"
               data-testid="unit-faction-head"
-              :title="`${g.faction}（${g.units.length}）— 點擊收合/展開`"
+              :title="`${g.faction}：${g.units.length} 單位、戰力 ${Math.round(g.power.pct)}%`
+                + `（各單位效能以量體加權平均，總量體 ${Math.round(g.power.mass)}）`
+                + (g.power.ko ? `；已折損 ${g.power.ko} 個單位` : '')
+                + ' — 點擊收合/展開'"
               @click="toggleFactionGroup(g.faction)"
             >
               <i class="pi" :class="collapsedFactions.has(g.faction) ? 'pi-chevron-right' : 'pi-chevron-down'" />
               <span class="u-dot" :style="{ background: factionColor(g.faction) }" />
               <b>{{ g.faction }}</b>
               <span class="ufac-count">· {{ g.units.length }}</span>
+              <span
+                class="ufac-pow"
+                :style="{ color: healthColor(Math.round(g.power.pct)) }"
+                data-testid="unit-faction-power"
+              >{{ Math.round(g.power.pct) }}%</span>
+              <span v-if="g.power.ko" class="ufac-ko">✖{{ g.power.ko }}</span>
             </button>
             <ul v-show="!collapsedFactions.has(g.faction)" class="ufac-units">
               <li
@@ -3034,6 +3071,17 @@ watch(
 .ufac-count {
   color: #64748b;
   font-size: 0.75rem;
+}
+/* 陣營戰力（量體加權）——靠右對齊，與各單位的效能%同一套色帶。 */
+.ufac-pow {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ufac-ko {
+  color: #ef4444;
+  font-size: 0.7rem;
 }
 .ufac-units {
   list-style: none;
