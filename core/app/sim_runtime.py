@@ -248,7 +248,8 @@ class SimManager:
                     hot_state=hot,
                 ),
                 trigger_checker=NoOpTriggerChecker(),
-                broadcaster=RedisBroadcaster(client, session_id),
+                # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）。
+                broadcaster=RedisBroadcaster(client, session_id, sensor_resolver.faction_for),
                 event_sink=LedgerWriter(self._factory),
                 hot_state=hot,
                 wall_clock=PerfCounterClock(),

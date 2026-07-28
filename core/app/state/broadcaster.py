@@ -11,7 +11,7 @@ WebSocket 客戶端 fan-out（訂閱頻道、依 faction 過濾、推給前端�
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import redis
@@ -27,7 +27,35 @@ RING_CAPACITY = 5000  # §16.2：保留最近 5000 條供重連補送
 _FEED_EXCLUDE = frozenset({"UNIT_MOVED", "TICK_OVERRUN"})
 
 
-def build_event_envelope(event: LedgerEvent) -> dict[str, Any]:
+FactionLookup = Callable[[str], str]
+
+
+def event_audience(event: LedgerEvent, faction_for: FactionLookup | None) -> list[str] | None:
+    """事件的受眾陣營（fog of war）。回 None ＝ 全域事件（所有人可見）。
+
+    規則：
+    - **`observer_faction` 存在時它就是唯一受眾**（SENSOR_CONTACT）。這條必須優先——該事件的
+      `target_id` 是「被偵測到的單位」，若按 unit 推導受眾，等於通知對方「你被發現了」。
+    - 否則取事件所涉單位的陣營（射手/目標）。一次交戰同時關乎兩方，故是清單。
+    - 都沒有（SESSION_CONCLUDED / FACTION_RELATION_CHANGED / TICK_OVERRUN…）→ None ＝全域。
+
+    `faction_for` 為 None（測試/合成想定）→ 一律 None，維持既有「全部廣播」行為不變。
+    """
+    if faction_for is None:
+        return None
+    decision = event.ai_decision if isinstance(event.ai_decision, dict) else {}
+    observer = decision.get("observer_faction")
+    if isinstance(observer, str) and observer:
+        return [observer]
+    factions = {
+        f for uid in (event.initiator_id, event.target_id) if uid for f in (faction_for(uid),) if f
+    }
+    return sorted(factions) or None
+
+
+def build_event_envelope(
+    event: LedgerEvent, faction_for: FactionLookup | None = None
+) -> dict[str, Any]:
     """把 LedgerEvent 壓成精簡的 EVENT envelope payload（供戰況 feed；ID→番號由前端對映）。"""
     payload: dict[str, Any] = {"event_type": event.event_type, "tick": event.tick}
     if event.initiator_id:
@@ -52,7 +80,11 @@ def build_event_envelope(event: LedgerEvent) -> dict[str, Any]:
     ):
         if isinstance(event.ai_decision, dict) and k in event.ai_decision:
             payload[k] = event.ai_decision[k]
-    return {"v": 1, "seq": 0, "type": "EVENT", "payload": payload}
+    envelope: dict[str, Any] = {"v": 1, "seq": 0, "type": "EVENT", "payload": payload}
+    audience = event_audience(event, faction_for)
+    if audience is not None:
+        envelope["factions"] = audience  # fog of war：僅相關陣營（+全知）收得到
+    return envelope
 
 
 def build_state_diff_envelope(seq: int, tick: int, diff: SessionDiff) -> dict[str, Any]:
@@ -85,9 +117,16 @@ class RedisBroadcaster:
       reset_stream() 讓新串流從乾淨狀態開始（契約見 contracts/ws_protocol.md）。
     """
 
-    def __init__(self, redis_client: redis.Redis, session_id: str) -> None:
+    def __init__(
+        self,
+        redis_client: redis.Redis,
+        session_id: str,
+        faction_for: FactionLookup | None = None,
+    ) -> None:
         self._redis = redis_client
         self._session_id = session_id
+        # fog of war：unit → faction，用來標事件受眾。None（測試/合成想定）→ 不標＝維持全廣播。
+        self._faction_for = faction_for
 
     def _seq_key(self) -> str:
         return f"session:{self._session_id}:broadcast_seq"
@@ -138,7 +177,7 @@ class RedisBroadcaster:
                 seq_key=self._seq_key(),
                 ring_key=self._ring_key(),
                 channel=self._channel(),
-                envelope=build_event_envelope(e),
+                envelope=build_event_envelope(e, self._faction_for),
                 ring_capacity=RING_CAPACITY,
             )
 

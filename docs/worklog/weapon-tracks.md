@@ -64,5 +64,21 @@ spec: SPEC_FULL §13.3（COP 顯示）、§7.1（交戰裁決——本卡只讀�
 ## 未做
 - 彈道飛彈的拋物線軌跡：目前一律畫直線。後端 `adjudication/trajectory.py` 有拋物線淨空判定，
   但未輸出弧線幾何；要畫真弧線需後端提供取樣點（且同樣受上述迷霧洩漏限制）。
-- 交戰事件本身缺 faction 受眾標籤（既有問題，非本卡造成）——各陣營目前都收得到他方的交戰事件
-  文字。要修屬事件通道的迷霧強化，已記於此供後續開卡。
+- ~~交戰事件本身缺 faction 受眾標籤~~ → **已於同批解決**（見下）。
+
+## 追加：事件受眾標籤（本檔提出的問題，隨後即修）
+Kernel 發出的事件原本**完全沒有受眾標籤**，`is_visible` 因而一律放行 → 每個陣營都收得到
+他方的交戰與偵測事件。修法：
+
+- `faction_filter.is_visible` 支援 `factions` **清單**受眾（一次交戰同時關乎射手與目標兩方；
+  原本的單一 `faction` 欄位保留給 API 端 `publish_event`，向後相容）。
+- `broadcaster.event_audience(event, faction_for)` 導出受眾：
+  **`observer_faction` 優先且為唯一受眾**（SENSOR_CONTACT）→ 否則取所涉單位的陣營 → 都沒有則
+  為全域事件（不標）。
+- `RedisBroadcaster` 接受 `faction_for`；sim_runtime 注入 `SensorResolver.faction_for`（已現成）。
+
+**最關鍵的一條**：SENSOR_CONTACT 的 `target_id` 是「被偵測到的單位」。若照 unit 推導受眾，
+等於通知對方「你被發現了」——**比原本的全廣播更糟**。故 `observer_faction` 必須優先。有測試釘住。
+
+**未注入 `faction_for`（測試/合成想定）→ 不標受眾 ＝ 行為與加此功能前完全相同**，
+故 golden 與既有測試零影響。8 條新測試；pytest 1096 passed / 8 skipped。
