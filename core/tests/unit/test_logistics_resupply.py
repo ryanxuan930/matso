@@ -234,3 +234,43 @@ def test_stranded_unit_can_move_again_after_refuel(
     with session_factory() as db:
         t = db.get(TacticalUnit, tgt)
         assert t.current_lng > before[1]  # 救回來了：確實往東前進
+
+
+def test_resupplies_ammo_too(session_factory: sessionmaker[Session]) -> None:
+    """#87：補給車同時撥交油料與**彈藥**（彈藥補到 basic_load）。"""
+    with session_factory() as db:
+        db.add(WargameSession(id=_SID, name="x", master_seed=1, current_weather={}))
+        db.flush()
+        sup = _unit(db, "SUP", "BLUE", _POS)
+        tgt = _unit(db, "T1", "BLUE", _POS)
+        truck = {**_TRUCK_LOG, "capacity": {"FUEL": 5000, "AMMO": 5000}}
+        _equip(db, sup, "TRUCK_AMMO", {"logistics": truck})
+        _equip(db, tgt, "TANK_T", {"mobility": _TANK_VEH}, {"fuel": 0.0})
+        # 目標的槍打到只剩 10 發（basic_load 預設 100）。
+        _equip(
+            db,
+            tgt,
+            "RIFLE_T",
+            {
+                "max_range_m": 600,
+                "ph_by_range_band": [[600, 0.5]],
+                "damage_by_armor_class": {},
+                "ammo_types": ["A"],
+            },
+            {"ammo": 10},
+        )
+        _resupply_order(db, sup, tgt)
+        db.commit()
+        tgt_id = tgt.id
+    events = _run(session_factory, 6)
+    assert any(e.detail.get("ammo", 0) > 0 for e in events), "應有彈藥撥交"
+    with session_factory() as db:
+        rifle = [
+            i
+            for i in db.execute(
+                select(EquipmentInstance).where(EquipmentInstance.owner_id == tgt_id)
+            ).scalars()
+            if "ammo" in (i.current_state or {})
+        ]
+        assert rifle and rifle[0].current_state["ammo"] == 100  # 補到 basic_load
+        assert load_unit_fuel(db, tgt_id).remaining > 0  # 油也加了

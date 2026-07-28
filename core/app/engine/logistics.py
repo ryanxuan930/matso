@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.engine.clock import SimTime
 from app.engine.movement import _haversine_km
 from app.models import Order, OrderStatus, TacticalUnit
+from app.models.tables import EquipmentInstance, EquipmentTemplate
 from app.movement.fuel import load_supply_cargo, load_unit_fuel, refuel
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
@@ -27,6 +28,49 @@ from app.state.ledger import LedgerEvent
 RESUPPLY_RANGE_KM = 2.0
 # 無 `resupply_rate_per_tick` 定義時的預設撥交速率（油量單位/tick）。
 _DEFAULT_RATE = 200.0
+
+
+_DEFAULT_BASIC_LOAD = 100.0  # 滿彈基準後備（契約 kinetic.basic_load 未定義時）
+
+
+def _ammo_shortfall(db: Session, unit_id: str) -> list[tuple[EquipmentInstance, float]]:
+    """回 [(武器 instance, 缺彈量)]——缺彈＝basic_load − 現有 ammo（#87）。"""
+    rows = db.execute(
+        select(EquipmentInstance, EquipmentTemplate.base_stats)
+        .join(EquipmentTemplate, EquipmentTemplate.id == EquipmentInstance.template_id)
+        .where(EquipmentInstance.owner_id == unit_id)
+    ).all()
+    out: list[tuple[EquipmentInstance, float]] = []
+    for inst, stats in rows:
+        if not isinstance(stats, dict) or "ammo_types" not in stats:
+            continue  # 非射擊武器（載具/後勤）不補彈
+        raw_full = stats.get("basic_load")
+        if isinstance(raw_full, (int, float)) and raw_full > 0:
+            full = float(raw_full)
+        else:
+            full = _DEFAULT_BASIC_LOAD
+        full *= max(1, int(inst.quantity or 1))  # #30 建制數量
+        state = inst.current_state if isinstance(inst.current_state, dict) else {}
+        have = state.get("ammo")
+        have_f = float(have) if isinstance(have, (int, float)) else 0.0
+        if full - have_f > 0:
+            out.append((inst, full - have_f))
+    return out
+
+
+def _refill_ammo(items: list[tuple[EquipmentInstance, float]], amount: float) -> float:
+    """把 `amount` 依缺口順序補進各武器 `current_state["ammo"]`。回實際補入量。"""
+    added = 0.0
+    for inst, short in items:
+        if amount - added <= 0:
+            break
+        take = min(short, amount - added)
+        state = inst.current_state if isinstance(inst.current_state, dict) else {}
+        have = state.get("ammo")
+        have_f = float(have) if isinstance(have, (int, float)) else 0.0
+        inst.current_state = {**state, "ammo": round(have_f + take, 2)}
+        added += take
+    return added
 
 
 class ResupplySystem:
@@ -106,34 +150,49 @@ class ResupplySystem:
                 o.status = OrderStatus.EXECUTING  # 標記已受理，等補給車接近
             return None
 
-        cargo = load_supply_cargo(db, o.unit_id)
-        if not cargo.has_fuel_cargo:
+        # #87：本 tick 依序撥交**油料**與**彈藥**（各自有載運量與缺口）。
+        fuel_cargo = load_supply_cargo(db, o.unit_id, "FUEL")
+        ammo_cargo = load_supply_cargo(db, o.unit_id, "AMMO")
+        if not fuel_cargo.has_cargo and not ammo_cargo.has_cargo:
             return self._fail(o, now, "NOT_A_SUPPLY_UNIT")
-        fuel = load_unit_fuel(db, target.id)
-        if not fuel.tanks:
-            return self._fail(o, now, "TARGET_NEEDS_NO_FUEL", target_unit_id=target.id)
 
-        room = fuel.capacity - fuel.remaining
-        if room <= 0:
+        fuel = load_unit_fuel(db, target.id)
+        fuel_room = fuel.capacity - fuel.remaining
+        ammo_items = _ammo_shortfall(db, target.id)
+        ammo_room = sum(short for _i, short in ammo_items)
+        if fuel_room <= 0 and ammo_room <= 0:
             o.status = OrderStatus.COMPLETED
             return LedgerEvent(
                 event_type="RESUPPLY_COMPLETED",
                 tick=now.tick,
                 initiator_id=o.unit_id,
                 target_id=target.id,
-                detail={"order_id": o.id, "reason": "TARGET_FULL", "transferred": 0.0},
+                detail={"order_id": o.id, "reason": "TARGET_FULL", "fuel": 0.0, "ammo": 0.0},
             )
-        if cargo.remaining <= 0:
+        if fuel_cargo.remaining <= 0 and ammo_cargo.remaining <= 0:
             return self._fail(o, now, "CARGO_EMPTY", target_unit_id=target.id)
 
-        rate = cargo.rate_per_tick if cargo.rate_per_tick > 0 else _DEFAULT_RATE
-        drawn = cargo.draw(min(rate, room))
-        added = refuel(fuel, drawn)
-        self._hot_state.update_unit(target.id, {"fuel": round(fuel.remaining, 2)})
+        fuel_added = 0.0
+        if fuel_room > 0 and fuel_cargo.remaining > 0:
+            rate = fuel_cargo.rate_per_tick if fuel_cargo.rate_per_tick > 0 else _DEFAULT_RATE
+            fuel_added = refuel(fuel, fuel_cargo.draw(min(rate, fuel_room)))
+            self._hot_state.update_unit(target.id, {"fuel": round(fuel.remaining, 2)})
+        ammo_added = 0.0
+        if ammo_room > 0 and ammo_cargo.remaining > 0:
+            rate = ammo_cargo.rate_per_tick if ammo_cargo.rate_per_tick > 0 else _DEFAULT_RATE
+            ammo_added = _refill_ammo(ammo_items, ammo_cargo.draw(min(rate, ammo_room)))
         o.status = OrderStatus.EXECUTING
 
-        filled = fuel.capacity - fuel.remaining <= 1e-6
-        if filled or cargo.remaining <= 0:
+        fuel_done = fuel.capacity - fuel.remaining <= 1e-6
+        ammo_done = ammo_room - ammo_added <= 1e-6
+        cargo_dry = fuel_cargo.remaining <= 0 and ammo_cargo.remaining <= 0
+        detail = {
+            "order_id": o.id,
+            "fuel": round(fuel_added, 2),
+            "ammo": round(ammo_added, 2),
+            "target_fuel": round(fuel.remaining, 2),
+        }
+        if (fuel_done and ammo_done) or cargo_dry:
             o.status = OrderStatus.COMPLETED
             return LedgerEvent(
                 event_type="RESUPPLY_COMPLETED",
@@ -141,10 +200,8 @@ class ResupplySystem:
                 initiator_id=o.unit_id,
                 target_id=target.id,
                 detail={
-                    "order_id": o.id,
-                    "reason": "TARGET_FULL" if filled else "CARGO_EMPTY",
-                    "transferred": round(added, 2),
-                    "target_fuel": round(fuel.remaining, 2),
+                    **detail,
+                    "reason": "TARGET_FULL" if fuel_done and ammo_done else "CARGO_EMPTY",
                 },
             )
         return LedgerEvent(
@@ -152,10 +209,5 @@ class ResupplySystem:
             tick=now.tick,
             initiator_id=o.unit_id,
             target_id=target.id,
-            detail={
-                "order_id": o.id,
-                "transferred": round(added, 2),
-                "target_fuel": round(fuel.remaining, 2),
-                "cargo_remaining": round(cargo.remaining, 2),
-            },
+            detail={**detail, "cargo_fuel": round(fuel_cargo.remaining, 2)},
         )

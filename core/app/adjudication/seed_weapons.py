@@ -165,7 +165,7 @@ SEED_VEHICLES: dict[str, dict[str, Any]] = {
 SEED_LOGISTICS: dict[str, dict[str, Any]] = {
     "FUEL_TRUCK": {
         "logistics": {
-            "capacity": {"FUEL": 10000},  # 約可加滿 5 輛 MBT
+            "capacity": {"FUEL": 10000, "AMMO": 5000},  # 約可加滿 5 輛 MBT + 補彈
             "resupply_rate_per_tick": 400,  # 每分鐘撥交 400（滿油 MBT 約需 5 分鐘）
             "crew": 2,
             "mobility": {
