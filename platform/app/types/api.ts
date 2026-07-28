@@ -277,6 +277,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/intel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description faction-scoped 敵情（fog of war）：一般角色見自身陣營的偵測結果；全知不帶參數＝god view （全部陣營的 contacts），帶 as_faction＝以該陣營視角查。**已依 fidelity 去識別化** （target_unit_id 這類 ground truth 永不下發）。 */
+        get: operations["listIntel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/participants": {
         parameters: {
             query?: never;
@@ -959,6 +978,30 @@ export interface components {
             /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
             category: string;
             base_stats: Record<string, never>;
+        };
+        /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 */
+        ContactView: {
+            /** @description 觀測方的 IntelContact id（非目標 unit id） */
+            contact_id: string;
+            /**
+             * @description 情報等級
+             * @enum {string}
+             */
+            fidelity: "DETECTED" | "CLASSIFIED" | "IDENTIFIED";
+            /** @description 最後觀測到的 sim tick */
+            last_seen_tick: number;
+            /** @description 最後已知緯度 */
+            lat: number;
+            /** @description 最後已知經度 */
+            lng: number;
+            /** @description 定位誤差半徑（m）；等級愈高愈小 */
+            error_radius_m: number;
+            /** @description CLASSIFIED 以上才揭露（unit_level） */
+            unit_type?: string | null;
+            /** @description IDENTIFIED 才揭露 */
+            designation?: string | null;
+            /** @description IDENTIFIED 才揭露敵我 */
+            faction?: string | null;
         };
         /** @description 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面） */
         MapFeatureView: {
@@ -1764,6 +1807,40 @@ export interface operations {
                 };
             };
             /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listIntel: {
+        parameters: {
+            query?: {
+                /** @description White Cell 視角切換——查某陣營的敵情；一般角色帶他陣營→403 */
+                as_faction?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contacts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactView"][];
+                };
+            };
+            /** @description 非參與者，或一般角色試圖查他陣營情報 */
             403: {
                 headers: {
                     [name: string]: unknown;

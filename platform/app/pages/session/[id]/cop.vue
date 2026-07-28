@@ -4,6 +4,8 @@ import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composa
 import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
 import type { components } from '~/types/api'
 import type { ApiError } from '~/composables/useApi'
+import type { ContactView } from '~/composables/useIntel'
+import { fetchIntel, toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
 import { buildBasemapSources } from '~/composables/useMapStyle'
 import {
@@ -225,6 +227,11 @@ const syntheticUnits = computed<OwnUnit[]>(() => {
 
 // 真單位（GET /units；下令對象）
 const realUnits = ref<UnitView[]>([])
+const intelContacts = ref<ContactView[]>([]) // 後端 fog 過濾後的敵情（#90）
+// 視角切換（#90）：僅全知角色可用。'' = 全局 god view；否則＝以該陣營之眼觀戰（套其戰場迷霧）。
+// **不在前端過濾**——值只是帶給後端的 as_faction，實際可見性由後端決定（紅線 #3）。
+const viewpoint = ref<string>('')
+const sessionFactions = ref<string[]>([]) // 視角下拉選項（全局視角時取得，切視角後不縮）
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
 const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
@@ -373,10 +380,13 @@ function factionPower(units: UnitView[]): { pct: number; mass: number; ko: numbe
 }
 
 // 真單位依「我方 / 他軍」分流渲染：我方＝友軍符號（可選取指揮）；他軍＝敵情符號（可鎖為攻擊目標）。
-// myFaction 未知（純白軍全知）時，全部以友軍呈現以便至少可見。
+// 觀測者陣營（#90）：白軍/管理員切了視角＝以該陣營之眼觀戰；否則為自身陣營。
+// 未選視角的純白軍為空字串＝全局 god view。#91/#92 皆以此為「我方」的判準。
+const observerFaction = computed(() => viewpoint.value || myFaction.value)
+// observerFaction 未知（純白軍全局視角）時，全部以友軍呈現以便至少可見。
 const realAsOwn = computed<OwnUnit[]>(() =>
   realUnits.value
-    .filter((u) => !myFaction.value || u.faction === myFaction.value)
+    .filter((u) => !observerFaction.value || u.faction === observerFaction.value)
     .map((u) => ({
       id: u.id,
       faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
@@ -387,22 +397,19 @@ const realAsOwn = computed<OwnUnit[]>(() =>
       isFixed: u.is_fixed, // 固定單位（指揮部等）→ 地圖鎖頭徽章
     })),
 )
+/**
+ * 敵情 contacts（#90）：**取自後端偵測結果**（`/intel`），不再由 `/units` 反推。
+ *
+ * 舊做法是「拿 units 裡非我方的挑出來當敵情」，那有兩個問題：一般陣營角色的 `/units`
+ * 只回己方 → 敵情恆為空（實際上就是看不到敵人）；白軍全知 → 等於把 ground truth 當敵情。
+ * 現在一律以後端 fog 過濾後的 contacts 為準（未偵獲就是看不到），位置為最後已知。
+ */
 const realAsContacts = computed<Contact[]>(() =>
-  myFaction.value
-    ? realUnits.value
-        .filter((u) => u.faction !== myFaction.value)
-        .map((u) => ({
-          contactId: u.id,
-          fidelity: 'IDENTIFIED' as const,
-          ...livePos(u),
-          errorRadiusM: 0,
-          designation: u.designation,
-          lastSeenTick: 100,
-          faction: u.faction,
-          relation: 'HOSTILE' as const, // 前端保守標敵；真 ROE 由後端關係矩陣裁決
-          health: liveHealth(u), // 敵情血量：STATE_DIFF 已帶 ground truth → 供地圖血量環/摧毀顯示
-        }))
-    : [],
+  intelContacts.value.map((c) =>
+    // relation 目前一律保守標敵：該局關係矩陣執行期尚不可得（見 #91）；faction 亦僅
+    // IDENTIFIED 才揭露。待關係矩陣接上後改為依觀測者關係決定 affiliation。
+    toContact(c, () => 'HOSTILE'),
+  ),
 )
 // 固定示範一個 OFFLINE 虛影（fog of war demo，O4.4）
 const GHOST: OwnUnit = {
@@ -436,11 +443,16 @@ const contacts = computed<Contact[]>(() => [
 // 可作 ENGAGE 目標的真單位（他軍）——供下拉與地圖點選鎖定共用。
 const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
 const engageTargets = computed(() =>
-  realUnits.value.filter((u) => u.id !== selectedId.value && u.faction !== myFaction.value),
+  realUnits.value.filter((u) => u.id !== selectedId.value && u.faction !== observerFaction.value),
 )
 
 async function refresh() {
-  realUnits.value = await fetchUnits(sessionId.value).catch(() => [])
+  realUnits.value = await fetchUnits(sessionId.value, viewpoint.value || null).catch(() => [])
+  intelContacts.value = await fetchIntel(sessionId.value, viewpoint.value || null).catch(() => [])
+  // 視角下拉的選項來源：只在全局視角時更新（切了視角後 /units 只回該陣營，會把清單縮成一項）。
+  if (!viewpoint.value) {
+    sessionFactions.value = [...new Set(realUnits.value.map((u) => u.faction))].sort()
+  }
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
   // 我方陣營（決定友/敵渲染與目標可選集）+ 開局時間（#4 執行時間）——由 session 摘要取得。
   const sessions = await apiFetch<
@@ -471,6 +483,12 @@ const unitCardDrag = ref<{ x: number; y: number } | null>(null)
 // 選取換單位/取消選取時，讓卡片回到自動錨定（不沿用上一單位的手動位置）。
 watch(selectedId, () => {
   unitCardDrag.value = null
+})
+// 切換視角（#90）→ 重抓 units/intel（後端依 as_faction 套該陣營迷霧）；清掉屬於前一視角的選取。
+watch(viewpoint, async () => {
+  selectedId.value = null
+  targetUnitId.value = ''
+  await refresh()
 })
 // 卡片實際定位：拖曳過 → 手動座標；否則圖標右上方偏移，並夾在視窗內（卡片約 304×320）。
 const unitCardStyle = computed(() => {
@@ -613,12 +631,12 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
 // 點地圖上的單位符號：我方 → 選取指揮；他軍（有選取的我方單位時）→ 鎖為 ENGAGE 目標。
 function onUnitClick(e: { id: string; faction: string; kind: string }) {
   const isReal = realUnitIds.value.has(e.id)
-  const isMine = isReal && e.faction === myFaction.value
+  const isMine = isReal && e.faction === observerFaction.value
   if (isMine) {
     selectUnit(e.id)
     return
   }
-  if (isReal && selectedId.value && e.faction !== myFaction.value) {
+  if (isReal && selectedId.value && e.faction !== observerFaction.value) {
     orderType.value = 'ENGAGE'
     targetUnitId.value = e.id
     targeting.value = false
@@ -662,13 +680,13 @@ const ctxIsMine = computed(
   () =>
     !!ctxMenu.value?.unitId &&
     realUnitIds.value.has(ctxMenu.value.unitId) &&
-    ctxMenu.value.faction === myFaction.value,
+    ctxMenu.value.faction === observerFaction.value,
 )
 const ctxIsEnemy = computed(
   () =>
     !!ctxMenu.value?.unitId &&
     realUnitIds.value.has(ctxMenu.value.unitId) &&
-    ctxMenu.value.faction !== myFaction.value,
+    ctxMenu.value.faction !== observerFaction.value,
 )
 const ctxUnitName = computed(() => {
   const id = ctxMenu.value?.unitId
@@ -1566,6 +1584,22 @@ watch(
       <span class="count" data-testid="unit-count">單位 {{ ownUnits.length }}</span>
       <ClientOnly><SimClockBar :tick="stream.lastTick" :start-time="sessionStart" /></ClientOnly>
       <nav class="cop-nav">
+        <!-- 視角切換（#90）：僅全知角色。選陣營＝以該陣營之眼觀戰（後端套其戰場迷霧）。 -->
+        <label v-if="canControl" class="vp" :class="{ 'vp-on': !!viewpoint }">
+          <i class="pi pi-eye" />
+          <select
+            v-model="viewpoint"
+            data-testid="viewpoint"
+            :title="
+              viewpoint
+                ? `目前以 ${viewpoint} 視角觀戰：只看得到該陣營看得到的（含其偵測到的敵情）`
+                : '全局視角（全知）：看得到所有陣營的單位'
+            "
+          >
+            <option value="">全局視角（全知）</option>
+            <option v-for="f in sessionFactions" :key="f" :value="f">{{ f }} 視角</option>
+          </select>
+        </label>
         <button
           v-if="canControl && !mapEditMode"
           data-testid="nav-map-edit"
@@ -2823,6 +2857,34 @@ watch(
   background: transparent;
   color: #e2e8f0;
   cursor: pointer;
+}
+/* 視角切換（#90）：套了陣營視角時整顆變琥珀，提醒「你現在不是全知」。 */
+.vp {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  color: #94a3b8;
+}
+.vp select {
+  background: transparent;
+  border: 0;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.vp select option {
+  background: #0f172a;
+}
+.vp-on {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.vp-on select {
+  color: #f59e0b;
+  font-weight: 600;
 }
 .cop-nav button:hover {
   border-color: #2563eb;
