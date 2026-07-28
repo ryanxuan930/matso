@@ -246,3 +246,54 @@ def test_on_demand_fills_cells_outside_prebuilt_bbox(fixture_tiff: Path) -> None
         before = cache.on_demand_count
         cache.get_cell(outside)
         assert cache.on_demand_count == before
+
+
+# ---------------- #89 土地利用疊加 ----------------
+
+
+def _cell(h3_index: str, klass: str) -> object:
+    from terrain.hexgrid import CellAttributes, TerrainClass
+
+    return CellAttributes(
+        h3_index=h3_index,
+        center_lat=23.7,
+        center_lng=121.2,
+        elevation_mean=50.0,
+        elevation_max=60.0,
+        slope_deg=2.0,
+        terrain_class=TerrainClass(klass),
+        water=False,
+        mobility_cost=1.1,
+    )
+
+
+def test_landuse_overrides_dem_guess() -> None:
+    """#89：坡度猜的 WETLAND（低平台北）被真實土地利用改為 URBAN。"""
+    from terrain.hexgrid import HexGridCache, TerrainClass
+
+    c = "8a2a1072b59ffff"
+    cache = HexGridCache({c: _cell(c, "WETLAND")}).with_landuse({c: "URBAN"})
+    got = cache.get_cell(c)
+    assert got is not None and got.terrain_class is TerrainClass.URBAN
+    assert cache.landuse_count == 1
+
+
+def test_dem_water_and_mountain_win_over_landuse() -> None:
+    """DEM 的 WATER（海面）與 MOUNTAIN（陡峭）優先於土地利用——可通行性/機動難度為重。"""
+    from terrain.hexgrid import HexGridCache, TerrainClass
+
+    w, m = "8a2a1072b59ffff", "8a2a1072b5bffff"
+    cache = HexGridCache({w: _cell(w, "WATER"), m: _cell(m, "MOUNTAIN")}).with_landuse(
+        {w: "URBAN", m: "FOREST"}
+    )
+    assert cache.get_cell(w).terrain_class is TerrainClass.WATER
+    assert cache.get_cell(m).terrain_class is TerrainClass.MOUNTAIN
+
+
+def test_no_landuse_leaves_cells_untouched() -> None:
+    """未注入土地利用 → 完全維持既有（坡度推導）行為。"""
+    from terrain.hexgrid import HexGridCache, TerrainClass
+
+    c = "8a2a1072b59ffff"
+    cache = HexGridCache({c: _cell(c, "WETLAND")})
+    assert cache.get_cell(c).terrain_class is TerrainClass.WETLAND

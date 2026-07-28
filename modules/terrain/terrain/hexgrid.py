@@ -222,6 +222,20 @@ class HexGridCache:
         self._builder = builder
         self._on_demand: dict[str, CellAttributes] = {}  # 隨需計算的記憶化（不落 parquet）
         self._roads: dict[str, str] = {}  # #83 h3 → road_class（疊加，不改 terrain_class）
+        self._landuse: dict[str, str] = {}  # #89 h3 → 真實土地利用 terrain_class（修正坡度猜測）
+
+    def with_landuse(self, landuse: dict[str, str]) -> HexGridCache:
+        """注入土地利用索引（#89）——修正只靠坡度+高程猜不出的 URBAN/FOREST。
+
+        優先序（見 `_decorate`）：DEM 的 WATER（海面 nodata）與 MOUNTAIN（陡峭）**優先於**土地利用
+        ——前者關乎可通行性正確、後者關乎機動難度；其餘情形以真實土地利用為準。
+        """
+        self._landuse = landuse
+        return self
+
+    @property
+    def landuse_count(self) -> int:
+        return len(self._landuse)
 
     def with_roads(self, roads: dict[str, str]) -> HexGridCache:
         """注入道路索引（#83）。cell 的 terrain_class 不變，另帶 road_class 供移動加速。"""
@@ -233,11 +247,20 @@ class HexGridCache:
         return len(self._roads)
 
     def _decorate(self, cell: CellAttributes | None) -> CellAttributes | None:
-        """替 cell 貼上道路等級（#83）。無道路資料 → 原樣回傳。"""
-        if cell is None or not self._roads:
+        """疊加道路等級（#83）與真實土地利用（#89）。無對應資料 → 原樣回傳。"""
+        if cell is None:
             return cell
-        cls = self._roads.get(cell.h3_index)
-        return replace(cell, road_class=cls) if cls else cell
+        road = self._roads.get(cell.h3_index, "") if self._roads else ""
+        klass = cell.terrain_class
+        if self._landuse:
+            lu = self._landuse.get(cell.h3_index)
+            # DEM 的 WATER/MOUNTAIN 優先（可通行性與機動難度），其餘以土地利用為準。
+            keep_dem = klass in (TerrainClass.WATER, TerrainClass.MOUNTAIN)
+            if lu and not keep_dem:
+                klass = TerrainClass(lu)
+        if not road and klass is cell.terrain_class:
+            return cell
+        return replace(cell, road_class=road or cell.road_class, terrain_class=klass)
 
     def with_builder(self, builder: HexGridBuilder | None) -> HexGridCache:
         """回傳同一份快取但附上隨需 builder（服務層在 DTED 可用時注入）。"""
