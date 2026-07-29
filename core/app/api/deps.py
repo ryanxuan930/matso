@@ -20,6 +20,7 @@ from app.lobby.service import LobbyService
 from app.orders.precheck import LosOutcome, PhysicsGateway, TerrainGatewayAdapter
 from app.orders.service import OrderService
 from app.plugins import TerrainClient
+from app.state.hot_state import session_tick_key
 from app.state.ledger import LedgerWriter
 
 
@@ -114,7 +115,7 @@ def _order_redis() -> object:
 def _live_tick(session_id: str) -> int:
     """讀本 session 當前 sim tick（廣播器每 tick 寫入 `session:{id}:tick`）。無值→0。"""
     try:
-        raw = _order_redis().get(f"session:{session_id}:tick")  # type: ignore[attr-defined]
+        raw = _order_redis().get(session_tick_key(session_id))  # type: ignore[attr-defined]
         return int(raw) if raw is not None else 0
     except (ValueError, TypeError, ConnectionError):
         return 0

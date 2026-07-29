@@ -23,6 +23,15 @@ UnitDiff = dict[str, Any]
 SessionDiff = dict[str, UnitDiff]
 
 
+def session_tick_key(session_id: str) -> str:
+    """該 session 的當前 sim tick 鍵。broadcaster 每個活動 tick 寫、多處讀。
+
+    WP-E1 前這個字面值散在 4 個模組各自重複——它是崩潰復原的續接點來源（見
+    `app.state.resume`），寫錯一處就會讓某條路徑安靜地讀到 0。集中於此。
+    """
+    return f"session:{session_id}:tick"
+
+
 def compute_diff(old: Mapping[str, Any], new: Mapping[str, Any]) -> UnitDiff:
     """回傳 new 相對 old 的變動：新增或值不同的欄位（相同值不列入）。
 

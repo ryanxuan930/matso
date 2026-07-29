@@ -298,6 +298,10 @@ onMounted(async () => {
               <input v-model.number="sim.ai_max_orders" type="number" min="1" step="50">
               <small>runaway 守衛：超過即停該 worker</small>
             </label>
+            <label>狀態快照間隔（tick）
+              <input v-model.number="sim.checkpoint_interval_ticks" type="number" min="1" step="50">
+              <small>600 ≈ 5 分鐘牆鐘；崩潰最多回退一個間隔</small>
+            </label>
           </div>
           <h3 class="sim-h3">行軍耗損（戰力點 / 公里）</h3>
           <div class="grid2">

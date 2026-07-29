@@ -46,10 +46,12 @@ from app.runtime import PerfCounterClock, TickPacer, run_paced
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
 from app.sim_params import load_sim_params
 from app.state.broadcaster import RedisBroadcaster
+from app.state.checkpoint import CheckpointManager
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
 from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
 from app.state.live_position import apply_pos_cmds, drain_pos_cmds
+from app.state.resume import read_live_tick, resume_tick
 from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
@@ -95,11 +97,7 @@ def _weather_snapshot() -> WeatherState | None:
 
 def _read_live_tick(client: object, session_id: str) -> int:
     """讀 session 當前 sim tick（廣播器每 tick 寫）；供勝負事件戳記與 time 條件。無值→0。"""
-    try:
-        raw = client.get(f"session:{session_id}:tick")  # type: ignore[attr-defined]
-        return int(raw) if raw is not None else 0
-    except (ValueError, TypeError):
-        return 0
+    return read_live_tick(client, session_id) or 0
 
 
 class SimManager:
@@ -203,7 +201,14 @@ class SimManager:
             relations = await asyncio.to_thread(load_session_relations, engage_db, session_id)
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
-            sim_clock = SimClock(tick_rate_ms=sim_params.tick_rate_ms)  # #93 可調節奏
+            # WP-E1：從上次跑到的地方續接，而不是每次重建 runner 都回到 tick 0
+            # （core 重啟 / 崩潰 / restart 旗標 / rollback 都會走到這裡）。判定見 state/resume。
+            start_tick = await asyncio.to_thread(resume_tick, self._factory, client, session_id)
+            if start_tick:
+                _LOG.info("session %s 自 tick=%d 續跑", session_id, start_tick)
+            sim_clock = SimClock(  # #93 可調節奏
+                tick_rate_ms=sim_params.tick_rate_ms, start_tick=start_tick
+            )
             kernel = Kernel(
                 session_id=session_id,
                 clock=sim_clock,
@@ -260,6 +265,9 @@ class SimManager:
                 event_sink=LedgerWriter(self._factory),
                 hot_state=hot,
                 wall_clock=PerfCounterClock(),
+                # WP-E1：活局終於會落快照（O1.5 的機件一直在，只是組裝時沒接上）。
+                checkpointer=CheckpointManager(self._factory),
+                checkpoint_interval=sim_params.checkpoint_interval_ticks,  # #93 可調
             )
             pacer = TickPacer(sim_params.tick_rate_ms, compression=sim_params.pace_compression)
             # White Cell 暫停旗標（新 #6）：control 端點 PAUSE 設 Redis 鍵、RESUME 清除；

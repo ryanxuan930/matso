@@ -31,7 +31,7 @@ from app.models.enums import AiMode, UserRole
 from app.models.tables import SessionParticipant, SystemConfiguration, User
 from app.orders.precheck import PhysicsGateway
 from app.sim_params import load_sim_params
-from app.state.hot_state import HotStateStore
+from app.state.hot_state import HotStateStore, session_tick_key
 from app.state.ledger import LedgerWriter
 
 _LOG = logging.getLogger("app.ai_orchestrator")
@@ -60,7 +60,7 @@ def _make_status_sink(
 
 
 def _tick_key(session_id: str) -> str:
-    return f"session:{session_id}:tick"
+    return session_tick_key(session_id)
 
 
 def read_system_ai(db: Session) -> dict[str, Any]:

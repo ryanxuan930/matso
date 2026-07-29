@@ -16,7 +16,7 @@ from typing import Any
 
 import redis
 
-from app.state.hot_state import SessionDiff
+from app.state.hot_state import SessionDiff, session_tick_key
 from app.state.ledger import LedgerEvent
 from app.state.redis_stream import publish_to_stream
 
@@ -138,7 +138,7 @@ class RedisBroadcaster:
         return f"session:{self._session_id}:stream"
 
     def _tick_key(self) -> str:
-        return f"session:{self._session_id}:tick"
+        return session_tick_key(self._session_id)
 
     def _write_tick(self, tick: int) -> None:
         # 供 API 下令端讀「當前 sim tick」以戳記 issued_at_tick（否則永遠 0 → 指令無法依時排序、

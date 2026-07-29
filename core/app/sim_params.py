@@ -72,6 +72,10 @@ class SimParams:
     # --- AI 自主推演 ---
     ai_heartbeat_s: float = 45.0
     ai_max_orders: int = 500
+    # --- 崩潰復原（WP-E1）---
+    # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），
+    # 而牆鐘會隨 TickPacer 的過載降頻漂移。600 tick ≈ 5 分鐘牆鐘（@ 預設 0.5s/tick）。
+    checkpoint_interval_ticks: int = 600
 
     def attrition_for(self, profile: str) -> float:
         """該機動 profile 的每公里基礎磨耗（未定義的 profile 退回 params 的預設）。"""
@@ -115,6 +119,9 @@ def parse_sim_params(raw: object) -> SimParams:
         comms_interval_ticks=_int("comms_interval_ticks", DEFAULTS.comms_interval_ticks),
         ai_heartbeat_s=_positive(raw.get("ai_heartbeat_s"), DEFAULTS.ai_heartbeat_s),
         ai_max_orders=_int("ai_max_orders", DEFAULTS.ai_max_orders),
+        checkpoint_interval_ticks=_int(
+            "checkpoint_interval_ticks", DEFAULTS.checkpoint_interval_ticks
+        ),
     )
 
 
@@ -133,6 +140,7 @@ def to_config(p: SimParams) -> dict[str, Any]:
         "comms_interval_ticks": p.comms_interval_ticks,
         "ai_heartbeat_s": p.ai_heartbeat_s,
         "ai_max_orders": p.ai_max_orders,
+        "checkpoint_interval_ticks": p.checkpoint_interval_ticks,
     }
 
 

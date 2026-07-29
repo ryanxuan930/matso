@@ -1044,6 +1044,8 @@ export interface components {
             ai_heartbeat_s: number;
             /** @description 單一 AI worker 累計落單上限（runaway 守衛） */
             ai_max_orders: number;
+            /** @description 狀態快照間隔 tick（WP-E1，預設 600）。以 tick 計而非牆鐘秒——快照點必須是模擬時間上的 確定位置，牆鐘會隨降頻漂移。預設 600 tick ≈ 5 分鐘牆鐘（@ tick_rate_ms=60000 / pace_compression=120，即 0.5s/tick）。崩潰時最多損失一個間隔內的熱狀態。 */
+            checkpoint_interval_ticks: number;
         };
         /** @description 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。 */
         SystemConfigEdit: {

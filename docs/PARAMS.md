@@ -46,6 +46,7 @@
 | AI `heartbeat_s` | `ai_loop/orchestrator.py:162` | 45.0 | AI 決策心跳（**已可 per-session 由 autonomy 設定覆寫**） |
 | `_MAX_TOTAL_ORDERS` | `ai_loop/worker.py:44` | 500 | AI runaway 守衛（單 worker 累計落單上限） |
 | `victory` 輪詢 `_DEFAULT_POLL_S` | `ai_loop/victory.py:28` | 5.0 | 勝負監視器輪詢間隔 |
+| `checkpoint_interval_ticks` | `sim_params.py`（WP-E1） | 600 | 狀態快照間隔（≈5 分鐘牆鐘 @ 0.5s/tick）；崩潰最多回退一個間隔 |
 
 ---
 
