@@ -1,12 +1,12 @@
 ---
 task: WP-B2          # SPEC_V2 §6 WP-B2（MSEL 排程執行引擎與白軍誘導迴圈）
-status: IN_PROGRESS  # B2a/B2b 完成；B2c（白軍 UI）與 MSEL golden 未做
+status: IN_PROGRESS  # B2a/B2b/B2c 完成；含 MSEL 的 golden 案例未做
 started: 2026-07-31T09:10+08:00
-updated: 2026-07-31T10:40+08:00
+updated: 2026-07-31T11:05+08:00
 agent: Opus 5
 ---
 
-# WP-B2 MSEL 執行引擎（B2a：DSL + 執行器 + 接上 tick；B2b：SPAWN_UNITS）
+# WP-B2 MSEL 執行引擎（B2a DSL+執行器+接 tick；B2b SPAWN_UNITS；B2c 白軍動態取捨）
 
 ## 動手前 MSEL 整個是死的
 
@@ -97,14 +97,41 @@ agent: Opus 5
 
 地圖、裁決、MSEL 脈絡讀的都是熱狀態。只寫 DB 的話那支部隊在模擬裡等於不存在。
 
+## 已完成（B2c：白軍動態取捨）
+
+教官看現場狀況決定要不要發下一個狀況——這是 [JCATS-F p.9–10] 誘導迴圈的核心。
+
+### 為什麼需要一條命令通道
+
+`MselRuntime` 活在 **sim runner 行程**，白軍按的按鈕在 **API 行程**。
+
+- API 直接改 runtime 的記憶：做不到（不同行程）。
+- API 直接寫 Redis 熱狀態：**會被忽略**——`RedisHotState` 有 in-process mirror，
+  外部直寫看不到（`api/control.py` 已經記過這個教訓）。
+
+故沿用 `live_ammo`/`live_position` 同一套：API 排命令進 Redis list，
+runner 在 `pre_tick` drain 出來套用。**單一寫入者原則因此維持**。
+
+反方向（白軍要看得到「還有哪些狀況待發」）走另一個鍵，runner 每 tick 覆寫。
+純顯示，晚一個 tick 無所謂。
+
+### 端點回 202 不是 200
+
+扣板機是**排隊**不是立即生效。前端也照實顯示（按完 1.5 秒後才重抓清單），
+不做樂觀更新假裝已經發了——那會讓教官以為狀況已經出去了。
+
+### 限白軍/統裁
+
+MSEL 是整場演習的腳本。任何一方看得到，就等於知道接下來會發生什麼。
+
 ## 未完成（本卡剩餘）
 
-- [ ] **B2c 白軍 UI**：待命注入清單（`MselRuntime.pending()` 已備）+ 一鍵扣發 + skip/delay。
-      後端的 `fire_manually`/`skip` 已實作，缺 REST 端點與面板。
-- [ ] 含 MSEL 的 golden 案例（SPEC 要求）。
+- [ ] 含 MSEL 的 golden 案例（SPEC 要求）。無 MSEL 的既有 6 案例不受影響
+      （`MselRuntime.check()` 第一行就對空清單回 `[]`）。
+- [ ] `delay`（白軍延後注入）：目前只有 fire/skip。delay 需要「排到第 N tick」的佇列語義。
 
 ## 中斷續作指引
 
-- **下一步第一件事**：B2c 白軍待命注入面板。後端已備
-  （`MselRuntime.pending()` / `fire_manually` / `skip`），缺 REST 端點與 UI。
+- **下一步第一件事**：含 MSEL 的 golden 案例——SPEC 明列的驗收項，
+  也是「MSEL 可重播」這句話目前唯一沒被證明的部分。
 - 既有局零行為變更：無 MSEL 的 session，`MselRuntime.check()` 第一行就回 `[]`。
