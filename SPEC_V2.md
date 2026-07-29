@@ -606,8 +606,12 @@ DEGRADED 陣營的敵情圖示跳格；恢復 ONLINE 後投影即時回真。
 
 **規格**：
 - **火力計畫實體** `FirePlan`：`{targets: [{id, latlng, ammo_type, rounds, schedule: at_tick|on_call}], status}`
-  ——想定編輯器/COP 均可建；`at_tick` 到時由 MSEL 執行器（WP-B2 複用）自動生成 ENGAGE 令；
-  `on_call` 由 FSO 席位一鍵呼叫。
+  ——COP 可建；`at_tick` 到時自動下 FIRE_MISSION 令；`on_call` 由 FSO 席位一鍵呼叫。
+  ⚠ **原文寫「由 MSEL 執行器（WP-B2）複用」，那不成立**（C10.3 實作時查證）：
+  `TriggerChecker.check()` 回的是 `list[LedgerEvent]`，結構上產生不了令；trigger 槽又在
+  `run_tick` 的最後才跑（drain 在最前面）故必定慢一 tick；而且活執行期傳的是
+  `NoOpTriggerChecker`，MSEL 從未運行。實作改走 `run_paced(pre_tick=…)`——它在
+  `run_tick` 之前，落庫的令當個 tick 就被 drain 撿走。
 - **臨機火力鏈**（依賴 WP-B5 席位）：觀測單位（有 LOS 的任一友軍）對 contact 發 CALL_FOR_FIRE request →
   FSO 核准（或想定設自動）→ 就近可達砲兵單位執行 → 落彈後觀測單位自動回 BDA 報告
   （觀測到的目標狀態，帶迷霧誤差——BDA 是情報不是 ground truth）。

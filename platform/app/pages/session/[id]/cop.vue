@@ -264,6 +264,8 @@ const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
 const engageTargets = computed(() =>
   realUnits.value.filter((u) => u.id !== selectedId.value && !isFriendly(u.faction)),
 )
+// 火力計畫挑砲兵用：只列我方（後端仍會擋越權下令，這裡是 UX）。
+const friendlyUnits = computed(() => realUnits.value.filter((u) => isFriendly(u.faction)))
 
 // WP-E3：狀態（單位/敵情/關係/標註）改由**單一原子快照**取得。
 // 過去是四個獨立 GET 各自回來拼裝——彼此不同時，會拼出「單位是新的、敵情是舊的」的畫面。
@@ -760,6 +762,19 @@ onBeforeUnmount(() => {
         <ClientOnly>
         <CopWidget id="c2" :ui="copUiView" :open="widgets.c2.open">
           <C2Panel :session-id="sessionId" :my-seat="mySeatRole" />
+        </CopWidget>
+        </ClientOnly>
+
+        <!-- 火力計畫（WP-C10.3）：預劃目標 + 待命目標一鍵呼叫。 -->
+        <ClientOnly>
+        <CopWidget id="fireplan" :ui="copUiView" :open="widgets.fireplan.open">
+          <FirePlanPanel
+            :session-id="sessionId"
+            :own-units="friendlyUnits"
+            :current-aim="firePoint"
+            :current-tick="currentTick"
+            @focus-target="firePoint = $event"
+          />
         </CopWidget>
         </ClientOnly>
 

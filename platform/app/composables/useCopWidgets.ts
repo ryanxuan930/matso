@@ -14,6 +14,7 @@ export type WidgetId =
   | 'mapedit'
   | 'coords'
   | 'c2'
+  | 'fireplan'
 export type DockSide = 'left' | 'right' | 'float'
 
 export interface WStat {
@@ -41,6 +42,7 @@ export const WIDGET_DEFS: { id: WidgetId; title: string; label: string }[] = [
   { id: 'mapedit', title: '地圖編輯', label: '地圖編輯' },
   { id: 'coords', title: '座標查詢', label: '座標' },
   { id: 'c2', title: '信文 / 申請', label: '信文' },
+  { id: 'fireplan', title: '火力計畫', label: '火力計畫' },
 ]
 
 const DOCK_EDGE = 72 // 拖到最左/右 DOCK_EDGE px 內即停靠成側欄
@@ -57,6 +59,7 @@ export function defaultWidgets(): Record<WidgetId, WStat> {
     mapedit: { open: false, dock: 'float', x: 12, y: 60, w: 326, h: 540, z: 15 },
     coords: { open: false, dock: 'float', x: 12, y: 540, w: 260, h: 170, z: 16 },
     c2: { open: false, dock: 'right', x: rx, y: 60, w: 320, h: 380, z: 17 },
+    fireplan: { open: false, dock: 'float', x: 340, y: 60, w: 340, h: 420, z: 18 },
   }
 }
 

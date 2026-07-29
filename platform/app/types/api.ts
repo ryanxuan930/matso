@@ -784,6 +784,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/fire-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 本陣營的火力計畫（WP-C10.3）。**火力計畫是陣營私有情報**——過濾一律在後端做 （全知角色可見全部）。 */
+        get: operations["listFirePlans"];
+        put?: never;
+        /** @description 建立火力計畫（含預劃目標）。計畫歸建立者的陣營。 */
+        post: operations["createFirePlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/fire-plans/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 刪除火力計畫（連同其預劃目標）。已執行的目標留在帳本上，刪計畫不會抹掉那些事實。 */
+        delete: operations["deleteFirePlan"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/fire-plans/{plan_id}/targets/{target_id}/fire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                plan_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 對預劃目標下火力任務（on-call；WP-C10.3）。**本端點不繞過任何閘門**——它組出 FIRE_MISSION 令後照樣走 `OrderService.submit`（驗證 → 物理預檢 → 火協 gate）。 故本局若要求火協，此目標仍須自帶已核准的 FIRE_SUPPORT 申請單。 */
+        post: operations["fireFirePlanTarget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/aar": {
         parameters: {
             query?: never;
@@ -1111,6 +1172,67 @@ export interface components {
             decided_by?: string | null;
             decided_at_tick?: number | null;
             decision_note?: string | null;
+        };
+        /**
+         * @description 預劃目標的射擊時機（WP-C10.3）。`AT_TICK`＝到指定 tick 自動下令（攻擊準備射擊）； `ON_CALL`＝待命，由 FSO 席位按鈕呼叫。
+         * @enum {string}
+         */
+        FireSchedule: "AT_TICK" | "ON_CALL";
+        /**
+         * @description `PENDING` 待命／`FIRED` 已下令（order_id 指向該令）／`FAILED` 下令被擋 （原因見 failure_reason）／`SKIPPED` 計畫取消時未執行。 **注意 `FIRED` 只代表「令送出去了」**，不代表打中——裁決失敗（無彈/超射程） 的令會以零毀傷 COMPLETED，那是帳本上的事實，不回頭改這裡的狀態。
+         * @enum {string}
+         */
+        FirePlanTargetStatus: "PENDING" | "FIRED" | "FAILED" | "SKIPPED";
+        FirePlanTargetView: {
+            id: string;
+            /** @description 計畫內序號（決定執行順序，必須確定） */
+            seq: number;
+            /** @description 目標編號/代號（如 AB1001） */
+            label?: string;
+            target_lat: number;
+            target_lng: number;
+            rounds: number;
+            /** @description 執行此目標的砲兵單位。**由計畫指定，系統不自動挑砲**——自動指派 （「就近可達砲兵」）屬 WP-C10.4 的臨機火力鏈。 */
+            shooter_unit_id: string;
+            schedule: components["schemas"]["FireSchedule"];
+            /** @description schedule=AT_TICK 時的執行 tick */
+            at_tick?: number | null;
+            /** @description 本局要求火協時要掛的已核准 FIRE_SUPPORT 申請單。**一張核准單只兌現一次**， 故是逐目標欄位而非整份計畫共用。 */
+            fire_request_id?: string | null;
+            status: components["schemas"]["FirePlanTargetStatus"];
+            /** @description 已下令時指向產生的 Order */
+            order_id?: string | null;
+            fired_at_tick?: number | null;
+            failure_reason?: string | null;
+        };
+        /** @description 火力計畫（WP-C10.3）。陣營私有——後端依陣營過濾，前端不做過濾。 */
+        FirePlanView: {
+            id: string;
+            name: string;
+            faction: string;
+            /**
+             * @description 取消的計畫其未執行目標一律轉 SKIPPED，排程器不再看它。
+             * @enum {string}
+             */
+            status: "ACTIVE" | "CANCELLED";
+            /** @description 建立者 username */
+            created_by?: string | null;
+            created_at_tick: number;
+            targets: components["schemas"]["FirePlanTargetView"][];
+        };
+        CreateFirePlanRequest: {
+            name: string;
+            targets: {
+                label?: string;
+                target_lat: number;
+                target_lng: number;
+                /** @default 4 */
+                rounds: number;
+                shooter_unit_id: string;
+                schedule?: components["schemas"]["FireSchedule"];
+                at_tick?: number | null;
+                fire_request_id?: string | null;
+            }[];
         };
         SubmitRequestRequest: {
             kind: components["schemas"]["RequestKind"];
@@ -3428,6 +3550,127 @@ export interface operations {
             };
             /** @description 該申請單已非 PENDING */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listFirePlans: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fire plans */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirePlanView"][];
+                };
+            };
+        };
+    };
+    createFirePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFirePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirePlanView"];
+                };
+            };
+        };
+    };
+    deleteFirePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 非本陣營的計畫 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    fireFirePlanTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                plan_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已下令（回更新後的目標；order_id 指向產生的令） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirePlanTargetView"];
+                };
+            };
+            /** @description 非本陣營的計畫 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 該目標已執行過（一個預劃目標只打一次） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 物理預檢不可行（射程/無曲射武器/火協未核准…） */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
