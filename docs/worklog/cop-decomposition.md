@@ -88,6 +88,44 @@ D6.1 AAR 地圖重播）的前置——在 4400 行的檔案裡加功能，每�
 ## 測試證據
 （施工中）
 
+## 進度（cop.vue 行數）
+| 步驟 | 行數 | 驗證 |
+|------|------|------|
+| 開卡 | 4419 | — |
+| `useCopWidgets` + `useCopPrefs` | 4207 | 容器實測 `matso.cop.layers` 的 25 欄 + 6 個 widget 幾何未變 |
+| `useWeaponTracks` + `useUnitCardDrag` | 4055 | — |
+| **修 typecheck 閘門** + `useCopOrdering` | 3871 | 選單位 → 資訊卡/通聯/座標/彈藥皆正確 |
+| `useMapEditor` | 3483 | 點標註列 → 編輯欄位載入「樓梯」；繪製工具列六個鈕齊全 |
+
+目前組成：script 913 / template 1067 / style 1498。**剩下的都在後兩塊**，
+所以下一步是子元件（template 與它的 scoped CSS 一起搬）。
+
+## 下一步的設計決定：子元件收「composable 束」而非 40 個 props
+
+地圖編輯面板要綁 `drawKind`/`drawFeatureKind`/`drawLabel`/`drawColor`/… 二十幾個
+v-model，逐個開 prop + emit 就是把 MapCanvas 那個「50 個 props」的毛病複製一份
+（那正是本卡要修的東西之一）。
+
+改法：**`useMapEditor()` 的回傳物件整包當一個 prop 傳下去**
+（`<CopMapEditorPanel :editor="mapEditor" />`）。ref 傳下去仍是 ref，
+子元件內 `editor.drawLabel` 直接 v-model 可用，型別也完整（composable 的回傳型別即契約）。
+代價是子元件與該 composable 綁定——但它們本來就是同一件事的兩半，這個耦合是誠實的。
+
+同一招套用到 MapCanvas 的 props 收斂：依用途分組成
+`layers` / `overlays` / `interaction` 三個 config 物件。
+
+## 待辦（依序）
+- [ ] `CopMapEditorPanel`（template 248 行 + 對應 CSS）
+- [ ] `CopUnitsOrderPanel`（template 216 行 + CSS）
+- [ ] `CopUnitCard`、`CopLayersPanel`、其餘小工具（events/orders/coords）
+- [ ] `useMapStateEdit` / `useEquipMgr` / `useCtxMenu`（script 尾巴）
+- [ ] MapCanvas props 收斂
+- [ ] 容器逐項手測（清單見上）→ 更新 SPEC_V2 / PROGRESS / TASKS
+
 ## 中斷續作指引
-- **下一步第一件事**：抽 `useCopWidgets` + `useCopPrefs`（兩者共用同一把 localStorage 鑰匙，
-  必須一起搬才不會破壞持久化格式）。
+- **下一步第一件事**：`CopMapEditorPanel`——把 template 1614–1862 與其 scoped CSS 一起搬，
+  以 `:editor="mapEditor"` 單一 prop 收（見上方設計決定；為此 cop.vue 要把
+  `useMapEditor()` 的解構改回物件形式）。
+- **紀律**：每搬一塊立刻 `npm run typecheck`（現在是 `vue-tsc --build`，真的會檢查）+ `npm run lint`，
+  綠了才 commit。`npm run typecheck` 在本卡之前是空轉的，別再相信舊 worklog 的「typecheck 綠」。
+- **未解**：e2e 只有 5 支且沒有涵蓋 COP 的下令/地圖編輯流程，本卡全程靠 typecheck + 容器手測。
