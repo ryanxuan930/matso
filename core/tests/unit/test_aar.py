@@ -7,6 +7,7 @@ from app.aar.export import export_csv, export_json
 from app.aar.narrative import generate_narrative, verify_citations
 from app.aar.replay import bookmarks, build_timeline, reconstruct_states, replay_summary
 from app.aar.stats import compute_metrics
+from app.adjudication.effectiveness import effectiveness_pct
 
 
 def _ev(seq, tick, etype, **kw):  # type: ignore[no-untyped-def]
@@ -74,6 +75,63 @@ def test_reconstruct_state_matches_recorded_after() -> None:
     # up_to_tick 之後的事件不套用
     at5b = reconstruct_states(_events(), 5)
     assert at5b["R1"].health == 60.0  # 不受 tick 8 事件影響
+
+
+def _agg_events():  # type: ignore[no-untyped-def]
+    """聚合交戰：後態是**戰力點**，damage_calc 是雙方損失相加。"""
+    return [
+        _ev(
+            1,
+            3,
+            "AGGREGATE_ENGAGEMENT_RESOLVED",
+            initiator="B-BN",
+            target="R-BN",
+            dmg=130.0,  # a_loss 50 + b_loss 80，**不是**單側戰損
+            dec={
+                "initiator_loss": 50.0,
+                "target_loss": 80.0,
+                "initiator_strength_after": 450.0,
+                "target_strength_after": 320.0,
+            },
+        ),
+    ]
+
+
+def test_aggregate_strength_is_not_written_into_health_pct() -> None:
+    """量綱：戰力點不得直接當效能%（過去 450 點會顯示成 health 450）。"""
+    st = reconstruct_states(_agg_events(), 3, authorized={"B-BN": 500.0, "R-BN": 400.0})
+    assert st["B-BN"].strength == 450.0
+    assert st["R-BN"].strength == 320.0
+    # 效能% 由戰力比經效能曲線導出，必落在 0–100
+    assert 0.0 <= st["B-BN"].health <= 100.0
+    assert 0.0 <= st["R-BN"].health <= 100.0
+    # 與活模擬同一條曲線
+    assert st["B-BN"].health == effectiveness_pct(450.0 / 500.0)
+    assert st["R-BN"].health == effectiveness_pct(320.0 / 400.0)
+    # 損失較重的一方效能較低
+    assert st["R-BN"].health < st["B-BN"].health
+
+
+def test_aggregate_without_authorized_keeps_points_but_does_not_guess_pct() -> None:
+    """缺滿編戰力時：戰力點照記，但不給一個錯刻度的效能%。"""
+    st = reconstruct_states(_agg_events(), 3)
+    assert st["B-BN"].strength == 450.0
+    assert st["B-BN"].health == 100.0  # 維持預設，不是 450
+
+
+def test_aggregate_damage_calc_not_charged_to_one_side() -> None:
+    """聚合事件的 damage_calc 是雙方損失和，不得從守方單側扣（§4 第 23 列）。"""
+    st = reconstruct_states(_agg_events(), 3, authorized={"B-BN": 500.0, "R-BN": 400.0})
+    # 若走了 fallback，R-BN 的 health 會被 100-130 扣成 0
+    assert st["R-BN"].health > 0.0
+    assert st["R-BN"].health == effectiveness_pct(320.0 / 400.0)
+
+
+def test_individual_engagement_health_pct_unchanged_by_the_fix() -> None:
+    """個體交戰記的本來就是效能%，行為不得改變（回歸釘）。"""
+    st = reconstruct_states(_events(), 5)
+    assert st["R1"].health == 60.0
+    assert st["R1"].strength is None
 
 
 def test_replay_summary() -> None:
