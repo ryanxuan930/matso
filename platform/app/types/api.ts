@@ -784,6 +784,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/msel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 白軍待命注入清單（WP-B2c）。回**尚未觸發也未被跳過**的 MSEL 事件 id。 限白軍/統裁——這是整場演習的腳本，不是任何一方看得到的東西。 */
+        get: operations["listMselPending"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/msel/{entry_id}/fire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 白軍扣板機（WP-B2c）。`manual` 型觸發條件唯一會成立的方式。 命令排入佇列由 runner 於下一 tick 套用——**API 行程不能直接改 runtime 的記憶** （不同行程，且熱狀態有 in-process mirror）。 */
+        post: operations["fireMselEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/msel/{entry_id}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 白軍決定不發這個狀況（WP-B2c）。**記著而不是刪掉**——AAR 要看得出「原定 vs 實際」。 */
+        post: operations["skipMselEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/fire-plans": {
         parameters: {
             query?: never;
@@ -3550,6 +3609,93 @@ export interface operations {
             };
             /** @description 該申請單已非 PENDING */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listMselPending: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending MSEL entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        pending: string[];
+                    };
+                };
+            };
+            /** @description 非白軍/統裁 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    fireMselEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已排入（下一 tick 生效） */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 非白軍/統裁 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skipMselEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已排入 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 非白軍/統裁 */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

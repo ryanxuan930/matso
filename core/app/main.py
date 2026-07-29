@@ -25,6 +25,7 @@ from app.api import (
     lobby_router,
     map_features_router,
     movement_router,
+    msel_router,
     orbat_router,
     orders_router,
     participants_router,
@@ -103,6 +104,7 @@ app.include_router(equipment_router)
 app.include_router(fire_plans_router)
 app.include_router(map_features_router)
 app.include_router(movement_router)
+app.include_router(msel_router)
 app.include_router(orders_router)
 app.include_router(participants_router)
 app.include_router(scenarios_router)

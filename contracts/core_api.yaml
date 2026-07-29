@@ -1688,6 +1688,48 @@ paths:
               schema: { $ref: "#/components/schemas/RequestView" }
         "403": { description: 此席位無核覆權 }
         "409": { description: 該申請單已非 PENDING }
+  /sessions/{id}/msel:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listMselPending
+      description: >-
+        白軍待命注入清單（WP-B2c）。回**尚未觸發也未被跳過**的 MSEL 事件 id。
+        限白軍/統裁——這是整場演習的腳本，不是任何一方看得到的東西。
+      responses:
+        "200":
+          description: Pending MSEL entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pending]
+                properties:
+                  pending: { type: array, items: { type: string } }
+        "403": { description: 非白軍/統裁 }
+  /sessions/{id}/msel/{entry_id}/fire:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { name: entry_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: fireMselEntry
+      description: >-
+        白軍扣板機（WP-B2c）。`manual` 型觸發條件唯一會成立的方式。
+        命令排入佇列由 runner 於下一 tick 套用——**API 行程不能直接改 runtime 的記憶**
+        （不同行程，且熱狀態有 in-process mirror）。
+      responses:
+        "202": { description: 已排入（下一 tick 生效） }
+        "403": { description: 非白軍/統裁 }
+  /sessions/{id}/msel/{entry_id}/skip:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { name: entry_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: skipMselEntry
+      description: >-
+        白軍決定不發這個狀況（WP-B2c）。**記著而不是刪掉**——AAR 要看得出「原定 vs 實際」。
+      responses:
+        "202": { description: 已排入 }
+        "403": { description: 非白軍/統裁 }
   /sessions/{id}/fire-plans:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

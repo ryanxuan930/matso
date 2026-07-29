@@ -69,6 +69,11 @@ from app.state.checkpoint import CheckpointManager, restore_msel_memory
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
 from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
+from app.state.live_msel import (
+    apply_msel_cmds,
+    drain_msel_cmds,
+    publish_pending,
+)
 from app.state.live_position import apply_pos_cmds, drain_pos_cmds
 from app.state.resume import apply_pending_rollback, read_live_tick, resume_session
 from app.weather import WeatherState
@@ -506,6 +511,16 @@ class SimManager:
                 # `session:{id}:tick` 是廣播器在 tick 跑完之後才寫的，讀它會慢一拍。
                 # 在此落庫的令會被同一個 tick 的 drain 撿走（pre_tick 在 run_tick 之前）。
                 await asyncio.to_thread(_fire_plan_tick, sim_clock.now().tick)
+                # WP-B2c 白軍動態取捨：扣板機/跳過的命令在 API 行程排入，這裡套用。
+                # **不能讓 API 直接改 runtime 的記憶**——不同行程，而且 RedisHotState
+                # 有 in-process mirror，外部直寫會被忽略（api/control.py 已記過這個教訓）。
+                if msel_entries:
+                    cmds = await asyncio.to_thread(drain_msel_cmds, client, session_id)
+                    if cmds:
+                        apply_msel_cmds(msel_runtime, cmds)
+                    await asyncio.to_thread(
+                        publish_pending, client, session_id, msel_runtime.pending()
+                    )
                 # WP-C10.5 陣地變換：打夠次數的砲自動換位置。事件走 LedgerWriter，
                 # 因為 pre_tick 不在 Kernel 的事件蒐集路徑上。
                 moves = await asyncio.to_thread(_displacement_tick, sim_clock.now().tick)

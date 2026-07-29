@@ -110,9 +110,43 @@ async function togglePerm(f: string) {
   }
 }
 
+/**
+ * WP-B2c 待命注入：MSEL 腳本裡還沒發、也沒被跳過的狀況。
+ *
+ * **扣板機是排隊不是立即生效**：`MselRuntime` 活在 sim runner 行程，
+ * API 只能把命令排進佇列，由 runner 於下一 tick 套用（故端點回 202）。
+ * 清單本身也是 runner 每 tick 發布的，所以按完會慢一拍才更新——這裡照實顯示，
+ * 不做樂觀更新假裝已經發了。
+ */
+const mselPending = ref<string[]>([])
+const mselBusy = ref('')
+
+async function loadMsel() {
+  try {
+    const r = await apiFetch<{ pending: string[] }>(`/sessions/${sessionId}/msel`)
+    mselPending.value = r.pending
+  } catch {
+    mselPending.value = []
+  }
+}
+
+async function mselAct(entryId: string, action: 'fire' | 'skip') {
+  mselBusy.value = entryId
+  try {
+    await apiFetch(`/sessions/${sessionId}/msel/${entryId}/${action}`, { method: 'POST' })
+    status.value = action === 'fire' ? `已排入扣發：${entryId}` : `已排入跳過：${entryId}`
+    setTimeout(loadMsel, 1500) // runner 下一 tick 才會更新清單
+  } catch (e) {
+    status.value = `MSEL 操作失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+  } finally {
+    mselBusy.value = ''
+  }
+}
+
 onMounted(() => {
   loadUnits()
   loadPerms()
+  loadMsel()
   stream.connect(sessionId)
 })
 onUnmounted(() => stream.disconnect())
@@ -188,6 +222,27 @@ watch(viewpoint, loadUnits)
         <h3>編裝（武器/彈藥）</h3>
         <UnitOrbatEditor :session-id="sessionId" :unit-id="editUnitId" :can-edit="true" />
       </div>
+    </section>
+
+    <!-- WP-B2c 白軍動態取捨：教官看現場狀況決定要不要發下一個狀況。 -->
+    <section>
+      <h2>待命注入（MSEL）</h2>
+      <p class="wc-hint">
+        `manual` 型狀況只有在這裡扣板機才會發生。跳過會**記在帳本上**——
+        AAR 要看得出「原定 vs 實際」。
+      </p>
+      <ul data-testid="wc-msel-pending">
+        <li v-for="id in mselPending" :key="id" class="wc-msel">
+          <code>{{ id }}</code>
+          <button :disabled="mselBusy === id" data-testid="wc-msel-fire" @click="mselAct(id, 'fire')">
+            扣發
+          </button>
+          <button :disabled="mselBusy === id" data-testid="wc-msel-skip" @click="mselAct(id, 'skip')">
+            跳過
+          </button>
+        </li>
+        <li v-if="!mselPending.length" class="dim">（無待命注入；該局可能沒有 MSEL 或尚未開跑）</li>
+      </ul>
     </section>
 
     <section>
