@@ -81,6 +81,10 @@ class SensorResolver:
         """單位陣營；查無（熱狀態有但 DB 無）→ 空字串，sweep 端會視為與任何人皆非同盟。"""
         return self._faction_by_unit.get(unit_id, "")
 
+    def factions(self) -> list[str]:
+        """本局有單位的陣營（確定性排序）。STATE_DIFF 每陣營投影用它列出觀測方（WP-C5）。"""
+        return sorted(set(self._faction_by_unit.values()))
+
 
 def make_detect_env(
     gateway: object | None = None, weather: WeatherState | None = None

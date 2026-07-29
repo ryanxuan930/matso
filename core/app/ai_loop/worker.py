@@ -31,7 +31,13 @@ from app.ai_loop.orders_bridge import (
     UnitTargetLocator,
     submit_faction_orders,
 )
-from app.ai_loop.world_view import allied_units, recent_events
+from app.ai_loop.world_view import (
+    allied_units,
+    faction_granularity,
+    projected_snapshot,
+    recent_events,
+)
+from app.comms import IntelGranularity
 from app.factions.relations import FactionRelations
 from app.guardrails import GuardrailGateway, intervention_events
 from app.guardrails.schemas import CitationVerifier
@@ -52,10 +58,18 @@ _MAX_TOTAL_ORDERS = 500  # 單 worker 累計落單上限（O11.8 runaway 守衛�
 
 
 class EnemyVisibility(Protocol):
-    """霧化敵情來源。回傳**已依陣營過濾**的敵情清單（呼叫端保證只含本陣營可見者）。"""
+    """霧化敵情來源。回傳**已依陣營過濾**的敵情清單（呼叫端保證只含本陣營可見者）。
+
+    `granularity`（WP-C5）：本軍通聯不良時的敵情降級（位置量化 + fidelity 上限）。
+    """
 
     def __call__(
-        self, db: Session, session_id: str, faction: str, relations: FactionRelations
+        self,
+        db: Session,
+        session_id: str,
+        faction: str,
+        relations: FactionRelations,
+        granularity: IntelGranularity = IntelGranularity.FULL,
     ) -> list[dict[str, Any]]: ...  # pragma: no cover
 
 
@@ -91,11 +105,17 @@ def load_unit_meta(db: Session, session_id: str) -> dict[str, UnitMeta]:
 
 
 def ground_truth_enemies(
-    db: Session, session_id: str, faction: str, relations: FactionRelations
+    db: Session,
+    session_id: str,
+    faction: str,
+    relations: FactionRelations,
+    granularity: IntelGranularity = IntelGranularity.FULL,
 ) -> list[dict[str, Any]]:
     """首版敵情可見性：所有**存活的敵對陣營**單位（ground truth；感測 NoOp 期間的權宜）。
 
     真偵測（IntelService）上線後以其取代——worker 只依賴 EnemyVisibility 協定，不需改動。
+    `granularity` 刻意忽略：這條路徑本來就是全知權宜，粗化一份 ground truth 沒有意義
+    （真正的粗化在 `contacts_from_intel`，那才是 WP-A1 之後的預設）。
     """
     units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
     out: list[dict[str, Any]] = []
@@ -142,12 +162,16 @@ def run_decision_cycle(
 
     快照 → context → run_faction_turn（護欄 + feasibility）→ 落單。回 DecisionOutcome。
     """
-    snapshot = hot.get_all()
+    # WP-C5：AI 指揮官與人類指揮官看同一張圖——斷聯單位的位置凍結、敵情依本軍通聯粒度粗化。
+    # 投影**在取快照之後立刻做**，之後的每個消費者拿到的都已是投影過的世界。
+    snapshot = projected_snapshot(hot.get_all())
     unit_meta = load_unit_meta(db, session_id)
-    enemies = enemy_visibility(db, session_id, faction, relations)
+    enemies = enemy_visibility(
+        db, session_id, faction, relations, faction_granularity(snapshot, unit_meta, faction)
+    )
     # WP-A1：盟軍走共享視圖（非偵測）、近期事件走 Ledger 受眾過濾。
     # faction_for 由已載入的 unit_meta 導出——查無單位回 ""，`event_audience` 會忽略空字串。
-    allies = allied_units(db, session_id, faction, relations)
+    allies = allied_units(db, session_id, faction, relations, snapshot)
     events = recent_events(
         db,
         session_id,

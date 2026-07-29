@@ -1,11 +1,18 @@
 """Units REST 端點（O4.5，SPEC §16.1）——faction-scoped 單位列表（下令 UX 需真單位）。
 
 GET /api/v1/sessions/{id}/units —— 一般角色見己方單位；全知（統裁/白軍/管理）見全部。
+
+WP-C5 起本端點是**位置凍結**的投影點之一（SPEC_FULL §6.2）：陣營視角下，通聯非 ONLINE 的
+單位回報的是它**最後一次位置回報**（附 `stale_since_tick`），不是真實座標。全知的 god view
+一律真實座標——「己方 COP 看不到」與「統裁看不到」是兩回事。
+同時通聯狀態改以熱狀態為準：`TacticalUnit.comms_status` 自播種後從未被寫過，活模擬中
+只有熱狀態的 `comms_state` 是真的。
 """
 
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 
@@ -19,11 +26,14 @@ from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.cache import make_redis
+from app.comms import parse_link_state, project_position
 from app.config import Settings
 from app.errors import AuthForbiddenError, SessionNotFoundError
 from app.factions import validate_faction_id
 from app.factions.session_store import load_session_relations
+from app.factions.visibility import visible_factions
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
+from app.state.comms_view import EMPTY_COMMS_VIEW, CommsView, load_comms_view
 from app.state.live_position import push_pos_cmd
 from app.stream.faction_filter import is_omniscient
 
@@ -44,6 +54,8 @@ class UnitView(BaseModel):
     personnel_current: int | None = None  # 當前人員數（顯示用）
     comms: str
     is_fixed: bool = False  # 固定單位（指揮部等）：不可下 MOVE 令；COP 顯示鎖定標記
+    # WP-C5 位置凍結：非 None ＝ lat/lng 是「最後一次位置回報」而非真實位置，本欄為其 tick。
+    stale_since_tick: int | None = None
 
 
 class WeaponView(BaseModel):
@@ -59,22 +71,38 @@ class WeaponView(BaseModel):
     ammo_remaining: int | None
 
 
-def _view(u: TacticalUnit) -> UnitView:
+def _view(
+    u: TacticalUnit, comms: CommsView = EMPTY_COMMS_VIEW, *, scoped: bool = False
+) -> UnitView:
+    """單位視圖。`scoped=True`（陣營視角）才套用位置凍結；god view 一律真實座標。"""
+    hot = comms.units.get(u.id)
+    lat, lng, stale = u.current_lat, u.current_lng, None
+    projected = project_position(hot) if scoped and hot is not None else None
+    if projected is not None:
+        lat, lng, stale = projected.lat, projected.lng, projected.stale_since_tick
     return UnitView(
         id=u.id,
         designation=u.designation,
         unit_level=u.unit_level.value,
         faction=u.faction,
-        lat=u.current_lat,
-        lng=u.current_lng,
+        lat=lat,
+        lng=lng,
         health=u.health_status,
         strength=u.current_strength,
         authorized_strength=u.authorized_strength,
         platform_count=_platform_count(u),
         personnel_current=u.personnel_current,
-        comms=u.comms_status.value,
+        comms=_comms_value(u, hot),
         is_fixed=u.is_fixed,
+        stale_since_tick=stale,
     )
+
+
+def _comms_value(u: TacticalUnit, hot: Mapping[str, Any] | None) -> str:
+    """通聯狀態以熱狀態為準；該局沒在跑（無熱狀態）才退回 DB 播種值。"""
+    if hot is not None and hot.get("comms_state"):
+        return parse_link_state(hot["comms_state"]).value
+    return u.comms_status.value
 
 
 def _platform_count(u: TacticalUnit) -> int:
@@ -93,14 +121,15 @@ def _visible_factions(db: Session, session_id: str, observer: str) -> list[str]:
     （`intel/sweep.py`），但那個共享視圖從來沒實作——units 一直是嚴格 `== faction`。
     #98 把關係矩陣接上後，盟軍變成既不在 units、也不在 contacts，等於互相隱形。此函式補上該視圖。
 
-    NEUTRAL/HOSTILE 不在此列：那些要靠偵測（`/intel`），看不看得到由 fog 決定。
+    規則本身在 `factions/visibility.py`（STATE_DIFF 的每陣營投影共用同一份，WP-C5）；
+    這裡只負責把 DB 的資料餵給它。
     """
     observer = validate_faction_id(observer)
     rel = load_session_relations(db, session_id)
     factions = db.scalars(
         select(TacticalUnit.faction).where(TacticalUnit.session_id == session_id).distinct()
     ).all()
-    return [f for f in factions if f == observer or rel.is_allied(observer, f)]
+    return visible_factions(observer, factions, rel)
 
 
 @router.get("/{session_id}/units", response_model=list[UnitView])
@@ -132,7 +161,11 @@ def list_units(
     # else：全知且未指定視角 → 全部（god view）
 
     units = db.execute(stmt).scalars().all()
-    return [_view(u) for u in units]
+    # WP-C5：陣營視角才凍結位置（god view ＝ 全知未指定視角 → scoped=False，看真實座標）。
+    # 白軍指定 as_faction 時**要**凍結：那正是「這一軍看得到什麼」的問題（與 O7.4 視角語義一致）。
+    scoped = as_faction is not None or not omniscient
+    comms = load_comms_view(make_redis(settings.redis_url), session_id, [u.id for u in units])
+    return [_view(u, comms, scoped=scoped) for u in units]
 
 
 @router.get("/{session_id}/units/{unit_id}/weapons", response_model=list[WeaponView])

@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db, get_settings
-from app.api.intel import get_intel
+from app.api.intel import faction_posture, get_intel
 from app.api.map_features import MapFeatureView, list_map_features
 from app.api.relations import FactionRelationsView, get_faction_relations
 from app.api.units import UnitView, list_units
@@ -51,6 +51,9 @@ class StateSnapshotView(BaseModel):
     tick: int
     last_seq: int
     observer_faction: str | None
+    # WP-C5：觀測陣營的整體通聯姿態（god view 為 None）。前端據此顯示「敵情圖粗化中」——
+    # 粗化本身**已在 contacts 上生效**，本欄純為說明，client 不得據此再動資料。
+    comms_posture: str | None
     units: list[UnitView]
     contacts: list[ContactView]
     map_features: list[MapFeatureView]
@@ -83,14 +86,19 @@ def get_state(
     tick = _int_key(client, session_tick_key(session_id))
 
     relations = get_faction_relations(session_id, as_faction, user, db)
+    observer = relations.observer
     return StateSnapshotView(
         tick=tick,
         last_seq=last_seq,
         # 觀測視角由 relations handler 推導（全知未指定 as_faction → None＝god view），
         # 不在此另算一次——多一份推導就多一個會漂移的地方。
-        observer_faction=relations.observer,
+        observer_faction=observer,
+        # 同理，粗化與否由 /intel 那條路自己決定；本欄只是把它算出來的姿態說出來。
+        comms_posture=(
+            faction_posture(db, settings, session_id, observer).value if observer else None
+        ),
         units=list_units(session_id, as_faction, user, db, settings),
-        contacts=get_intel(session_id, as_faction, user, db),
+        contacts=get_intel(session_id, as_faction, user, db, settings),
         map_features=list_map_features(session_id, as_faction, user, db),
         relations=relations,
     )

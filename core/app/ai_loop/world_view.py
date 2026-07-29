@@ -10,16 +10,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.comms import (
+    IntelGranularity,
+    faction_link_state,
+    intel_granularity,
+    parse_link_state,
+    project_position,
+)
 from app.factions.relations import FactionRelations
 from app.intel import store
 from app.intel.service import IntelService
 from app.models import TacticalEventLog, TacticalUnit
 from app.state.broadcaster import event_audience
+from app.state.hot_state import UnitState
 from app.state.ledger import LedgerEvent
 
 # 近期事件：不進 AI briefing 的事件型別。
@@ -32,8 +41,54 @@ _EVENT_OVERSCAN = 10  # 受眾過濾會刷掉他方事件 → 先多抓幾倍再
 _EVENT_SCAN_CAP = 400  # 單次掃描硬上限：避免長局把整條帳本拉進記憶體
 
 
+def projected_snapshot(snapshot: Mapping[str, UnitState]) -> dict[str, UnitState]:
+    """把熱狀態快照套上**位置回報投影**（WP-C5）——AI 指揮官與人類指揮官看到同一張圖。
+
+    純函數（不讀 DB/Redis）。對每個單位：通聯非 ONLINE 就把 `lat`/`lng` 換成它最後一次
+    位置回報，並補 `stale_since_tick`；尚無回報則**移除** `lat`/`lng`（context 會渲染成
+    「位置未知」，不得以真實座標回填——那正是本卡要消滅的全知）。
+
+    這裡刻意投影**整份快照**而非只有己方：`allied_units` 也吃這份資料，而盟軍的位置同樣
+    是經該軍的回報鏈路來的（`GET /units` 的陣營視角也是對己方＋盟軍一律套用）。
+    敵方單位不經此路徑（AI 的敵情走 `contacts_from_intel`）。
+    """
+    out: dict[str, UnitState] = {}
+    for uid, state in snapshot.items():
+        projection = project_position(state)
+        if projection is None:
+            out[uid] = dict(state)
+            continue
+        projected = dict(state)
+        projected.pop("lat", None)
+        projected.pop("lng", None)
+        if projection.lat is not None and projection.lng is not None:
+            projected["lat"], projected["lng"] = projection.lat, projection.lng
+        projected["stale_since_tick"] = projection.stale_since_tick
+        out[uid] = projected
+    return out
+
+
+def faction_granularity(
+    snapshot: Mapping[str, UnitState], unit_meta: Mapping[str, Any], faction: str
+) -> IntelGranularity:
+    """該陣營的敵情粒度（WP-C5）——由**自己單位**的通聯狀態導出，與 `GET /intel` 同一規則。
+
+    純函數：熱狀態快照已在手上，不必像 REST 端那樣再讀一次 Redis。
+    """
+    links = [
+        parse_link_state(snapshot.get(uid, {}).get("comms_state"))
+        for uid, meta in unit_meta.items()
+        if getattr(meta, "faction", None) == faction
+    ]
+    return intel_granularity(faction_link_state(links))
+
+
 def contacts_from_intel(
-    db: Session, session_id: str, faction: str, relations: FactionRelations
+    db: Session,
+    session_id: str,
+    faction: str,
+    relations: FactionRelations,
+    granularity: IntelGranularity = IntelGranularity.FULL,
 ) -> list[dict[str, Any]]:
     """該陣營**真實偵測所得**的敵情（EnemyVisibility 協定實作）。
 
@@ -50,7 +105,7 @@ def contacts_from_intel(
     contact 是**最後已知位置**：目標移走或已被殲滅仍會留在清單裡（IntelContact 無存活狀態、
     不過期）。AI 因此可能打空點——這是迷霧的本義，**不得**用 ground truth 回填修正。
     """
-    views = IntelService(db).visible_contacts(session_id, faction)
+    views = IntelService(db).visible_contacts(session_id, faction, granularity)
     # contact_id → 真實 unit id（只在伺服端用；見上方 docstring）。
     unit_by_contact = {c.id: c.target_unit_id for c in store.query(db, session_id, faction)}
     out: list[dict[str, Any]] = []
@@ -79,13 +134,21 @@ def contacts_from_intel(
 
 
 def allied_units(
-    db: Session, session_id: str, faction: str, relations: FactionRelations
+    db: Session,
+    session_id: str,
+    faction: str,
+    relations: FactionRelations,
+    snapshot: Mapping[str, UnitState] | None = None,
 ) -> list[dict[str, Any]]:
     """盟軍部隊（ALLIED 陣營）——走 units 共享視圖，不經偵測（#91 語義）。
 
     改版前盟軍對 AI 是**完全隱形**的：`build_faction_context` 的己方迴圈是嚴格 `faction ==`，
     而 `ground_truth_enemies` 只收 HOSTILE → 盟軍既不在 own_units 也不在 known_enemies。
     協同作戰的前提是看得到友軍，故補上此桶。
+
+    `snapshot`（WP-C5，應為 `projected_snapshot` 的輸出）：有則位置以它為準——盟軍的位置同樣
+    經該軍的回報鏈路而來，斷聯的盟軍在共享視圖上一樣是凍結的。**投影後沒有座標就是沒有**，
+    不得退回 DB 的真實座標（那會讓凍結破功）。
     """
     units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
     out: list[dict[str, Any]] = []
@@ -100,9 +163,13 @@ def allied_units(
             "designation": u.designation,
             "unit_type": u.unit_level.value,
         }
-        if u.current_lat is not None and u.current_lng is not None:
-            view["lat"] = round(float(u.current_lat), 6)
-            view["lng"] = round(float(u.current_lng), 6)
+        hot = snapshot.get(u.id) if snapshot is not None else None
+        lat, lng = (
+            (hot.get("lat"), hot.get("lng")) if hot is not None else (u.current_lat, u.current_lng)
+        )
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            view["lat"] = round(float(lat), 6)
+            view["lng"] = round(float(lng), 6)
         out.append(view)
     out.sort(key=lambda v: str(v["unit_id"]))
     return out

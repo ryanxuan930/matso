@@ -73,6 +73,14 @@ def _own_unit_view(unit_id: str, state: UnitState, meta: UnitMeta) -> dict[str, 
         view["lat"] = round(lat, 6)
         view["lng"] = round(lng, 6)
         view["h3"] = h3.latlng_to_cell(lat, lng, _OBJECTIVE_H3_RES)
+    # WP-C5 通聯後果：斷聯的單位**收不到新令**（`order_admissible`），且其位置只是最後一次
+    # 回報。不告訴 LLM 的話，它會對一支聽不到命令的部隊反覆下令，還以為位置是即時的。
+    comms = state.get("comms_state")
+    if isinstance(comms, str) and comms and comms != "ONLINE":
+        view["comms"] = comms
+    stale = state.get("stale_since_tick")
+    if isinstance(stale, int) and not isinstance(stale, bool):
+        view["stale_since_tick"] = stale
     for key in ("strength", "health"):
         num = _num(state.get(key))
         if num is not None:
@@ -134,6 +142,17 @@ def build_faction_context(
     }
 
 
+def _comms_note(u: dict[str, Any]) -> str:
+    """通聯後果的敘述（WP-C5）。ONLINE 不出現——只有反常才值得佔 prompt 篇幅。"""
+    comms = u.get("comms")
+    if not comms:
+        return ""
+    stale = u.get("stale_since_tick")
+    when = f"，位置為 tick {stale} 的最後回報" if stale is not None else "，位置不明"
+    tail = "新令無法送達" if comms == "OFFLINE" else "新令延遲送達"
+    return f"｜【通聯 {comms}：{tail}{when}】"
+
+
 def _fmt_own(u: dict[str, Any]) -> str:
     pos = f"({u['lat']:.4f},{u['lng']:.4f})" if "lat" in u else "位置未知"
     ammo = u.get("ammo_by_weapon") or {}
@@ -150,6 +169,7 @@ def _fmt_own(u: dict[str, Any]) -> str:
     return (
         f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('type', '?')}）{fixed}"
         f" {u.get('status', '?')} 戰力{u.get('strength', '?')} @ {pos}{mob}｜彈藥：{ammo_s}"
+        f"{_comms_note(u)}"
     )
 
 

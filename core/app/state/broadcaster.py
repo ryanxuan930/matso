@@ -11,12 +11,13 @@ WebSocket 客戶端 fan-out（訂閱頻道、依 faction 過濾、推給前端�
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Container, Mapping, Sequence
 from typing import Any
 
 import redis
 
-from app.state.hot_state import SessionDiff, session_tick_key
+from app.comms import REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY, project_position
+from app.state.hot_state import SessionDiff, UnitDiff, session_tick_key
 from app.state.ledger import LedgerEvent
 from app.state.redis_stream import channel_key, publish_to_stream, ring_key, seq_key
 
@@ -87,15 +88,91 @@ def build_event_envelope(
     return envelope
 
 
-def build_state_diff_envelope(seq: int, tick: int, diff: SessionDiff) -> dict[str, Any]:
-    """依 ws_protocol.md 的 envelope + STATE_DIFF payload 格式建構訊息。"""
-    return {
+def build_state_diff_envelope(
+    seq: int,
+    tick: int,
+    diff: SessionDiff,
+    *,
+    factions: list[str] | None = None,
+    exclusive: bool = False,
+) -> dict[str, Any]:
+    """依 ws_protocol.md 的 envelope + STATE_DIFF payload 格式建構訊息。
+
+    `factions` / `exclusive` 是受眾標籤（見 ws_protocol.md「受眾標籤」）：
+    每陣營投影用 `factions=[F], exclusive=True`；真實副本用 `factions=[]`（只有全知旁通收得到）。
+    """
+    envelope: dict[str, Any] = {
         "v": 1,
         "seq": seq,
         "tick": tick,
         "type": "STATE_DIFF",
         "payload": {"units": [{"id": unit_id, **fields} for unit_id, fields in diff.items()]},
     }
+    if factions is not None:
+        envelope["factions"] = factions
+        if exclusive:
+            envelope["exclusive"] = True
+    return envelope
+
+
+# 位置回報的原始欄位是**投影的輸入**，不是要下發的狀態——契約沒有它們，且對陣營副本而言
+# 就是「凍結前的真實位置」。一律剝掉（含全知的真實副本：統裁看 lat/lng 就好）。
+_INTERNAL_FIELDS = frozenset({REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY})
+
+
+def _public_fields(fields: UnitDiff) -> UnitDiff:
+    return {k: v for k, v in fields.items() if k not in _INTERNAL_FIELDS}
+
+
+def public_diff(diff: SessionDiff) -> SessionDiff:
+    """真實副本（全知視角）：只剝內部欄位，不套任何投影。"""
+    out: SessionDiff = {}
+    for unit_id, fields in diff.items():
+        public = _public_fields(fields)
+        if public:
+            out[unit_id] = public
+    return out
+
+
+def project_diff(
+    diff: SessionDiff,
+    *,
+    visible: Container[str],
+    faction_for: FactionLookup,
+    state_for: Callable[[str], Mapping[str, Any] | None],
+) -> SessionDiff:
+    """某陣營視角的 STATE_DIFF 投影（WP-C5）——兩層 fog of war，皆為後端強制（紅線 3）。
+
+    1. **可見集**：陣營不在 `visible`（自己＋盟軍）的單位整筆剔除。WP-C5 之前 STATE_DIFF
+       沒有任何受眾標籤，等於把敵軍即時座標廣播給每個連線的 client。
+    2. **位置凍結**（SPEC §6.2）：通聯非 ONLINE 的單位以最後一次位置回報取代 lat/lng。
+       **尚無回報時是移除 lat/lng 而非送 null**——null 會把 client 上最後已知的位置清掉，
+       等於「單位憑空消失」；移除則讓 client 保留最後已知值，那正是凍結的語義。
+
+    `stale_since_tick` 只在通聯狀態**本 tick 有變動**時才附上（含恢復 ONLINE 時送 None 清標記）；
+    否則每 tick 對每個斷聯單位重複同一個值，純屬雜訊。
+    """
+    out: SessionDiff = {}
+    for unit_id, fields in diff.items():
+        owner = faction_for(unit_id)
+        if owner and owner not in visible:
+            continue
+        projected = _public_fields(fields)
+        transition = "comms_state" in fields
+        position = project_position(state_for(unit_id) or {})
+        if position is None:  # ONLINE：真實座標照送
+            if transition:
+                projected["stale_since_tick"] = None  # 恢復通聯 → 清掉 client 的凍結標記
+        else:
+            projected.pop("lat", None)
+            projected.pop("lng", None)
+            if position.lat is not None and position.lng is not None:
+                projected["lat"], projected["lng"] = position.lat, position.lng
+            if transition:
+                projected["stale_since_tick"] = position.stale_since_tick
+        if projected:
+            out[unit_id] = projected
+    return out
 
 
 def build_clock_envelope(seq: int, tick: int) -> dict[str, Any]:
@@ -122,11 +199,20 @@ class RedisBroadcaster:
         redis_client: redis.Redis,
         session_id: str,
         faction_for: FactionLookup | None = None,
+        *,
+        observers: Sequence[str] = (),
+        visible_for: Callable[[str], Container[str]] | None = None,
+        state_for: Callable[[str], Mapping[str, Any] | None] | None = None,
     ) -> None:
         self._redis = redis_client
         self._session_id = session_id
         # fog of war：unit → faction，用來標事件受眾。None（測試/合成想定）→ 不標＝維持全廣播。
         self._faction_for = faction_for
+        # WP-C5 每陣營 STATE_DIFF 投影所需的三件事：有哪些觀測陣營、各自看得到誰、
+        # 以及單位當下的熱狀態（判位置凍結）。三者不齊 → 退回單一全廣播信封（測試/合成想定）。
+        self._observers = tuple(observers)
+        self._visible_for = visible_for
+        self._state_for = state_for
 
     def _seq_key(self) -> str:
         return seq_key(self._session_id)
@@ -181,19 +267,49 @@ class RedisBroadcaster:
                 ring_capacity=RING_CAPACITY,
             )
 
+    def _projecting(self) -> bool:
+        """具備每陣營投影的條件（缺任一件就退回單一全廣播信封，維持舊行為）。"""
+        return bool(self._observers and self._visible_for and self._faction_for and self._state_for)
+
+    def _envelopes(self, tick: int, diff: SessionDiff) -> list[dict[str, Any]]:
+        """本 tick 要發的 STATE_DIFF 信封（seq 佔位 0，由 publish_to_stream 指派）。"""
+        if not self._projecting():
+            return [build_state_diff_envelope(0, tick, diff)]
+        assert self._visible_for is not None and self._faction_for is not None
+        assert self._state_for is not None
+        out: list[dict[str, Any]] = []
+        # 真實副本：`factions: []` ＝ 沒有作戰陣營在受眾內，只有全知旁通收得到。
+        truth = public_diff(diff)
+        if truth:
+            out.append(build_state_diff_envelope(0, tick, truth, factions=[]))
+        for faction in self._observers:
+            projected = project_diff(
+                diff,
+                visible=self._visible_for(faction),
+                faction_for=self._faction_for,
+                state_for=self._state_for,
+            )
+            if projected:
+                out.append(
+                    build_state_diff_envelope(
+                        0, tick, projected, factions=[faction], exclusive=True
+                    )
+                )
+        return out
+
     def _publish_sync(self, tick: int, diff: SessionDiff) -> None:
         # 原子指派 seq + 寫 ring + publish（CODE_REVIEW C3）——與 API 端 publish_event 共用同一
         # 原子路徑，避免兩個寫入者交錯造成 ring 順序與 seq 不一致。
         self._write_tick(tick)  # 下令端讀此戳記 issued_at_tick（活動 tick 每次刷新）
-        envelope = build_state_diff_envelope(0, tick, diff)  # seq 佔位，由 publish_to_stream 指派
-        publish_to_stream(
-            self._redis,
-            seq_key=self._seq_key(),
-            ring_key=self._ring_key(),
-            channel=self._channel(),
-            envelope=envelope,
-            ring_capacity=RING_CAPACITY,
-        )
+        for envelope in self._envelopes(tick, diff):
+            publish_to_stream(
+                self._redis,
+                seq_key=self._seq_key(),
+                ring_key=self._ring_key(),
+                channel=self._channel(),
+                envelope=envelope,
+                ring_capacity=RING_CAPACITY,
+            )
 
     def reset_stream(self) -> None:
         """清除傳輸層狀態（seq 計數器 + ring buffer），供崩潰復原後重啟乾淨串流。

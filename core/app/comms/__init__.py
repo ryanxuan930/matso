@@ -9,17 +9,26 @@
 from app.comms.consequences import (
     DEFAULT_DEGRADED_DELAY_TICKS,
     DEFAULT_DEGRADED_REPORT_MULTIPLIER,
+    FACTION_DEGRADED_ONLINE_RATIO,
+    REPORT_LAT_KEY,
+    REPORT_LNG_KEY,
+    REPORT_TICK_KEY,
     CommandDelivery,
     CommsState,
     IntelGranularity,
     LinkState,
+    ProjectedPosition,
     can_receive_command,
     command_delivery,
+    faction_link_state,
     intel_granularity,
+    last_position_report,
     order_admissible,
     parse_link_state,
+    position_report_due,
     position_report_frozen,
     position_report_interval,
+    project_position,
 )
 from app.comms.link_budget import (
     CommsNode,
@@ -31,9 +40,13 @@ from app.comms.link_budget import (
 )
 
 __all__ = [
-    # consequences（O5.4）
+    # consequences（O5.4；WP-C5 補位置回報投影與陣營姿態）
     "DEFAULT_DEGRADED_DELAY_TICKS",
     "DEFAULT_DEGRADED_REPORT_MULTIPLIER",
+    "FACTION_DEGRADED_ONLINE_RATIO",
+    "REPORT_LAT_KEY",
+    "REPORT_LNG_KEY",
+    "REPORT_TICK_KEY",
     "CommandDelivery",
     # link_budget（#33）
     "CommsNode",
@@ -41,15 +54,20 @@ __all__ = [
     "CommsState",
     "IntelGranularity",
     "LinkState",
+    "ProjectedPosition",
     "can_receive_command",
     "command_delivery",
+    "faction_link_state",
     "fspl_db",
     "intel_granularity",
+    "last_position_report",
     "link_margin_db",
     "link_state",
     "mesh_states",
     "order_admissible",
     "parse_link_state",
+    "position_report_due",
     "position_report_frozen",
     "position_report_interval",
+    "project_position",
 ]

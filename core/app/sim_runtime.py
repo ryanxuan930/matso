@@ -14,7 +14,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,7 +38,9 @@ from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
 from app.engine.subsystems import NoOpTriggerChecker
+from app.factions.relations import FactionRelations
 from app.factions.session_store import load_session_relations
+from app.factions.visibility import visible_factions
 from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
@@ -110,6 +112,18 @@ def _make_roe_lookup(
         return roe.fire_policy_for(faction), roe.forbidden_for(faction)
 
     return _lookup
+
+
+def _make_visible_for(
+    relations: FactionRelations, factions: Sequence[str]
+) -> Callable[[str], frozenset[str]]:
+    """observer → 它直接看得到的陣營集（自己＋盟軍）。供 STATE_DIFF 每陣營投影（WP-C5）。
+
+    規則本體與 `GET /units` 共用 `factions.visibility.visible_factions`——兩份實作就是兩份
+    會漂移的 fog of war。這裡預先算好（每局陣營數是個位數），投影時每 tick 查表即可。
+    """
+    table = {f: frozenset(visible_factions(f, factions, relations)) for f in factions}
+    return lambda observer: table.get(observer, frozenset({observer}))
 
 
 def _read_live_tick(client: object, session_id: str) -> int:
@@ -306,8 +320,16 @@ class SimManager:
                     sim_params=sim_params,  # #93 可調補給距離
                 ),
                 trigger_checker=NoOpTriggerChecker(),
-                # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）。
-                broadcaster=RedisBroadcaster(client, session_id, sensor_resolver.faction_for),
+                # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）；
+                # WP-C5 起 STATE_DIFF 也改為**每陣營投影**（可見集 + 位置凍結），不再全廣播。
+                broadcaster=RedisBroadcaster(
+                    client,
+                    session_id,
+                    sensor_resolver.faction_for,
+                    observers=sensor_resolver.factions(),
+                    visible_for=_make_visible_for(relations, sensor_resolver.factions()),
+                    state_for=hot.get_unit,
+                ),
                 event_sink=LedgerWriter(self._factory),
                 hot_state=hot,
                 wall_clock=PerfCounterClock(),

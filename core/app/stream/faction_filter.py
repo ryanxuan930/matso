@@ -26,17 +26,24 @@ def is_white_cell(role: UserRole) -> bool:
 
 
 def is_visible(envelope: dict[str, Any], faction: str, omniscient: bool) -> bool:
-    """envelope 是否應送給此 faction 的 client。全知 → 全收；否則僅收己方受眾或無受眾標籤者。
+    """envelope 是否應送給此 faction 的 client（契約見 ws_protocol.md「受眾標籤」）。
 
-    兩種受眾標籤：
+    三種受眾標籤：
     - `faction`：單一受眾（API 端 `publish_event` 用）。
     - `factions`：受眾清單（Kernel 事件用——一次交戰同時關乎射手與目標兩方）。
-    兩者皆無 → 全域事件（如 SESSION_CONCLUDED），所有人可見。
+    - `exclusive: true`：**關掉全知旁通**（WP-C5 的每陣營 STATE_DIFF 投影）。
+    皆無 → 全域事件（如 SESSION_CONCLUDED），所有人可見。
+
+    `exclusive` 存在的理由：同一 tick 會發出「每陣營各一份已投影的副本」＋「一份真實副本」。
+    全知角色若照舊旁通，就會同時收到 N 份互相矛盾的副本（有的凍結、有的沒凍結，先到先贏）。
+    真實副本以 `factions: []` 標記，作戰陣營一個都不匹配，只有全知旁通收得到。
     """
-    if omniscient:
-        return True
     audience_list = envelope.get("factions")
     if isinstance(audience_list, list):
-        return faction in audience_list
+        if faction in audience_list:
+            return True
+        return omniscient and not envelope.get("exclusive", False)
+    if omniscient:
+        return True
     audience = envelope.get("faction")
     return audience is None or audience == faction

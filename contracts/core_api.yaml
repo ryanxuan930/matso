@@ -228,8 +228,15 @@ components:
         authorized_strength: { type: number, description: "滿編戰力（TO&E 分母）" }
         platform_count: { type: integer, description: "平台/建制數（每次命中僅損一個平台份量）" }
         personnel_current: { type: [integer, "null"], description: "當前人員數（顯示用，可空）" }
-        comms: { type: string }
+        comms: { type: string, description: "通聯狀態 ONLINE/DEGRADED/OFFLINE（活模擬中取自熱狀態，非 DB 播種值）" }
         is_fixed: { type: boolean, description: "固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記" }
+        stale_since_tick:
+          type: [integer, "null"]
+          description: >-
+            **位置凍結**（WP-C5，SPEC_FULL §6.2）。非 null 表示 `lat`/`lng` 不是真實位置，
+            而是該單位**最後一次位置回報**的內容，本欄為那次回報的 tick。
+            OFFLINE 單位不再回報（位置對己方 COP 凍結）；DEGRADED 降頻回報（位置落後）。
+            只出現在**陣營視角**（一般角色，或白軍指定 `as_faction`）；白軍 god view 一律真實位置。
     WeaponView:
       type: object
       description: 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種
@@ -321,11 +328,18 @@ components:
         /units、/intel、/map-features、/relations 的同一份邏輯，故其可見範圍與各端點**逐項相同**。
         `last_seq` 的用途：client 套用快照後，只接受 seq 大於它的 STATE_DIFF——否則
         「RESYNC 送出後、快照回來前」抵達的新 diff 會被隨後回來的舊快照蓋掉。
-      required: [tick, last_seq, observer_faction, units, contacts, map_features, relations]
+      required:
+        [tick, last_seq, observer_faction, comms_posture, units, contacts, map_features, relations]
       properties:
         tick:
           type: integer
           description: 快照當下的 sim tick（無活模擬的局為 0）
+        comms_posture:
+          type: [string, "null"]
+          description: >-
+            觀測陣營的**整體通聯姿態** ONLINE/DEGRADED/OFFLINE（WP-C5）。
+            這是敵情粗化的依據本身（後端算一次，前端只用來顯示「敵情圖粗化中」，
+            不得據此自行改動資料——粗化已在 `contacts` 上生效）。god view 為 null。
         last_seq:
           type: integer
           description: >-
@@ -414,6 +428,9 @@ components:
         敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id，
         不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露，
         未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。
+        **敵情粗化**（WP-C5，SPEC_FULL §6.2）：觀測陣營整體通聯非 ONLINE 時，`lat`/`lng`
+        量化到 h3 res-6 格心（約 3km）、`error_radius_m` 放大到該格尺度、`fidelity` 上限
+        DETECTED（連帶 unit_type/designation/faction 回到 null）。資料本身不動，只是投影降級。
       required: [contact_id, fidelity, last_seen_tick, lat, lng, error_radius_m]
       properties:
         contact_id: { type: string, description: 觀測方的 IntelContact id（非目標 unit id） }

@@ -4,6 +4,10 @@
 `comms_state`（ONLINE/DEGRADED/OFFLINE）寫入熱狀態（供 COP 顯示 + 後續指令延遲/凍結後果），
 狀態改變時記 `COMMS_STATE_CHANGED`。決定性：純公式，不用 RNG；每 N tick 重算一次（省算）。
 
+WP-C5 起本系統同時是**位置回報**的產出端：依 `position_report_interval` 把 `report_lat/lng/tick`
+寫入熱狀態（OFFLINE 不再更新＝凍結、DEGRADED 降頻＝落後）。真實 lat/lng 照常由 movement 演進；
+「指揮所看得到什麼」由投影層（`/units`、STATE_DIFF、AI context）依這三欄決定。
+
 紅線：Kernel 為熱狀態唯一寫入者（本系統經 hot_state.update_unit 累積 diff）；同步 DB 移到執行緒。
 """
 
@@ -14,7 +18,17 @@ import asyncio
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from app.comms import CommsNode, CommsProfile, LinkState, mesh_states
+from app.comms import (
+    REPORT_LAT_KEY,
+    REPORT_LNG_KEY,
+    REPORT_TICK_KEY,
+    CommsNode,
+    CommsProfile,
+    LinkState,
+    last_position_report,
+    mesh_states,
+    position_report_due,
+)
 from app.engine.clock import SimTime
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.models.enums import UnitLevel
@@ -85,14 +99,44 @@ class CommsSystem:
         events: list[LedgerEvent] = []
         for _faction, nodes in by_faction.items():
             states = mesh_states(nodes)
+            positions = {n.unit_id: (n.lat, n.lng) for n in nodes}
             for uid, st in states.items():
                 prev = self._hot.get_unit(uid) or {}
+                changes = self._position_report(prev, uid, st, positions, now)
                 prev_state = prev.get("comms_state")
                 if prev_state != st.value:
-                    self._hot.update_unit(uid, {"comms_state": st.value})
-                    if prev_state is not None:  # 首次播種不記事件，僅記真正轉移
-                        events.append(self._event(uid, prev_state, st, now))
+                    changes["comms_state"] = st.value
+                if changes:
+                    self._hot.update_unit(uid, changes)
+                if prev_state != st.value and prev_state is not None:
+                    events.append(self._event(uid, prev_state, st, now))  # 首次播種不記事件
         return events
+
+    def _position_report(
+        self,
+        prev: dict,  # type: ignore[type-arg]
+        unit_id: str,
+        state: LinkState,
+        positions: dict[str, tuple[float, float]],
+        now: SimTime,
+    ) -> dict[str, object]:
+        """WP-C5：到期則落一筆位置回報（`report_*`）。回傳要寫入熱狀態的變更。
+
+        這是 SPEC §6.2「位置回報」的產出端；消費端在投影層（`/units`、STATE_DIFF、AI context）。
+        **真實 lat/lng 一概不動**——凍結的是「指揮所看得到什麼」，不是單位本身。
+
+        兩種情況會寫：回報週期到期（ONLINE 每 interval、DEGRADED ×3、OFFLINE 永不），
+        或**該單位還沒有任何回報**。後者是刻意的：開局即失聯的單位若連一筆回報都沒有，
+        己方 COP 會變成「自己的部隊位置不明」——但部署位置本來就是指揮所知道的。
+        """
+        pos = positions.get(unit_id)
+        if pos is None:
+            return {}
+        seeded = last_position_report(prev) is not None
+        if seeded and not position_report_due(state, now.tick, self._interval):
+            return {}
+        lat, lng = pos
+        return {REPORT_LAT_KEY: lat, REPORT_LNG_KEY: lng, REPORT_TICK_KEY: now.tick}
 
     def _comms_profile(self, db: object, unit_id: str) -> CommsProfile:
         """單位的通訊裝備（category=COMMS）→ profile；無則預設手持 VHF。"""

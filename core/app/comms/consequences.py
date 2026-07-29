@@ -17,11 +17,23 @@ SPEC §6.2 對照：
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 # SPEC §6.2「延遲 N ticks」的 v0 預設 N；「位置回報降頻」的 v0 倍率。
 DEFAULT_DEGRADED_DELAY_TICKS = 3
 DEFAULT_DEGRADED_REPORT_MULTIPLIER = 3
+
+# 熱狀態中「最後一次位置回報」的欄位（WP-C5）。**不是**單位的真實位置——真實位置照常
+# 每 tick 演進於 lat/lng，這三欄只在該單位的回報週期到期時才被 CommsSystem 覆寫。
+REPORT_LAT_KEY = "report_lat"
+REPORT_LNG_KEY = "report_lng"
+REPORT_TICK_KEY = "report_tick"
+
+# 陣營整體通聯姿態的門檻（WP-C5，v0 值，與上方兩個 v0 常數同紀律）：
+# 能即時回報的單位不到半數 → 該陣營的敵情融合圖粗化。
+FACTION_DEGRADED_ONLINE_RATIO = 0.5
 
 
 class LinkState(enum.StrEnum):
@@ -132,3 +144,85 @@ def intel_granularity(state: LinkState) -> IntelGranularity:
     if state is LinkState.DEGRADED:
         return IntelGranularity.COARSE
     return IntelGranularity.FROZEN
+
+
+def faction_link_state(states: Iterable[LinkState]) -> LinkState:
+    """整個陣營的通聯姿態（供敵情粗化，WP-C5）。
+
+    敵情融合是**指揮所**的功能：各單位的觀測要送得回來才進得了那張圖。故：
+    - **全部** OFFLINE → OFFLINE（沒有任何新觀測進得來，圖凍結）；
+    - 能即時回報（ONLINE）的不到半數 → DEGRADED（圖粗化）——注意全員 DEGRADED 也落在這裡，
+      那些單位仍在回報，只是慢，稱不上凍結；
+    - 否則 ONLINE。無單位（尚未部署／全數殲滅）→ ONLINE，不因無資料而懲罰。
+
+    ⚠ 這是規格明定的**陣營層**近似。更真實的做法是「該筆情報的回報單位斷聯 → 該筆凍結」，
+    但 `IntelContact` 沒有觀測者單位欄位（只有 faction），做不到（記於 PROGRESS backlog）。
+    """
+    items = list(states)
+    if not items:
+        return LinkState.ONLINE
+    if all(s is LinkState.OFFLINE for s in items):
+        return LinkState.OFFLINE
+    online = sum(1 for s in items if s is LinkState.ONLINE)
+    if online / len(items) < FACTION_DEGRADED_ONLINE_RATIO:
+        return LinkState.DEGRADED
+    return LinkState.ONLINE
+
+
+def position_report_due(
+    state: LinkState,
+    tick: int,
+    base_interval_ticks: int,
+    degraded_multiplier: int = DEFAULT_DEGRADED_REPORT_MULTIPLIER,
+) -> bool:
+    """本 tick 是否該送出位置回報（OFFLINE 永不；DEGRADED 依降頻後的間隔）。
+
+    以 tick 取餘數判定（決定性，不用時鐘）——與 `order_admissible` 同紀律。
+    """
+    interval = position_report_interval(state, base_interval_ticks, degraded_multiplier)
+    if interval is None or interval <= 0:
+        return False
+    return tick % interval == 0
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedPosition:
+    """己方 COP 上該單位「應該被看到」的位置（WP-C5）。
+
+    `lat`/`lng` 為 None ＝ 該陣營對此單位的位置**一無所知**（尚無任何回報）——呼叫端須
+    自行決定表現方式（REST 回 null＝位置不明；STATE_DIFF 移除欄位＝保留 client 最後已知值，
+    **不得**送 null 把它清掉）。
+    """
+
+    lat: float | None
+    lng: float | None
+    stale_since_tick: int | None
+
+
+def last_position_report(unit_state: Mapping[str, Any]) -> ProjectedPosition | None:
+    """熱狀態中最後一次位置回報；三欄不齊（型別不符/缺欄）→ None。"""
+    lat, lng, tick = (
+        unit_state.get(REPORT_LAT_KEY),
+        unit_state.get(REPORT_LNG_KEY),
+        unit_state.get(REPORT_TICK_KEY),
+    )
+    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+        return None
+    if isinstance(tick, bool) or not isinstance(tick, int):
+        return None
+    return ProjectedPosition(float(lat), float(lng), tick)
+
+
+def project_position(unit_state: Mapping[str, Any]) -> ProjectedPosition | None:
+    """己方視角的位置投影。**回 None ＝ 不必投影**（ONLINE，照用真實位置）。
+
+    SPEC §6.2「位置對己方 COP 凍結」的實作核心：真實位置在熱狀態照常演進，這裡只決定
+    「指揮所看得到什麼」。非 ONLINE 即以最後一次回報取代——OFFLINE 的回報早已停止（凍結），
+    DEGRADED 的回報降頻（落後）。
+    """
+    if parse_link_state(unit_state.get("comms_state")) is LinkState.ONLINE:
+        return None
+    report = last_position_report(unit_state)
+    if report is None:
+        return ProjectedPosition(None, None, None)  # 尚無回報：位置不明（不得回填真實位置）
+    return report

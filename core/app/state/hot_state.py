@@ -32,6 +32,11 @@ def session_tick_key(session_id: str) -> str:
     return f"session:{session_id}:tick"
 
 
+def unit_key(session_id: str, unit_id: str) -> str:
+    """單位熱狀態鍵。Kernel 之外的**唯讀**取用者（API 投影層）也要用它，勿另寫字面值。"""
+    return f"session:{session_id}:unit:{unit_id}"
+
+
 def compute_diff(old: Mapping[str, Any], new: Mapping[str, Any]) -> UnitDiff:
     """回傳 new 相對 old 的變動：新增或值不同的欄位（相同值不列入）。
 
@@ -148,7 +153,7 @@ class RedisHotState(_BaseHotState):
         self._cache_complete = False  # True = cache 已涵蓋本 session 全部單位
 
     def _key(self, unit_id: str) -> str:
-        return f"session:{self._session_id}:unit:{unit_id}"
+        return unit_key(self._session_id, unit_id)
 
     def _prefix(self) -> str:
         return f"session:{self._session_id}:unit:"
