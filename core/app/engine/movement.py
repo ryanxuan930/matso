@@ -22,9 +22,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.adjudication.effectiveness import effectiveness_pct
+from app.adjudication.suppression import move_modifier
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
+from app.engine.suppression_wiring import SUPPRESSION_KEY, interrupt_posture
 from app.models import MapFeature, Order, OrderStatus, TacticalUnit
 from app.movement.attrition import (
     Obstacle,
@@ -284,6 +286,13 @@ class UnitMovementSystem:
             step_km = float(raw_step)
         else:
             step_km = self._step_km
+        # WP-C1：被壓制的部隊走不動——趴著推進本來就慢。同時把姿態打回 MOVING
+        # （挖到一半的洞帶不走）。無壓制/已是 MOVING → 乘 1.0、不寫熱狀態，位元不變。
+        hot_state = self._hot_state.get_unit(unit.id) or {}
+        raw_sup = hot_state.get(SUPPRESSION_KEY)
+        if isinstance(raw_sup, (int, float)) and raw_sup > 0:
+            step_km *= move_modifier(float(raw_sup))
+        interrupt_posture(self._hot_state, unit.id, now.tick)
         tgt_lng, tgt_lat = targets[leg]
         cur_lat, cur_lng = float(unit.current_lat or 0.0), float(unit.current_lng or 0.0)
         # #81 Phase B：以目前所在格地形類別+坡度調速；不可通行→停在此 + MOVE_BLOCKED。

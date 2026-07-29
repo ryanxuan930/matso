@@ -44,6 +44,11 @@ from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
 from app.engine.subsystems import ChainedOrderSource, DispatchingAdjudicator
+from app.engine.suppression_wiring import (
+    apply_hit_suppression,
+    drain_posture_orders,
+    tick_suppression,
+)
 from app.factions.relations import FactionRelations
 from app.factions.session_store import load_session_relations
 from app.factions.visibility import visible_factions
@@ -165,6 +170,33 @@ def _make_visible_for(
     """
     table = {f: frozenset(visible_factions(f, factions, relations)) for f in factions}
     return lambda observer: table.get(observer, frozenset({observer}))
+
+
+def _posture_tick(factory: Any, session_id: str, hot: Any, tick: int) -> int:
+    """POSTURE 令的執行。另開 DB session——不借用 engage_db（那條在 tick 之中被 commit）。"""
+    with factory() as db:
+        return drain_posture_orders(db, session_id, hot, tick)
+
+
+def _suppress_hit(hot: Any, unit_id: str, category: str) -> None:
+    """命中 → 累積壓制（丟掉回傳值，裁決層不需要新的壓制度）。"""
+    apply_hit_suppression(hot, unit_id, category)
+
+
+def _weapon_category(resolver: WeaponResolver, cmd: Any) -> str:
+    """射手這次用的武器類別（WP-C1 壓制累積量）。
+
+    指名了武器就用那一把；沒指名則取武器清單的第一件（穩定序）。查不到 → KINETIC，
+    那是最保守的（累積最少），寧可低估壓制也不要憑空放大砲兵的效果。
+    """
+    entries = resolver.weapons_for(cmd.shooter_id)
+    if not entries:
+        return "KINETIC"
+    if cmd.weapon_template_id:
+        named = [e for e in entries if e.weapon_id == cmd.weapon_template_id]
+        if named:
+            return named[0].category
+    return entries[0].category
 
 
 def _set_pause(client: Any, session_id: str) -> None:
@@ -383,6 +415,9 @@ class SimManager:
                             # WP-B6：射手陣營的 ROE（預設火力政策 + 被禁武器）。
                             # 無宣告→(None, 空集)。
                             roe_for=_make_roe_lookup(roe, sensor_resolver.faction_for),
+                            # WP-C1：命中即累積壓制。武器類別決定累積量（砲兵高、直射低）。
+                            suppress=lambda uid, cat: _suppress_hit(hot, uid, cat),
+                            weapon_category_for=lambda cmd: _weapon_category(resolver, cmd),
                         ),
                         # WP-C10.2 面目標射擊：**獨立的 RNG stream**——散布抽樣次數會隨發數變動，
                         # 與交戰共用 stream 的話，打一次砲就會擾動所有交戰的隨機序列。
@@ -521,6 +556,13 @@ class SimManager:
                     await asyncio.to_thread(
                         publish_pending, client, session_id, msel_runtime.pending()
                     )
+                # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
+                # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
+                await asyncio.to_thread(tick_suppression, hot, sim_clock.now().tick)
+                # POSTURE 令（在此之前是 NoOp——令收得下、狀態機也走得完，就是沒有任何效果）。
+                await asyncio.to_thread(
+                    _posture_tick, self._factory, session_id, hot, sim_clock.now().tick
+                )
                 # WP-C10.5 陣地變換：打夠次數的砲自動換位置。事件走 LedgerWriter，
                 # 因為 pre_tick 不在 Kernel 的事件蒐集路徑上。
                 moves = await asyncio.to_thread(_displacement_tick, sim_clock.now().tick)

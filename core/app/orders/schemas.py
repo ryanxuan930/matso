@@ -71,6 +71,16 @@ class FireMissionPayload(BaseModel):
     fire_request_id: str | None = None
 
 
+class PosturePayload(BaseModel):
+    """POSTURE 指令載荷（WP-C1）：宣告單位要進入的姿態。
+
+    **只是宣告目標**——轉換要時間（HASTY 即時／DEFENSE 30 分／DUG_IN 4 小時），
+    期間仍算前一級。宣告掘壕的那一秒就享有掘壕防護會讓工事變成免費按鈕。
+    """
+
+    posture: str = Field(pattern="^(MOVING|HASTY|DEFENSE|DUG_IN)$")
+
+
 class PrecheckCheck(BaseModel):
     """單一預檢項目結果（供 AAR 溯源與前端顯示）。"""
 

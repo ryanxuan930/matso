@@ -152,6 +152,8 @@ class EngagementAdjudicator:
         quantity_for: QuantityLookup | None = None,
         combined_weapons_for: CombinedWeaponsLookup | None = None,
         roe_for: RoeLookup | None = None,
+        suppress: Callable[[str, str], None] | None = None,
+        weapon_category_for: Callable[[EngageCommand], str] | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -166,6 +168,9 @@ class EngagementAdjudicator:
         # None → 無限制（既有行為位元相同）。以 callable 注入而非傳 RoeRules，
         # 使 adjudication 套件不必依賴會讀 DB 的 orders.roe（同 G3/G4 的注入紀律）。
         self._roe_for = roe_for
+        # WP-C1 壓制累積（None → 不累積，既有呼叫端零行為變更）。
+        self._suppress = suppress
+        self._weapon_category_for = weapon_category_for
 
     def resolve(self, order: EngageCommand, now: SimTime) -> list[LedgerEvent]:
         shooter_state = self._hot.get_unit(order.shooter_id)
@@ -326,6 +331,12 @@ class EngagementAdjudicator:
         unit.current_strength = strength_after
         unit.health_status = health
 
+    def _weapon_category(self, order: EngageCommand) -> str:
+        """射手用的武器類別——決定壓制累積量（砲兵高、直射低）。查不到 → KINETIC。"""
+        if self._weapon_category_for is None:
+            return "KINETIC"
+        return self._weapon_category_for(order) or "KINETIC"
+
     def _apply(self, order: EngageCommand, result: EngagementResult) -> None:
         if result.status is Resolution.REJECTED:
             return  # 合法性未過（彈藥/射程/LOS）→ 不消耗、不變更
@@ -351,6 +362,10 @@ class EngagementAdjudicator:
             # 消耗實際發射彈藥（單發＝1；squad 齊射＝發射數）。
             self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - result.ammo_spent)})
         if result.status is Resolution.HIT:
+            # WP-C1：被打中就會被壓制。**由此處呼叫而非每 tick 掃描**——
+            # 壓制的來源是具體的一次命中，掃描式的模型分不清「被打三次」與「被打一次但很久」。
+            if self._suppress is not None:
+                self._suppress(order.target_id, self._weapon_category(order))
             patch: dict[str, float] = {"health": result.target_health_after}
             if result.target_strength_after is not None:
                 patch["strength"] = result.target_strength_after  # 當前戰力（唯一權威量）

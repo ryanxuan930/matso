@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import h3
 from sqlalchemy import select
@@ -25,6 +26,7 @@ from app.adjudication.adjudicator import EngageCommand
 from app.adjudication.combined import CombinedWeapon
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
+from app.adjudication.suppression import Posture, fire_modifier, posture_modifier
 from app.adjudication.weapon import WeaponProfile
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.state.hot_state import HotStateStore
@@ -308,6 +310,20 @@ def _weather_res(weather: WeatherState) -> int:
     return 8
 
 
+def _as_float(raw: object) -> float:
+    return float(raw) if isinstance(raw, (int, float)) else 0.0
+
+
+def _posture_of(state: dict[str, Any]) -> Posture:
+    """熱狀態 → **已就位**的姿態。讀 `posture`（引擎每 tick 收斂後的值），不讀 `posture_target`
+    ——挖到一半就享有掘壕防護會讓工事變成免費按鈕。"""
+    raw = state.get("posture")
+    try:
+        return Posture(str(raw)) if raw else Posture.MOVING
+    except ValueError:
+        return Posture.MOVING
+
+
 def make_engage_env(  # type: ignore[no-untyped-def]
     hot: HotStateStore, gateway: object | None = None, weather: WeatherState | None = None
 ):
@@ -320,6 +336,9 @@ def make_engage_env(  # type: ignore[no-untyped-def]
       無天氣或查無 cell → CLEAR（1.0）。給定座標/快照具決定性 → replay 安全。
     - terrain_cover_modifier（STEP3）：由視線最小餘隙導出——掠地射擊＝目標半遮蔽 → 命中降低（直瞄）；
       間瞄不受地形遮蔽。無 gateway/餘隙 → 1.0。
+    - shooter_suppression_modifier / target_posture_modifier（WP-C1）：由熱狀態的
+      `suppression` 與 `posture` 導出。**兩者從交戰真實化時代就恆為 1.0**——掛點早就留好，
+      系統一直缺席。無壓制、MOVING 姿態 → 剛好 1.0，既有局位元不變。
     """
     w_res = _weather_res(weather) if weather is not None else 8
 
@@ -355,6 +374,9 @@ def make_engage_env(  # type: ignore[no-untyped-def]
             los_clear=los_clear,
             weather_modifier=weather_mod,
             terrain_cover_modifier=cover_mod,
+            # WP-C1：射手被壓制 → 打不準；目標有工事 → 更難被打中。
+            shooter_suppression_modifier=fire_modifier(_as_float(s.get("suppression"))),
+            target_posture_modifier=posture_modifier(_posture_of(t)),
         )
 
     return env_for
