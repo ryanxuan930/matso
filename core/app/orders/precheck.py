@@ -34,6 +34,7 @@ from app.orders.no_strike import ZoneClass, load_no_strike_cells
 from app.orders.roe import load_session_roe
 from app.orders.schemas import (
     EngagePayload,
+    FireMissionPayload,
     MovePayload,
     PrecheckCheck,
     PrecheckResult,
@@ -184,7 +185,7 @@ def _unit_has_indirect(db: Session, unit: TacticalUnit) -> bool:
 
 
 def _precheck_fire_approval(
-    db: Session, unit: TacticalUnit, payload: EngagePayload
+    db: Session, unit: TacticalUnit, payload: EngagePayload | FireMissionPayload
 ) -> list[PrecheckCheck]:
     """WP-B5.3 曲射火協：本局要求時，曲射交戰須掛一張已核准的 FIRE_SUPPORT 申請單。
 
@@ -196,12 +197,17 @@ def _precheck_fire_approval(
     要用直射就把武器指出來。訊息會講清楚怎麼做。
 
     未開啟本局開關 → 一律通過（既有局零行為變更）。
+
+    **FIRE_MISSION 一律視為曲射**（WP-C10.2）：面目標射擊本來就是間瞄火力，
+    不掛核准單就能打的話，等於用新令型繞過火協——與「不指名武器就繞過」是同一類洞。
     """
     session = db.get(WargameSession, unit.session_id)
     if session is None or not getattr(session, "indirect_fire_requires_approval", False):
         return []
 
-    if payload.weapon_id:
+    if isinstance(payload, FireMissionPayload):
+        pass  # 面目標射擊本身即曲射，無論指名什麼武器都要火協
+    elif payload.weapon_id:
         inst = db.get(EquipmentInstance, payload.weapon_id)
         tmpl = db.get(EquipmentTemplate, inst.template_id) if inst is not None else None
         if tmpl is None or str(tmpl.category) not in _INDIRECT_CATEGORIES:
@@ -243,6 +249,50 @@ def _precheck_fire_approval(
     return []
 
 
+def _precheck_fire_mission(
+    db: Session, unit: TacticalUnit, payload: FireMissionPayload
+) -> list[PrecheckCheck]:
+    """面目標射擊的物理預檢（WP-C10.2）：單位須有曲射武器、目標須在射程內。
+
+    **刻意不檢查 LOS**——間瞄火力打的就是看不見的地方，那正是它存在的理由。
+    （直射的 ENGAGE 仍照舊檢查視線。）
+    """
+    checks: list[PrecheckCheck] = []
+    if unit.current_lat is None or unit.current_lng is None:
+        return [PrecheckCheck(name="position", passed=False, detail="射擊單位無座標")]
+
+    rows = db.scalars(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)).all()
+    best_range = 0.0
+    for inst in rows:
+        tmpl = db.get(EquipmentTemplate, inst.template_id)
+        if tmpl is None or str(tmpl.category) not in _INDIRECT_CATEGORIES:
+            continue
+        try:
+            profile = WeaponProfile.from_base_stats(dict(tmpl.base_stats))
+            best_range = max(best_range, profile.max_range_m)
+        except (KeyError, ValueError):
+            continue
+    if best_range <= 0:
+        return [
+            PrecheckCheck(name="indirect_weapon", passed=False, detail="此單位無可用的曲射武器")
+        ]
+
+    dist_m = (
+        _haversine_km(
+            float(unit.current_lat), float(unit.current_lng), payload.target_lat, payload.target_lng
+        )
+        * 1000.0
+    )
+    checks.append(
+        PrecheckCheck(
+            name="range",
+            passed=dist_m <= best_range,
+            detail=f"距離 {dist_m / 1000:.1f} km / 最大射程 {best_range / 1000:.1f} km",
+        )
+    )
+    return checks
+
+
 def run_precheck(
     db: Session,
     validated: ValidatedOrder,
@@ -260,6 +310,9 @@ def run_precheck(
     rel = relations or FactionRelations()
     if isinstance(payload, MovePayload):
         checks = _precheck_move(validated.unit, payload, gateway)
+    elif isinstance(payload, FireMissionPayload):
+        checks = _precheck_fire_mission(db, validated.unit, payload)
+        checks.extend(_precheck_fire_approval(db, validated.unit, payload))
     elif isinstance(payload, EngagePayload):
         checks = _precheck_engage(db, validated.unit, payload, gateway, rel)
         checks.extend(_precheck_no_strike(db, validated.unit, payload, acknowledge_restricted))

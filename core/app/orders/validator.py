@@ -20,15 +20,22 @@ from app.errors import (
 )
 from app.models.enums import UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, WargameSession
-from app.orders.schemas import EngagePayload, MovePayload, OrderRequest, OrderType
+from app.orders.schemas import (
+    EngagePayload,
+    FireMissionPayload,
+    MovePayload,
+    OrderRequest,
+    OrderType,
+)
 from app.seats import SEAT_LABELS, seat_may_order
 
 # 可跨陣營下令的角色（白軍/導演）
 _OVERRIDE_ROLES = frozenset({UserRole.WHITE_CELL_STAFF, UserRole.EXERCISE_DIRECTOR})
 
-_PAYLOAD_MODELS: dict[OrderType, type[MovePayload | EngagePayload]] = {
+_PAYLOAD_MODELS: dict[OrderType, type[MovePayload | EngagePayload | FireMissionPayload]] = {
     OrderType.MOVE: MovePayload,
     OrderType.ENGAGE: EngagePayload,
+    OrderType.FIRE_MISSION: FireMissionPayload,
 }
 
 
@@ -36,7 +43,7 @@ _PAYLOAD_MODELS: dict[OrderType, type[MovePayload | EngagePayload]] = {
 class ValidatedOrder:
     unit: TacticalUnit
     order_type: OrderType
-    payload: MovePayload | EngagePayload | dict[str, object]
+    payload: MovePayload | EngagePayload | FireMissionPayload | dict[str, object]
 
 
 def validate_order(
@@ -113,7 +120,9 @@ def _check_permission(
         )
 
 
-def _parse_payload(req: OrderRequest) -> MovePayload | EngagePayload | dict[str, object]:
+def _parse_payload(
+    req: OrderRequest,
+) -> MovePayload | EngagePayload | FireMissionPayload | dict[str, object]:
     model = _PAYLOAD_MODELS.get(req.order_type)
     if model is None:
         return dict(req.payload)  # 其餘類型（RECON/RESUPPLY/POSTURE）O3.x 再細化

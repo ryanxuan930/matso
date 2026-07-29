@@ -36,11 +36,22 @@ agent: Opus 5
 
 10 個測試。pytest 1400、mypy 218、ruff 綠。
 
+## 已完成：令型與准入
+
+- **`OrderType.FIRE_MISSION` + `FireMissionPayload`**（目標座標、發數、選用武器/核准單）。
+- **席位**：`SEAT_ORDER_TYPES[FSO_FIRES]` 加上 FIRE_MISSION。
+  B5.1 把它做成單一 registry 的用意在這裡兌現——新增令型只改一張表。
+  （COMMANDER 是 `frozenset(OrderType)`，自動涵蓋。）
+- **預檢**：單位須有曲射武器、目標須在射程內。
+  **刻意不檢查 LOS**——間瞄火力打的就是看不見的地方，那正是它存在的理由。
+- **火協 gate 也綁 FIRE_MISSION**：面射擊本身即曲射，一律要核准單。
+  不套的話等於**用新令型繞過火協**——與 B5.3 那個「不指名武器就繞過」是同一類洞：
+  新增一條路徑時忘了套既有的閘門。3 個測試釘住。
+
 ## 未完成（本卡剩餘）
 
-- [ ] `OrderType.FIRE_MISSION` + payload（目標座標/發數）+ 契約
-- [ ] 預檢（射程、曲射不需 LOS、火協 gate 沿用 B5.3）
-- [ ] 引擎接線：令 → 蒐集半徑內單位 → `resolve_area_fire` → 落戰損與帳本
+- [ ] 引擎接線：令 → 蒐集半徑內單位（**兩軍都收**）→ `resolve_area_fire` → 落戰損與帳本
+- [ ] 契約：`OrderRequest.order_type` 若有列舉需同步；FIRE_MISSION 的 payload schema
 - [ ] 前端：COP 點地圖下火力任務
 
 ## 中斷續作指引

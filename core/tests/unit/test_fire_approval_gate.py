@@ -167,3 +167,51 @@ def test_wrong_kind_request_rejected(session_factory: sessionmaker[Session]) -> 
     rid = _make_request(session_factory, world, RequestStatus.APPROVED, kind=RequestKind.AIR_RECON)
     out = _check(session_factory, world, _p(weapon_id=wid, fire_request_id=rid))
     assert out and not out[0].passed
+
+
+# ---- WP-C10.2 FIRE_MISSION 也要走火協 gate ----
+
+
+def test_fire_mission_always_needs_approval(session_factory: sessionmaker[Session]) -> None:
+    """**面目標射擊本身即曲射**——不掛核准單就能打的話，等於用新令型繞過火協。
+
+    與 B5.3 的「不指名武器就繞過」是同一類洞：新增一條路徑時忘了套既有的閘門。
+    """
+    from app.orders.schemas import FireMissionPayload
+
+    world = seed_world(session_factory)
+    _give_weapon(session_factory, world.blue_unit_id, "ARTILLERY")
+    _enable_gate(session_factory, world)
+    payload = FireMissionPayload(target_lat=23.8, target_lng=121.3, rounds=4)
+    with session_factory() as db:
+        unit = db.get(TacticalUnit, world.blue_unit_id)
+        assert unit is not None
+        out = _precheck_fire_approval(db, unit, payload)
+    assert out and not out[0].passed
+
+
+def test_fire_mission_with_approval_passes(session_factory: sessionmaker[Session]) -> None:
+    from app.orders.schemas import FireMissionPayload
+
+    world = seed_world(session_factory)
+    _give_weapon(session_factory, world.blue_unit_id, "ARTILLERY")
+    _enable_gate(session_factory, world)
+    rid = _make_request(session_factory, world, RequestStatus.APPROVED)
+    payload = FireMissionPayload(target_lat=23.8, target_lng=121.3, fire_request_id=rid)
+    with session_factory() as db:
+        unit = db.get(TacticalUnit, world.blue_unit_id)
+        assert unit is not None
+        assert _precheck_fire_approval(db, unit, payload) == []
+
+
+def test_fire_mission_gate_off_unaffected(session_factory: sessionmaker[Session]) -> None:
+    """未開開關 → 面射擊不需核准單（既有局零行為變更）。"""
+    from app.orders.schemas import FireMissionPayload
+
+    world = seed_world(session_factory)
+    _give_weapon(session_factory, world.blue_unit_id, "ARTILLERY")
+    payload = FireMissionPayload(target_lat=23.8, target_lng=121.3)
+    with session_factory() as db:
+        unit = db.get(TacticalUnit, world.blue_unit_id)
+        assert unit is not None
+        assert _precheck_fire_approval(db, unit, payload) == []

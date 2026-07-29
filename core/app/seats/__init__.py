@@ -20,7 +20,8 @@ from app.orders.schemas import OrderType
 SEAT_ORDER_TYPES: dict[SeatRole, frozenset[OrderType]] = {
     SeatRole.COMMANDER: frozenset(OrderType),  # 指揮官：全部
     SeatRole.S3_OPS: frozenset({OrderType.MOVE}),  # 作戰官：機動
-    SeatRole.FSO_FIRES: frozenset({OrderType.ENGAGE}),  # 火力支援協調官：火力
+    # 火力支援協調官：火力（含面目標射擊——WP-C10.2 新增令型時只改這一張表）
+    SeatRole.FSO_FIRES: frozenset({OrderType.ENGAGE, OrderType.FIRE_MISSION}),
     SeatRole.S2_INTEL: frozenset(),  # 情報官：唯讀
     SeatRole.S4_LOG: frozenset(),  # 後勤官：待補給令型（WP-C7）
     SeatRole.OBSERVER: frozenset(),  # 觀察員：唯讀

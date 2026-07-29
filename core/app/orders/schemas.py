@@ -19,6 +19,9 @@ class OrderType(enum.StrEnum):
     RECON = "RECON"
     RESUPPLY = "RESUPPLY"
     POSTURE = "POSTURE"
+    # 面目標射擊（WP-C10.2）：打座標而非打單位。ENGAGE 表達不了「攻擊準備射擊」
+    # 這種「不管有沒有人在那裡都要打一片」的火力。
+    FIRE_MISSION = "FIRE_MISSION"
 
 
 class OrderRequest(BaseModel):
@@ -54,6 +57,17 @@ class EngagePayload(BaseModel):
     weapon_id: str | None = None
     ammo_type: str | None = None
     # WP-B5.3 曲射火協：本局要求時，曲射交戰須掛一張已核准的 FIRE_SUPPORT 申請單。
+    fire_request_id: str | None = None
+
+
+class FireMissionPayload(BaseModel):
+    """FIRE_MISSION 指令載荷（WP-C10.2）：目標座標 + 發數（+ 選用武器與火協核准單）。"""
+
+    target_lat: float = Field(ge=-90.0, le=90.0)
+    target_lng: float = Field(ge=-180.0, le=180.0)
+    rounds: int = Field(default=1, ge=1, le=200)
+    weapon_id: str | None = None
+    # 與 EngagePayload 同名同義：本局要求火協時，須掛已核准的 FIRE_SUPPORT 申請單。
     fire_request_id: str | None = None
 
 
