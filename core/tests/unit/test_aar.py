@@ -20,6 +20,7 @@ def _ev(seq, tick, etype, **kw):  # type: ignore[no-untyped-def]
         ai_decision=kw.get("dec", {}),
         damage_calc=kw.get("dmg"),
         reasoning_chain=kw.get("cot"),
+        detail=kw.get("detail", {}),
     )
 
 
@@ -132,6 +133,31 @@ def test_individual_engagement_health_pct_unchanged_by_the_fix() -> None:
     st = reconstruct_states(_events(), 5)
     assert st["R1"].health == 60.0
     assert st["R1"].strength is None
+
+
+def test_position_reconstructed_from_detail_not_ai_decision() -> None:
+    """移動類事件把 lat/lng 記在 `detail`（movement.py 全部走 detail=）。
+
+    位置分支原本只看 `ai_decision`，於是對任何真實移動都不生效——
+    地圖重播會是「所有單位都不動」。這條釘住真實事件形狀。
+    """
+    evs = [
+        _ev(1, 2, "UNIT_MOVED", initiator="B1", detail={"lat": 24.1, "lng": 120.5}),
+        _ev(2, 6, "UNIT_ARRIVED", initiator="B1", detail={"lat": 24.9, "lng": 121.2}),
+    ]
+    at2 = reconstruct_states(evs, 2)
+    assert (at2["B1"].lat, at2["B1"].lng) == (24.1, 120.5)
+    at6 = reconstruct_states(evs, 6)
+    assert (at6["B1"].lat, at6["B1"].lng) == (24.9, 121.2)
+    # up_to_tick 之前不套用後面的移動
+    assert (reconstruct_states(evs, 5)["B1"].lat) == 24.1
+
+
+def test_position_still_read_from_ai_decision_when_present() -> None:
+    """裁決類事件若把位置記在 ai_decision，仍要能取到（向後相容）。"""
+    evs = [_ev(1, 4, "SOME_EVENT", initiator="B2", dec={"lat": 23.0, "lng": 120.0})]
+    st = reconstruct_states(evs, 4)
+    assert (st["B2"].lat, st["B2"].lng) == (23.0, 120.0)
 
 
 def test_replay_summary() -> None:

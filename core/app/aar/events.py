@@ -24,6 +24,11 @@ class AarEvent:
     ai_decision: dict[str, Any] = field(default_factory=dict)
     damage_calc: float | None = None
     reasoning_chain: str | None = None
+    # 非證據性診斷欄（**不入 hash chain**，見 ledger.py 的警語）。
+    # 移動類事件（UNIT_MOVED / UNIT_ARRIVED / MOVE_HALTED_FUEL）把 lat/lng 記在這裡，
+    # 所以地圖重播的位置只能從這裡取——代價是那些座標不受竄改偵測保護。
+    # 重播是「看」不是「裁決」，可接受；但這是刻意的取捨，不是沒注意到。
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 def _to_aar(row: TacticalEventLog) -> AarEvent:
@@ -36,6 +41,7 @@ def _to_aar(row: TacticalEventLog) -> AarEvent:
         ai_decision=dict(row.ai_decision or {}),
         damage_calc=row.damage_calc,
         reasoning_chain=row.reasoning_chain,
+        detail=dict(row.detail or {}),
     )
 
 

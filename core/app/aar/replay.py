@@ -128,10 +128,14 @@ def reconstruct_states(
             _set_strength(e.initiator_id, float(dec["initiator_strength_after"]))
         if "target_strength_after" in dec and e.target_id:
             _set_strength(e.target_id, float(dec["target_strength_after"]))
-        # 位置更新（MOVE 完成等記 lat/lng）。
-        if e.initiator_id and "lat" in dec and "lng" in dec:
+        # 位置更新。**移動類事件把 lat/lng 記在 `detail` 而非 `ai_decision`**
+        # （movement.py 全部走 detail=）——本分支原本只看 ai_decision，於是自建立以來
+        # 從未對任何真實移動生效過，地圖重播會是「所有單位都不動」。
+        # 兩處都看：detail 優先（移動事件的真實來源），ai_decision 保留給有記位置的裁決事件。
+        pos = e.detail if ("lat" in e.detail and "lng" in e.detail) else dec
+        if e.initiator_id and "lat" in pos and "lng" in pos:
             s = _st(e.initiator_id)
-            s.lat, s.lng = float(dec["lat"]), float(dec["lng"])
+            s.lat, s.lng = float(pos["lat"]), float(pos["lng"])
     return states
 
 
