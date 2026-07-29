@@ -66,6 +66,8 @@ WeaponLookup = Callable[[EngageCommand], WeaponProfile]
 QuantityLookup = Callable[[EngageCommand], int]
 # 聯合兵種（SPEC_EXTEND P2）：由 shooter_id 取單位當前武器組合（帶活彈藥）；≥2 → combined 加總。
 CombinedWeaponsLookup = Callable[[str], Sequence[CombinedWeapon]]
+# WP-B6：shooter_id → (該陣營想定 ROE 的預設火力政策 | None, 被禁的類別/型號集)。
+RoeLookup = Callable[[str], tuple[str | None, frozenset[str]]]
 
 # 聚合裁決（#33a）攻擊係數：射手 lethality＝武器 pk × 尺度（每 tick 對敵戰力的殺傷率）；
 # 目標返火用固定小係數；變異度給隨機化。皆為 v0 校準值，可由想定/平衡調整。
@@ -149,6 +151,7 @@ class EngagementAdjudicator:
         env_for: EngageEnvLookup,
         quantity_for: QuantityLookup | None = None,
         combined_weapons_for: CombinedWeaponsLookup | None = None,
+        roe_for: RoeLookup | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -159,6 +162,10 @@ class EngagementAdjudicator:
         self._quantity_for = quantity_for
         # SPEC_EXTEND P2 聯合兵種：武器組合查表（None 或 <2 武器 → 走既有單/齊射；golden 不變）。
         self._combined_weapons_for = combined_weapons_for
+        # WP-B6 想定 ROE：shooter_id → (該陣營預設火力政策, 被禁武器集)。
+        # None → 無限制（既有行為位元相同）。以 callable 注入而非傳 RoeRules，
+        # 使 adjudication 套件不必依賴會讀 DB 的 orders.roe（同 G3/G4 的注入紀律）。
+        self._roe_for = roe_for
 
     def resolve(self, order: EngageCommand, now: SimTime) -> list[LedgerEvent]:
         shooter_state = self._hot.get_unit(order.shooter_id)
@@ -291,6 +298,9 @@ class EngagementAdjudicator:
         def env_for(profile: WeaponProfile) -> EnvSnapshot:
             return self._env_for(order.shooter_id, order.target_id, profile.indirect_fire)
 
+        roe_policy, forbidden = (
+            self._roe_for(order.shooter_id) if self._roe_for is not None else (None, frozenset())
+        )
         result = resolve_combined_engagement(
             cweapons,
             order.shooter_id,
@@ -299,7 +309,9 @@ class EngagementAdjudicator:
             env_for,
             self._rng,
             now.tick,
-            fire_policy=order.fire_policy or "FREE",
+            # 令面指定的政策優先於想定 ROE 的陣營預設；兩者皆無 → 引擎預設 FREE。
+            fire_policy=order.fire_policy or roe_policy or "FREE",
+            forbidden=forbidden,
         )
         self._apply(order, result)
         self._complete(order.order_id, now.tick)

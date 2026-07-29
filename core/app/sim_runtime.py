@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -42,6 +43,7 @@ from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.movement.terrain_sampler import build_terrain_cell_sampler, build_terrain_path_fn
+from app.orders.roe import RoeRules, load_session_roe
 from app.runtime import PerfCounterClock, TickPacer, run_paced
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
 from app.sim_params import load_sim_params
@@ -93,6 +95,20 @@ def _weather_snapshot() -> WeatherState | None:
     except Exception:
         _LOG.warning("交戰 weather 快照建立失敗，天氣修正退回晴天")
         return None
+
+
+def _make_roe_lookup(
+    roe: RoeRules, faction_for: Callable[[str], str | None]
+) -> Callable[[str], tuple[str | None, frozenset[str]]]:
+    """shooter_id → (該陣營 ROE 預設火力政策, 被禁武器集)。無宣告時回 (None, 空集)＝零行為變更。"""
+    if not roe.any_rules:
+        return lambda _shooter: (None, frozenset())
+
+    def _lookup(shooter_id: str) -> tuple[str | None, frozenset[str]]:
+        faction = faction_for(shooter_id)
+        return roe.fire_policy_for(faction), roe.forbidden_for(faction)
+
+    return _lookup
 
 
 def _read_live_tick(client: object, session_id: str) -> int:
@@ -219,6 +235,11 @@ class SimManager:
             sensor_resolver = await asyncio.to_thread(SensorResolver, engage_db, session_id)
             # #98 該局的陣營關係矩陣（未宣告→全 HOSTILE，與過去語義相同）。
             relations = await asyncio.to_thread(load_session_relations, engage_db, session_id)
+            # WP-B6 該局的想定 ROE（未宣告→無限制）。**runner 啟動時讀一次**——與 sim_params
+            # 同紀律；白軍局中改 ROE 需重啟該局 runner（restart 旗標）才生效。
+            roe = await asyncio.to_thread(load_session_roe, engage_db, session_id)
+            if roe.any_rules:
+                _LOG.info("session %s 套用想定 ROE（交戰規則）", session_id)
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
             if resumed.start_tick:
@@ -240,6 +261,8 @@ class SimManager:
                     quantity_for=resolver.quantity_for,  # #30 squad 齊射
                     # SPEC_EXTEND P2 聯合兵種：≥2 武器系統 → 武器組合加總（帶熱狀態活彈藥）。
                     combined_weapons_for=make_combined_weapons_for(resolver, hot),
+                    # WP-B6：射手陣營的 ROE（預設火力政策 + 被禁武器）。無宣告→(None, 空集)。
+                    roe_for=_make_roe_lookup(roe, sensor_resolver.faction_for),
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,

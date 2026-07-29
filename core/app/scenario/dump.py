@@ -32,6 +32,8 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
         files["orbat"] = orbat_files
     if loaded.msel:
         files["msel"] = "msel.yaml"
+    if loaded.roe:
+        files["roe"] = "roe.yaml"
 
     out: dict[str, Any] = {"name": loaded.name, "version": loaded.version}
     if loaded.description is not None:
@@ -105,6 +107,8 @@ def dump_scenario_package(loaded: LoadedScenario, package_dir: str | Path) -> No
         )
 
     _write("scenario.yaml", scenario_to_dict(loaded))
+    if loaded.roe:
+        _write("roe.yaml", dict(loaded.roe))
     for faction in _factions_with_units(loaded):
         _write(f"orbat/{faction.lower()}.yaml", _orbat_dict(loaded, faction))
     if loaded.msel:

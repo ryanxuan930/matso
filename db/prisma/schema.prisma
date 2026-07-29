@@ -46,6 +46,10 @@ model WargameSession {
   // 想定載入時寫入、白軍可局中增修；**null = 無禁射區**（既有局零遷移）。
   // 存宣告而非 h3 格集——格集由幾何於讀取時導出（見 core/app/orders/no_strike.py）。
   noStrikeZones Json?
+  // WP-B6 想定交戰規則（SPEC_FULL §11.1／§10 G4）：{default_fire_policy, weapon_restrictions}。
+  // 想定 roe.yaml 載入時寫入、白軍可局中修改；**null = 無 ROE 限制**（既有局零遷移）。
+  // 生效於裁決層（被禁武器不開火）與 submit 端（明確指名被禁武器即拒）——見 core/app/orders/roe.py。
+  roe Json?
 
   units       TacticalUnit[]
   eventLogs   TacticalEventLog[]

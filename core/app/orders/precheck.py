@@ -24,6 +24,7 @@ from app.adjudication.weapon import WeaponProfile
 from app.factions import FactionRelations
 from app.models.tables import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.orders.no_strike import ZoneClass, load_no_strike_cells
+from app.orders.roe import load_session_roe
 from app.orders.schemas import (
     EngagePayload,
     MovePayload,
@@ -70,6 +71,8 @@ _CHECK_ERROR_CODES = {
     "ammo": "ORDER_NO_AMMO",
     # WP-A3 禁射區：NO_STRIKE 一律拒；RESTRICTED_FIRE 未經 override 亦拒（可由使用者確認後放行）。
     "no_strike": "ORDER_NO_STRIKE_ZONE",
+    # WP-B6 想定 ROE 禁用武器（明確指名被禁武器的令）。與友軍誤傷共用 ROE 違規碼。
+    "roe_weapon": "ORDER_ROE_VIOLATION",
 }
 
 
@@ -126,6 +129,39 @@ def _precheck_no_strike(
     ]
 
 
+def _precheck_roe_weapon(
+    db: Session, unit: TacticalUnit, payload: EngagePayload
+) -> list[PrecheckCheck]:
+    """WP-B6 想定 ROE：**明確指名**的武器是否被本局 ROE 禁用。
+
+    只擋「令面指名了被禁武器」這一種——沒指名武器的令交由裁決層逐武器篩（那裡是權威，
+    人與 AI 都走同一條）。在 submit 端另擋一次的價值是**早退與留痕**：使用者當場知道
+    「這場不准用飛彈」，而不是下了令、單位卻安靜地不開火。
+
+    無 ROE 宣告的局：一律通過（零行為變更）。
+    """
+    if not payload.weapon_id:
+        return []
+    roe = load_session_roe(db, unit.session_id)
+    forbidden = roe.forbidden_for(unit.faction)
+    if not forbidden:
+        return []
+    inst = db.get(EquipmentInstance, payload.weapon_id)
+    tmpl = db.get(EquipmentTemplate, inst.template_id) if inst is not None else None
+    if tmpl is None:
+        return []  # 武器不存在 → 交由既有的 weapon 檢查回報
+    hit = next((x for x in (str(tmpl.category), str(tmpl.name)) if x in forbidden), None)
+    if hit is None:
+        return []
+    reason = roe.reason_for(unit.faction, hit)
+    detail = f"本局交戰規則禁用 {hit}"
+    return [
+        PrecheckCheck(
+            name="roe_weapon", passed=False, detail=f"{detail}（{reason}）" if reason else detail
+        )
+    ]
+
+
 def run_precheck(
     db: Session,
     validated: ValidatedOrder,
@@ -146,6 +182,7 @@ def run_precheck(
     elif isinstance(payload, EngagePayload):
         checks = _precheck_engage(db, validated.unit, payload, gateway, rel)
         checks.extend(_precheck_no_strike(db, validated.unit, payload, acknowledge_restricted))
+        checks.extend(_precheck_roe_weapon(db, validated.unit, payload))
     else:
         checks = []  # 其餘類型（RECON/RESUPPLY/POSTURE）之物理檢查於 O3.x
     feasible = all(c.passed for c in checks)

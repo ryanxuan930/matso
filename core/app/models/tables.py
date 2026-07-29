@@ -84,6 +84,10 @@ class WargameSession(Base):
     no_strike_zones: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "noStrikeZones", JSON, nullable=True
     )
+    # WP-B6 想定交戰規則宣告（NULL＝無限制，既有局零遷移）。解析見 orders/roe.py。
+    roe: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
+        "roe", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):

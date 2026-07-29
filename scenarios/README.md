@@ -7,7 +7,7 @@
 ├── scenario.yaml        # 元資料（contracts/scenario.schema.json 驗證）
 ├── orbat/blue.yaml      # 藍軍戰鬥序列
 ├── orbat/red.yaml
-├── roe.yaml             # ROE + No-Strike List (GeoJSON)
+├── roe.yaml             # 交戰規則（No-Strike 清單在 scenario.yaml 的 no_strike_zones）
 ├── msel.yaml            # 事件注入清單
 ├── weather_script.yaml  # (可選) SYNTHETIC 天氣
 └── overrides/           # (可選) mobility matrix / weaponeering 覆寫

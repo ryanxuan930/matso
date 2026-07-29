@@ -61,6 +61,9 @@ class LoadedScenario:
     faction_display_names: dict[str, str] = field(default_factory=dict)
     # WP-A3 禁射區宣告（原樣帶入；幾何→h3 格集由 orders/no_strike.py 於讀取時導出）。
     no_strike_zones: list[dict[str, Any]] = field(default_factory=list)
+    # WP-B6 交戰規則宣告（roe.yaml 原樣帶入；解析成規則由 orders/roe.py 於讀取時做）。
+    # 空 dict ＝ 未宣告 ＝ 無限制。
+    roe: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -91,6 +94,7 @@ def _build(
     relations: FactionRelations,
     units: list[ScenarioUnit],
     msel: list[MselEntry],
+    roe: dict[str, Any],
 ) -> LoadedScenario:
     """由已驗證的 scenario dict 組 LoadedScenario。
 
@@ -112,6 +116,7 @@ def _build(
         msel=msel,
         victory_conditions=list(sc["victory_conditions"]),
         no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
+        roe=roe,
         description=sc.get("description"),
         faction_display_names={
             f["id"]: f["display_name"] for f in sc["factions"] if "display_name" in f
@@ -132,8 +137,9 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
 
     units = _load_orbats(root, sc.get("files", {}).get("orbat", {}), faction_ids)
     msel = _load_msel(root, sc.get("files", {}).get("msel"))
+    roe = _load_roe(root, sc.get("files", {}).get("roe"), faction_ids)
 
-    return _build(sc, faction_ids, relations, units, msel)
+    return _build(sc, faction_ids, relations, units, msel, roe)
 
 
 def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
@@ -151,7 +157,8 @@ def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
     _validate_victory(sc["victory_conditions"], faction_ids)
     units = _units_from_orbat_dict(bundle.get("orbat") or {}, faction_ids)
     msel = _msel_from_dict(bundle.get("msel"))
-    return _build(sc, faction_ids, relations, units, msel)
+    roe = _roe_from_dict(bundle.get("roe"), faction_ids)
+    return _build(sc, faction_ids, relations, units, msel, roe)
 
 
 def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> list[ScenarioUnit]:
@@ -189,6 +196,47 @@ def _msel_from_dict(data: dict[str, Any] | None) -> list[MselEntry]:
         MselEntry(id=e["id"], trigger=e["trigger"], inject=e["inject"], once=e.get("once", True))
         for e in data["events"]
     ]
+
+
+def _roe_from_dict(data: dict[str, Any] | None, faction_ids: list[str]) -> dict[str, Any]:
+    """ROE dict → 驗證後原樣帶回（空/None → {}）。**兩條載入入口共用**。"""
+    if not data:
+        return {}
+    _validate_schema(data, "roe.schema.json", "roe")
+    _validate_roe_factions(data, faction_ids, "roe")
+    return dict(data)
+
+
+def _validate_roe_factions(data: dict[str, Any], faction_ids: list[str], label: str) -> None:
+    """ROE 裡出現的陣營必須是本想定宣告過的。
+
+    打錯字的陣營名不會被 JSON Schema 擋（它只驗字串格式），而規則會安靜地套用到
+    一個不存在的陣營——**寫了限制卻沒有任何單位受限**，正是 WP-A3 說的沉默失效。
+    """
+    known = set(faction_ids)
+    for faction in data.get("default_fire_policy") or {}:
+        if faction not in known:
+            raise ScenarioError(f"{label}: default_fire_policy.{faction}: 未宣告的陣營")
+    for i, rule in enumerate(data.get("weapon_restrictions") or []):
+        faction = rule.get("faction") if isinstance(rule, dict) else None
+        if faction is not None and faction not in known:
+            raise ScenarioError(
+                f"{label}: weapon_restrictions[{i}].faction: 未宣告的陣營：{faction}"
+            )
+
+
+def _load_roe(root: Path, rel_path: str | None, faction_ids: list[str]) -> dict[str, Any]:
+    """讀 `files.roe` 指的 roe.yaml。**宣告了但檔案不存在 → 報錯**。
+
+    與 msel「宣告了但檔不在就靜默略過」的既有寬容處理刻意相反：ROE 是安全/合規機制，
+    「以為有限制、其實檔案沒被讀到」的失效模式沒有任何外顯症狀。缺檔要當場炸。
+    """
+    if not rel_path:
+        return {}
+    data = _load_yaml(root / rel_path, rel_path)
+    _validate_schema(data, "roe.schema.json", rel_path)
+    _validate_roe_factions(data, faction_ids, rel_path)
+    return data
 
 
 def _load_msel(root: Path, rel_path: str | None) -> list[MselEntry]:
@@ -235,6 +283,9 @@ def create_session_from_scenario(
         # WP-A3 禁射區落地：想定宣告的保護區隨局持久化（護欄 G4 與人類 precheck 共用）。
         # 空宣告存 None ＝ 無禁射區（既有局語義）。
         no_strike_zones=loaded.no_strike_zones or None,
+        # WP-B6 ROE 落地：想定宣告的交戰規則隨局持久化（裁決層與 precheck 共用）。
+        # 空宣告存 None ＝ 無限制（既有局語義）。
+        roe=loaded.roe or None,
     )
     db.add(session)
     db.flush()

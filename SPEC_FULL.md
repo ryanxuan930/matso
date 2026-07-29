@@ -462,7 +462,10 @@ Phase 1 內建於 Core（`core/app/engine/logistics.py`），Phase 2 可抽出�
 scenario.yaml          # 元資料：名稱、bbox、模式、tick 設定、勝利條件、
                        # factions 清單（id/顯示名/顏色）+ relations 關係矩陣（§12.1，ADR 006）
 orbat/<faction>.yaml   # 各陣營戰鬥序列（每個 scenario.yaml 宣告的交戰陣營一檔，N 方任意數量）
-roe.yaml               # 交戰規則 + No-Strike List(GeoJSON)
+roe.yaml               # 交戰規則（預設火力政策、禁用武器；contracts/roe.schema.json）
+                       # ⚠ No-Strike List **不在此檔**：住 scenario.yaml 的 no_strike_zones
+                       #   （WP-A3）——白軍可局中以 COP 地圖編輯器增修保護區、且隨局持久化
+                       #   於 WargameSession.noStrikeZones，與想定文字規則分開存放
 msel.yaml              # 事件注入清單：{trigger: {type: time|condition, ...}, inject: {...}}
 weather_script.yaml    # (可選) SYNTHETIC 天氣腳本
 overrides/             # (可選) mobility matrix、weaponeering 覆寫

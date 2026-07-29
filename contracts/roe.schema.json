@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "matso:roe:0.1.0",
+  "title": "RoeFile",
+  "description": "想定交戰規則（roe.yaml，SPEC_FULL §11.1／§10 G4）。**保護目標清單（No-Strike List）不住這裡**——它住 scenario.yaml 的 `no_strike_zones`（WP-A3），理由是白軍可於局中以 COP 地圖編輯器增修保護區、且該宣告隨局持久化於 WargameSession.noStrikeZones；把同一份資料放兩處會產生兩個權威。本檔負責 §10 G4 的另一半：對「怎麼打」的規則約束。v0.1 只宣告**確實會在執行期生效**的規則——安全機制的沉默失效比缺功能危險（見 WP-A3）；SPEC_FULL §10 G4 提到的「不得越過某線」需要邊界幾何判定與 MOVE 令攔截，延後至 WP-C10/B5 一併實作，屆時於此檔加 `boundary_lines` 區段。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "本 ROE 文件版本（想定作者自訂，供 AAR 追溯用的是哪一版規則）"
+    },
+    "default_fire_policy": {
+      "type": "object",
+      "description": "陣營 → 未於令面指定 `fire_policy` 的 ENGAGE 令所採用的火力政策。未列的陣營維持引擎預設 FREE（全打）。",
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{1,31}$" },
+      "additionalProperties": {
+        "enum": ["FREE", "SMALL_ARMS_ONLY", "ANTI_ARMOR_HOLD"],
+        "description": "FREE＝全打；SMALL_ARMS_ONLY＝僅輕兵器；ANTI_ARMOR_HOLD＝反裝甲武器僅對有效目標開火"
+      }
+    },
+    "weapon_restrictions": {
+      "type": "array",
+      "description": "禁用武器（SPEC_FULL §10 G4「禁用某類武器」）。逐條套用；同一陣營多條取聯集。被禁的武器**不會開火**（裁決層逐武器篩掉，per_weapon 記 HELD/ROE），而明確指名該武器的下令於 submit 端即被拒（ORDER_ROE_VIOLATION）。",
+      "items": {
+        "type": "object",
+        "required": ["reason"],
+        "additionalProperties": false,
+        "properties": {
+          "faction": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,31}$",
+            "description": "受此限制的陣營；**省略＝全陣營適用**"
+          },
+          "forbid_categories": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "enum": ["KINETIC", "MISSILE", "ARTILLERY", "DRONE"]
+            },
+            "description": "禁用的裝備類別（EquipmentTemplate.category）"
+          },
+          "forbid_templates": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "禁用的裝備範本名稱（EquipmentTemplate.name），用於只禁特定型號"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "必填——AAR 要能回答『為什麼這場不准用飛彈』。無理由的限制在事後檢討時無法評量。"
+          }
+        },
+        "anyOf": [
+          { "required": ["forbid_categories"] },
+          { "required": ["forbid_templates"] }
+        ]
+      }
+    }
+  }
+}

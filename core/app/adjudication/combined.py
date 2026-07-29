@@ -100,6 +100,10 @@ class CombinedWeapon:
     profile: WeaponProfile
     quantity: int
     ammo: int
+    # WP-B6 ROE 篩選用的身分（想定可禁「某類別」或「某型號」）。預設值使既有呼叫端
+    # 與測試無須改動，且空 ROE 下行為位元相同。
+    category: str = "KINETIC"
+    template_name: str = ""
 
 
 def resolve_combined_engagement(
@@ -111,12 +115,17 @@ def resolve_combined_engagement(
     rng: DeterministicRNG,
     tick: int,
     fire_policy: str = "FREE",
+    forbidden: frozenset[str] = frozenset(),
 ) -> EngagementResult:
     """裁決單位以武器組合對目標的單次交戰。確定性：相同 (輸入, rng 狀態) → 相同結果。
 
     對每件武器：火力政策篩選（P3）→ 逐武器合法性篩選 → 合格者算 volley 期望毀傷（含一次
     dispersion 抽樣）→ Σ；毀傷累計夾在目標當前戰力內（能量守恆）。無任何合格武器 → REJECTED。
     政策保留（HELD）的武器不發射、不耗彈、不抽 dispersion（決定性）。
+
+    `forbidden`（WP-B6 ROE）：該射手陣營被想定禁用的**裝備類別或範本名**集合。命中者與
+    政策保留走同一條路（不發射/不耗彈/不抽樣），reason 標 `ROE` 以便 AAR 分辨
+    「戰術上按兵不動」與「規則上不准打」。空集合 → 行為與改版前位元相同。
     """
     authorized = (
         target.authorized_strength
@@ -140,6 +149,11 @@ def resolve_combined_engagement(
 
     held_by_policy = False
     for w in weapons:
+        # ROE 禁用武器（WP-B6）：先於火力政策判——「不准用」是規則，「不該用」才是戰術。
+        if forbidden and (w.category in forbidden or w.template_name in forbidden):
+            held_by_policy = True
+            per_weapon.append({"weapon_id": w.weapon_id, "status": "HELD", "reason": "ROE"})
+            continue
         # 火力政策篩選（P3）：被保留者不發射、不耗彈、不抽 dispersion（決定性）。
         if not _policy_allows(fire_policy, w.profile, target.armor_class):
             held_by_policy = True

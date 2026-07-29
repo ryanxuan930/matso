@@ -1,0 +1,11 @@
+# 交戰規則（SPEC_FULL §11.1／§10 G4；contracts/roe.schema.json 驗證）——教學想定用。
+# 保護目標清單（No-Strike）**不在此檔**：見 scenario.yaml 的 no_strike_zones（白軍可局中以
+# COP 地圖編輯器增修，故與想定文字規則分開存放）。
+version: "1.0"
+# 未於令面指定 fire_policy 的 ENGAGE 令所採用的政策。
+default_fire_policy:
+  BLUE: FREE
+  RED: SMALL_ARMS_ONLY   # 紅軍受限：僅輕兵器（示範「規則改變交戰結果」）
+weapon_restrictions:
+  - forbid_categories: [MISSILE]
+    reason: 教學演訓區安全限制，全場不得使用飛彈

@@ -60,6 +60,9 @@ class WeaponEntry:
     profile: WeaponProfile
     quantity: int
     ammo: int
+    # WP-B6 ROE 篩選用（想定可禁某類別/某型號）。取自 EquipmentTemplate。
+    category: str = "KINETIC"
+    template_name: str = ""
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -119,7 +122,14 @@ class WeaponResolver:
                 self._qty_by_weapon[inst.id] = qty
                 ammo = _ammo_of(inst)
                 entries.append(
-                    WeaponEntry(weapon_id=inst.id, profile=profile, quantity=qty, ammo=ammo)
+                    WeaponEntry(
+                        weapon_id=inst.id,
+                        profile=profile,
+                        quantity=qty,
+                        ammo=ammo,
+                        category=str(tmpl.category),
+                        template_name=str(tmpl.name),
+                    )
                 )
                 # 主武器＝射程最遠者（活執行期最小版；未指定選武器時的預設）。
                 if best is None or profile.max_range_m > best.max_range_m:
@@ -179,7 +189,12 @@ def make_combined_weapons_for(
             ammo = int(raw) if isinstance(raw, (int, float)) else e.ammo
             out.append(
                 CombinedWeapon(
-                    weapon_id=e.weapon_id, profile=e.profile, quantity=e.quantity, ammo=ammo
+                    weapon_id=e.weapon_id,
+                    profile=e.profile,
+                    quantity=e.quantity,
+                    ammo=ammo,
+                    category=e.category,
+                    template_name=e.template_name,
                 )
             )
         return out

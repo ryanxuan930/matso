@@ -34,3 +34,4 @@ files:
     BLUE: orbat/blue.yaml
     RED: orbat/red.yaml
   msel: msel.yaml
+  roe: roe.yaml
