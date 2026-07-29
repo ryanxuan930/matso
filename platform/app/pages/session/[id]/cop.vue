@@ -206,38 +206,9 @@ const {
 } = mapEditor
 // WS 串流（含活模擬 STATE_DIFF 位置）——先宣告以供 livePos 使用。
 const stream = useSessionStreamStore()
-// 活模擬位置（O10.1）：優先用 STATE_DIFF 累積的最新座標，否則用 GET /units 的初始座標。
-function livePos(u: UnitView): { lat: number; lng: number } {
-  const p = stream.unitPatches[u.id]
-  return {
-    lat: (typeof p?.lat === 'number' ? p.lat : u.lat) ?? 23.7,
-    lng: (typeof p?.lng === 'number' ? p.lng : u.lng) ?? 121,
-  }
-}
-// 活血量（#5）：交戰 HIT 後由 STATE_DIFF 帶入，否則用 GET /units 初始值。
-function liveHealth(u: UnitView): number | undefined {
-  const p = stream.unitPatches[u.id]
-  return (typeof p?.health === 'number' ? p.health : u.health) ?? undefined
-}
-// #84 活油料：STATE_DIFF 串流的 fuel（移動耗油/補給加油即時反映）。無值＝徒步/無油料模型。
-function liveFuel(unitId: string | null): number | null {
-  const f = stream.unitPatches[unitId ?? '']?.fuel
-  return typeof f === 'number' ? f : null
-}
-/**
- * 位置凍結的時間戳（WP-C5）。非 null ＝ 圖上的座標是**最後一次位置回報**而非真實位置。
- *
- * patch 只要**有這個鍵**就以它為準（含恢復通聯時送來的 null）——只看 `typeof === 'number'`
- * 的話，恢復通聯後會退回快照裡的舊值，單位永遠掛著「失聯」標籤。
- */
-function liveStaleTick(u: UnitView): number | null {
-  const p = stream.unitPatches[u.id]
-  const raw = p && 'stale_since_tick' in p ? p.stale_since_tick : u.stale_since_tick
-  return typeof raw === 'number' ? raw : null
-}
-// 系統當前 tick：以串流為準（CLOCK 心跳/STATE_DIFF 都帶）。WP-C5 之前這是**寫死的 100**，
-// 於是地圖上「失聯 +Nt」與敵情老化淡出都是拿假 tick 算的。
-const currentTick = computed(() => stream.lastTick ?? 0)
+// 活值讀取器（STATE_DIFF 優先、退回 GET /units 初值）——七個同規則欄位收在一處。
+const { livePos, liveHealth, liveStrength, liveComms, liveFuel, liveStaleTick, currentTick } =
+  useLiveState(stream)
 
 /**
  * 單位量體＝加權平均的權重。用滿編戰力（TO&E 分母，與規模同單位）；
@@ -580,17 +551,6 @@ const hpPct = computed(() => {
   return Math.round((liveHealth(u) ?? u.health ?? 100) as number)
 })
 const hpColor = computed(() => healthColor(hpPct.value))
-// 活戰力（真實化交戰）：STATE_DIFF 帶入的當前戰力優先，否則 GET /units 初值。
-function liveStrength(u: UnitView): number | undefined {
-  const p = stream.unitPatches[u.id]
-  const s = (typeof p?.strength === 'number' ? p.strength : u.strength) as number | undefined
-  return s
-}
-// 活通聯狀態（#33 comms 子系統）：STATE_DIFF 的 comms_state 優先，否則單位初值。
-function liveComms(u: UnitView): string {
-  const p = stream.unitPatches[u.id]
-  return (typeof p?.comms_state === 'string' ? p.comms_state : (u.comms ?? 'ONLINE')) as string
-}
 // 選取單位的戰力/平台顯示（漸進消耗一望即知：如「戰力 82/100 · 14 平台」）。
 const selForce = computed(() => {
   const u = selectedUnit.value
