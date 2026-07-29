@@ -55,10 +55,13 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
     # （同 `fixed` 旗標曾遺失的前例）。空清單不輸出，維持既有想定的 diff 乾淨。
     if loaded.no_strike_zones:
         out["no_strike_zones"] = [dict(z) for z in loaded.no_strike_zones]
-    # WP-C10.5 陣地變換同理進 roundtrip。
-    # ⚠ 本函式是**手寫白名單**，`indirect_fire_requires_approval` 與 `request_quotas`
-    #   至今都沒被寫出來——匯出再匯入會靜靜丟掉它們。那是既有缺陷（記在 PROGRESS Backlog），
-    #   不在本卡順手修；但新增的鍵不能再多一個受害者。
+    # ⚠ 本函式是**手寫白名單**——沒列進來的鍵，匯出再匯入就會靜靜消失。
+    # `no_strike_zones` 之外，以下三個都曾是（或差點是）受害者，故一律要在此列出。
+    # 新增想定層設定時**務必同時改這裡**，否則「匯出再匯入」會拆掉那個設定。
+    if loaded.request_quotas:
+        out["request_quotas"] = dict(loaded.request_quotas)
+    if loaded.indirect_fire_requires_approval:
+        out["indirect_fire_requires_approval"] = True
     if loaded.survivability_move:
         out["survivability_move"] = dict(loaded.survivability_move)
 

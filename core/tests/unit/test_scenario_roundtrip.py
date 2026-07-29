@@ -212,3 +212,22 @@ def test_units_without_declared_equipment_still_get_the_default(session_factory)
             assert db.scalar(
                 select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)
             ), f"{unit.designation} 應有預設配發"
+
+
+def test_session_level_settings_survive_export(tmp_path: Path) -> None:
+    """**三個想定層設定過去全都掉在 `scenario_to_dict` 的手寫白名單外**（Backlog 清理）。
+
+    `_snapshot` 是以 `dataclasses.fields` 列舉的，本來就會抓到欄位遺失——
+    但**官方想定沒有一個宣告這三個鍵**，所以那條保護一直沒被觸發。
+    症狀：把要求火協、有申請配額、開了陣地變換的想定匯出再匯入，
+    三個設定全部安靜消失，演習規則整個變了樣而畫面上毫無徵兆。
+    """
+    sc = load_scenario_package(_TUTORIAL)
+    sc.request_quotas = {"AIR_RECON": 3, "FIRE_SUPPORT": 5}
+    sc.indirect_fire_requires_approval = True
+    sc.survivability_move = {"enabled": True, "missions_before_move": 4, "min_km": 1.5}
+    dump_scenario_package(sc, tmp_path)
+    reloaded = load_scenario_package(tmp_path)
+    assert reloaded.request_quotas == {"AIR_RECON": 3, "FIRE_SUPPORT": 5}
+    assert reloaded.indirect_fire_requires_approval is True
+    assert reloaded.survivability_move["missions_before_move"] == 4

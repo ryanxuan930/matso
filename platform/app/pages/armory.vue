@@ -341,8 +341,20 @@ function readMobility(m: Record<string, unknown>): void {
   ccSpeed.value = Number(m.max_cross_country_speed_kmh ?? 35)
 }
 
+/**
+ * 機動諸元。**必須疊在原本的 mobility 之上，不能整包替換**。
+ *
+ * 表單只涵蓋四個欄位，但 `mobility` 底下還有 `fuel_capacity` / `fuel_burn_per_km`
+ * （#84 油料模型）與未來可能的擴充鍵。整包替換的話，在軍械庫開 `HOWITZER_155_SP`
+ * 按一次儲存，那門砲的油料資料就沒了——而且畫面上什麼都看不出來。
+ *
+ * 頂層的 `{...originalBaseStats, ...formToBaseStats()}` 是**淺合併**，救不了巢狀物件；
+ * 巢狀的保留只能在這裡做。
+ */
 function mobilityStats(): Record<string, unknown> {
+  const prev = (originalBaseStats.value.mobility ?? {}) as Record<string, unknown>
   return {
+    ...prev,
     can_self_move: canSelfMove.value,
     mobility_class: mobilityClass.value,
     max_road_speed_kmh: roadSpeed.value,
