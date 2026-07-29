@@ -93,6 +93,20 @@ export function useCopOrdering(opts: {
   // 聯合火力模式＝未指定單一武器（≥2 武器才有意義）；指定武器＝單武器射擊。
   const combinedMode = computed(() => weaponId.value === null && weapons.value.length >= 2)
 
+  /**
+   * 活彈藥（#53）：交戰消耗即時反映——優先讀 STATE_DIFF 的 `ammo_by_weapon`（活模擬扣減），
+   * 否則回 `w.ammo_remaining`（GET /weapons 的 DB 值）。
+   * `w.id` ＝ EquipmentInstance.id ＝ `ammo_by_weapon` 的鍵。
+   */
+  const stream = useSessionStreamStore()
+  function liveAmmo(w: WeaponView): number | null {
+    const abw = stream.unitPatches[selectedId.value ?? '']?.ammo_by_weapon as
+      | Record<string, number>
+      | undefined
+    const live = abw?.[w.id]
+    return typeof live === 'number' ? live : (w.ammo_remaining ?? null)
+  }
+
   /** 選新單位/取消選取時要清掉的下令子狀態（#6）。 */
   function resetOrderForm() {
     precheck.value = null
@@ -290,6 +304,7 @@ export function useCopOrdering(opts: {
     ammoOptions,
     firePolicy,
     combinedMode,
+    liveAmmo,
     resetOrderForm,
     loadWeapons,
     schedulePreview,

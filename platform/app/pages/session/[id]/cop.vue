@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Contact, OwnUnit, Relation } from '~/composables/useUnits'
 import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composables/useUnits'
-import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
+import type { UnitView, OrderResponse } from '~/composables/useOrders'
 import type { StateSnapshot } from '~/stores/sessionStream'
 import type { ContactView } from '~/composables/useIntel'
 import { toContact } from '~/composables/useIntel'
@@ -146,6 +146,17 @@ const toasts = useToasts()
 
 // 下令狀態機（指令類型/目的地/瞄準/武器彈種/火力政策/預檢 + 移動預覽 + 送出取消）。
 // `refresh` 為函式宣告（已提升），可在其文字定義之前傳入。
+const ordering = useCopOrdering({
+  sessionId,
+  selectedId,
+  selectedUnit,
+  selectedUnitFixed,
+  refresh: () => refresh(),
+  toasts,
+})
+// 面板收 unwrap 過的視圖（樣板不會 unwrap 巢狀 ref）；寫入會回寫原 ref。
+const orderingView = reactive(ordering)
+// 以下是**頁面自己**要用的部分：地圖點擊/右鍵的下令互動、MapCanvas 圖層資料。
 const {
   orderType,
   destH3,
@@ -160,27 +171,12 @@ const {
   movePathCoords,
   moveCrossPoints,
   weapons,
-  weaponId,
-  ammoType,
-  ammoOptions,
-  firePolicy,
-  combinedMode,
   resetOrderForm,
   loadWeapons,
   schedulePreview,
-  clearMovePath,
-  undoWaypoint,
-  submit,
+  liveAmmo,
   cancel,
-} = useCopOrdering({
-  sessionId,
-  selectedId,
-  selectedUnit,
-  selectedUnitFixed,
-  refresh: () => refresh(),
-  toasts,
-})
-
+} = ordering
 // 地圖編輯器（stage ③b）——標註/工事/武器據點的繪製、編輯、整形、地形裁切。
 // `canControl`/`myFaction`/`viewpoint` 決定可繪與歸屬；選到圖形時把「地圖編輯」小工具叫出來（#26）。
 const mapEditor = useMapEditor({
@@ -240,15 +236,6 @@ function liveHealth(u: UnitView): number | undefined {
 function liveFuel(unitId: string | null): number | null {
   const f = stream.unitPatches[unitId ?? '']?.fuel
   return typeof f === 'number' ? f : null
-}
-// 活彈藥（#53）：交戰消耗即時反映——優先讀 STATE_DIFF 的 ammo_by_weapon（活模擬扣減），
-// 否則回 w.ammo_remaining（GET /weapons 的 DB 值）。w.id＝EquipmentInstance.id＝ammo_by_weapon 鍵。
-function liveAmmo(w: WeaponView): number | null {
-  const abw = stream.unitPatches[selectedId.value ?? '']?.ammo_by_weapon as
-    | Record<string, number>
-    | undefined
-  const live = abw?.[w.id]
-  return typeof live === 'number' ? live : (w.ammo_remaining ?? null)
 }
 /**
  * 位置凍結的時間戳（WP-C5）。非 null ＝ 圖上的座標是**最後一次位置回報**而非真實位置。
@@ -1122,210 +1109,22 @@ onBeforeUnmount(() => {
         @close="widgets.units.open = false"
         @focus="focusWidget('units')"
       >
-        <div class="wsec-hd">單位（{{ realUnits.length }}）</div>
-        <div class="units" data-testid="unit-list">
-          <div
-            v-for="g in unitsByFaction"
-            :key="g.faction"
-            class="ufac"
-            data-testid="unit-faction-group"
-          >
-            <button
-              class="ufac-hd"
-              data-testid="unit-faction-head"
-              :title="`${g.faction}：${g.units.length} 單位、戰力 ${Math.round(g.power.pct)}%`
-                + `（各單位效能以量體加權平均，總量體 ${Math.round(g.power.mass)}）`
-                + (g.power.ko ? `；已折損 ${g.power.ko} 個單位` : '')
-                + ' — 點擊收合/展開'"
-              @click="toggleFactionGroup(g.faction)"
-            >
-              <i class="pi" :class="collapsedFactions.has(g.faction) ? 'pi-chevron-right' : 'pi-chevron-down'" />
-              <span class="u-dot" :style="{ background: factionColor(g.faction) }" />
-              <b>{{ g.faction }}</b>
-              <span class="ufac-count">· {{ g.units.length }}</span>
-              <span
-                class="ufac-pow"
-                :style="{ color: healthColor(Math.round(g.power.pct)) }"
-                data-testid="unit-faction-power"
-              >{{ Math.round(g.power.pct) }}%</span>
-              <span v-if="g.power.ko" class="ufac-ko">✖{{ g.power.ko }}</span>
-            </button>
-            <ul v-show="!collapsedFactions.has(g.faction)" class="ufac-units">
-              <li
-                v-for="u in g.units"
-                :key="u.id"
-                :class="{ sel: u.id === selectedId, 'out-scope': !inScope(u) }"
-                :title="inScope(u) ? '' : '不在你的指揮範圍（此帳號僅獲授權指揮部分單位）'"
-                data-testid="unit-item"
-                @click="inScope(u) ? selectUnit(u.id) : null"
-              >
-                {{ u.designation }} ·
-                <span class="u-hp" :style="{ color: healthColor(Math.round(liveHealth(u) ?? 100)) }">
-                  {{ Math.round(liveHealth(u) ?? 100) }}%
-                </span>
-                <span v-if="u.is_fixed" class="u-fixed" title="固定單位（指揮部等）：不可移動">🔒</span>
-                <span v-if="!inScope(u)" class="u-ban" title="不在指揮範圍">🚫</span>
-                <span v-if="(liveHealth(u) ?? 100) <= 0" class="u-ko">✖ 摧毀</span>
-              </li>
-            </ul>
-          </div>
-          <div v-if="!realUnits.length" class="empty">（此 session 無可下令單位）</div>
-        </div>
-
-        <div v-if="selectedId" class="order" data-testid="order-panel">
-          <h3>下令 · <span class="selunit" data-testid="selected-unit">{{ selectedUnit?.designation ?? selectedId }}</span></h3>
-          <select v-model="orderType" data-testid="order-type">
-            <option value="MOVE">移動</option>
-            <option value="ENGAGE">交戰</option>
-          </select>
-          <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
-            🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
-          </p>
-          <template v-if="orderType === 'MOVE' && !selectedUnitFixed">
-            <label class="precise">
-              <input v-model="preciseMove" type="checkbox" data-testid="precise-move">
-              精確移動（走到點擊處，不吸附六角格心）
-            </label>
-            <div class="movebtns">
-              <button
-                data-testid="pick-dest"
-                :class="{ armed: targeting }"
-                @click="waypointMode = false; targeting = true"
-              >
-                {{ targeting ? '點地圖設目標…' : '設定目標點' }}
-              </button>
-              <button
-                data-testid="pick-waypoints"
-                :class="{ armed: waypointMode }"
-                title="逐點點擊地圖建立自訂路徑"
-                @click="targeting = false; waypointMode = !waypointMode"
-              >
-                {{ waypointMode ? `加點中…（${moveWaypoints.length}）` : '自訂路徑' }}
-              </button>
-              <button
-                v-if="moveWaypoints.length"
-                data-testid="undo-waypoint"
-                title="移除最後一個路徑點"
-                @click="undoWaypoint"
-              >
-                <i class="pi pi-undo" /> 退一點
-              </button>
-              <button
-                v-if="destH3 || moveWaypoints.length"
-                data-testid="clear-path"
-                title="清除路徑"
-                @click="clearMovePath"
-              >
-                <i class="pi pi-times" /> 清除
-              </button>
-            </div>
-            <div class="dest" data-testid="dest-h3">
-              {{ destH3 || '未設目標' }}
-              <span v-if="destH3 && !preciseMove && !moveWaypoints.length" class="snaphint">· 吸附至六角格心（大範圍省算；近距會跑回格心）</span>
-              <span v-if="destH3 && preciseMove && !moveWaypoints.length" class="snaphint precise">· 精確落點（單位走到黃色標記；近距作戰建議）</span>
-              <span v-if="moveWaypoints.length" class="snaphint precise">· 自訂路徑 {{ moveWaypoints.length }} 點</span>
-            </div>
-            <!-- #28 路徑成本試算 -->
-            <div v-if="movePreview" class="mvprev" data-testid="move-preview">
-              <div class="mv-row">
-                <span>距離 <b>{{ (movePreview.distance_m / 1000).toFixed(2) }} km</b></span>
-                <span>約 <b>{{ movePreview.duration_ticks }}</b> tick</span>
-                <span v-if="movePreview.fuel_cost > 0">油耗 <b>{{ movePreview.fuel_cost.toFixed(0) }}</b></span>
-              </div>
-              <!-- #80/#81：機動能力 + 實際速度（已含地形/坡度調變） -->
-              <div class="mv-row mv-sub">
-                <span :title="`機動 profile（由編裝導出）：${movePreview.mobility_profile}`">
-                  <i class="pi pi-forward" /> {{ mobilityLabel(movePreview.mobility_profile) }}
-                  <b>{{ movePreview.speed_kmh.toFixed(1) }}</b> km/h
-                </span>
-                <span v-if="movePreview.terrain_routed" class="mv-routed" title="已依地形 A* 繞開不可通行區（非直線）">
-                  <i class="pi pi-share-alt" /> 地形繞路
-                </span>
-              </div>
-              <!-- #84：油料是否夠走完全程 -->
-              <div v-if="movePreview.fuel_remaining > 0" class="mv-row mv-sub">
-                <span :class="{ 'mv-lowfuel': !movePreview.fuel_sufficient }">
-                  <i class="pi pi-bolt" /> 油料 <b>{{ movePreview.fuel_remaining.toFixed(0) }}</b>
-                  <template v-if="!movePreview.fuel_sufficient">（不足，將中途拋錨）</template>
-                </span>
-              </div>
-              <div v-if="movePreview.terrain_impassable" class="mv-forced" data-testid="move-impassable">
-                ⛔ 路徑穿越此單位<b>無法通行</b>的地形（{{ mobilityLabel(movePreview.mobility_profile) }}）——將於邊界停止
-              </div>
-              <div v-else-if="movePreview.feasible" class="mv-ok" title="此預覽僅檢查路徑上的已知障礙與地形；地形可達性於送出時再驗證">
-                ✓ 無障礙阻擋（地形可達性於送出時驗證）
-              </div>
-              <div v-else class="mv-forced" data-testid="move-forced">
-                ⚠ 需強穿 {{ movePreview.crossings.length }} 處阻礙（隨機額外耗損）
-                <ul>
-                  <li v-for="(c, i) in movePreview.crossings" :key="i">
-                    {{ crossKindLabel(c.kind) }}{{ c.label ? `（${c.label}）` : '' }}
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </template>
-          <template v-else>
-            <div class="hint">點地圖上的敵方單位鎖定目標（紅環），或從清單選：</div>
-            <select v-model="targetUnitId" data-testid="engage-target">
-              <option :value="null">選目標</option>
-              <option v-for="u in engageTargets" :key="u.id" :value="u.id">{{ u.designation }}</option>
-            </select>
-            <div class="dest" data-testid="target-label">
-              {{ targetUnit ? `🎯 ${targetUnit.designation}（${targetUnit.faction}）` : '未鎖定目標' }}
-            </div>
-            <template v-if="weapons.length">
-              <select v-model="weaponId" data-testid="engage-weapon">
-                <option :value="null">{{ weapons.length >= 2 ? '聯合火力（全武器一起打）' : '預設武器' }}</option>
-                <option v-for="w in weapons" :key="w.id" :value="w.id">
-                  {{ w.name }}<span v-if="liveAmmo(w) != null"> · 彈 {{ liveAmmo(w) }}</span>
-                </option>
-              </select>
-              <!-- 聯合火力（未選單一武器且 ≥2 武器）：顯示將開火的武器組合 + 火力政策（P4）。 -->
-              <template v-if="combinedMode">
-                <select v-model="firePolicy" data-testid="engage-fire-policy">
-                  <option v-for="p in FIRE_POLICY_OPTS" :key="p.value" :value="p.value">
-                    {{ p.label }}
-                  </option>
-                </select>
-                <ul class="weapon-mix" data-testid="weapon-mix">
-                  <li v-for="w in weapons" :key="w.id">
-                    <i class="pi pi-bullseye" /> {{ w.name }}
-                    <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
-                    <span v-if="liveAmmo(w) != null" class="dim">· 彈 {{ liveAmmo(w) }}</span>
-                  </li>
-                </ul>
-              </template>
-              <!-- 指定單一武器：彈種選擇（單武器射擊路徑）。 -->
-              <select
-                v-if="!combinedMode && ammoOptions.length"
-                v-model="ammoType"
-                data-testid="engage-ammo"
-              >
-                <option :value="null">彈種（預設）</option>
-                <option v-for="a in ammoOptions" :key="a" :value="a">{{ a }}</option>
-              </select>
-            </template>
-          </template>
-          <button
-            data-testid="submit-order"
-            :disabled="orderType === 'MOVE' ? !destH3 : !targetUnitId"
-            @click="submit"
-          >
-            {{ orderType === 'MOVE' ? '送出移動' : '送出交戰' }}
-          </button>
-          <p v-if="message" data-testid="order-message">{{ message }}</p>
-          <div v-if="precheck" class="precheck" data-testid="precheck">
-            <div :class="precheck.feasible ? 'ok' : 'bad'">
-              預檢：{{ precheck.feasible ? '可行' : '不可行' }}
-            </div>
-            <ul>
-              <li v-for="(c, i) in precheck.checks" :key="i">
-                {{ c.passed ? '✓' : '✗' }} {{ c.name }} <span v-if="c.detail">— {{ c.detail }}</span>
-              </li>
-            </ul>
-          </div>
-        </div>
+        <UnitsOrderPanel
+          v-model:precise-move="preciseMove"
+          :ordering="orderingView"
+          :units-by-faction="unitsByFaction"
+          :unit-count="realUnits.length"
+          :selected-id="selectedId"
+          :selected-unit="selectedUnit"
+          :selected-unit-fixed="selectedUnitFixed"
+          :collapsed-factions="collapsedFactions"
+          :engage-targets="engageTargets"
+          :target-unit="targetUnit"
+          :in-scope="inScope"
+          :live-health="liveHealth"
+          @select="selectUnit"
+          @toggle-group="toggleFactionGroup"
+        />
       </FloatingWidget>
       </Teleport>
 
@@ -2357,323 +2156,23 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 /* 下令面板小標（浮動視窗內） */
-.order h3 {
-  margin: 0.75rem 0 0.375rem;
-  font-size: 0.8125rem;
-  color: #94a3b8;
-}
-.units,
-.orders,
-.events {
+/* 「指令」小工具沿用的清單樣式（單位清單那半已隨 UnitsOrderPanel 搬走；
+   scoped CSS 之下兩邊各留一份是必要的重複）。 */
+.orders {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  overflow-y: auto;
+  font-size: 0.8125rem;
 }
-.events li {
-  padding: 0.25rem 0.5rem;
-  border-left: 2px solid #f59e0b;
-  background: #1c1917;
-  font-size: 0.75rem;
-}
-.ws {
-  color: #64748b;
-  font-weight: normal;
-}
-.units li,
 .orders li {
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #1e293b;
+  padding: 0.25rem 0.375rem;
   border-radius: 0.25rem;
   cursor: pointer;
-}
-/* 單位小工具依陣營分組（可收合/展開） */
-.ufac {
-  margin-bottom: 0.35rem;
-}
-.ufac-hd {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  width: 100%;
-  padding: 0.25rem 0.4rem;
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 0.3rem;
-  color: #cbd5e1;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-.ufac-hd:hover {
-  border-color: #334155;
-}
-.ufac-hd .pi {
-  font-size: 0.7rem;
-  color: #64748b;
-}
-.ufac-count {
-  color: #64748b;
-  font-size: 0.75rem;
-}
-/* 陣營戰力（量體加權）——靠右對齊，與各單位的效能%同一套色帶。 */
-.ufac-pow {
-  margin-left: auto;
-  font-size: 0.78rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.ufac-ko {
-  color: #ef4444;
-  font-size: 0.7rem;
-}
-.ufac-units {
-  list-style: none;
-  margin: 0.2rem 0 0;
-  padding: 0 0 0 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-/* #27 指令列：對象 + 時間 + 狀態。 */
-.orders li {
-  cursor: default;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.ord-main {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-.ord-unit {
-  font-weight: 600;
-  color: #e2e8f0;
-}
-.ord-type {
-  color: #93c5fd;
-  font-size: 0.72rem;
-}
-.ord-tgt {
-  color: #fca5a5;
-  font-size: 0.72rem;
-}
-.ord-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.7rem;
-  color: #94a3b8;
-}
-.ord-time {
-  font-variant-numeric: tabular-nums;
-}
-.ord-status {
-  padding: 0 0.3rem;
-  border-radius: 0.2rem;
-  background: #1e293b;
-}
-.ord-status.st-COMPLETED {
-  color: #86efac;
-}
-.ord-status.st-REJECTED,
-.ord-status.st-CANCELLED {
-  color: #fca5a5;
-}
-.ord-status.st-EXECUTING {
-  color: #fcd34d;
-}
-.ord-meta button {
-  margin-left: auto;
-  padding: 0.1rem 0.4rem;
-  font-size: 0.68rem;
-  border: 1px solid #334155;
-  border-radius: 0.2rem;
-  background: transparent;
-  color: #cbd5e1;
-  cursor: pointer;
-}
-.units li.sel {
-  border-color: #2563eb;
-  background: #172554;
-}
-.ufac-hd .u-dot {
-  display: inline-block;
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  flex: none;
-}
-.units li .u-hp {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-.units li .u-ko {
-  margin-left: 0.35rem;
-  color: #ef4444;
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-.units li .u-fixed {
-  margin-left: 0.3rem;
-  font-size: 0.78rem;
-}
-.units li.out-scope {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.units li.out-scope:hover {
-  border-color: #1e293b;
-}
-.units li .u-ban {
-  margin-left: 0.3rem;
-  font-size: 0.72rem;
-}
-.order .fixed-note {
-  margin: 0.35rem 0;
-  padding: 0.35rem 0.5rem;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.4);
-  border-radius: 0.3rem;
-  color: #fde68a;
-  font-size: 0.74rem;
-  line-height: 1.4;
 }
 .empty {
   color: #64748b;
-  cursor: default !important;
-}
-.order {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-  margin: 0.5rem 0;
-}
-.order select,
-.order button {
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #334155;
-  border-radius: 0.25rem;
-  background: #0a1626;
-  color: #e2e8f0;
-  cursor: pointer;
-}
-.order button.armed {
-  border-color: #eab308;
-}
-.dest {
-  font-family: monospace;
-  color: #94a3b8;
-}
-.dest .snaphint {
-  font-family: system-ui, sans-serif;
-  color: #eab308;
-  font-size: 0.68rem;
-}
-.dest .snaphint.precise {
-  color: #f472b6;
-}
-.order .precise {
-  display: flex;
-  gap: 0.35rem;
-  align-items: center;
-  color: #94a3b8;
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-/* #28 移動路徑：按鈕列 + 成本試算 */
-.order .movebtns {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-.order .movebtns button {
-  font-size: 0.72rem;
-  padding: 0.3rem 0.45rem;
-}
-.mvprev {
-  margin-top: 0.3rem;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #334155;
-  border-radius: 0.3rem;
-  background: #0b1220;
-  font-size: 0.74rem;
-}
-.mvprev .mv-row {
-  display: flex;
-  gap: 0.75rem;
-  color: #cbd5e1;
-}
-.mvprev .mv-row b {
-  color: #38bdf8;
-}
-.unit-card .lowfuel {
-  color: #f87171;
-}
-.mvprev .mv-sub {
-  color: #94a3b8;
-  font-size: 0.78rem;
-}
-.mvprev .mv-routed {
-  color: #7dd3fc;
-}
-.mvprev .mv-lowfuel {
-  color: #fbbf24;
-}
-.mvprev .mv-ok {
-  margin-top: 0.25rem;
-  color: #4ade80;
-}
-.mvprev .mv-forced {
-  margin-top: 0.25rem;
-  color: #f59e0b;
-}
-.mvprev .mv-forced ul {
-  margin: 0.2rem 0 0;
-  padding-left: 1.1rem;
-  color: #fbbf24;
-}
-.order .selunit {
-  color: #60a5fa;
-  font-weight: 600;
-}
-.order .hint {
-  color: #94a3b8;
-  font-size: 0.72rem;
-  line-height: 1.4;
-}
-/* 聯合火力武器組合清單（P4）：顯示將一起開火的武器。 */
-.weapon-mix {
-  list-style: none;
-  margin: 0.25rem 0 0;
-  padding: 0.35rem 0.5rem;
-  background: rgba(30, 58, 95, 0.25);
-  border: 1px solid #1e3a5f;
-  border-radius: 0.35rem;
-  font-size: 0.72rem;
-  color: #cbd5e1;
-}
-.weapon-mix li {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.1rem 0;
-}
-.weapon-mix .dim {
-  color: #94a3b8;
-}
-.precheck .ok {
-  color: #4ade80;
-}
-.precheck .bad {
-  color: #f87171;
-}
-.precheck ul {
-  margin: 0.25rem 0 0;
-  padding-left: 1rem;
+  padding: 0.5rem 0;
 }
 .orders button {
   margin-left: 0.5rem;
