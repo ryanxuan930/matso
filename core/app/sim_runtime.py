@@ -55,6 +55,7 @@ from app.factions.visibility import visible_factions
 from app.fires.displacement import run_due_displacements
 from app.fires.scheduler import run_due_fire_missions
 from app.fires.survivability import load_session_survivability
+from app.governance.guard import seal_violation
 from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
@@ -219,6 +220,9 @@ class SimManager:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._stop = asyncio.Event()
         self._scan_client = make_redis(redis_url)  # 掃描層唯讀（檢查收場旗標）
+        # WP-B4：已因簽證不符拒起過的 session。掃描每 3 秒重來一次，
+        # 每輪印一行會淹掉所有其他訊息——只在狀態改變時記。
+        self._seal_refused: set[str] = set()
 
     async def run(self) -> None:
         """掃描迴圈：直到 stop() 前，定期為每個 session 確保有 runner。"""
@@ -254,6 +258,16 @@ class SimManager:
             session_concluded_key(session_id)
         ):
             return
+        # WP-B4 參數簽證比對：不符即拒起（防「演習中偷改參數重啟」）。
+        # **只在第一次拒絕時記一次 log**——掃描每 3 秒重來一次，每輪印一行會淹掉所有訊息。
+        with self._factory() as db:
+            violation = seal_violation(db, session_id)
+        if violation is not None:
+            if session_id not in self._seal_refused:
+                self._seal_refused.add(session_id)
+                _LOG.error("session %s 拒絕啟動：%s", session_id, violation)
+            return
+        self._seal_refused.discard(session_id)  # 參數改回來了 → 下次違規要再記一次
         self._tasks[session_id] = asyncio.create_task(self._run_session(session_id))
 
     def _start_victory_monitor(

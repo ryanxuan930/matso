@@ -17,13 +17,24 @@ from app.adjudication.seed_weapons import (
     SEED_VEHICLES,
     SEED_WEAPONS,
 )
+from app.governance.guard import params_sealed
 from app.models.tables import EquipmentInstance, EquipmentTemplate, TacticalUnit
 
 
 def _upsert_templates(
     db: Session, seed: dict[str, dict[str, Any]], category: str
 ) -> dict[str, str]:
-    """把一組 seed 定義 upsert 為 EquipmentTemplate（冪等：以 name 查，更新 baseStats 或新建）。"""
+    """把一組 seed 定義 upsert 為 EquipmentTemplate（冪等：以 name 查，更新 baseStats 或新建）。
+
+    ⚠ **WP-B4：簽證期間不覆寫既有範本的 baseStats**。這條路徑跑在**每一次**由想定開局時
+    （`scenario/loader.py`）——若照常覆寫，在已簽證的演習裡新開一個預推/分析局，
+    就會靜靜改掉被鎖住的那張表，然後**該演習的每一局都會因為雜湊不符而拒起**。
+
+    只擋覆寫、不擋新建：新範本不改變任何既有值，也就動不到簽證的內容
+    （簽證雜湊涵蓋全表，新建確實會讓雜湊變——但那是「有人在演習中新增裝備」，
+    本來就該被開局比對抓到；靜靜跳過新建反而會讓增援單位拿不到武器）。
+    """
+    sealed = params_sealed(db)
     out: dict[str, str] = {}
     for name, stats in seed.items():
         tmpl = db.execute(
@@ -33,7 +44,7 @@ def _upsert_templates(
             tmpl = EquipmentTemplate(name=name, category=category, base_stats=dict(stats))
             db.add(tmpl)
             db.flush()
-        else:
+        elif not sealed:
             tmpl.base_stats = dict(stats)
         out[name] = tmpl.id
     return out

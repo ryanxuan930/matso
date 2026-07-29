@@ -23,6 +23,7 @@ from app.exercise.schemas import (
     DestroyResult,
     ExerciseAuditEntry,
     ExerciseView,
+    SealView,
 )
 from app.exercise.service import ExerciseService
 
@@ -147,3 +148,34 @@ def destroy_exercise_data(
     return DestroyResult(
         **svc.destroy_data(user, exercise_id, req.confirm_name, settings.redis_url)
     )
+
+
+@router.post("/{exercise_id}/seal", response_model=SealView)
+def seal_exercise_params(
+    exercise_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    svc: ExerciseService = Depends(get_exercise_service),
+) -> SealView:
+    """參數簽證（WP-B4）：快照並鎖住全域參數，同時勾稽 `params_sealed`。"""
+    return svc.seal_params(user, exercise_id)
+
+
+@router.get("/{exercise_id}/seal", response_model=SealView | None)
+def get_exercise_seal(
+    exercise_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    svc: ExerciseService = Depends(get_exercise_service),
+) -> SealView | None:
+    """簽證狀態（含**當前**雜湊比對——白軍要看得出參數有沒有被動過）。"""
+    return svc.get_seal(user, exercise_id)
+
+
+@router.delete("/{exercise_id}/seal", status_code=status.HTTP_204_NO_CONTENT)
+def unseal_exercise_params(
+    exercise_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    svc: ExerciseService = Depends(get_exercise_service),
+) -> Response:
+    """解除簽證。**不是繞過閘門，是改變狀態**——會進稽核軌跡。"""
+    svc.unseal_params(user, exercise_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

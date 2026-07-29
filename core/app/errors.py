@@ -267,3 +267,15 @@ class ExerciseDestroyConfirmError(MatsoError):
 
     error_code = "EXERCISE_DESTROY_UNCONFIRMED"
     http_status = 409
+
+
+class ParamsSealedError(MatsoError):
+    """全域參數已簽證鎖定（WP-B4）——演習進行中不得改裝備模板/SimParams。
+
+    白軍的例外通道是 MSEL `MODIFY_UNIT`（留痕），**不是**在這些端點上加 `force` 旗標。
+    真的要解鎖得走 `DELETE /exercises/{id}/seal`——那是一個會進稽核軌跡的明示動作，
+    不是繞過檢查。
+    """
+
+    error_code = "PARAMS_SEALED"
+    http_status = 403

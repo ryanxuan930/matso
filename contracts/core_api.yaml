@@ -113,6 +113,7 @@ components:
                 - EXERCISE_CHECKLIST_INCOMPLETE
                 - EXERCISE_SESSION_CONFLICT
                 - EXERCISE_DESTROY_UNCONFIRMED
+                - PARAMS_SEALED
             message: { type: string }
             details: { type: object }
     UserRole:
@@ -320,6 +321,20 @@ components:
           additionalProperties: { type: integer }
           description: 各表刪除筆數
         redis_keys_deleted: { type: integer, description: 清掉的 Redis 活狀態鍵數 }
+    SealView:
+      type: object
+      description: >-
+        參數簽證（WP-B4）。`matches=false` ＝參數在簽證後被動過，該演習的局會**拒起**。
+        **鎖住的是全域參數**（EquipmentTemplate 全表 + SimParams + 機動矩陣）——
+        那三樣都是全域單例，沒有 session 可以 scope，故簽證生效期間全場唯讀。
+      required: [exercise_id, sealed_at, sealed_by, content_hash, current_hash, matches]
+      properties:
+        exercise_id: { type: string }
+        sealed_at: { type: string }
+        sealed_by: { type: string }
+        content_hash: { type: string, description: 簽證當下的參數雜湊 }
+        current_hash: { type: string, description: 此刻的參數雜湊 }
+        matches: { type: boolean }
     ExerciseAuditEntry:
       type: object
       description: >-
@@ -1371,6 +1386,56 @@ paths:
         "403": { description: Not admin / not archived, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: Confirmation name mismatch, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/seal:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getExerciseSeal
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: 簽證狀態（含當前雜湊比對）。未簽證回 null。
+      responses:
+        "200":
+          description: Seal or null
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SealView" }
+                  - { type: "null" }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      operationId: sealExerciseParams
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: >-
+        參數簽證：快照並鎖住全域參數，同時勾稽 `params_sealed`。
+        **是 REHEARSAL 期間的明示動作**，不是進 EXECUTION 的副作用——
+        `params_sealed` 同時是離開 REHEARSAL 的必要項，做成副作用會死鎖。
+        重複呼叫＝重新快照（參數又調了、要重新確認是正常流程）。
+      responses:
+        "200":
+          description: Sealed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SealView" }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: unsealExerciseParams
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: >-
+        解除簽證。**不是繞過閘門，是改變狀態**——會進稽核軌跡。
+        沒有它，一場被忘記的演習會讓全域參數永遠唯讀。
+      responses:
+        "204": { description: Unsealed }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: No seal, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /exercises/{exercise_id}/audit:
     parameters:
       - name: exercise_id

@@ -82,3 +82,14 @@ class DestroyResult(BaseModel):
     sessions_destroyed: int
     rows_deleted: dict[str, int] = Field(default_factory=dict)
     redis_keys_deleted: int = 0
+
+
+class SealView(BaseModel):
+    """參數簽證（WP-B4）。`matches=False` ＝參數在簽證後被動過——該演習的局會拒起。"""
+
+    exercise_id: str
+    sealed_at: str
+    sealed_by: str
+    content_hash: str
+    current_hash: str
+    matches: bool

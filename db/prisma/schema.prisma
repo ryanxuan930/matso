@@ -576,3 +576,18 @@ enum SessionRole {
   MAIN
   ANALYSIS
 }
+
+
+/// 參數簽證（WP-B4，[JCATS-A p.14,25–26]「參數確認後簽證鎖定不得再改」）。
+///
+/// 一場演習最多一份（`@@unique`）。`snapshotBlob` 是 zstd 壓縮的 canonical JSON
+/// （EquipmentTemplate 全表 + 正規化後的 SimParams + 機動矩陣內容）；
+/// `contentHash` 是同一份內容的 sha256——**開局比對它**，不符即拒起。
+model ParameterSeal {
+  id           String   @id @default(uuid())
+  exerciseId   String   @unique
+  sealedAt     DateTime @default(now())
+  sealedBy     String
+  contentHash  String
+  snapshotBlob Bytes
+}

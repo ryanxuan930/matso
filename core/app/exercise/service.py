@@ -42,9 +42,18 @@ from app.exercise.schemas import (
     ExerciseChecklistItem,
     ExerciseSessionRef,
     ExerciseView,
+    SealView,
 )
+from app.governance.seal import build_seal_payload, compress, compute_seal_hash, seal_for
 from app.lobby.purge import purge_session_redis, purge_session_rows
-from app.models import Exercise, ExerciseAuditLog, ExercisePhase, UserRole, WargameSession
+from app.models import (
+    Exercise,
+    ExerciseAuditLog,
+    ExercisePhase,
+    ParameterSeal,
+    UserRole,
+    WargameSession,
+)
 from app.stream.faction_filter import is_omniscient, is_white_cell
 
 # 稽核 action 常數——字串散在各處會拼錯，而稽核軌跡拼錯了沒有人會發現。
@@ -54,6 +63,8 @@ ACTION_CHECKLIST_TICKED = "CHECKLIST_TICKED"
 ACTION_SESSION_ATTACHED = "SESSION_ATTACHED"
 ACTION_SESSION_DETACHED = "SESSION_DETACHED"
 ACTION_DESTROYED = "DATA_DESTROYED"
+ACTION_SEALED = "PARAMS_SEALED"
+ACTION_UNSEALED = "PARAMS_UNSEALED"
 
 
 def _now() -> _dt.datetime:
@@ -303,6 +314,73 @@ class ExerciseService:
         self._audit(exercise_id, user.id, ACTION_DESTROYED, detail=summary)
         self._db.commit()
         return summary
+
+    # ---- 參數簽證（WP-B4）----
+
+    def seal_params(self, user: CurrentUser, exercise_id: str) -> SealView:
+        """簽證：把當下的全域參數快照起來並鎖住（[JCATS-A]「參數確認後簽證鎖定不得再改」）。
+
+        **簽證是 REHEARSAL 期間的明示動作，不是進 EXECUTION 的副作用**。
+        規格說「進入 EXECUTION 時執行 freeze」，但 `params_sealed` 同時是離開 REHEARSAL 的
+        必要勾稽項——那樣寫會死鎖：要進 EXECUTION 得先勾，而勾是進去以後才發生的。
+        改成明示動作也更貼近條文本身（「參數**確認後**簽證鎖定」——確認是人做的事）。
+
+        重複簽證 → **重新快照**（參數又調了、要重新確認是正常流程），並記一筆稽核。
+        """
+        self._require_white_cell(user)
+        exercise = self._get(exercise_id)
+        payload = build_seal_payload(self._db)
+        content_hash = compute_seal_hash(payload)
+        seal = seal_for(self._db, exercise_id)
+        if seal is None:
+            seal = ParameterSeal(exercise_id=exercise_id, sealed_by=user.id, content_hash="")
+            self._db.add(seal)
+        seal.sealed_by = user.id
+        seal.sealed_at = _now()
+        seal.content_hash = content_hash
+        seal.snapshot_blob = compress(payload)
+        self._apply_tick(exercise, "params_sealed", True, actor_id=user.id)
+        self._audit(exercise_id, user.id, ACTION_SEALED, detail={"content_hash": content_hash})
+        self._db.commit()
+        return self._seal_view(seal)
+
+    def unseal_params(self, user: CurrentUser, exercise_id: str) -> None:
+        """解除簽證。
+
+        **這不是繞過閘門，是改變狀態**——一個會進稽核軌跡的明示動作。
+        沒有它，一場被忘記的演習會讓全域武器庫永遠唯讀（`active_seal` 看的是 phase，
+        而 phase 只能往前推、推不動就卡住）。留一條有痕跡的路，好過讓人去改 DB。
+        """
+        self._require_white_cell(user)
+        self._get(exercise_id)
+        seal = seal_for(self._db, exercise_id)
+        if seal is None:
+            raise ExerciseNotFoundError("此演習沒有簽證", details={"exercise_id": exercise_id})
+        old = seal.content_hash
+        self._db.delete(seal)
+        exercise = self._get(exercise_id)
+        self._apply_tick(exercise, "params_sealed", False, actor_id=user.id)
+        self._audit(exercise_id, user.id, ACTION_UNSEALED, detail={"content_hash": old})
+        self._db.commit()
+
+    def get_seal(self, user: CurrentUser, exercise_id: str) -> SealView | None:
+        self._require_view(user)
+        self._get(exercise_id)
+        seal = seal_for(self._db, exercise_id)
+        return self._seal_view(seal) if seal is not None else None
+
+    def _seal_view(self, seal: ParameterSeal) -> SealView:
+        """簽證視圖。**當前雜湊一起回**——白軍要看得出「現在的參數還跟簽證時一樣嗎」，
+        而不是等到開局被拒才發現。"""
+        current = compute_seal_hash(build_seal_payload(self._db))
+        return SealView(
+            exercise_id=seal.exercise_id,
+            sealed_at=_iso(seal.sealed_at) or "",
+            sealed_by=seal.sealed_by,
+            content_hash=seal.content_hash,
+            current_hash=current,
+            matches=current == seal.content_hash,
+        )
 
     # ---- 供 WP-B4 的程式端掛點 ----
 

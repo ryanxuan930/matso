@@ -260,6 +260,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/exercises/{exercise_id}/seal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description 簽證狀態（含當前雜湊比對）。未簽證回 null。 */
+        get: operations["getExerciseSeal"];
+        put?: never;
+        /** @description 參數簽證：快照並鎖住全域參數，同時勾稽 `params_sealed`。 **是 REHEARSAL 期間的明示動作**，不是進 EXECUTION 的副作用—— `params_sealed` 同時是離開 REHEARSAL 的必要項，做成副作用會死鎖。 重複呼叫＝重新快照（參數又調了、要重新確認是正常流程）。 */
+        post: operations["sealExerciseParams"];
+        /** @description 解除簽證。**不是繞過閘門，是改變狀態**——會進稽核軌跡。 沒有它，一場被忘記的演習會讓全域參數永遠唯讀。 */
+        delete: operations["unsealExerciseParams"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/exercises/{exercise_id}/audit": {
         parameters: {
             query?: never;
@@ -1175,7 +1196,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_FIRE_APPROVAL_REQUIRED" | "REQUEST_NO_OBSERVER" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND" | "EXERCISE_NOT_FOUND" | "EXERCISE_PHASE_INVALID" | "EXERCISE_CHECKLIST_INCOMPLETE" | "EXERCISE_SESSION_CONFLICT" | "EXERCISE_DESTROY_UNCONFIRMED";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_FIRE_APPROVAL_REQUIRED" | "REQUEST_NO_OBSERVER" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND" | "EXERCISE_NOT_FOUND" | "EXERCISE_PHASE_INVALID" | "EXERCISE_CHECKLIST_INCOMPLETE" | "EXERCISE_SESSION_CONFLICT" | "EXERCISE_DESTROY_UNCONFIRMED" | "PARAMS_SEALED";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -1340,6 +1361,17 @@ export interface components {
             };
             /** @description 清掉的 Redis 活狀態鍵數 */
             redis_keys_deleted?: number;
+        };
+        /** @description 參數簽證（WP-B4）。`matches=false` ＝參數在簽證後被動過，該演習的局會**拒起**。 **鎖住的是全域參數**（EquipmentTemplate 全表 + SimParams + 機動矩陣）—— 那三樣都是全域單例，沒有 session 可以 scope，故簽證生效期間全場唯讀。 */
+        SealView: {
+            exercise_id: string;
+            sealed_at: string;
+            sealed_by: string;
+            /** @description 簽證當下的參數雜湊 */
+            content_hash: string;
+            /** @description 此刻的參數雜湊 */
+            current_hash: string;
+            matches: boolean;
         };
         /** @description 演習稽核軌跡（WP-B1）。**刻意不寫 TacticalEventLog**：那是 golden 會驗的雜湊鏈， 而階段推進是牆鐘的、人為的、局外的事件——寫進鏈裡會擾動決定性重播。 */
         ExerciseAuditEntry: {
@@ -2696,6 +2728,124 @@ export interface operations {
             };
             /** @description Confirmation name mismatch */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getExerciseSeal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Seal or null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SealView"] | null;
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sealExerciseParams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sealed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SealView"];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    unsealExerciseParams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unsealed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No seal */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

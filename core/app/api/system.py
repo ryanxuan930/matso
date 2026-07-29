@@ -31,6 +31,7 @@ from app.api.deps import get_current_user, get_db, get_settings
 from app.auth.schemas import CurrentUser
 from app.config import Settings
 from app.errors import AuthForbiddenError, OrderValidationError
+from app.governance.guard import require_params_unsealed
 from app.models.enums import AiMode
 from app.models.tables import SystemConfiguration
 from app.sim_params import parse_sim_params, to_config
@@ -152,7 +153,13 @@ def put_config(
     ic["ai"] = ai
     if edit.sim is not None:
         # 逐欄驗證後回寫正規化結果（壞值退預設，不讓不合法的數字進到裁決）。
-        ic["sim"] = to_config(parse_sim_params(edit.sim))
+        normalized = to_config(parse_sim_params(edit.sim))
+        # WP-B4：簽證期間 SimParams 唯讀。**選擇性拒絕**——這個端點同時寫 ai.*（H 層，
+        # 規格明說不凍），整條擋掉會讓白軍在演習中連 LLM 端點都換不了。
+        # 且值沒變就放行：前端每次存檔都送整包，原封不動的重送不該變成 403。
+        if normalized != (ic.get("sim") or {}):
+            require_params_unsealed(db)
+        ic["sim"] = normalized
     cfg.integration_config = ic
     cfg.updated_at = datetime.now()  # type: ignore[assignment]
     db.commit()

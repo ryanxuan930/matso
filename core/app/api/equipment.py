@@ -29,6 +29,7 @@ from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.config import Settings
 from app.errors import AuthForbiddenError, OrderValidationError, SessionNotFoundError
+from app.governance.guard import require_params_unsealed
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit, WargameSession
 from app.state.live_ammo import push_ammo_cmd
 from app.stream.faction_filter import is_omniscient
@@ -190,6 +191,7 @@ def create_equipment_template(
     db: Session = Depends(get_db),
 ) -> EquipmentTemplateView:
     _require_admin(user)
+    require_params_unsealed(db)  # WP-B4：演習簽證期間武器庫唯讀
     category = body.category.upper()
     _validate_base_stats(category, body.base_stats)
     tmpl = EquipmentTemplate(name=body.name, category=category, base_stats=dict(body.base_stats))
@@ -206,6 +208,7 @@ def update_equipment_template(
     db: Session = Depends(get_db),
 ) -> EquipmentTemplateView:
     _require_admin(user)
+    require_params_unsealed(db)  # WP-B4：演習簽證期間武器庫唯讀
     category = body.category.upper()
     _validate_base_stats(category, body.base_stats)
     tmpl = db.get(EquipmentTemplate, tid)
@@ -228,6 +231,7 @@ def delete_equipment_template(
 ) -> Response:
     """刪除武器/裝備範本（全域武器庫）。限統裁/管理。使用中（有單位配發）→ 拒刪，避免孤兒編裝。"""
     _require_admin(user)
+    require_params_unsealed(db)  # WP-B4：演習簽證期間武器庫唯讀
     tmpl = db.get(EquipmentTemplate, tid)
     if tmpl is None:
         raise OrderValidationError(

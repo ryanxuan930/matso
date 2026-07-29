@@ -509,3 +509,24 @@ class ExerciseAuditLog(Base):
     detail: Mapped[dict | None] = mapped_column("detail", JSON)  # type: ignore[type-arg]
 
     __table_args__ = (UniqueConstraint("exerciseId", "seq"),)
+
+
+class ParameterSeal(Base):
+    """參數簽證（WP-B4）——一場演習最多一份。
+
+    `content_hash` 是簽證當下「全域參數」的雜湊；開局比對它，不符即拒起
+    （防「演習中偷改參數重啟」）。`snapshot_blob` 是同一份內容的 zstd 壓縮 canonical JSON，
+    供事後查證「當時到底鎖了什麼」。
+    """
+
+    __tablename__ = "ParameterSeal"
+    __table_args__ = (UniqueConstraint("exerciseId"),)
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    exercise_id: Mapped[str] = mapped_column("exerciseId", String(191))
+    sealed_at: Mapped[Any] = mapped_column(
+        "sealedAt", DateTime(timezone=False), server_default=func.now()
+    )
+    sealed_by: Mapped[str] = mapped_column("sealedBy", String(191))
+    content_hash: Mapped[str] = mapped_column("contentHash", String(191))
+    snapshot_blob: Mapped[bytes] = mapped_column("snapshotBlob", LargeBinary)
