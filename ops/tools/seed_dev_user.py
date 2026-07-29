@@ -78,14 +78,17 @@ def _seed_session(db: Session, user: User) -> None:
             )
         )
     # 敵對陣營目標（RED）——供 ENGAGE E2E 選為 hostile 目標（ROE 允許，§12.1/O6.8）。
+    # **距 B1 約 500 m**：B1 是步槍排（射程 600 m）。原本放在 7 km 外，
+    # 於是「下 ENGAGE 令」那條 e2e 一直是 ORDER_OUT_OF_RANGE——
+    # 種子的幾何與測試的期待從一開始就矛盾（一個步兵排打不到 7 km 外的東西）。
     db.add(
         TacticalUnit(
             session_id=sid,
             designation="R1",
             unit_level=UnitLevel.PLATOON,
             faction="RED",
-            current_lat=23.80,
-            current_lng=121.30,
+            current_lat=23.7545,
+            current_lng=121.25,
         )
     )
     # WP-C10.2：一門砲兵——面目標射擊要求單位持有曲射武器，沒有砲就只能驗到「被預檢擋下」。

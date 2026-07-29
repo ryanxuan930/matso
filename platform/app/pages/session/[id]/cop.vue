@@ -547,6 +547,7 @@ onBeforeUnmount(() => {
       :unit-count="ownUnits.length"
       :comms-posture="commsPosture"
       :tick="stream.lastTick"
+      :stream-status="stream.status"
       :start-time="sessionStart"
       :can-control="canControl"
       :can-draw="canDraw"

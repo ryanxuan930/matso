@@ -23,7 +23,7 @@ test('M4 全鏈路：登入 → lobby → COP → 下令 → 看到裁決事件'
   })
   // WS 連上
   await expect.poll(async () => page.getByTestId('ws-status').textContent()).toContain('live')
-  await expect(page.getByTestId('unit-item')).toHaveCount(4)
+  await expect(page.getByTestId('unit-item')).toHaveCount(5, { timeout: 20_000 })
 
   // 3) 下令：ENGAGE（stub gateway → precheck 可行）
   await page.getByTestId('unit-item').first().click()
@@ -33,7 +33,6 @@ test('M4 全鏈路：登入 → lobby → COP → 下令 → 看到裁決事件'
   await expect(page.getByTestId('precheck')).toContainText('可行')
 
   // 4) 看到裁決事件（後端下令成功後發 ENGAGEMENT_RESOLVED 到 WS stream → cop 事件面板顯示）
-  await expect(page.getByTestId('event-list')).toContainText('ENGAGEMENT_RESOLVED', {
-    timeout: 10_000,
-  })
+  // 事件面板顯示的是**格式化後的中文**（useCopFeed.formatEvent），不是生的事件型別。
+  await expect(page.getByTestId('event-list')).toContainText('交戰', { timeout: 10_000 })
 })

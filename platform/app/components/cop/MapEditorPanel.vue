@@ -305,18 +305,6 @@ defineEmits<{ (e: 'toggle-hidden', id: string): void }>()
   font-size: 0.78rem;
   color: #e2e8f0;
 }
-.map-editor .me-hd {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.4rem;
-}
-.map-editor .me-x {
-  border: none;
-  background: transparent;
-  color: #64748b;
-  cursor: pointer;
-}
 .map-editor .me-kind {
   display: flex;
   gap: 0.4rem;

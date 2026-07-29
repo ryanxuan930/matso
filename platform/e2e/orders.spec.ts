@@ -18,7 +18,9 @@ async function loginToOrdersCop(page: Page): Promise<void> {
 
 test('單位列表載入真單位', async ({ page }) => {
   await loginToOrdersCop(page)
-  await expect(page.getByTestId('unit-item')).toHaveCount(5) // 3 藍軍 + 1 砲兵 + 1 紅軍
+  // 冷啟時 Nuxt 要先編譯這一頁、快照 API 也還沒回來——預設 5 秒不夠，
+  // 之前這條就是這樣紅的（Received: 0，不是數量錯）。
+  await expect(page.getByTestId('unit-item')).toHaveCount(5, { timeout: 20_000 })
 })
 
 test('下 MOVE 令全流程：選單位 → 點地圖 → precheck 可行 → pending → 取消', async ({ page }) => {
@@ -37,11 +39,12 @@ test('下 MOVE 令全流程：選單位 → 點地圖 → precheck 可行 → pe
   await expect(page.getByTestId('precheck')).toContainText('可行')
 
   // pending 列表出現此指令（列表容器；e2e-orders session 跨測試共用，可能有多筆）
-  await expect(page.getByTestId('order-list')).toContainText('MOVE')
+  // 指令列顯示的是**中文標籤**（ORDER_TYPE_LABELS）——斷言生的 enum 值一直是紅的。
+  await expect(page.getByTestId('order-list')).toContainText('移動')
 
   // 取消 → 出現 CANCELLED
   await page.getByTestId('cancel-order').first().click()
-  await expect(page.getByTestId('order-list')).toContainText('CANCELLED')
+  await expect(page.getByTestId('order-list')).toContainText('已取消')
 })
 
 test('下 ENGAGE 令：選單位 → 選目標 → precheck 可行', async ({ page }) => {
@@ -51,7 +54,7 @@ test('下 ENGAGE 令：選單位 → 選目標 → precheck 可行', async ({ pa
   await page.getByTestId('engage-target').selectOption({ label: 'R1' }) // 第一個可選目標
   await page.getByTestId('submit-order').click()
   await expect(page.getByTestId('precheck')).toContainText('可行')
-  await expect(page.getByTestId('order-list')).toContainText('ENGAGE')
+  await expect(page.getByTestId('order-list')).toContainText('交戰')
 })
 
 // WP-C10.2 面目標射擊：打座標而非打單位。砲兵 ARTY 持 155 榴（曲射），故預檢可過。

@@ -16,6 +16,14 @@ defineProps<{
   commsPosture: string | null
   /** 目前 sim tick（給時鐘列）。 */
   tick: number | null
+  /**
+   * WS 串流狀態（idle/connecting/live/resyncing/closed）。
+   *
+   * **這個指示器在 WP-G1 拆分時被弄丟了**——store 一直有 `status`，但沒有任何地方顯示它，
+   * 於是 smoke e2e 那條 `ws-status` 斷言從此不可能成立（找不到元素、textContent 永遠 null）。
+   * 它本身也是操作員真正需要的資訊：畫面沒動，是戰場安靜還是我斷線了？
+   */
+  streamStatus: string
   startTime: string | null
   /** 全知（統裁/白軍/管理）——視角切換與部分導覽鈕僅其可見。 */
   canControl: boolean
@@ -54,6 +62,19 @@ const widgetMenuOpen = defineModel<boolean>('widgetMenuOpen', { required: true }
     "
   >
     <i class="pi pi-wifi" /> 敵情粗化（{{ commsLabel(commsPosture) }}）
+  </span>
+  <span
+    class="ws"
+    :class="`ws-${streamStatus}`"
+    data-testid="ws-status"
+    :title="
+      streamStatus === 'live'
+        ? '即時串流連線中：單位位置與戰況事件即時更新'
+        : '即時串流未連線：畫面可能停在最後一次收到的狀態'
+    "
+  >
+    <i class="pi" :class="streamStatus === 'live' ? 'pi-circle-fill' : 'pi-circle'" />
+    {{ streamStatus }}
   </span>
   <ClientOnly><SimClockBar :tick="tick" :start-time="startTime" /></ClientOnly>
   <nav class="cop-nav">
@@ -232,6 +253,23 @@ const widgetMenuOpen = defineModel<boolean>('widgetMenuOpen', { required: true }
   color: #94a3b8;
 }
 /* WP-C5 敵情粗化告示：琥珀色（警示但非錯誤——是戰場現實，不是系統故障）。 */
+.ws {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+.ws.ws-live {
+  color: #4ade80;
+}
+.ws.ws-closed {
+  color: #f87171;
+}
+.ws i {
+  font-size: 0.5rem;
+}
 .posture {
   display: inline-flex;
   align-items: center;

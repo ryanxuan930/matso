@@ -137,37 +137,22 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-20：契約 fuzz 用 schemathesis **v4**（v3 不支援 FastAPI 產生的 OpenAPI 3.1）；order 端點只斷言「不 5xx」。ruff B008 放行 FastAPI `Depends()` 慣例。
 
 ## Backlog / 發現的問題
-- **`scenario_to_dict` 是手寫白名單，漏掉兩個想定鍵**（WP-C10.5 發現）：`indirect_fire_requires_approval` 與 `request_quotas` 從未被寫出來 → 想定匯出再匯入會**靜靜丟掉火協開關與申請配額**。C10.5 已把自己的 `survivability_move` 加進去，但沒順手補那兩個（紅線 5）。
-- **`armory.vue` 的 `formToBaseStats` 會摧毀砲兵油料模型**（WP-C10.5 發現）：它以 `mobilityStats()` 整包替換 `mobility`，而後者不含 `fuel_capacity`/`fuel_burn_per_km`——在軍械庫開 `HOWITZER_155_SP` 存一次就沒油料資料了。C10.5 的自走判定正好讀那些欄位。
-- **rollback 後 DB 座標與熱狀態不同步**（WP-C10.5 發現）：`rollback` 還原熱狀態 lat/lng，但 `TacticalUnit.current_lat/lng` 留在回滾前的值；之後 runner 一重啟，`seed_combat_state` 又會用那個舊 DB 值覆蓋熱狀態。影響所有移動，不只 C10.5。
-- **`has_observer_on` 三個既有缺陷**（WP-C10.4a 發現，屬 C10.1 的 API 路徑函式，未動）：把**死掉的單位也算成觀測者**（沒有存活過濾）、位置讀 `TacticalUnit.current_lat/lng` （活模擬從不寫那兩欄，只寫熱狀態）、`except Exception: continue` 讓地形中斷變成「沒有觀測」。改它會連帶改掉 call-for-fire 的行為，需自成一卡。C10.4a 的 `observer_verdict` 是另寫的 tick 側判定，沒有共用它。
-- **AAR REST 可繞過火力迷霧**（WP-C10.4a 發現）：`require_aar_access` 放行任一參與者，`read_events` 回整包 `ai_decision` → 玩家可在局中 poll `GET /aar/export` 取得 `losses_by_unit` 與每一發落點座標（雙方都有）。C10.4 的迷霧只擋 WS/AI briefing 兩條路，擋不住這條。
-- **面射擊戰損在 AAR 沒有歸屬**：`aar/stats.py` 只用 `target_id` 歸帳，而 `AREA_FIRE_RESOLVED` 從不設 `target_id`；`losses_by_unit` 寫了但沒有任何地方讀。
-- **FIRE_MISSION 沒有禁射區保護**（WP-C10.3 發現）：`run_precheck` 只在 `EngagePayload` 分支套 `_precheck_no_strike`（`precheck.py`），所以火力任務／火力計畫可以砲擊一個 `ENGAGE` 會被拒的 NO_STRIKE 區。缺口自 C10.2 就存在，依紅線 5 未在 C10.3 順手修。
-- **令沒有 TTL**（WP-C10.3）：`at_tick` 到期的令若因射手 OFFLINE 被通信閘門擋下，會留在 VALIDATED 直到通聯恢復——準備射擊可能遲到數十個 tick 才落地。逾時作廢與「換一門砲重試」都未做。
-- **`CALL_FOR_FIRE` 完全沒有前端**（C10.1 遺留，C10.3 再次確認）：`REQUEST_KIND_LABELS` 漏了它，`submitRequest` 寫死 `params: {}` 而後端要求 `target_lat`/`target_lng` → 從 UI 送不出一張合法的臨機火力申請。屬 C10.4。
-- **e2e 必須在 `.env`-free worktree 跑**：`platform/.env` 的 `NUXT_PUBLIC_API_BASE` 會蓋掉 Playwright 傳給 Nuxt 的 :8100，使 e2e 前端連到 docker 後端（:8000），`e2e-orders` 那局不存在 → 多條 COP 測試假性失敗。舊紀錄只寫「影響底圖那條」，範圍其實大得多（WP-D6.1 發現）。
-- `MapEditorPanel.vue` 的 `.map-editor .me-hd` / `.me-x` 是死規則（面板搬進 FloatingWidget 後，自帶的標題列與關閉鈕變成多餘）。**早於 G1b**——G1a 從 cop.vue 帶過來時就已無使用者，故未順手修（紅線 5）。由 WP-G1b 的機械式孤兒掃描發現。
 
-### 🧪 e2e 既有紅燈（WP-G1a 對等比較時確認，屬 G3）
-`.env`-free 環境下，拆分前後**同樣四條**失敗，與重構無關：`map.spec:71 地圖可縮放與平移`、
-`orders.spec:24 下 MOVE 令全流程`、`orders.spec:47 下 ENGAGE 令`、`smoke.spec:11 M4 全鏈路`。
+> **2026-07-31 清倉**：火力鏈三個安全洞、想定/軍械庫資料遺失、`has_observer_on` 三缺陷、
+> 回滾座標不同步、e2e 五條紅燈與死 CSS 全部已修（見該日 commit）。以下是**還沒動**的。
 
-**WP-C10.2 實測後修正上面對成因的判斷**（原本記「共同前置是 `ws-status` 等不到 `live`」，
-逐條看過後不是這樣；三條各自獨立、各自是小修）：
-
-| 測試 | 實際原因 | 該怎麼修 |
-|------|----------|----------|
-| `orders.spec:19 單位列表載入真單位` | 冷啟第一條測試斷言時單位清單還沒回來（`Received: 0`） | 改成 `expect.poll` / 等單位 API |
-| `orders.spec:24 下 MOVE 令全流程` | 斷言 `'MOVE'`，指令列顯示的是中文 `移動`（型別標籤中文化後沒跟上） | 斷言改中文標籤 |
-| `orders.spec:47 下 ENGAGE 令` | B1 只有步槍（600m），R1 在 7km 外 → `ORDER_OUT_OF_RANGE` | **先決定**改種子距離還是改測試期待，不是筆誤 |
-
-⚠ 量這件事時的陷阱：`playwright.config.ts` 的 `reuseExistingServer` 會留著上一輪的
-uvicorn，而它握著已被 `rm` 掉的 sqlite 檔控制代碼——**不先殺掉 :8100/:3100，
-量到的是上一輪的世界**（曾因此誤判「HEAD 的單位數是 5」）。
-⚠ 另注意：本機 `platform/.env` 有 `NUXT_PUBLIC_TILE_URL`，會讓
-`map.spec:53「離線：無 tile server」`**在本機必紅**——那是環境不是程式碼，
-比對 e2e 一律用不帶 `.env` 的 worktree。
+- **令沒有 TTL**（WP-C10.3）：`at_tick` 到期的令若因射手 OFFLINE 被通信閘門擋下，會留在
+  VALIDATED 直到通聯恢復——準備射擊可能遲到數十個 tick 才落地。逾時作廢與「換一門砲重試」都未做。
+- **`CALL_FOR_FIRE` 完全沒有前端**：`REQUEST_KIND_LABELS` 漏了它，`submitRequest` 寫死
+  `params: {}` 而後端要求 `target_lat`/`target_lng` → 從 UI 送不出一張合法的臨機火力申請。
+- **`emplace_ticks` 沒有消費者**（WP-C10.5 明列未做）：進入陣地後的待命時間——
+  打完就跑之後不該能立刻再開火。需新增 `WeaponProfile` 欄位 + `fire_wiring` 一條「就位了沒」的分支。
+- **`rounds_per_mission` 沒有消費者**：不是門檻、也對不上火力路徑計的東西（C10.5 計的是任務次數）。
+- **盟軍不算觀測者**：SPEC 寫「任一友軍」、關係矩陣也讓盟軍互相可見，但 C10.1 與 C10.4a
+  都只認自己陣營。兩處要一起改才有意義。
+- **e2e 的 `platform/.env` 干擾**：`NUXT_PUBLIC_TILE_URL` 會讓 `map.spec` 的離線那條前提不成立
+  （現在會**明確 skip 並說明原因**，不再是無聲紅燈）。`NUXT_PUBLIC_API_BASE` 的干擾範圍待再確認——
+  目前整套 e2e 在本機是綠的。
 
 ### 🧩 前端工程債（WP-G1a 期間發現，未修）
 - WP-A3 的 `acknowledge_restricted`（限制射擊區明確 override）**前端完全沒有呼叫端**，

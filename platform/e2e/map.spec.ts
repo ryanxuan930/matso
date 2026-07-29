@@ -53,6 +53,9 @@ test('地圖在 headless WebGL 初始化並置中台灣', async ({ page }) => {
 test('離線：無 tile server 時無底圖來源，hex 仍可計算', async ({ page }) => {
   await loginToCop(page)
   const s = await mapState(page)
+  // 本機 `platform/.env` 若設了 NUXT_PUBLIC_TILE_URL，這條的前提就不成立——
+  // 那是環境不是程式碼。**明確 skip 比永遠紅著好**：紅燈久了就沒人看了。
+  test.skip(s.hasBasemap, '本機設了 NUXT_PUBLIC_TILE_URL，離線前提不成立（見 PROGRESS Backlog）')
   expect(s.hasBasemap).toBe(false) // tileUrl 空 → 純離線
   // 開 hex → 視野內有 H3 cell 被計算出（客戶端離線）
   await page.getByTestId('toggle-hex').check()
@@ -72,9 +75,11 @@ test('地圖可縮放與平移', async ({ page }) => {
   await loginToCop(page)
   const before = await mapState(page)
 
-  // 縮放：雙擊放大
+  // 縮放：雙擊放大。
+  // **x 要避開左側停靠欄**（DOCK_W = 320px）——小工具浮動化之後，x=300 落在圖層面板上，
+  // 點擊被它吃掉，症狀是 dblclick 逾時而不是縮放沒生效。
   const canvas = page.getByTestId('map-canvas')
-  await canvas.dblclick({ position: { x: 300, y: 200 } })
+  await canvas.dblclick({ position: { x: 600, y: 200 } })
   await expect.poll(async () => (await mapState(page)).zoom).toBeGreaterThan(before.zoom)
 
   // 平移：拖曳畫布
