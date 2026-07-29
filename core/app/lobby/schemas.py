@@ -38,3 +38,5 @@ class SessionSummary(BaseModel):
     archived_at: str | None = None  # 封存時間 ISO8601（#31；有值＝已封存）
     orbat_edit: bool = False  # 呼叫者是否可編輯本 session 編裝（白軍，或本軍且該局開放自編）
     my_unit_scope: list[str] = []  # 呼叫者限指揮之單位子集（空＝整個陣營；COP 灰化範圍外）
+    # 席位（WP-B5.1/B5.2）；None＝未指派（權限沿用角色規則）。COP 據此顯示「你坐哪一席」。
+    my_seat_role: str | None = None

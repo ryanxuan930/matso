@@ -38,6 +38,7 @@ class LobbyService:
         """依角色過濾的 session 列表。統裁/管理見全部，其餘僅見自己參與的。"""
         my_factions = self._participant_factions(user.id)
         my_scopes = self._participant_scopes(user.id)
+        my_seats = self._participant_seats(user.id)
         if user.role in _OMNISCIENT_ROLES:
             sessions = self._db.execute(select(WargameSession)).scalars().all()
         else:
@@ -56,6 +57,7 @@ class LobbyService:
                 my_factions.get(s.id),
                 orbat_edit=omni or (my_factions.get(s.id) in set(s.orbat_edit_factions or [])),
                 my_unit_scope=my_scopes.get(s.id, []),
+                my_seat_role=my_seats.get(s.id),
             )
             for s in sessions
         ]
@@ -276,6 +278,17 @@ class LobbyService:
         )
         return {p.session_id: p.faction for p in rows}
 
+    def _participant_seats(self, user_id: str) -> dict[str, str]:
+        """呼叫者於各 session 的席位（WP-B5.2）。未指派席位者不列（前端視為 null）。"""
+        rows = (
+            self._db.execute(
+                select(SessionParticipant).where(SessionParticipant.user_id == user_id)
+            )
+            .scalars()
+            .all()
+        )
+        return {p.session_id: p.seat_role.value for p in rows if p.seat_role is not None}
+
     def _participant_scopes(self, user_id: str) -> dict[str, list[str]]:
         """呼叫者於各 session 的 unit_scope（限指揮單位子集；空＝整個陣營）。"""
         rows = (
@@ -297,6 +310,7 @@ class LobbyService:
         my_faction: str | None,
         orbat_edit: bool = False,
         my_unit_scope: list[str] | None = None,
+        my_seat_role: str | None = None,
     ) -> SessionSummary:
         return SessionSummary(
             id=session.id,
@@ -313,6 +327,7 @@ class LobbyService:
             my_faction=my_faction,
             orbat_edit=orbat_edit,
             my_unit_scope=my_unit_scope or [],
+            my_seat_role=my_seat_role,
             archived_at=(
                 session.archived_at.isoformat()
                 if session.archived_at is not None and hasattr(session.archived_at, "isoformat")

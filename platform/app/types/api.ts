@@ -725,6 +725,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 本人可見的信文（WP-B5.2）——寄給自己席位、自己陣營、或自己寄出的。 **受眾過濾在後端**（紅線 3）；全知角色可見全部。 */
+        get: operations["listMessages"];
+        put?: never;
+        post: operations["sendMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 本陣營的申請單（全知角色可見全部）+ 配額用量。 */
+        get: operations["listRequests"];
+        put?: never;
+        /** @description 送出申請單（下級席位）。配額用罄→自動 DENIED（不是拒收，留痕才看得出被卡在哪）。 */
+        post: operations["submitRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/requests/{rid}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                rid: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 核覆申請單（上級/白軍席位）。越權→ REQUEST_APPROVAL_DENIED。 */
+        post: operations["decideRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/aar": {
         parameters: {
             query?: never;
@@ -843,7 +902,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -920,6 +979,8 @@ export interface components {
             orbat_edit: boolean;
             /** @description 呼叫者限指揮之單位子集（空＝整個陣營；COP 下令面板灰化範圍外） */
             my_unit_scope?: string[];
+            /** @description 呼叫者在此 session 的席位（WP-B5.1/B5.2）。null＝未指派席位（權限沿用角色規則）。 COP 據此顯示「你坐哪一席」與越權時的說明——後端仍是權威，前端只做提示。 */
+            my_seat_role?: components["schemas"]["SeatRole"] | null;
         };
         /** @description 編輯已開推演設定（#16）——限統裁/管理 */
         EditSessionRequest: {
@@ -989,6 +1050,86 @@ export interface components {
             min_range_m: number;
             ammo_types: string[];
             ammo_remaining?: number | null;
+        };
+        /**
+         * @description 信文種類（[JCATS-F p.10–14] C2 工件）。REQUEST/APPROVAL 會帶 ref_id 指向申請單。
+         * @enum {string}
+         */
+        MessageKind: "FREE_TEXT" | "REQUEST" | "APPROVAL" | "REPORT";
+        /**
+         * @description 申請單種類（[JCATS-A p.13,15,26]）。
+         * @enum {string}
+         */
+        RequestKind: "AIR_RECON" | "FIRE_SUPPORT" | "RESUPPLY_VOUCHER";
+        /**
+         * @description 申請單狀態機：PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED。 EXPENDED 是終態，不可再用——「已核准」與「還沒用掉」是兩件事，合併會讓一張核准單被用兩次。
+         * @enum {string}
+         */
+        RequestStatus: "PENDING" | "APPROVED" | "DENIED" | "EXPENDED";
+        /** @description 信文。受眾是**收件席位或陣營**，過濾一律在後端（紅線 3）—— 前端拿到的就是它該看到的，不做二次過濾。 */
+        MessageView: {
+            id: string;
+            kind: components["schemas"]["MessageKind"];
+            /** @description 寄件席位；null＝未指派席位者所發（沿用其角色身分） */
+            from_seat: components["schemas"]["SeatRole"] | null;
+            from_username?: string;
+            /** @description 收件席位；null＝發給整個陣營 */
+            to_seat?: components["schemas"]["SeatRole"] | null;
+            /** @description 收件陣營 */
+            to_faction?: string;
+            /** @description 關聯的申請單 id（REQUEST/APPROVAL 用） */
+            ref_id?: string | null;
+            body: string;
+            /** @description 發送當下的 sim tick */
+            tick: number;
+            /** Format: date-time */
+            read_at?: string | null;
+        };
+        SendMessageRequest: {
+            kind: components["schemas"]["MessageKind"];
+            /** @description 省略/null＝發給整個陣營 */
+            to_seat?: components["schemas"]["SeatRole"] | null;
+            /** @description 省略＝寄件者自己的陣營 */
+            to_faction?: string;
+            ref_id?: string | null;
+            body: string;
+        };
+        /** @description 申請單。核覆留痕（誰、第幾 tick）供 AAR 重建事件鏈。 */
+        RequestView: {
+            id: string;
+            kind: components["schemas"]["RequestKind"];
+            status: components["schemas"]["RequestStatus"];
+            faction?: string;
+            params: {
+                [key: string]: unknown;
+            };
+            /** @description 申請者 username */
+            requested_by: string;
+            requested_seat?: components["schemas"]["SeatRole"] | null;
+            requested_at_tick: number;
+            /** @description 核覆者 username */
+            decided_by?: string | null;
+            decided_at_tick?: number | null;
+            decision_note?: string | null;
+        };
+        SubmitRequestRequest: {
+            kind: components["schemas"]["RequestKind"];
+            params?: {
+                [key: string]: unknown;
+            };
+            /** @description 隨單附言（會成為一封 REQUEST 信文） */
+            note?: string;
+        };
+        DecideRequestRequest: {
+            approve: boolean;
+            note?: string;
+        };
+        /** @description 該陣營各類申請的配額與已用量。**目前是整局總量，不是每日**—— SimClock 沒有「模擬日」概念，硬做每日重置會是假的（見 worklog）。 */
+        RequestQuota: {
+            kind: components["schemas"]["RequestKind"];
+            /** @description null＝不限 */
+            limit: number | null;
+            used: number;
         };
         /**
          * @description 席位（[JCATS-F p.9–10]）——同一陣營內的分工。與 `role`（系統角色）正交： role 決定「這個帳號在系統裡是誰」，seat_role 決定「他在這局的參謀席次」。 **可為 null＝未指派席位**，此時權限完全沿用 role 的既有規則（既有局零行為變更）。
@@ -3140,6 +3281,153 @@ export interface operations {
         responses: {
             /** @description Events */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listMessages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Messages */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageView"][];
+                };
+            };
+        };
+    };
+    sendMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Sent */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageView"];
+                };
+            };
+            /** @description 非本局參與者 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Requests */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        requests: components["schemas"]["RequestView"][];
+                        quotas: components["schemas"]["RequestQuota"][];
+                    };
+                };
+            };
+        };
+    };
+    submitRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitRequestRequest"];
+            };
+        };
+        responses: {
+            /** @description Submitted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestView"];
+                };
+            };
+        };
+    };
+    decideRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecideRequestRequest"];
+            };
+        };
+        responses: {
+            /** @description Decided */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestView"];
+                };
+            };
+            /** @description 此席位無核覆權 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 該申請單已非 PENDING */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

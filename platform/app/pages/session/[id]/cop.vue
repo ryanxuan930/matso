@@ -122,6 +122,7 @@ const factionRelations = ref<Record<string, string>>({})
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
 const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
+const mySeatRole = ref<string | null>(null) // 席位（WP-B5.2）；null＝未指派（沿用角色權限）
 const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個陣營）；範圍外單位不可下令
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 
@@ -295,6 +296,7 @@ async function refresh() {
       start_time?: string | null
       orbat_edit?: boolean
       my_unit_scope?: string[]
+      my_seat_role?: string | null
     }[]
   >('/sessions').catch(() => [])
   const me = sessions.find((s) => s.id === sessionId.value)
@@ -302,6 +304,7 @@ async function refresh() {
   sessionStart.value = me?.start_time ?? null
   orbatEdit.value = !!me?.orbat_edit
   myUnitScope.value = me?.my_unit_scope ?? []
+  mySeatRole.value = me?.my_seat_role ?? null
 }
 
 // 清空選取與下令子狀態（#6 點空白取消選取 / 選新單位前重置）。
@@ -742,6 +745,13 @@ onBeforeUnmount(() => {
             :hidden-feature-ids="hiddenFeatureIds"
             @toggle-hidden="toggleFeatureHidden"
           />
+        </CopWidget>
+        </ClientOnly>
+
+        <!-- C2 信文 / 申請-核覆（WP-B5.2）：席位之間的異步審批鏈。 -->
+        <ClientOnly>
+        <CopWidget id="c2" :ui="copUiView" :open="widgets.c2.open">
+          <C2Panel :session-id="sessionId" :my-seat="mySeatRole" />
         </CopWidget>
         </ClientOnly>
 

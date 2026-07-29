@@ -6,7 +6,14 @@
  */
 import { computed, ref, type Ref } from 'vue'
 
-export type WidgetId = 'layers' | 'units' | 'events' | 'orders' | 'mapedit' | 'coords'
+export type WidgetId =
+  | 'layers'
+  | 'units'
+  | 'events'
+  | 'orders'
+  | 'mapedit'
+  | 'coords'
+  | 'c2'
 export type DockSide = 'left' | 'right' | 'float'
 
 export interface WStat {
@@ -33,6 +40,7 @@ export const WIDGET_DEFS: { id: WidgetId; title: string; label: string }[] = [
   { id: 'orders', title: '指令', label: '指令' },
   { id: 'mapedit', title: '地圖編輯', label: '地圖編輯' },
   { id: 'coords', title: '座標查詢', label: '座標' },
+  { id: 'c2', title: '信文 / 申請', label: '信文' },
 ]
 
 const DOCK_EDGE = 72 // 拖到最左/右 DOCK_EDGE px 內即停靠成側欄
@@ -48,6 +56,7 @@ export function defaultWidgets(): Record<WidgetId, WStat> {
     orders: { open: true, dock: 'right', x: rx, y: 532, w: 300, h: 180, z: 14 },
     mapedit: { open: false, dock: 'float', x: 12, y: 60, w: 326, h: 540, z: 15 },
     coords: { open: false, dock: 'float', x: 12, y: 540, w: 260, h: 170, z: 16 },
+    c2: { open: false, dock: 'right', x: rx, y: 60, w: 320, h: 380, z: 17 },
   }
 }
 
