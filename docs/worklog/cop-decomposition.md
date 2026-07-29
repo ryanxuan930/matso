@@ -135,6 +135,27 @@ v-model，逐個開 prop + emit 就是把 MapCanvas 那個「50 個 props」的�
 同一招套用到 MapCanvas 的 props 收斂：依用途分組成
 `layers` / `overlays` / `interaction` 三個 config 物件。
 
+## 剩餘拆分的測繪（唯讀盤點，於等待稽核 workflow 時做）
+以目前的 cop.vue（2181 行；script 864 / template 549 / style 745）為準：
+
+| 產出 | 樣板行段 | scoped CSS 行段 | 估計減少 |
+|------|---------|----------------|---------|
+| `CopHeader`（頂列：session/單位數/通聯姿態/時鐘/視角/導覽鈕/小工具選單） | 873–995 | `.cop-bar` 1704–、`.sid/.count/.posture` 1814–1830、`.cop-nav*` 1831–1932、`.vp*` 1846–1872、`.widget-menu/.wm-*` 1715–1759 | ~120 + ~230 |
+| `EquipManagerPanel`（＋`useEquipMgr`） | 1034–1130 | `.equip-overlay`–`.eq-hint` 1570–1693 | ~100 + ~124 |
+| `MapContextMenu` | 1333–1400 | `.ctx-backdrop`–`.ctx-empty` 1976–2023 | ~68 + ~48 |
+| `MapStateEditBar`（＋`useMapStateEdit`） | 996–1010 | `.mapedit-bar*` 1522–1569 | ~15 + ~48 |
+| `LayersPanel` | 1280–1318 | `.linewidth-btn` 1958–1975、`.modal*` 2024–2085 | ~38 + ~80 |
+| `OrdersPanel` / `EventsPanel` | 1136–1198 | `.orders*` 2094–2118、`.empty` 2106 | ~62 + ~25 |
+| `CoordReadout` | 1404–1431 | `.coord-readout*` 2135–2172 | ~28 + ~38 |
+| 地圖區包裝（MapCanvas 呼叫點 + notice + loading） | 1200–1278 | `.map-wrap*` 2119–2134、`.map-notice` 1933–1957、`.map-loading` 2173– | ~78 + ~55 |
+
+**對 < 800 的誠實推估**：以上全做完約再減 1100 行 → cop.vue 落在 **1050–1150**。
+要真的到 800 以下，還得把 `body` 版面容器與 Teleport/停靠邏輯本身也包成一層
+（`CopWorkspace`），並把 script 尾巴的 `useCtxMenu` / `useEquipMgr` / `useMapStateEdit` 搬走。
+**做得到，但這張卡的體量遠大於卡片描述**——它實質上是把一個 4400 行單體重寫成一組元件。
+若要在單一 session 內收斂，比較務實的做法是把「< 800」改成分兩張卡：
+G1a（composables + 面板元件，已完成大半）與 G1b（版面/頂列/地圖區元件化）。
+
 ## 待辦（依序）
 - [x] `MapEditorPanel`（template 236 行 + CSS 314 行）
 - [x] `UnitsOrderPanel`（template 204 行 + CSS 318 行；`liveAmmo` 一併併入 `useCopOrdering`）
