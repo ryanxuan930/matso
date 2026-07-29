@@ -58,6 +58,35 @@ class SeatRole(enum.StrEnum):
     OBSERVER = "OBSERVER"
 
 
+class MessageKind(enum.StrEnum):
+    """信文種類（WP-B5.2）。REQUEST/APPROVAL 會帶 ref_id 指向申請單。"""
+
+    FREE_TEXT = "FREE_TEXT"
+    REQUEST = "REQUEST"
+    APPROVAL = "APPROVAL"
+    REPORT = "REPORT"
+
+
+class RequestKind(enum.StrEnum):
+    """申請單種類（WP-B5.2，[JCATS-A p.13,15,26]）。"""
+
+    AIR_RECON = "AIR_RECON"
+    FIRE_SUPPORT = "FIRE_SUPPORT"
+    RESUPPLY_VOUCHER = "RESUPPLY_VOUCHER"
+
+
+class RequestStatus(enum.StrEnum):
+    """PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED（終態）。
+
+    **「已核准」與「還沒用掉」是兩件事**——合併成一個狀態會讓一張核准單被用兩次。
+    """
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    DENIED = "DENIED"
+    EXPENDED = "EXPENDED"
+
+
 class OrderStatus(enum.StrEnum):
     PENDING = "PENDING"
     VALIDATED = "VALIDATED"

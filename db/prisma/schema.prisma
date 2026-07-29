@@ -244,6 +244,67 @@ model SessionParticipant {
   @@unique([userId, sessionId])
 }
 
+/// C2 信文（WP-B5.2，[JCATS-F p.10–14]）——席位之間的文書往返。
+/// 受眾＝ toSeat（指定席位）或 toFaction（整個陣營）；過濾一律在後端（紅線 3）。
+model Message {
+  id           String      @id @default(uuid())
+  sessionId    String
+  kind         MessageKind
+  fromUserId   String
+  fromSeat     SeatRole?   // null＝寄件者未指派席位
+  toSeat       SeatRole?   // null＝發給整個陣營
+  toFaction    String
+  refId        String? // 關聯的申請單（REQUEST/APPROVAL）
+  body         String      @db.Text
+  tick         Int
+  readAt       DateTime?
+  createdAt    DateTime    @default(now())
+
+  @@index([sessionId, toFaction])
+}
+
+/// 申請單（WP-B5.2，[JCATS-A p.13,15,26]）——下級送出、上級核覆、核准後轉為效果。
+/// 核覆留痕（誰、第幾 tick）供 AAR 重建 [JCATS-F p.14] 的可評分事件鏈。
+model Request {
+  id              String        @id @default(uuid())
+  sessionId       String
+  faction         String
+  kind            RequestKind
+  status          RequestStatus @default(PENDING)
+  params          Json
+  requestedById   String
+  requestedSeat   SeatRole?
+  requestedAtTick Int
+  decidedById     String?
+  decidedAtTick   Int?
+  decisionNote    String?       @db.Text
+  createdAt       DateTime      @default(now())
+
+  @@index([sessionId, faction])
+}
+
+enum MessageKind {
+  FREE_TEXT
+  REQUEST
+  APPROVAL
+  REPORT
+}
+
+enum RequestKind {
+  AIR_RECON
+  FIRE_SUPPORT
+  RESUPPLY_VOUCHER
+}
+
+/// PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED（終態）。
+/// 「已核准」與「還沒用掉」是兩件事——合併會讓一張核准單被用兩次。
+enum RequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPENDED
+}
+
 /// 席位（WP-B5.1）：同一陣營內的參謀席次。與 UserRole 正交——
 /// UserRole 說「這個帳號在系統裡是誰」，SeatRole 說「他在這局坐哪個位子」。
 enum SeatRole {

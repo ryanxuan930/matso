@@ -30,7 +30,10 @@ from app.models.base import Base
 from app.models.enums import (
     CommsState,
     IntelFidelity,
+    MessageKind,
     OrderStatus,
+    RequestKind,
+    RequestStatus,
     SeatRole,
     SessionMode,
     UnitLevel,
@@ -231,6 +234,51 @@ class SessionParticipant(Base):
     seat_role: Mapped[SeatRole | None] = mapped_column("seatRole", SAEnum(SeatRole))
     # unit_scope＝限指揮之單位 id 清單（JSON 陣列；空＝整個陣營）。以 Any 容納 JSON 值。
     unit_scope: Mapped[Any] = mapped_column("unitScope", JSON, default=list)
+
+
+class Message(Base):
+    """C2 信文（WP-B5.2）——受眾＝ to_seat（指定席位）或 to_faction（整個陣營）。"""
+
+    __tablename__ = "Message"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column("sessionId", String(191))
+    kind: Mapped[MessageKind] = mapped_column("kind", SAEnum(MessageKind))
+    from_user_id: Mapped[str] = mapped_column("fromUserId", String(191))
+    from_seat: Mapped[SeatRole | None] = mapped_column("fromSeat", SAEnum(SeatRole))
+    to_seat: Mapped[SeatRole | None] = mapped_column("toSeat", SAEnum(SeatRole))
+    to_faction: Mapped[str] = mapped_column("toFaction", String(191))
+    ref_id: Mapped[str | None] = mapped_column("refId", String(191))
+    body: Mapped[str] = mapped_column("body", Text)
+    tick: Mapped[int] = mapped_column("tick", Integer)
+    read_at: Mapped[Any | None] = mapped_column("readAt", DateTime(timezone=False))
+    created_at: Mapped[Any] = mapped_column(
+        "createdAt", DateTime(timezone=False), server_default=func.now()
+    )
+
+
+class Request(Base):
+    """申請單（WP-B5.2）——核覆留痕供 AAR 重建事件鏈。"""
+
+    __tablename__ = "Request"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column("sessionId", String(191))
+    faction: Mapped[str] = mapped_column("faction", String(191))
+    kind: Mapped[RequestKind] = mapped_column("kind", SAEnum(RequestKind))
+    status: Mapped[RequestStatus] = mapped_column(
+        "status", SAEnum(RequestStatus), default=RequestStatus.PENDING
+    )
+    params: Mapped[Any] = mapped_column("params", JSON, default=dict)
+    requested_by_id: Mapped[str] = mapped_column("requestedById", String(191))
+    requested_seat: Mapped[SeatRole | None] = mapped_column("requestedSeat", SAEnum(SeatRole))
+    requested_at_tick: Mapped[int] = mapped_column("requestedAtTick", Integer)
+    decided_by_id: Mapped[str | None] = mapped_column("decidedById", String(191))
+    decided_at_tick: Mapped[int | None] = mapped_column("decidedAtTick", Integer)
+    decision_note: Mapped[str | None] = mapped_column("decisionNote", Text)
+    created_at: Mapped[Any] = mapped_column(
+        "createdAt", DateTime(timezone=False), server_default=func.now()
+    )
 
 
 class Scenario(Base):

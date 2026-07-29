@@ -85,6 +85,9 @@ components:
                 - ORDER_UNIT_NOT_FOUND
                 - ORDER_PERMISSION_DENIED
                 - ORDER_SEAT_DENIED
+                - REQUEST_APPROVAL_DENIED
+                - REQUEST_ALREADY_DECIDED
+                - REQUEST_QUOTA_EXCEEDED
                 - ORDER_INVALID_TRANSITION
                 - ORDER_UNIT_NO_POSITION
                 - ORDER_UNIT_FIXED
@@ -251,6 +254,92 @@ components:
         min_range_m: { type: number }
         ammo_types: { type: array, items: { type: string } }
         ammo_remaining: { type: [integer, "null"] }
+    MessageKind:
+      type: string
+      description: 信文種類（[JCATS-F p.10–14] C2 工件）。REQUEST/APPROVAL 會帶 ref_id 指向申請單。
+      enum: [FREE_TEXT, REQUEST, APPROVAL, REPORT]
+    RequestKind:
+      type: string
+      description: 申請單種類（[JCATS-A p.13,15,26]）。
+      enum: [AIR_RECON, FIRE_SUPPORT, RESUPPLY_VOUCHER]
+    RequestStatus:
+      type: string
+      description: >-
+        申請單狀態機：PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED。
+        EXPENDED 是終態，不可再用——「已核准」與「還沒用掉」是兩件事，合併會讓一張核准單被用兩次。
+      enum: [PENDING, APPROVED, DENIED, EXPENDED]
+    MessageView:
+      type: object
+      description: >-
+        信文。受眾是**收件席位或陣營**，過濾一律在後端（紅線 3）——
+        前端拿到的就是它該看到的，不做二次過濾。
+      required: [id, kind, from_seat, body, tick]
+      properties:
+        id: { type: string }
+        kind: { $ref: "#/components/schemas/MessageKind" }
+        from_seat:
+          oneOf: [{ $ref: "#/components/schemas/SeatRole" }, { type: "null" }]
+          description: 寄件席位；null＝未指派席位者所發（沿用其角色身分）
+        from_username: { type: string }
+        to_seat:
+          oneOf: [{ $ref: "#/components/schemas/SeatRole" }, { type: "null" }]
+          description: 收件席位；null＝發給整個陣營
+        to_faction: { type: string, description: 收件陣營 }
+        ref_id: { type: [string, "null"], description: 關聯的申請單 id（REQUEST/APPROVAL 用） }
+        body: { type: string }
+        tick: { type: integer, description: 發送當下的 sim tick }
+        read_at: { type: [string, "null"], format: date-time }
+    SendMessageRequest:
+      type: object
+      required: [kind, body]
+      properties:
+        kind: { $ref: "#/components/schemas/MessageKind" }
+        to_seat:
+          oneOf: [{ $ref: "#/components/schemas/SeatRole" }, { type: "null" }]
+          description: 省略/null＝發給整個陣營
+        to_faction: { type: string, description: 省略＝寄件者自己的陣營 }
+        ref_id: { type: [string, "null"] }
+        body: { type: string, maxLength: 4000 }
+    RequestView:
+      type: object
+      description: 申請單。核覆留痕（誰、第幾 tick）供 AAR 重建事件鏈。
+      required: [id, kind, status, params, requested_by, requested_at_tick]
+      properties:
+        id: { type: string }
+        kind: { $ref: "#/components/schemas/RequestKind" }
+        status: { $ref: "#/components/schemas/RequestStatus" }
+        faction: { type: string }
+        params: { type: object, additionalProperties: true }
+        requested_by: { type: string, description: 申請者 username }
+        requested_seat:
+          oneOf: [{ $ref: "#/components/schemas/SeatRole" }, { type: "null" }]
+        requested_at_tick: { type: integer }
+        decided_by: { type: [string, "null"], description: 核覆者 username }
+        decided_at_tick: { type: [integer, "null"] }
+        decision_note: { type: [string, "null"] }
+    SubmitRequestRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind: { $ref: "#/components/schemas/RequestKind" }
+        params: { type: object, additionalProperties: true }
+        note: { type: string, maxLength: 2000, description: 隨單附言（會成為一封 REQUEST 信文） }
+    DecideRequestRequest:
+      type: object
+      required: [approve]
+      properties:
+        approve: { type: boolean }
+        note: { type: string, maxLength: 2000 }
+    RequestQuota:
+      type: object
+      description: >-
+        該陣營各類申請的配額與已用量。**目前是整局總量，不是每日**——
+        SimClock 沒有「模擬日」概念，硬做每日重置會是假的（見 worklog）。
+      required: [kind, limit, used]
+      properties:
+        kind: { $ref: "#/components/schemas/RequestKind" }
+        limit: { type: [integer, "null"], description: null＝不限 }
+        used: { type: integer }
     SeatRole:
       type: string
       description: >-
@@ -1438,6 +1527,83 @@ paths:
       operationId: queryLedger
       description: "?after_seq=&types=  分頁、faction-scoped 投影"
       responses: { "200": { description: Events } }
+  /sessions/{id}/messages:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listMessages
+      description: >-
+        本人可見的信文（WP-B5.2）——寄給自己席位、自己陣營、或自己寄出的。
+        **受眾過濾在後端**（紅線 3）；全知角色可見全部。
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MessageView" } }
+    post:
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "201":
+          description: Sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageView" }
+        "403": { description: 非本局參與者 }
+  /sessions/{id}/requests:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listRequests
+      description: 本陣營的申請單（全知角色可見全部）+ 配額用量。
+      responses:
+        "200":
+          description: Requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requests, quotas]
+                properties:
+                  requests: { type: array, items: { $ref: "#/components/schemas/RequestView" } }
+                  quotas: { type: array, items: { $ref: "#/components/schemas/RequestQuota" } }
+    post:
+      operationId: submitRequest
+      description: 送出申請單（下級席位）。配額用罄→自動 DENIED（不是拒收，留痕才看得出被卡在哪）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitRequestRequest" }
+      responses:
+        "201":
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequestView" }
+  /sessions/{id}/requests/{rid}/decide:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { name: rid, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: decideRequest
+      description: 核覆申請單（上級/白軍席位）。越權→ REQUEST_APPROVAL_DENIED。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DecideRequestRequest" }
+      responses:
+        "200":
+          description: Decided
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequestView" }
+        "403": { description: 此席位無核覆權 }
+        "409": { description: 該申請單已非 PENDING }
   /sessions/{id}/aar:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get: { operationId: getAAR, responses: { "200": { description: AAR report } } }
