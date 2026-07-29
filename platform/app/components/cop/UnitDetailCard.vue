@@ -238,6 +238,9 @@ const showOrbat = defineModel<boolean>('showOrbat', { required: true })
   color: #64748b;
   min-width: 2.5rem;
 }
+.unit-card .lowfuel {
+  color: #f87171;
+}
 .unit-card .card-meta dd {
   margin: 0;
   color: #cbd5e1;

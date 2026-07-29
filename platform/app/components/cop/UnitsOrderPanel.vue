@@ -229,7 +229,7 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
     {{ ordering.orderType === 'MOVE' ? '送出移動' : '送出交戰' }}
   </button>
   <p v-if="ordering.message" data-testid="order-message">{{ ordering.message }}</p>
-  <div v-if="ordering.precheck" class="ordering.precheck" data-testid="ordering.precheck">
+  <div v-if="ordering.precheck" class="precheck" data-testid="precheck">
     <div :class="ordering.precheck.feasible ? 'ok' : 'bad'">
       預檢：{{ ordering.precheck.feasible ? '可行' : '不可行' }}
     </div>
@@ -254,9 +254,7 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
   font-size: 0.8125rem;
   color: #94a3b8;
 }
-.units,
-.orders,
-.events {
+.units {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -264,18 +262,7 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
   flex-direction: column;
   gap: 0.25rem;
 }
-.events li {
-  padding: 0.25rem 0.5rem;
-  border-left: 2px solid #f59e0b;
-  background: #1c1917;
-  font-size: 0.75rem;
-}
-.ws {
-  color: #64748b;
-  font-weight: normal;
-}
-.units li,
-.orders li {
+.units li {
   padding: 0.375rem 0.5rem;
   border: 1px solid #1e293b;
   border-radius: 0.25rem;
@@ -327,66 +314,6 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-}
-/* #27 指令列：對象 + 時間 + 狀態。 */
-.orders li {
-  cursor: default;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.ord-main {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-.ord-unit {
-  font-weight: 600;
-  color: #e2e8f0;
-}
-.ord-type {
-  color: #93c5fd;
-  font-size: 0.72rem;
-}
-.ord-tgt {
-  color: #fca5a5;
-  font-size: 0.72rem;
-}
-.ord-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.7rem;
-  color: #94a3b8;
-}
-.ord-time {
-  font-variant-numeric: tabular-nums;
-}
-.ord-status {
-  padding: 0 0.3rem;
-  border-radius: 0.2rem;
-  background: #1e293b;
-}
-.ord-status.st-COMPLETED {
-  color: #86efac;
-}
-.ord-status.st-REJECTED,
-.ord-status.st-CANCELLED {
-  color: #fca5a5;
-}
-.ord-status.st-EXECUTING {
-  color: #fcd34d;
-}
-.ord-meta button {
-  margin-left: auto;
-  padding: 0.1rem 0.4rem;
-  font-size: 0.68rem;
-  border: 1px solid #334155;
-  border-radius: 0.2rem;
-  background: transparent;
-  color: #cbd5e1;
-  cursor: pointer;
 }
 .units li.sel {
   border-color: #2563eb;
@@ -501,9 +428,6 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
 }
 .mvprev .mv-row b {
   color: #38bdf8;
-}
-.unit-card .lowfuel {
-  color: #f87171;
 }
 .mvprev .mv-sub {
   color: #94a3b8;

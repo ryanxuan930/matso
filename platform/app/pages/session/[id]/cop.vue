@@ -2089,23 +2089,97 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 /* 下令面板小標（浮動視窗內） */
-/* 「指令」小工具沿用的清單樣式（單位清單那半已隨 UnitsOrderPanel 搬走；
-   scoped CSS 之下兩邊各留一份是必要的重複）。 */
-.orders {
+/* 「指令」與「戰況事件」兩個小工具的清單樣式。單位清單那半已隨 UnitsOrderPanel 搬走；
+   scoped CSS 之下兩邊各留一份是必要的重複——但**必須逐字照抄原規則**，
+   憑印象重寫會靜默改掉版面（WP-G1 稽核抓到過一次）。 */
+.orders,
+.events {
   list-style: none;
   margin: 0;
   padding: 0;
-  overflow-y: auto;
-  font-size: 0.8125rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.events li {
+  padding: 0.25rem 0.5rem;
+  border-left: 2px solid #f59e0b;
+  background: #1c1917;
+  font-size: 0.75rem;
+}
+.ws {
+  color: #64748b;
+  font-weight: normal;
 }
 .orders li {
-  padding: 0.25rem 0.375rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid #1e293b;
   border-radius: 0.25rem;
   cursor: pointer;
 }
 .empty {
   color: #64748b;
-  padding: 0.5rem 0;
+  cursor: default !important;
+}
+/* #27 指令列：對象 + 時間 + 狀態。 */
+.orders li {
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.ord-main {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.ord-unit {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.ord-type {
+  color: #93c5fd;
+  font-size: 0.72rem;
+}
+.ord-tgt {
+  color: #fca5a5;
+  font-size: 0.72rem;
+}
+.ord-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+.ord-time {
+  font-variant-numeric: tabular-nums;
+}
+.ord-status {
+  padding: 0 0.3rem;
+  border-radius: 0.2rem;
+  background: #1e293b;
+}
+.ord-status.st-COMPLETED {
+  color: #86efac;
+}
+.ord-status.st-REJECTED,
+.ord-status.st-CANCELLED {
+  color: #fca5a5;
+}
+.ord-status.st-EXECUTING {
+  color: #fcd34d;
+}
+.ord-meta button {
+  margin-left: auto;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.68rem;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
 }
 .orders button {
   margin-left: 0.5rem;
