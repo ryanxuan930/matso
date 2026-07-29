@@ -56,6 +56,11 @@ model WargameSession {
   /// 陣地變換（WP-C10.5）：{enabled, missions_before_move, min_km, max_km}。
   /// NULL＝停用（既有局零遷移）。開局從想定快照一份，不即時讀想定。
   survivabilityMove Json?
+  /// 所屬演習（WP-B1）。**NULL＝獨立局**——與掛演習之前的行為完全相同。
+  /// 刻意不設 FK：刪演習不該連坐刪局（`deleteExercise` 只把本欄轉 NULL）。
+  exerciseId        String?
+  /// 本局在演習中的角色（預推/正式/分析）。NULL＝未指定（含獨立局）。
+  sessionRole       SessionRole?
   /// MSEL 腳本事件（WP-B2）：[{id, once, trigger, inject}]。開局從想定快照一份。
   /// NULL＝無 MSEL（既有局零遷移）。**在此之前想定的 msel 從未被持久化**——
   /// 載得進來、卻沒有任何一條路把它帶進執行期，等於整個 MSEL 是死的。
@@ -509,4 +514,65 @@ enum FirePlanTargetStatus {
   FAILED
   /// 計畫被取消時尚未執行者。
   SKIPPED
+}
+
+
+/// 演習專案（WP-B1，SPEC_V2 §6）——把多次預推、正式局、檢討裝在一起的容器。
+/// [JCATS-A p.9–16 圖7] 的 17 步 SOP：一場演習遠大於一局模擬。
+///
+/// **與 session 是兩條獨立的軸**：演習的 `phase` 講的是演習流程走到哪；
+/// session 的 `archivedAt` 講的是那一局有沒有被封存。混為一談會讓局從錯的清單裡消失。
+model Exercise {
+  id             String        @id @default(uuid())
+  name           String
+  phase          ExercisePhase @default(PREP)
+  /// 行程表（自由結構的鍵值對；D-45 想定發佈之類）。
+  scheduleJson   Json?
+  /// 整備勾稽項：[{key, label, phase, required, done, done_at, done_by}]。
+  /// **required 且未勾就推不動階段**——只是提示的話與沒有無異。
+  checklistJson  Json?
+  createdBy      String
+  createdAt      DateTime      @default(now())
+  /// 最近一次階段推進的**真實牆鐘**時間（這不是模擬時間，故不受 SimClock 紅線約束）。
+  phaseChangedAt DateTime?
+
+  audit ExerciseAuditLog[]
+}
+
+/// 演習稽核軌跡（WP-B1）。**刻意不寫 TacticalEventLog**：那是 golden 會驗的雜湊鏈，
+/// 而階段推進是牆鐘的、人為的、局外的事件——寫進鏈裡會擾動決定性重播。
+model ExerciseAuditLog {
+  id         String         @id @default(uuid())
+  exerciseId String
+  exercise   Exercise       @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  /// 演習內單調遞增序號。**沒有它，同一秒內的兩筆稽核順序就是隨機的**——
+  /// 順序隨機的稽核軌跡讀不出「先勾了項目才推階段」還是反過來。
+  seq        Int
+  at         DateTime       @default(now())
+  actorId    String
+  action     String
+  fromPhase  ExercisePhase?
+  toPhase    ExercisePhase?
+  detail     Json?
+
+  @@unique([exerciseId, seq])
+}
+
+enum ExercisePhase {
+  /// 整備（會議、想定發佈、飽和測試）
+  PREP
+  /// 預推
+  REHEARSAL
+  /// 正式實施（WP-B4 於此階段簽證鎖定參數）
+  EXECUTION
+  /// 檢討
+  REVIEW
+  /// 撤收建檔
+  ARCHIVED
+}
+
+enum SessionRole {
+  REHEARSAL
+  MAIN
+  ANALYSIS
 }

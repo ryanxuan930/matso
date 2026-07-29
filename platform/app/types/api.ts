@@ -107,6 +107,140 @@ export interface paths {
         patch: operations["updateUser"];
         trace?: never;
     };
+    "/exercises": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 演習清單（WP-B1）。**限白軍/統裁/管理**——演習層是導演工具，作戰方看到的是自己那一局。 */
+        get: operations["listExercises"];
+        put?: never;
+        /** @description 建立演習（起始階段 PREP，附預設整備 checklist）。限白軍/統裁。 */
+        post: operations["createExercise"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exercises/{exercise_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getExercise"];
+        put?: never;
+        post?: never;
+        /** @description 刪除演習專案本身。**不動任何 session**——掛在底下的局改回獨立局（`exercise_id` 轉 null）。 銷毀 session 資料是另一回事（WP-B1b 的銷毀模式）。 */
+        delete: operations["deleteExercise"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exercises/{exercise_id}/phase": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description 推進階段。**只能沿序前進一階**；該階段所有 `required` 且未勾的 checklist 項目 會擋下推進（403 EXERCISE_CHECKLIST_INCOMPLETE，`details.missing` 列出鍵）。 */
+        patch: operations["advanceExercisePhase"];
+        trace?: never;
+    };
+    "/exercises/{exercise_id}/checklist/{item_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+                item_key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description 勾稽/取消勾稽一個整備項目（進稽核軌跡）。限白軍/統裁。 */
+        patch: operations["tickExerciseChecklist"];
+        trace?: never;
+    };
+    "/exercises/{exercise_id}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 把既有的一局掛進本演習（不複製、不新建；已掛在別的演習者拒絕）。 */
+        post: operations["attachSessionToExercise"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exercises/{exercise_id}/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description 把一局從演習卸下（該局變回獨立局；**不刪任何資料**）。 */
+        delete: operations["detachSessionFromExercise"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exercises/{exercise_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description 演習稽核軌跡（階段推進、勾稽、掛載/卸載），時間序。 */
+        get: operations["getExerciseAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions": {
         parameters: {
             query?: never;
@@ -214,25 +348,6 @@ export interface paths {
         get: operations["getAiStatus"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sessions/{id}/lifecycle": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description action: START|PAUSE|RESUME|END|ROLLBACK (+checkpoint_tick) */
-        post: operations["sessionLifecycle"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1022,7 +1137,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_FIRE_APPROVAL_REQUIRED" | "REQUEST_NO_OBSERVER" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_FIRE_APPROVAL_REQUIRED" | "REQUEST_NO_OBSERVER" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND" | "EXERCISE_NOT_FOUND" | "EXERCISE_PHASE_INVALID" | "EXERCISE_CHECKLIST_INCOMPLETE" | "EXERCISE_SESSION_CONFLICT";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -1101,6 +1216,90 @@ export interface components {
             my_unit_scope?: string[];
             /** @description 呼叫者在此 session 的席位（WP-B5.1/B5.2）。null＝未指派席位（權限沿用角色規則）。 COP 據此顯示「你坐哪一席」與越權時的說明——後端仍是權威，前端只做提示。 */
             my_seat_role?: components["schemas"]["SeatRole"] | null;
+            /** @description 所屬演習（WP-B1）。**null＝獨立局**，與掛演習之前的行為完全相同。 演習物件本身只有白軍/管理看得到；本欄與 `session_role` 是每局資訊，人人可見。 */
+            exercise_id?: string | null;
+            /** @description 本局在演習中的角色（預推/正式/分析）。null＝未指定（含獨立局）。 */
+            session_role?: components["schemas"]["SessionRole"] | null;
+        };
+        /**
+         * @description 演習階段（WP-B1，對映 [JCATS-A] 的 17 步 SOP）。**只能沿序前進，一次一階**—— 倒退會讓已經簽證的參數（WP-B4）與稽核軌跡失去意義。
+         * @enum {string}
+         */
+        ExercisePhase: "PREP" | "REHEARSAL" | "EXECUTION" | "REVIEW" | "ARCHIVED";
+        /**
+         * @description 一局在演習中的角色：預推 / 正式 / 分析。
+         * @enum {string}
+         */
+        SessionRole: "REHEARSAL" | "MAIN" | "ANALYSIS";
+        /** @description 整備勾稽項（WP-B1）。`required: true` 的項目**未勾就推不動階段**—— checklist 的意義就在於此，只是提示的話與沒有無異。 */
+        ExerciseChecklistItem: {
+            /** @description 穩定鍵（程式據此自動勾稽，例如 WP-B4 簽證完成即勾 params_sealed） */
+            key: string;
+            label: string;
+            /** @description 這一項是「離開哪個階段」的前提 */
+            phase: components["schemas"]["ExercisePhase"];
+            required: boolean;
+            done: boolean;
+            /** @description 勾稽時間 ISO8601 */
+            done_at?: string | null;
+            /** @description 勾稽者 user id */
+            done_by?: string | null;
+        };
+        /** @description 掛在演習底下的一局（摘要） */
+        ExerciseSessionRef: {
+            id: string;
+            name: string;
+            /** @description ACTIVE / ENDED / ARCHIVED（由 session 導出，與演習階段是**兩條獨立的軸**） */
+            status: string;
+            session_role?: components["schemas"]["SessionRole"] | null;
+            archived_at?: string | null;
+        };
+        /** @description 演習專案（WP-B1）。**只有白軍/統裁/管理看得到**——演習層是導演工具； 作戰方看到的是自己那一局（`SessionSummary.exercise_id` / `session_role`）。 */
+        ExerciseView: {
+            id: string;
+            name: string;
+            phase: components["schemas"]["ExercisePhase"];
+            /** @description 建立者 user id */
+            created_by: string;
+            /** @description ISO8601 */
+            created_at: string;
+            /** @description 最近一次階段推進時間 ISO8601 */
+            phase_changed_at?: string | null;
+            /** @description 行程表（自由結構的鍵值對，例如 d_minus_45 → 想定發佈、d_day → 正式實施） */
+            schedule?: Record<string, never>;
+            checklist: components["schemas"]["ExerciseChecklistItem"][];
+            sessions: components["schemas"]["ExerciseSessionRef"][];
+        };
+        CreateExerciseRequest: {
+            name: string;
+            /** @description 行程表（可省，預設空） */
+            schedule?: Record<string, never>;
+        };
+        /** @description 推進到下一階段。**只接受序列上的下一階**——跳階與倒退皆 EXERCISE_PHASE_INVALID。 */
+        AdvancePhaseRequest: {
+            phase: components["schemas"]["ExercisePhase"];
+            /** @description 推進理由/備註，進稽核軌跡 */
+            note?: string | null;
+        };
+        ChecklistTickRequest: {
+            done: boolean;
+        };
+        /** @description 把一局掛到演習底下。已掛在**別的**演習底下者拒絕（EXERCISE_SESSION_CONFLICT）。 */
+        AttachSessionRequest: {
+            session_id: string;
+            session_role?: components["schemas"]["SessionRole"] | null;
+        };
+        /** @description 演習稽核軌跡（WP-B1）。**刻意不寫 TacticalEventLog**：那是 golden 會驗的雜湊鏈， 而階段推進是牆鐘的、人為的、局外的事件——寫進鏈裡會擾動決定性重播。 */
+        ExerciseAuditEntry: {
+            id: string;
+            /** @description ISO8601（真實牆鐘；這不是模擬時間） */
+            at: string;
+            actor_id: string;
+            /** @description PHASE_ADVANCED / CHECKLIST_TICKED / SESSION_ATTACHED / SESSION_DETACHED / … */
+            action: string;
+            from_phase?: components["schemas"]["ExercisePhase"] | null;
+            to_phase?: components["schemas"]["ExercisePhase"] | null;
+            detail?: Record<string, never>;
         };
         /** @description 編輯已開推演設定（#16）——限統裁/管理 */
         EditSessionRequest: {
@@ -2038,6 +2237,369 @@ export interface operations {
             };
         };
     };
+    listExercises: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exercises */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseView"][];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createExercise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateExerciseRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseView"];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getExercise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exercise */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseView"];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteExercise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    advanceExercisePhase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdvancePhaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Advanced */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseView"];
+                };
+            };
+            /** @description Not white cell / checklist incomplete / invalid transition */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    tickExerciseChecklist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+                item_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChecklistTickRequest"];
+            };
+        };
+        responses: {
+            /** @description Ticked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseView"];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Exercise or item not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    attachSessionToExercise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Attached */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseView"];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Exercise or session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Session already attached elsewhere */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    detachSessionFromExercise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detached */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseView"];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getExerciseAudit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit trail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExerciseAuditEntry"][];
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listSessions: {
         parameters: {
             query?: never;
@@ -2289,26 +2851,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Error"];
                 };
-            };
-        };
-    };
-    sessionLifecycle: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

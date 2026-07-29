@@ -29,6 +29,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 from app.models.enums import (
     CommsState,
+    ExercisePhase,
     FirePlanStatus,
     FirePlanTargetStatus,
     FireSchedule,
@@ -39,6 +40,7 @@ from app.models.enums import (
     RequestStatus,
     SeatRole,
     SessionMode,
+    SessionRole,
     UnitLevel,
     UserRole,
 )
@@ -113,6 +115,9 @@ class WargameSession(Base):
     # WP-B2 MSEL 腳本事件（NULL＝無 MSEL）。**在此之前想定的 msel 從未被持久化**：
     # 載得進來、卻沒有任何一條路把它帶進執行期，等於整個 MSEL 子系統是死的。
     msel: Mapped[list | None] = mapped_column("msel", JSON, nullable=True)  # type: ignore[type-arg]
+    # WP-B1 所屬演習（NULL＝獨立局，既有局零遷移）。刻意無 FK——刪演習不連坐刪局。
+    exercise_id: Mapped[str | None] = mapped_column("exerciseId", String(191))
+    session_role: Mapped[SessionRole | None] = mapped_column("sessionRole", SAEnum(SessionRole))
 
 
 class TacticalUnit(Base):
@@ -453,3 +458,54 @@ class FirePlanTarget(Base):
     order_id: Mapped[str | None] = mapped_column("orderId", String(191))
     fired_at_tick: Mapped[int | None] = mapped_column("firedAtTick", Integer)
     failure_reason: Mapped[str | None] = mapped_column("failureReason", Text)
+
+
+class Exercise(Base):
+    """演習專案（WP-B1）——把多次預推、正式局、檢討裝在一起的容器。
+
+    **與 session 是兩條獨立的軸**：`phase` 講演習流程走到哪；session 的 `archived_at`
+    講那一局有沒有被封存。混為一談會讓局從錯的清單裡消失。
+    """
+
+    __tablename__ = "Exercise"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column("name", String(191))
+    phase: Mapped[ExercisePhase] = mapped_column(
+        "phase", SAEnum(ExercisePhase), default=ExercisePhase.PREP
+    )
+    schedule_json: Mapped[dict | None] = mapped_column("scheduleJson", JSON)  # type: ignore[type-arg]
+    # 整備勾稽項。**required 且未勾就推不動階段**——只是提示的話與沒有無異。
+    checklist_json: Mapped[list | None] = mapped_column("checklistJson", JSON)  # type: ignore[type-arg]
+    created_by: Mapped[str] = mapped_column("createdBy", String(191))
+    created_at: Mapped[Any] = mapped_column(
+        "createdAt", DateTime(timezone=False), server_default=func.now()
+    )
+    # 最近一次階段推進的**真實牆鐘**時間（這不是模擬時間，故不受 SimClock 紅線約束）。
+    phase_changed_at: Mapped[Any | None] = mapped_column("phaseChangedAt", DateTime(timezone=False))
+
+
+class ExerciseAuditLog(Base):
+    """演習稽核軌跡（WP-B1）。
+
+    **刻意不寫 TacticalEventLog**：那是 golden 會驗的雜湊鏈，而階段推進是牆鐘的、人為的、
+    局外的事件——寫進鏈裡會擾動決定性重播。SPEC 說「專屬 audit 表」正是為此。
+    """
+
+    __tablename__ = "ExerciseAuditLog"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    exercise_id: Mapped[str] = mapped_column(
+        "exerciseId", String(191), ForeignKey("Exercise.id", ondelete="CASCADE")
+    )
+    # 演習內單調遞增。**沒有它，同一秒內的兩筆稽核順序就是隨機的**——
+    # 順序隨機的稽核軌跡讀不出「先勾了項目才推階段」還是反過來。
+    seq: Mapped[int] = mapped_column("seq", Integer)
+    at: Mapped[Any] = mapped_column("at", DateTime(timezone=False), server_default=func.now())
+    actor_id: Mapped[str] = mapped_column("actorId", String(191))
+    action: Mapped[str] = mapped_column("action", String(191))
+    from_phase: Mapped[ExercisePhase | None] = mapped_column("fromPhase", SAEnum(ExercisePhase))
+    to_phase: Mapped[ExercisePhase | None] = mapped_column("toPhase", SAEnum(ExercisePhase))
+    detail: Mapped[dict | None] = mapped_column("detail", JSON)  # type: ignore[type-arg]
+
+    __table_args__ = (UniqueConstraint("exerciseId", "seq"),)

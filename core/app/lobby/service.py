@@ -325,6 +325,8 @@ class LobbyService:
                 else "ACTIVE"
             ),
             my_faction=my_faction,
+            exercise_id=session.exercise_id,
+            session_role=session.session_role.value if session.session_role else None,
             orbat_edit=orbat_edit,
             my_unit_scope=my_unit_scope or [],
             my_seat_role=my_seat_role,

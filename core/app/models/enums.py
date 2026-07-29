@@ -141,3 +141,24 @@ class FirePlanTargetStatus(enum.StrEnum):
     FIRED = "FIRED"
     FAILED = "FAILED"  # 下令被擋（驗證/預檢/火協），原因見 failure_reason
     SKIPPED = "SKIPPED"  # 計畫被取消時尚未執行者
+
+
+class ExercisePhase(enum.StrEnum):
+    """演習階段（WP-B1，對映 [JCATS-A] 的 17 步 SOP）。
+
+    **只能沿序前進、一次一階**——倒退會讓已經簽證的參數（WP-B4）與稽核軌跡失去意義。
+    """
+
+    PREP = "PREP"  # 整備（會議、想定發佈、飽和測試）
+    REHEARSAL = "REHEARSAL"  # 預推
+    EXECUTION = "EXECUTION"  # 正式實施（WP-B4 於此階段簽證鎖定參數）
+    REVIEW = "REVIEW"  # 檢討
+    ARCHIVED = "ARCHIVED"  # 撤收建檔
+
+
+class SessionRole(enum.StrEnum):
+    """一局在演習中的角色（WP-B1）。NULL＝未指定（含獨立局）。"""
+
+    REHEARSAL = "REHEARSAL"
+    MAIN = "MAIN"
+    ANALYSIS = "ANALYSIS"

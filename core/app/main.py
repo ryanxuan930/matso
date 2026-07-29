@@ -18,6 +18,7 @@ from app.api import (
     c2_router,
     control_router,
     equipment_router,
+    exercises_router,
     fire_plans_router,
     inject_router,
     install_error_handlers,
@@ -99,6 +100,7 @@ app.include_router(auth_router)
 app.include_router(c2_router)
 app.include_router(autonomy_router)
 app.include_router(lobby_router)
+app.include_router(exercises_router)
 app.include_router(orbat_router)
 app.include_router(equipment_router)
 app.include_router(fire_plans_router)

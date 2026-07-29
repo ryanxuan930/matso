@@ -108,6 +108,10 @@ components:
                 - AI_OUTPUT_REJECTED
                 - USER_CONFLICT
                 - USER_NOT_FOUND
+                - EXERCISE_NOT_FOUND
+                - EXERCISE_PHASE_INVALID
+                - EXERCISE_CHECKLIST_INCOMPLETE
+                - EXERCISE_SESSION_CONFLICT
             message: { type: string }
             details: { type: object }
     UserRole:
@@ -197,6 +201,125 @@ components:
           description: >-
             呼叫者在此 session 的席位（WP-B5.1/B5.2）。null＝未指派席位（權限沿用角色規則）。
             COP 據此顯示「你坐哪一席」與越權時的說明——後端仍是權威，前端只做提示。
+        exercise_id:
+          type: [string, "null"]
+          description: >-
+            所屬演習（WP-B1）。**null＝獨立局**，與掛演習之前的行為完全相同。
+            演習物件本身只有白軍/管理看得到；本欄與 `session_role` 是每局資訊，人人可見。
+        session_role:
+          oneOf:
+            - { $ref: "#/components/schemas/SessionRole" }
+            - { type: "null" }
+          description: 本局在演習中的角色（預推/正式/分析）。null＝未指定（含獨立局）。
+    ExercisePhase:
+      type: string
+      enum: [PREP, REHEARSAL, EXECUTION, REVIEW, ARCHIVED]
+      description: >-
+        演習階段（WP-B1，對映 [JCATS-A] 的 17 步 SOP）。**只能沿序前進，一次一階**——
+        倒退會讓已經簽證的參數（WP-B4）與稽核軌跡失去意義。
+    SessionRole:
+      type: string
+      enum: [REHEARSAL, MAIN, ANALYSIS]
+      description: 一局在演習中的角色：預推 / 正式 / 分析。
+    ExerciseChecklistItem:
+      type: object
+      description: >-
+        整備勾稽項（WP-B1）。`required: true` 的項目**未勾就推不動階段**——
+        checklist 的意義就在於此，只是提示的話與沒有無異。
+      required: [key, label, phase, required, done]
+      properties:
+        key: { type: string, description: 穩定鍵（程式據此自動勾稽，例如 WP-B4 簽證完成即勾 params_sealed） }
+        label: { type: string }
+        phase:
+          $ref: "#/components/schemas/ExercisePhase"
+          description: 這一項是「離開哪個階段」的前提
+        required: { type: boolean }
+        done: { type: boolean }
+        done_at: { type: [string, "null"], description: 勾稽時間 ISO8601 }
+        done_by: { type: [string, "null"], description: 勾稽者 user id }
+    ExerciseSessionRef:
+      type: object
+      description: 掛在演習底下的一局（摘要）
+      required: [id, name, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string, description: ACTIVE / ENDED / ARCHIVED（由 session 導出，與演習階段是**兩條獨立的軸**） }
+        session_role:
+          oneOf:
+            - { $ref: "#/components/schemas/SessionRole" }
+            - { type: "null" }
+        archived_at: { type: [string, "null"] }
+    ExerciseView:
+      type: object
+      description: >-
+        演習專案（WP-B1）。**只有白軍/統裁/管理看得到**——演習層是導演工具；
+        作戰方看到的是自己那一局（`SessionSummary.exercise_id` / `session_role`）。
+      required: [id, name, phase, created_by, created_at, checklist, sessions]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        phase: { $ref: "#/components/schemas/ExercisePhase" }
+        created_by: { type: string, description: 建立者 user id }
+        created_at: { type: string, description: ISO8601 }
+        phase_changed_at: { type: [string, "null"], description: 最近一次階段推進時間 ISO8601 }
+        schedule:
+          type: object
+          description: 行程表（自由結構的鍵值對，例如 d_minus_45 → 想定發佈、d_day → 正式實施）
+        checklist:
+          type: array
+          items: { $ref: "#/components/schemas/ExerciseChecklistItem" }
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/ExerciseSessionRef" }
+    CreateExerciseRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        schedule: { type: object, description: 行程表（可省，預設空） }
+    AdvancePhaseRequest:
+      type: object
+      description: 推進到下一階段。**只接受序列上的下一階**——跳階與倒退皆 EXERCISE_PHASE_INVALID。
+      required: [phase]
+      properties:
+        phase: { $ref: "#/components/schemas/ExercisePhase" }
+        note: { type: [string, "null"], description: 推進理由/備註，進稽核軌跡 }
+    ChecklistTickRequest:
+      type: object
+      required: [done]
+      properties:
+        done: { type: boolean }
+    AttachSessionRequest:
+      type: object
+      description: 把一局掛到演習底下。已掛在**別的**演習底下者拒絕（EXERCISE_SESSION_CONFLICT）。
+      required: [session_id]
+      properties:
+        session_id: { type: string }
+        session_role:
+          oneOf:
+            - { $ref: "#/components/schemas/SessionRole" }
+            - { type: "null" }
+    ExerciseAuditEntry:
+      type: object
+      description: >-
+        演習稽核軌跡（WP-B1）。**刻意不寫 TacticalEventLog**：那是 golden 會驗的雜湊鏈，
+        而階段推進是牆鐘的、人為的、局外的事件——寫進鏈裡會擾動決定性重播。
+      required: [id, at, actor_id, action]
+      properties:
+        id: { type: string }
+        at: { type: string, description: ISO8601（真實牆鐘；這不是模擬時間） }
+        actor_id: { type: string }
+        action: { type: string, description: PHASE_ADVANCED / CHECKLIST_TICKED / SESSION_ATTACHED / SESSION_DETACHED / … }
+        from_phase:
+          oneOf:
+            - { $ref: "#/components/schemas/ExercisePhase" }
+            - { type: "null" }
+        to_phase:
+          oneOf:
+            - { $ref: "#/components/schemas/ExercisePhase" }
+            - { type: "null" }
+        detail: { type: object }
     EditSessionRequest:
       type: object
       description: 編輯已開推演設定（#16）——限統裁/管理
@@ -1013,6 +1136,187 @@ paths:
         "204": { description: Deleted }
         "403": { description: Not permitted, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: Conflict, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises:
+    get:
+      operationId: listExercises
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: >-
+        演習清單（WP-B1）。**限白軍/統裁/管理**——演習層是導演工具，作戰方看到的是自己那一局。
+      responses:
+        "200":
+          description: Exercises
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ExerciseView" } }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      operationId: createExercise
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: 建立演習（起始階段 PREP，附預設整備 checklist）。限白軍/統裁。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateExerciseRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExerciseView" }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getExercise
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      responses:
+        "200":
+          description: Exercise
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExerciseView" }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteExercise
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: >-
+        刪除演習專案本身。**不動任何 session**——掛在底下的局改回獨立局（`exercise_id` 轉 null）。
+        銷毀 session 資料是另一回事（WP-B1b 的銷毀模式）。
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/phase:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: advanceExercisePhase
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: >-
+        推進階段。**只能沿序前進一階**；該階段所有 `required` 且未勾的 checklist 項目
+        會擋下推進（403 EXERCISE_CHECKLIST_INCOMPLETE，`details.missing` 列出鍵）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdvancePhaseRequest" }
+      responses:
+        "200":
+          description: Advanced
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExerciseView" }
+        "403": { description: Not white cell / checklist incomplete / invalid transition, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/checklist/{item_key}:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: item_key
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: tickExerciseChecklist
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: 勾稽/取消勾稽一個整備項目（進稽核軌跡）。限白軍/統裁。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChecklistTickRequest" }
+      responses:
+        "200":
+          description: Ticked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExerciseView" }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Exercise or item not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/sessions:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: attachSessionToExercise
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: 把既有的一局掛進本演習（不複製、不新建；已掛在別的演習者拒絕）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttachSessionRequest" }
+      responses:
+        "200":
+          description: Attached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExerciseView" }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Exercise or session not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Session already attached elsewhere, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/sessions/{session_id}:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: session_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: detachSessionFromExercise
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: 把一局從演習卸下（該局變回獨立局；**不刪任何資料**）。
+      responses:
+        "200":
+          description: Detached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExerciseView" }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/audit:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getExerciseAudit
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: 演習稽核軌跡（階段推進、勾稽、掛載/卸載），時間序。
+      responses:
+        "200":
+          description: Audit trail
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ExerciseAuditEntry" } }
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions:
     get:
       operationId: listSessions
@@ -1114,12 +1418,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AiStatusView" }
         "403": { description: Not a participant, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-  /sessions/{id}/lifecycle:
-    parameters: [{ $ref: "#/components/parameters/SessionId" }]
-    post:
-      operationId: sessionLifecycle
-      description: "action: START|PAUSE|RESUME|END|ROLLBACK (+checkpoint_tick)"
-      responses: { "200": { description: OK } }
   /sessions/{id}/state:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

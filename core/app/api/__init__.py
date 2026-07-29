@@ -7,6 +7,7 @@ from app.api.c2 import router as c2_router
 from app.api.control import router as control_router
 from app.api.equipment import router as equipment_router
 from app.api.errors import install_error_handlers
+from app.api.exercises import router as exercises_router
 from app.api.fire_plans import router as fire_plans_router
 from app.api.inject import router as inject_router
 from app.api.intel import router as intel_router
@@ -32,6 +33,7 @@ __all__ = [
     "c2_router",
     "control_router",
     "equipment_router",
+    "exercises_router",
     "fire_plans_router",
     "inject_router",
     "install_error_handlers",

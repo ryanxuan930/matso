@@ -40,3 +40,7 @@ class SessionSummary(BaseModel):
     my_unit_scope: list[str] = []  # 呼叫者限指揮之單位子集（空＝整個陣營；COP 灰化範圍外）
     # 席位（WP-B5.1/B5.2）；None＝未指派（權限沿用角色規則）。COP 據此顯示「你坐哪一席」。
     my_seat_role: str | None = None
+    # WP-B1 所屬演習與本局角色。**None＝獨立局**，行為與掛演習之前完全相同。
+    # 演習物件本身只有白軍/管理看得到；這兩欄是每局資訊，人人可見。
+    exercise_id: str | None = None
+    session_role: str | None = None

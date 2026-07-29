@@ -219,3 +219,41 @@ class FactionInvalidError(MatsoError):
 
     error_code = "FACTION_INVALID"
     http_status = 422
+
+
+# ---------------- 演習專案（WP-B1，SPEC_V2 §6） ----------------
+
+
+class ExerciseNotFoundError(MatsoError):
+    """查無此演習（或呼叫者無權見）。"""
+
+    error_code = "EXERCISE_NOT_FOUND"
+    http_status = 404
+
+
+class ExercisePhaseInvalidError(MatsoError):
+    """階段轉移非法——只能沿序前進、一次一階（跳階與倒退皆拒）。
+
+    倒退不開放的理由寫在 `exercise/phases.py`：WP-B4 的參數簽證與稽核軌跡的意義都來自單調。
+    要重來就開一個新演習。
+    """
+
+    error_code = "EXERCISE_PHASE_INVALID"
+    http_status = 403
+
+
+class ExerciseChecklistIncompleteError(MatsoError):
+    """該階段還有 `required` 且未勾的整備項目——`details.missing` 列出鍵。
+
+    checklist 是**離開某階段的前提**而非待辦清單；只當提示的話與沒有這個機制無異。
+    """
+
+    error_code = "EXERCISE_CHECKLIST_INCOMPLETE"
+    http_status = 403
+
+
+class ExerciseSessionConflictError(MatsoError):
+    """該局已掛在別的演習底下——一局只能屬於一個演習。"""
+
+    error_code = "EXERCISE_SESSION_CONFLICT"
+    http_status = 409
