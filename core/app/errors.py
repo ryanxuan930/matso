@@ -160,6 +160,13 @@ class RequestAlreadyDecidedError(MatsoError):
     http_status = 409
 
 
+class FireApprovalRequiredError(MatsoError):
+    """曲射交戰未附已核准的火力支援申請（WP-B5.3）。"""
+
+    error_code = "ORDER_FIRE_APPROVAL_REQUIRED"
+    http_status = 422
+
+
 class PrecheckFailedError(MatsoError):
     """物理預檢不可行（步驟 [2]）——立即 REJECTED，回 422 + 具體 code + 各項結果。"""
 

@@ -53,6 +53,8 @@ class EngagePayload(BaseModel):
     target_unit_id: str = Field(min_length=1)
     weapon_id: str | None = None
     ammo_type: str | None = None
+    # WP-B5.3 曲射火協：本局要求時，曲射交戰須掛一張已核准的 FIRE_SUPPORT 申請單。
+    fire_request_id: str | None = None
 
 
 class PrecheckCheck(BaseModel):

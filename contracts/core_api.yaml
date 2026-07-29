@@ -85,6 +85,7 @@ components:
                 - ORDER_UNIT_NOT_FOUND
                 - ORDER_PERMISSION_DENIED
                 - ORDER_SEAT_DENIED
+                - ORDER_FIRE_APPROVAL_REQUIRED
                 - REQUEST_APPROVAL_DENIED
                 - REQUEST_ALREADY_DECIDED
                 - REQUEST_QUOTA_EXCEEDED

@@ -22,7 +22,14 @@ from sqlalchemy.orm import Session
 
 from app.adjudication.weapon import WeaponProfile
 from app.factions import FactionRelations
-from app.models.tables import EquipmentInstance, EquipmentTemplate, TacticalUnit
+from app.models.enums import RequestKind, RequestStatus
+from app.models.tables import (
+    EquipmentInstance,
+    EquipmentTemplate,
+    Request,
+    TacticalUnit,
+    WargameSession,
+)
 from app.orders.no_strike import ZoneClass, load_no_strike_cells
 from app.orders.roe import load_session_roe
 from app.orders.schemas import (
@@ -73,6 +80,7 @@ _CHECK_ERROR_CODES = {
     "no_strike": "ORDER_NO_STRIKE_ZONE",
     # WP-B6 想定 ROE 禁用武器（明確指名被禁武器的令）。與友軍誤傷共用 ROE 違規碼。
     "roe_weapon": "ORDER_ROE_VIOLATION",
+    "fire_approval": "ORDER_FIRE_APPROVAL_REQUIRED",
 }
 
 
@@ -162,6 +170,79 @@ def _precheck_roe_weapon(
     ]
 
 
+# 曲射武器類別（WP-B5.3）——與 engage_wiring 的 _WEAPON_CATEGORIES 同一組名稱。
+_INDIRECT_CATEGORIES = frozenset({"ARTILLERY", "MISSILE"})
+
+
+def _unit_has_indirect(db: Session, unit: TacticalUnit) -> bool:
+    rows = db.scalars(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)).all()
+    for inst in rows:
+        tmpl = db.get(EquipmentTemplate, inst.template_id)
+        if tmpl is not None and str(tmpl.category) in _INDIRECT_CATEGORIES:
+            return True
+    return False
+
+
+def _precheck_fire_approval(
+    db: Session, unit: TacticalUnit, payload: EngagePayload
+) -> list[PrecheckCheck]:
+    """WP-B5.3 曲射火協：本局要求時，曲射交戰須掛一張已核准的 FIRE_SUPPORT 申請單。
+
+    **與 ROE 武器禁令的關鍵差異**：ROE 只擋「令面指名了被禁武器」，其餘交裁決層逐武器篩；
+    火協若照抄，**不指名武器就能繞過**——那就不是 gate。故本檢查在「未指名武器但單位持有
+    任何曲射武器」時同樣要求核准單。
+
+    混合編裝（步槍＋迫砲）未指名武器時會被擋，這是刻意的：要求火協的演習裡，
+    要用直射就把武器指出來。訊息會講清楚怎麼做。
+
+    未開啟本局開關 → 一律通過（既有局零行為變更）。
+    """
+    session = db.get(WargameSession, unit.session_id)
+    if session is None or not getattr(session, "indirect_fire_requires_approval", False):
+        return []
+
+    if payload.weapon_id:
+        inst = db.get(EquipmentInstance, payload.weapon_id)
+        tmpl = db.get(EquipmentTemplate, inst.template_id) if inst is not None else None
+        if tmpl is None or str(tmpl.category) not in _INDIRECT_CATEGORIES:
+            return []  # 指名的是直射武器 → 不需火協
+    elif not _unit_has_indirect(db, unit):
+        return []  # 未指名，且該單位根本沒有曲射武器 → 不需火協
+
+    if not payload.fire_request_id:
+        return [
+            PrecheckCheck(
+                name="fire_approval",
+                passed=False,
+                detail=(
+                    "本局曲射火力需火協核准：請附上已核准的火力支援申請，"
+                    "或指名直射武器（weapon_id）"
+                ),
+            )
+        ]
+    req = db.get(Request, payload.fire_request_id)
+    if (
+        req is None
+        or req.session_id != unit.session_id
+        or req.faction != unit.faction
+        or req.kind is not RequestKind.FIRE_SUPPORT
+    ):
+        return [
+            PrecheckCheck(
+                name="fire_approval", passed=False, detail="火力支援申請單不存在或不屬於本陣營"
+            )
+        ]
+    if req.status is not RequestStatus.APPROVED:
+        return [
+            PrecheckCheck(
+                name="fire_approval",
+                passed=False,
+                detail=f"火力支援申請尚未核准（目前 {req.status.value}）",
+            )
+        ]
+    return []
+
+
 def run_precheck(
     db: Session,
     validated: ValidatedOrder,
@@ -183,6 +264,7 @@ def run_precheck(
         checks = _precheck_engage(db, validated.unit, payload, gateway, rel)
         checks.extend(_precheck_no_strike(db, validated.unit, payload, acknowledge_restricted))
         checks.extend(_precheck_roe_weapon(db, validated.unit, payload))
+        checks.extend(_precheck_fire_approval(db, validated.unit, payload))
     else:
         checks = []  # 其餘類型（RECON/RESUPPLY/POSTURE）之物理檢查於 O3.x
     feasible = all(c.passed for c in checks)

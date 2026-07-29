@@ -15,12 +15,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.c2.service import expend_request
 from app.errors import IllegalOrderTransitionError, OrderNotFoundError, PrecheckFailedError
 from app.factions import FactionRelations
 from app.models.enums import OrderStatus
 from app.models.tables import Order, TacticalUnit
 from app.orders.precheck import PhysicsGateway, precheck_error_code, run_precheck
-from app.orders.schemas import OrderRequest, OrderResponse, PrecheckResult
+from app.orders.schemas import EngagePayload, OrderRequest, OrderResponse, PrecheckResult
 from app.orders.state_machine import is_user_cancellable, next_status
 from app.orders.validator import validate_order
 from app.state.ledger import LedgerEvent
@@ -58,6 +59,13 @@ class OrderService:
             acknowledge_restricted=req.acknowledge_restricted,
         )
 
+        # WP-B5.3：火協核准單在**令被收下時**兌現，不是在裁決命中時。
+        # 一張核准單對應「一次火力任務」的授權；令被接受＝授權已使用。
+        # 若等命中才扣，令被取消或未命中時授權會憑空復活。
+        if precheck.feasible and isinstance(validated.payload, EngagePayload):
+            rid = validated.payload.fire_request_id
+            if rid:
+                expend_request(self._db, rid)
         order = Order(
             session_id=session_id,
             issuer_id=issuer_id,

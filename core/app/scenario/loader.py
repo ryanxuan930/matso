@@ -69,6 +69,8 @@ class LoadedScenario:
     roe: dict[str, Any] = field(default_factory=dict)
     # 申請單配額（WP-B5.2）：{RequestKind: 上限}。缺／未列＝不限。
     request_quotas: dict[str, int] = field(default_factory=dict)
+    # 曲射火協（WP-B5.3）：True＝ARTILLERY/MISSILE 的 ENGAGE 須掛已核准申請單。
+    indirect_fire_requires_approval: bool = False
     # WP-B6 想定機動覆寫（overrides/mobility_matrix.json 原樣帶入；**局部**覆寫，深合併於預設）。
     mobility_overrides: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
@@ -126,6 +128,7 @@ def _build(
         no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
         roe=roe,
         request_quotas={str(k): int(v) for k, v in (sc.get("request_quotas") or {}).items()},
+        indirect_fire_requires_approval=bool(sc.get("indirect_fire_requires_approval", False)),
         mobility_overrides=mobility_overrides,
         description=sc.get("description"),
         faction_display_names={
@@ -387,6 +390,8 @@ def create_session_from_scenario(
         # WP-B5.2 申請配額落地：想定宣告的配額**開局快照一份**（不即時讀想定，
         # 否則想定被編修會追溯改掉進行中的局）。空宣告存 None ＝ 不限（既有局語義）。
         request_quotas=loaded.request_quotas or None,
+        # WP-B5.3 曲射火協落地：未宣告存 None ＝ 不設限（既有局零變更）。
+        indirect_fire_requires_approval=loaded.indirect_fire_requires_approval or None,
     )
     db.add(session)
     db.flush()

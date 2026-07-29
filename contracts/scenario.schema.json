@@ -244,6 +244,10 @@
         }
       },
       "additionalProperties": false
+    },
+    "indirect_fire_requires_approval": {
+      "type": "boolean",
+      "description": "曲射火協（WP-B5.3）：開啟時 ARTILLERY/MISSILE 的 ENGAGE 令須掛已核准的 FIRE_SUPPORT 申請單，否則預檢拒絕。省略＝false＝不設限（既有想定零變更）。"
     }
   },
   "additionalProperties": false

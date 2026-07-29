@@ -79,6 +79,10 @@ class WargameSession(Base):
     # 申請單配額快照（WP-B5.2）：開局時從想定複製，不即時讀想定——想定可能在演習中被
     # 編修或刪除，即時讀會讓已開的局配額被追溯改掉。None＝未宣告＝不限（既有局語義）。
     request_quotas: Mapped[dict | None] = mapped_column("requestQuotas", JSON)  # type: ignore[type-arg]
+    # 曲射火協（WP-B5.3）：開局快照。None/False＝不設限（既有局零變更）。
+    indirect_fire_requires_approval: Mapped[bool | None] = mapped_column(
+        "indirectFireRequiresApproval", Boolean
+    )
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "orbatEditFactions", JSON, nullable=True
     )
