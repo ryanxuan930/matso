@@ -124,3 +124,28 @@ def test_audience_truth_table(
     why: str,
 ) -> None:
     assert is_visible(env, faction, omniscient=omni) is expected, why
+
+
+# ---- WP-B5.2 WS 推播端：publish_event 的席位受眾標籤 ----
+
+
+def test_publish_event_tags_seat_only_when_given() -> None:
+    """`publish_event(seat=...)` 才會加 `seat` 標籤；不給就是該陣營全體（既有行為不變）。"""
+    import fakeredis
+
+    from app.stream.publish import publish_event
+
+    r = fakeredis.FakeRedis()
+    publish_event(r, "s1", "C2_MESSAGE", {"message_id": "m1"}, faction="BLUE")
+    publish_event(r, "s1", "C2_MESSAGE", {"message_id": "m2"}, faction="BLUE", seat="FSO_FIRES")
+    import json
+
+    from app.state.redis_stream import ring_key
+
+    envs = [json.loads(x) for x in r.lrange(ring_key("s1"), 0, -1)]
+    by_msg = {e["payload"]["message_id"]: e for e in envs}
+    assert "seat" not in by_msg["m1"], "沒指定席位卻被標上了"
+    assert by_msg["m2"]["seat"] == "FSO_FIRES"
+    # 兩封都仍帶陣營標籤——席位是額外收窄，不是取代
+    assert by_msg["m1"]["faction"] == "BLUE"
+    assert by_msg["m2"]["faction"] == "BLUE"

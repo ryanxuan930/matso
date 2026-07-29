@@ -21,6 +21,8 @@ class WsIdentity:
     faction: str
     role: UserRole
     omniscient: bool
+    # 席位（WP-B5.2）：信文可指定收件席位，過濾在後端。None＝未指派席位。
+    seat: str | None = None
 
 
 def resolve_ws_identity(
@@ -38,6 +40,7 @@ def resolve_ws_identity(
             faction=participant.faction,
             role=participant.role,
             omniscient=is_omniscient(participant.role),
+            seat=participant.seat_role.value if participant.seat_role is not None else None,
         )
     if is_omniscient(user_role):
         return WsIdentity(faction=WHITE_CELL, role=user_role, omniscient=True)

@@ -125,7 +125,7 @@ async def _run_stream(
         sent_through = plan.resumed_from_seq
         if plan.backfill_after_seq is not None:
             for env in select_backfill(envelopes, plan.backfill_after_seq):
-                if is_visible(env, identity.faction, identity.omniscient):
+                if is_visible(env, identity.faction, identity.omniscient, identity.seat):
                     await websocket.send_json(env)
                     sent_through = max(sent_through, int(env.get("seq", sent_through)))
 
@@ -177,7 +177,7 @@ async def _pump_live(
             seq = env.get("seq")
             if isinstance(seq, int) and seq <= sent_through:
                 continue  # 已於 backfill 送過（訂閱緩衝與快照重疊）
-            if is_visible(env, identity.faction, identity.omniscient):
+            if is_visible(env, identity.faction, identity.omniscient, identity.seat):
                 sender.offer(env)  # 慢 client → BackpressureError
 
     async def consume() -> None:

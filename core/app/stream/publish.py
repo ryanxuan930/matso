@@ -20,6 +20,7 @@ def publish_event(
     event_type: str,
     payload: dict[str, Any],
     faction: str | None = None,
+    seat: str | None = None,
 ) -> int:
     """原子指派 seq → 推 ring buffer → PUBLISH。回傳 seq。與 STATE_DIFF 共用計數器/頻道。
 
@@ -33,6 +34,9 @@ def publish_event(
     }
     if faction is not None:
         env["faction"] = faction
+    # 席位受眾（WP-B5.2）——**只能收窄**：先過陣營才看席位（見 faction_filter 的不變式）。
+    if seat is not None:
+        env["seat"] = seat
     return publish_to_stream(
         redis_client,
         seq_key=seq_key(session_id),

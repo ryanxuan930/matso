@@ -20,14 +20,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_settings
 from app.auth.schemas import CurrentUser
 from app.c2.service import decide_request, quota_limits, quota_used, submit_request
+from app.cache import make_redis
+from app.config import Settings
 from app.errors import AuthForbiddenError, SessionNotFoundError
 from app.models import SessionParticipant, User, WargameSession
 from app.models.enums import MessageKind, RequestKind, SeatRole
 from app.models.tables import Message, Request
 from app.stream.faction_filter import is_omniscient, is_visible
+from app.stream.publish import publish_event
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["c2"])
 
@@ -131,6 +134,31 @@ def _msg_envelope(m: Message) -> dict[str, Any]:
     return env
 
 
+def _push(
+    settings: Settings,
+    session_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    faction: str,
+    seat: str | None,
+) -> None:
+    """WS 即時推播（WP-B5.2）。受眾＝陣營 + 可選席位，**過濾在後端**（紅線 3）。
+
+    推播失敗（redis 不可達）不讓 API 失敗——信文已落庫，重新開面板仍讀得到。
+    """
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        publish_event(
+            make_redis(settings.redis_url),
+            session_id,
+            event_type,
+            payload,
+            faction=faction,
+            seat=seat,
+        )
+
+
 def _username(db: Session, user_id: str | None) -> str:
     if not user_id:
         return "?"
@@ -180,6 +208,7 @@ def send_message(
     req: SendMessageRequest,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> MessageView:
     part, _ = _require_member(db, session_id, user)
     if part is None:
@@ -198,6 +227,14 @@ def send_message(
     db.add(m)
     db.commit()
     db.refresh(m)
+    _push(
+        settings,
+        session_id,
+        "C2_MESSAGE",
+        {"message_id": m.id, "kind": m.kind.value},
+        m.to_faction,
+        m.to_seat.value if m.to_seat is not None else None,
+    )
     return MessageView(
         id=m.id,
         kind=m.kind,
@@ -259,6 +296,7 @@ def post_request(
     req: SubmitRequestRequest,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> RequestView:
     part, _ = _require_member(db, session_id, user)
     if part is None:
@@ -272,6 +310,8 @@ def post_request(
         note=req.note,
         tick=_live_tick(db, session_id),
     )
+    # 申請送到核覆者席位（COMMANDER），與服務層生成的 REQUEST 信文同一受眾。
+    _push(settings, session_id, "C2_REQUEST", {"request_id": r.id}, r.faction, "COMMANDER")
     return _req_view(db, r)
 
 
@@ -282,6 +322,7 @@ def post_decide(
     req: DecideRequestRequest,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> RequestView:
     part, _ = _require_member(db, session_id, user)
     if part is None:
@@ -296,4 +337,6 @@ def post_decide(
         note=req.note,
         tick=_live_tick(db, session_id),
     )
+    # 申請送到核覆者席位（COMMANDER），與服務層生成的 REQUEST 信文同一受眾。
+    _push(settings, session_id, "C2_REQUEST", {"request_id": r.id}, r.faction, "COMMANDER")
     return _req_view(db, r)
