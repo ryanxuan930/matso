@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.adjudication.weapon import WeaponProfile
 from app.factions import FactionRelations
 from app.models.tables import EquipmentInstance, EquipmentTemplate, TacticalUnit
+from app.orders.no_strike import ZoneClass, load_no_strike_cells
 from app.orders.schemas import (
     EngagePayload,
     MovePayload,
@@ -67,6 +68,8 @@ _CHECK_ERROR_CODES = {
     "weapon": "ORDER_INVALID_PAYLOAD",
     "range": "ORDER_OUT_OF_RANGE",
     "ammo": "ORDER_NO_AMMO",
+    # WP-A3 禁射區：NO_STRIKE 一律拒；RESTRICTED_FIRE 未經 override 亦拒（可由使用者確認後放行）。
+    "no_strike": "ORDER_NO_STRIKE_ZONE",
 }
 
 
@@ -85,15 +88,56 @@ class PhysicsGateway(Protocol):
     def elevation(self, lat: float, lng: float) -> float: ...
 
 
+def _precheck_no_strike(
+    db: Session, unit: TacticalUnit, payload: EngagePayload, acknowledged: bool
+) -> list[PrecheckCheck]:
+    """WP-A3 禁射區：目標**實際所在位置**是否落在保護區。
+
+    與護欄 G4 同一份格集、同一條規則——人與 AI 受同樣約束（差別只在人可對 RESTRICTED_FIRE
+    明確 override，AI 則是升白軍確認）。無宣告禁射區的局：一律通過（零行為變更）。
+    """
+    zones = load_no_strike_cells(db, unit.session_id)
+    if not zones.any_cells:
+        return []
+    target = db.get(TacticalUnit, payload.target_unit_id)
+    if target is None or target.current_lat is None or target.current_lng is None:
+        return []  # 目標不存在/無座標 → 交由既有的 target_exists / position 檢查回報
+    zone = zones.classify_latlng(float(target.current_lat), float(target.current_lng))
+    if zone is None:
+        return []
+    if zone is ZoneClass.NO_STRIKE:
+        return [
+            PrecheckCheck(
+                name="no_strike", passed=False, detail="目標位於禁射區（No-Strike），不得射擊"
+            )
+        ]
+    if acknowledged:  # 限制射擊區：使用者已明確確認 → 放行，但留痕（service 寫 Ledger）
+        return [
+            PrecheckCheck(
+                name="no_strike", passed=True, detail="目標位於限制射擊區——已由下令者明確確認"
+            )
+        ]
+    return [
+        PrecheckCheck(
+            name="no_strike",
+            passed=False,
+            detail="目標位於限制射擊區（Restricted-Fire）；確認仍要射擊請重送並勾選確認",
+        )
+    ]
+
+
 def run_precheck(
     db: Session,
     validated: ValidatedOrder,
     gateway: PhysicsGateway,
     relations: FactionRelations | None = None,
+    *,
+    acknowledge_restricted: bool = False,
 ) -> PrecheckResult:
     """依 order 類型跑對應物理檢查，回 PrecheckResult（feasible + 各項）。
 
     relations=None 時退回全 HOSTILE 預設（N 方前語義相容；ENGAGE 對非敵陣營→ROE 攔）。
+    `acknowledge_restricted`：下令者已明確確認「限制射擊區仍要射擊」（WP-A3）。
     """
     payload = validated.payload
     rel = relations or FactionRelations()
@@ -101,6 +145,7 @@ def run_precheck(
         checks = _precheck_move(validated.unit, payload, gateway)
     elif isinstance(payload, EngagePayload):
         checks = _precheck_engage(db, validated.unit, payload, gateway, rel)
+        checks.extend(_precheck_no_strike(db, validated.unit, payload, acknowledge_restricted))
     else:
         checks = []  # 其餘類型（RECON/RESUPPLY/POSTURE）之物理檢查於 O3.x
     feasible = all(c.passed for c in checks)

@@ -20,6 +20,7 @@ from app.lobby.service import LobbyService
 from app.orders.precheck import LosOutcome, PhysicsGateway, TerrainGatewayAdapter
 from app.orders.service import OrderService
 from app.plugins import TerrainClient
+from app.state.ledger import LedgerWriter
 
 
 def get_db() -> Iterator[Session]:
@@ -126,4 +127,10 @@ def get_order_service(
 ) -> OrderService:
     # session_id 由路徑 `/sessions/{session_id}/orders` 注入；tick_source 讓下令戳記真實 sim tick
     # （否則永遠 0 → 指令全部顯示 T0、無法依下令時間排序）。
-    return OrderService(db, gateway, tick_source=lambda: _live_tick(session_id))
+    # WP-A3：event_sink 供「限制射擊區 knowing override」留痕（LedgerWriter 自身處理 seq/tip）。
+    return OrderService(
+        db,
+        gateway,
+        tick_source=lambda: _live_tick(session_id),
+        event_sink=LedgerWriter(default_session_factory()),
+    )

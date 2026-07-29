@@ -10,6 +10,7 @@ O3.1 預設回 0（尚無運行中的 kernel 綁定）。
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from app.orders.precheck import PhysicsGateway, precheck_error_code, run_prechec
 from app.orders.schemas import OrderRequest, OrderResponse, PrecheckResult
 from app.orders.state_machine import is_user_cancellable, next_status
 from app.orders.validator import validate_order
+from app.state.ledger import LedgerEvent
 
 
 class OrderService:
@@ -31,11 +33,14 @@ class OrderService:
         gateway: PhysicsGateway,
         tick_source: Callable[[], int] = lambda: 0,
         relations: FactionRelations | None = None,
+        event_sink: Any = None,
     ) -> None:
         self._db = db
         self._gateway = gateway
         self._tick_source = tick_source
         self._relations = relations  # None → 全 HOSTILE（O7 scenario 載入實際矩陣）
+        # WP-A3：限制射擊區 override 的留痕出口（LedgerWriter）。None＝不落帳（測試/舊呼叫端）。
+        self._event_sink = event_sink
 
     def submit(self, session_id: str, req: OrderRequest, issuer_id: str) -> OrderResponse:
         """驗證 + 預檢 + 落庫。不可行 → 持久化 REJECTED 後拋 PrecheckFailedError（API 轉 422）。"""
@@ -45,7 +50,13 @@ class OrderService:
         dup = self._find_active_duplicate(session_id, req)
         if dup is not None:
             return _to_response(dup, _precheck_of(dup))
-        precheck = run_precheck(self._db, validated, self._gateway, self._relations)
+        precheck = run_precheck(
+            self._db,
+            validated,
+            self._gateway,
+            self._relations,
+            acknowledge_restricted=req.acknowledge_restricted,
+        )
 
         order = Order(
             session_id=session_id,
@@ -61,6 +72,27 @@ class OrderService:
         order.status = next_status(order.status, target)  # PENDING → VALIDATED / REJECTED
         self._db.add(order)
         self._db.commit()
+
+        # WP-A3：限制射擊區的知情放行必須留痕——AAR 要能追究「誰在什麼時候明知而為」。
+        if precheck.feasible and req.acknowledge_restricted and self._event_sink is not None:
+            overridden = any(c.name == "no_strike" and c.passed for c in precheck.checks)
+            if overridden:
+                self._event_sink.append(
+                    session_id,
+                    [
+                        LedgerEvent(
+                            event_type="ORDER_RESTRICTED_FIRE_OVERRIDE",
+                            tick=order.issued_at_tick or 0,
+                            initiator_id=req.unit_id,
+                            target_id=str(req.payload.get("target_unit_id") or "") or None,
+                            ai_decision={
+                                "order_id": order.id,
+                                "issuer_id": issuer_id,
+                                "reason": "下令者明確確認於限制射擊區射擊",
+                            },
+                        )
+                    ],
+                )
 
         if not precheck.feasible:
             raise PrecheckFailedError(

@@ -100,6 +100,20 @@ export function featureDisplayColor(f: MapFeature): string {
   return typeof c === 'string' && c ? c : featureColor(f.kind)
 }
 
+/**
+ * 禁射級別（WP-A3）：`attributes.zone_class`。'' = 一般標註（不參與禁射判定）。
+ * 後端 `orders/no_strike.py` 讀同一個鍵——**只認 POLYGON**（點/線不成區）。
+ */
+export const ZONE_CLASSES = [
+  { value: '', label: '（一般標註）' },
+  { value: 'NO_STRIKE', label: '禁射區（硬阻擋）' },
+  { value: 'RESTRICTED_FIRE', label: '限制射擊區（需確認）' },
+]
+export function featureZoneClass(f: MapFeature): string {
+  const z = (f.attributes as Record<string, unknown> | undefined)?.zone_class
+  return typeof z === 'string' ? z : ''
+}
+
 /** 標註線寬（#96）：`attributes.width`；未設 → 預設 2（既有標註維持原樣）。夾在 0.5–12。 */
 export const DEFAULT_FEATURE_WIDTH = 2
 export function featureLineWidth(f: MapFeature): number {
@@ -333,6 +347,7 @@ export function featuresToFc(features: MapFeature[]): FC {
         width: featureLineWidth(f),
         label: f.label ?? '',
         hasSym: f.geometry_type === 'POINT' && featureSidc(f) !== '',
+        zoneClass: featureZoneClass(f), // WP-A3：禁射區在圖上要一眼可辨
       },
       geometry,
     })

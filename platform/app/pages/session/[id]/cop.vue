@@ -33,6 +33,8 @@ import {
   editMapFeature,
   featureDisplayColor,
   featureSymbolFc,
+  featureZoneClass,
+  ZONE_CLASSES,
   featuresToFc,
   fetchMapFeatures,
   fetchMovementPreview,
@@ -266,6 +268,8 @@ const selectedFeatureId = ref<string | null>(null)
 const editFeatLabel = ref('')
 const editFeatColor = ref('')
 const editFeatOwner = ref('') // #92 歸屬陣營（僅全知可改；'' = 不變更）
+// WP-A3 禁射級別（僅全知可設；只對面有意義——點/線不成區，後端只認 POLYGON）。
+const editFeatZone = ref('')
 const drawWidth = ref(DEFAULT_FEATURE_WIDTH) // #96 繪製線寬
 const editFeatWidth = ref(DEFAULT_FEATURE_WIDTH) // #96 編輯線寬
 const editFeatNotes = ref('')
@@ -1117,6 +1121,7 @@ function onFeatureClick(e: { id: string }) {
   editFeatLabel.value = f?.label ?? ''
   editFeatColor.value = typeof a.color === 'string' ? a.color : ''
   editFeatOwner.value = f?.owner_faction ?? ''
+  editFeatZone.value = f ? featureZoneClass(f) : ''
   editFeatWidth.value = f ? featureLineWidth(f) : DEFAULT_FEATURE_WIDTH
   editFeatNotes.value = typeof a.notes === 'string' ? a.notes : ''
   editFeatHeight.value = typeof a.height_m === 'number' ? a.height_m : null
@@ -1340,6 +1345,10 @@ async function saveFeatureEdit() {
   else delete attrs.height_m
   if (editFeatSidc.value) attrs.sidc = editFeatSidc.value
   else delete attrs.sidc
+  // WP-A3：禁射級別。清空即移除該鍵——但 PATCH 對 attributes 是 merge，刪不掉鍵，
+  // 故以 null 明示「取消」，後端 merge 後值為 null，`no_strike.py` 只認非空字串故等同無效。
+  if (editFeatZone.value) attrs.zone_class = editFeatZone.value
+  else attrs.zone_class = null
   // 武器射向/雷達扇區（#11 C）：張角 <360 才存方向/張角（否則全向圓）。
   if (editFeatArc.value > 0 && editFeatArc.value < 360) {
     attrs.direction_deg = editFeatDir.value
@@ -2664,6 +2673,26 @@ watch(
                 <option v-for="f in sessionFactions" :key="f" :value="f">{{ f }}</option>
               </select>
             </label>
+            <!-- WP-A3 禁射區：僅全知可設，且只對面有意義（點/線不成區）。 -->
+            <label
+              v-if="canControl && selectedFeature.geometry_type === 'POLYGON'"
+              class="me-own"
+            >
+              禁射
+              <select v-model="editFeatZone" data-testid="edit-feat-zone">
+                <option v-for="z in ZONE_CLASSES" :key="z.value" :value="z.value">
+                  {{ z.label }}
+                </option>
+              </select>
+            </label>
+            <div v-if="editFeatZone" class="me-hint me-hint-zone" data-testid="zone-hint">
+              <i class="pi pi-ban" />
+              {{
+                editFeatZone === 'NO_STRIKE'
+                  ? '此區內的目標不得射擊：AI 的交戰令會被護欄 G4 剔除，人員下令一律被拒。'
+                  : '此區內的目標需確認才可射擊：AI 令保留但升白軍確認，人員須明確勾選確認且會留痕。'
+              }}
+            </div>
             <NatoSymbolSelect
               v-if="selectedFeature.geometry_type === 'POINT'"
               v-model="editFeatSidc"
@@ -4031,6 +4060,11 @@ watch(
   line-height: 1.35;
   padding: 0.28rem 0.4rem;
   margin-bottom: 0.3rem;
+}
+.map-editor .me-hint-zone {
+  color: #fca5a5;
+  background: #2a1215;
+  border-color: #7f1d1d;
 }
 .map-editor .me-hint-locked {
   color: #94a3b8;

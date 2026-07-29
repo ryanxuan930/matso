@@ -27,6 +27,10 @@ class OrderRequest(BaseModel):
     unit_id: str = Field(min_length=1)
     order_type: OrderType
     payload: dict[str, Any] = Field(default_factory=dict)
+    # WP-A3：下令者明確確認「目標位於限制射擊區（Restricted-Fire）仍要射擊」。
+    # 只對 RESTRICTED_FIRE 有效——NO_STRIKE 不可 override。true 時 service 會寫一筆
+    # ORDER_RESTRICTED_FIRE_OVERRIDE 到 Ledger 供 AAR 追究責任。
+    acknowledge_restricted: bool = False
 
 
 class MovePayload(BaseModel):

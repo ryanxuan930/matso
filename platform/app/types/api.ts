@@ -805,7 +805,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -1270,6 +1270,11 @@ export interface components {
             order_type: components["schemas"]["OrderType"];
             /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。 */
             payload?: Record<string, never>;
+            /**
+             * @description WP-A3：下令者明確確認『目標位於限制射擊區（RESTRICTED_FIRE）仍要射擊』。僅對 RESTRICTED_FIRE 有效——NO_STRIKE 不可 override。為 true 且確實落在限制射擊區時，伺服端寫一筆 ORDER_RESTRICTED_FIRE_OVERRIDE 至 Ledger 供 AAR 追究。
+             * @default false
+             */
+            acknowledge_restricted: boolean;
         };
         /**
          * @description 聯合兵種火力政策（SPEC_EXTEND P3；ENGAGE payload.fire_policy，未指定＝FREE）。僅意圖/篩選，不改物理數值。指定 payload.weapon_id 等同僅該武器射擊（單武器）。

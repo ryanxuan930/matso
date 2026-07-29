@@ -1,8 +1,8 @@
 ---
 task: "WP-A3 修復 G4 no-strike 護欄（欄位匹配＋資料源）"
-status: IN_PROGRESS
+status: DONE
 started: 2026-07-29T10:55+08:00
-updated: 2026-07-29T10:55+08:00
+updated: 2026-07-29T12:30+08:00
 agent: Opus 5
 spec: SPEC_V2.md §6 WP-A3；相關 SPEC_FULL §10（護欄）、§11（想定）、§13.2（COP 標註）
 ---
@@ -10,34 +10,86 @@ spec: SPEC_V2.md §6 WP-A3；相關 SPEC_FULL §10（護欄）、§11（想定�
 # WP-A3 修復 G4 no-strike 護欄
 
 ## 目標摘要
-護欄鏈 G1–G6 中的 **G4（禁射區）實質上從未攔過任何東西**——兩個獨立的斷點：
-1. **欄位不匹配**：G4 只讀令面的 `target_h3`，但 AI 令帶的是 `target_lat/lng`（MOVE）或
-   `target_unit_id`（ENGAGE），永遠對不上。
-2. **無資料源**：`no_strike_hexes` 由 deps 傳入卻恆為空——想定沒有宣告禁射區的地方，白軍也沒有介面設。
+G4（禁射區）**從未攔過任何東西**。規格點出兩個斷點，掃描時發現**第三個**：
 
-本卡把兩端接起來：想定/白軍能宣告禁射區 → 存 session → G4 解析目標**實際位置**再判 →
-NO_STRIKE 硬擋、RESTRICTED_FIRE 升級白軍確認；人類下令走 precheck 警告＋明確 override。
+| # | 斷點 | 來源 |
+|---|---|---|
+| 1 | 欄位不匹配：G4 只讀令面 `target_h3`，AI 的 ENGAGE 令帶 `target_unit_id` → 永遠對不上 | 規格已知 |
+| 2 | 無資料源：`no_strike_hexes` 恆為空（想定/白軍都沒有宣告處） | 規格已知 |
+| 3 | **`GUARDRAIL_INTERVENTION` 從未落帳**：`intervention_events` 自 O6.2 就存在但**無任何 production 呼叫端** → AAR 的「護欄攔截 N 次」恆為 0、重播書籤標不出來 | **本卡掃描發現** |
 
-## 計畫
-- [ ] 理解階段：workflow 4 reader（guardrails / scenario+db / map-features / 人類下令路徑）
-- [ ] 契約先行：`scenario.schema.json` 加 `no_strike_zones`；DB 欄位 migration
-- [ ] 幾何 → h3 格集（多邊形/圓形取樣）
-- [ ] G4 判定改寫（解析目標位置；NO_STRIKE vs RESTRICTED_FIRE）
-- [ ] 人類路徑：precheck 警告 + override（override 記 Ledger）
-- [ ] 白軍 UI：地圖標註標記為禁射區
-- [ ] 測試 + gates + 容器實跑
-
-## 執行紀錄
-- `10:55` 建卡。WP-A1 已完成並推上 main（`28b1e02`）。理解階段 workflow `wf_76f4ec88-d14` 啟動。
-
-## 檔案異動
+## 交付
 | 檔案 | 動作 | 說明 |
 |------|------|------|
-| （施工中） | | |
+| `contracts/scenario.schema.json` | 修改 | 加 `no_strike_zones`（name/zone_class/geometry；polygon\|circle；GeoJSON [lng,lat]） |
+| `contracts/core_api.yaml` | 修改 | `OrderRequest.acknowledge_restricted`；error code `ORDER_NO_STRIKE_ZONE` |
+| `db/prisma/migrations/20260729000000_wpa3_no_strike_zones/` | **新增** | `WargameSession.noStrikeZones Json?`（NULL＝無禁射區，既有局零遷移） |
+| `db/prisma/schema.prisma`、`core/app/models/tables.py` | 修改 | 雙邊同步（schema-sync 142 欄綠） |
+| `core/app/orders/no_strike.py` | **新增** | 幾何→h3 格集（純函數 `zones_to_cells`）＋兩來源合流（想定宣告 + MapFeature 標註） |
+| `core/app/guardrails/gateway.py` | 修改 | `TargetLocator` Protocol；G4 改判目標實際位置；NO_STRIKE 硬擋 / RESTRICTED_FIRE 只升級 |
+| `core/app/ai_loop/orders_bridge.py` | 修改 | `UnitTargetLocator`（unit→熱狀態/DB 座標→h3） |
+| `core/app/ai_loop/{opfor,worker,orchestrator}.py` | 修改 | 格集每週期自 DB 現讀；護欄攔截經 `event_sink` 落帳 |
+| `core/app/orders/{precheck,service,schemas}.py`、`api/deps.py` | 修改 | 人類路徑：`no_strike` 檢查 + `acknowledge_restricted` override + override 留痕 |
+| `core/app/state/ledger.py` | 修改 | `LedgerWriter` 型別放寬為 `Callable[[], Session]`（AI worker 走 db_factory） |
+| `platform/app/composables/useMapFeatures.ts`、`pages/session/[id]/cop.vue` | 修改 | 白軍在地圖編輯器把面標記為禁射/限制射擊區 + 紅色說明列 |
+| `core/tests/unit/test_no_strike_zones.py` | **新增** | 17 條 |
 
-## 決策與陷阱
-- 規格明示：**MOVE 令不擋**（開進禁射區不違規，打進去才是）。
+## 設計決定
+1. **存宣告而非格集**：`noStrikeZones` 存 `{name, zone_class, geometry}`，格集於讀取時導出。
+   理由：res-8 下一個中型區即數百格，存格集會讓欄位膨脹且與宣告重複；且白軍可局中增修。
+   每週期重算（不快取）——快取會讓白軍的變更不生效，而 zone 數是個位數、成本遠低於同路徑的 terrain gRPC。
+2. **guardrails 維持零 DB**：G4 需要查 DB 才能定位目標，故比照 G3 的 `OrderFeasibilityChecker`
+   加一個注入式 `TargetLocator`。連 `ZoneClass` 都不 import（那個模組會讀 DB），改在 gateway 內
+   自帶字面值，並用一條測試釘住兩處一致。
+3. **NO_STRIKE vs RESTRICTED_FIRE 的處置差異**：`GuardrailOutcome.accepted` 原本 `= not g4.blocked`，
+   無法表達「攔但不擋」。改為 G4 回**一組** findings，gateway 只讓帶 `zone_class=NO_STRIKE` 的
+   blocked 影響 `accepted`，其餘僅觸發 `escalate_white_cell`。
+4. **定位不到不擋**：locator 回 None 時放行——寧可漏擋也不要因為查不到就誤殺合法令，
+   真正的把關在 submit 端 precheck（那裡有權威資料）。
+5. **人類的 override 是新機制**：既有的 #28 強穿阻礙走的是「預覽端點警告 + 預設放行 + 執行期代價」，
+   與禁射區要的「擋下 + 明確 override」語義相反，故不複用而新增 `acknowledge_restricted`。
+   NO_STRIKE **不可** override（硬規則）；RESTRICTED_FIRE 的 override 寫
+   `ORDER_RESTRICTED_FIRE_OVERRIDE` 至 Ledger 供 AAR 追究「誰明知而為」。
+6. **MapFeature 來源不限 owner_faction**：禁射區是全局的人道/交戰規則，不是某軍私有標註——
+   某軍圈了醫院，敵軍的 AI 也該受同一條約束。
+
+## 測試證據
+- 新增 17 條（幾何/座標順序/兩級別/資料源/G4 兩種目標表達/MOVE 不擋/定位失敗/人類三情境）。
+- **`uv run pytest -m "not benchmark"` → 1133 passed / 8 skipped**；**golden 6 未破**。
+- ruff / ruff format / mypy(207) / schema-sync(142 欄) / OpenAPI 驗證 / JSON Schema metaschema 全綠。
+  （`redocly lint` 的 72 errors 為**改動前既有**、且非本專案 gate——CI 用 `openapi_spec_validator`。）
+- 前端 `npm run lint` + `vue-tsc` 綠；`npm run gen:api` 由契約重生型別。
+
+### 容器實測（唯讀探測使用者的局，不寫入）
+```
+既有局（無宣告）：no_strike=0 restricted=0 → 零行為變更 ✓
+真實 RED 單位 R5 @ (24.2506,120.8453)；半徑 400m 圓 → 4 格；目標格分類 = NO_STRIKE
+UnitTargetLocator 解析 target_unit_id → 884ba04ab3fffff  ← 改版前這一步不存在，G4 因此永遠對不上
+[NO_STRIKE ] accepted=False escalate=True 剩餘令=0  攔截理由：打擊保護目標——硬阻擋，升 White Cell
+[RESTRICTED] accepted=True  escalate=True 剩餘令=1  ← 保留但要白軍確認
+全庫既有 GUARDRAIL_INTERVENTION：無（佐證斷點 3——改版前從未落過帳）
+```
+
+## 座標順序陷阱（寫錯不會報錯，只會靜默失效）
+repo 幾何一律 GeoJSON `[lng, lat]`，`h3.LatLngPoly` 吃 `(lat, lng)`。寫反的話禁射區會跑到地球
+另一端而「永遠攔不到」——與修好前的症狀一模一樣、極難察覺。轉換集中在 `_ring_to_cells` 一處，
+並有一條測試斷言「經緯對調後的位置不在格集內」。
+
+另補頂點格：`polygon_to_cells` 只收「格心落在多邊形內」者，小於一格的區域會一格都框不進 →
+小型禁射區形同虛設。
+
+## 未做 / 已知限制
+- **想定 loader 尚未寫入 `no_strike_zones`**：schema 已宣告、DB 欄位已就緒、白軍可經地圖標註設定，
+  但 `scenario/loader.py` 還沒把想定包裡的宣告寫進 session。屬同卡未竟項，下次接手先做這段
+  （樣板＝`factionRelations` 的寫入路徑）。
+- 前端只做「標記既有面為禁射區」，沒有做「畫一個禁射區」的專用工具（沿用既有繪面流程即可）。
+- G4 目前只約束 `ENGAGE`；`MISSION` 令型尚不存在（WP-A2 做完要把它加進 `_STRIKE_ORDER_TYPES`）。
+
+## 範圍外發現（記 PROGRESS backlog）
+- `contracts/ai_output.schema.json` 的 `tactical_order` **未宣告 `target_lat`/`target_lng`**，
+  但 decider 的 OUTPUT_INSTRUCTION 明確要 LLM 產出它們（靠 JSON Schema 預設允許額外屬性才沒爆）。
+  屬契約漂移，應補宣告。
 
 ## 中斷續作指引
-- **下一步第一件事**：讀 workflow `wf_76f4ec88-d14` 的四份掃描結果。
-- **golden**：標示不動（護欄在 AI 決策路徑，不進 Kernel tick）——待確認。
+- 本卡主體完成並實測。**下一步第一件事**：把 `no_strike_zones` 接進 `scenario/loader.py`
+  （見「未做」第一項）。
