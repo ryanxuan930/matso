@@ -25,6 +25,7 @@ from app.errors import (
 )
 from app.factions import WHITE_CELL, validate_faction_id
 from app.models import SessionParticipant, TacticalUnit, User, UserRole, WargameSession
+from app.models.enums import SeatRole
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["participants"])
@@ -38,6 +39,8 @@ class SessionParticipantView(BaseModel):
     username: str
     faction: str
     role: str
+    # 席位（WP-B5.1）；None＝未指派 → 權限沿用 role 既有規則。
+    seat_role: SeatRole | None = None
     unit_scope: list[str] = []  # 限指揮之單位子集（空＝整個陣營）
 
 
@@ -56,6 +59,8 @@ class ParticipantRoster(BaseModel):
 class AssignParticipantRequest(BaseModel):
     faction: str
     role: UserRole  # pydantic 驗證：非法角色 → FastAPI 422
+    # 席位（WP-B5.1）；省略/None＝不指派席位（沿用 role 既有規則，既有局零變更）。
+    seat_role: SeatRole | None = None
     unit_scope: list[str] = []  # 限指揮之單位子集（空＝整個陣營）
 
 
@@ -93,6 +98,7 @@ def _view(db: Session, p: SessionParticipant) -> SessionParticipantView:
         username=(u.username if u is not None else "?"),
         faction=p.faction,
         role=p.role.value,
+        seat_role=p.seat_role,
         unit_scope=[str(x) for x in scope],
     )
 
@@ -170,6 +176,7 @@ def assign_participant(
     if existing is not None:
         existing.faction = faction
         existing.role = req.role
+        existing.seat_role = req.seat_role
         existing.unit_scope = scope
         p = existing
     else:
@@ -178,6 +185,7 @@ def assign_participant(
             session_id=session_id,
             faction=faction,
             role=req.role,
+            seat_role=req.seat_role,
             unit_scope=scope,
         )
         db.add(p)

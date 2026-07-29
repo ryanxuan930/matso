@@ -6,7 +6,14 @@ import pytest
 from _order_fakes import OrderWorld, seed_world
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.errors import OrderPermissionError, OrderValidationError, SessionNotFoundError
+from app.errors import (
+    OrderPermissionError,
+    OrderSeatDeniedError,
+    OrderValidationError,
+    SessionNotFoundError,
+)
+from app.models.enums import SeatRole
+from app.models.tables import SessionParticipant
 from app.orders.schemas import MovePayload, OrderRequest, OrderType
 from app.orders.validator import validate_order
 
@@ -158,3 +165,78 @@ def test_fixed_unit_can_still_engage(session_factory: sessionmaker[Session]) -> 
             world.blue_issuer_id,
         )
         assert result.order_type is OrderType.ENGAGE
+
+
+# ---- WP-B5.1 席位（seat_role） ----
+
+
+def _set_seat(session_factory, issuer_id: str, seat: SeatRole | None) -> None:  # type: ignore[no-untyped-def]
+    with session_factory() as db:
+        p = db.get(SessionParticipant, issuer_id)
+        assert p is not None
+        p.seat_role = seat
+        db.commit()
+
+
+def test_no_seat_behaves_exactly_as_before(session_factory: sessionmaker[Session]) -> None:
+    """**本卡最重要的一條**：未指派席位（NULL）＝權限完全沿用既有角色規則。
+
+    上線時所有既有參與者的 seat_role 都是 NULL；若把「無席位」當成「不能下令」，
+    跑到一半的演習會立刻鎖死。這條釘住「不縮」，`test_other_faction` 等既有測試釘住「不放」。
+    """
+    world = seed_world(session_factory)
+    _set_seat(session_factory, world.blue_issuer_id, None)
+    with session_factory() as db:
+        # MOVE 與 ENGAGE 都不受席位設限
+        assert validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
+
+
+def test_s3_ops_may_move_but_not_engage(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    _set_seat(session_factory, world.blue_issuer_id, SeatRole.S3_OPS)
+    with session_factory() as db:
+        assert validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
+    with session_factory() as db, pytest.raises(OrderSeatDeniedError) as ei:
+        validate_order(
+            db,
+            world.session_id,
+            _req(
+                world,
+                order_type=OrderType.ENGAGE,
+                payload={"target_unit_id": world.red_unit_id},
+            ),
+            world.blue_issuer_id,
+        )
+    assert ei.value.error_code == "ORDER_SEAT_DENIED"
+
+
+def test_fso_fires_may_engage_but_not_move(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    _set_seat(session_factory, world.blue_issuer_id, SeatRole.FSO_FIRES)
+    with session_factory() as db, pytest.raises(OrderSeatDeniedError):
+        validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
+
+
+def test_intel_and_observer_seats_may_not_order(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    for seat in (SeatRole.S2_INTEL, SeatRole.OBSERVER):
+        _set_seat(session_factory, world.blue_issuer_id, seat)
+        with session_factory() as db, pytest.raises(OrderSeatDeniedError):
+            validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
+
+
+def test_commander_seat_may_order_everything(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    _set_seat(session_factory, world.blue_issuer_id, SeatRole.COMMANDER)
+    with session_factory() as db:
+        assert validate_order(db, world.session_id, _req(world), world.blue_issuer_id)
+
+
+def test_wrong_faction_reported_before_seat(session_factory: sessionmaker[Session]) -> None:
+    """「這不是你的單位」比「這不是你的職掌」更根本，錯誤要報前者。"""
+    world = seed_world(session_factory)
+    _set_seat(session_factory, world.blue_issuer_id, SeatRole.S2_INTEL)  # 不能下任何令
+    with session_factory() as db, pytest.raises(OrderPermissionError):
+        validate_order(
+            db, world.session_id, _req(world, unit_id=world.red_unit_id), world.blue_issuer_id
+        )

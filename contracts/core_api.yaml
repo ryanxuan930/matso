@@ -84,6 +84,7 @@ components:
                 - ORDER_INVALID_PAYLOAD
                 - ORDER_UNIT_NOT_FOUND
                 - ORDER_PERMISSION_DENIED
+                - ORDER_SEAT_DENIED
                 - ORDER_INVALID_TRANSITION
                 - ORDER_UNIT_NO_POSITION
                 - ORDER_UNIT_FIXED

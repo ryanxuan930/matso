@@ -134,6 +134,18 @@ class OrderPermissionError(MatsoError):
     http_status = 403
 
 
+class OrderSeatDeniedError(MatsoError):
+    """該席位不得下此型別的令（WP-B5.1）。
+
+    與 `OrderPermissionError` 分開是刻意的：那個是「這不是你的單位」，
+    這個是「這不是你的職掌」——演習中兩者的處置完全不同（前者找錯對象，後者該轉給對的席位），
+    回同一個 code 會讓前端無從區分。
+    """
+
+    error_code = "ORDER_SEAT_DENIED"
+    http_status = 403
+
+
 class PrecheckFailedError(MatsoError):
     """物理預檢不可行（步驟 [2]）——立即 REJECTED，回 422 + 具體 code + 各項結果。"""
 

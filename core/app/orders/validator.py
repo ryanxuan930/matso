@@ -14,12 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.errors import (
     OrderPermissionError,
+    OrderSeatDeniedError,
     OrderValidationError,
     SessionNotFoundError,
 )
 from app.models.enums import UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, WargameSession
 from app.orders.schemas import EngagePayload, MovePayload, OrderRequest, OrderType
+from app.seats import SEAT_LABELS, seat_may_order
 
 # 可跨陣營下令的角色（白軍/導演）
 _OVERRIDE_ROLES = frozenset({UserRole.WHITE_CELL_STAFF, UserRole.EXERCISE_DIRECTOR})
@@ -51,7 +53,7 @@ def validate_order(
             details={"unit_id": req.unit_id},
         )
 
-    _check_permission(db, session_id, issuer_id, unit)
+    _check_permission(db, session_id, issuer_id, unit, req.order_type)
     # 固定單位（指揮部/後勤/陣地）：不接受 MOVE 令——不論下令者是 AI 或白軍/導演。這是想定層的
     # 編成約束（非物理裁決），故在驗證層擋下；ENGAGE/其他令不受限（原地自衛仍可）。座標「布局」
     # 走 reposition 端點（White Cell god setup），不經此路徑，故固定單位仍可於地圖狀態編輯中擺放。
@@ -65,7 +67,13 @@ def validate_order(
     return ValidatedOrder(unit=unit, order_type=req.order_type, payload=payload)
 
 
-def _check_permission(db: Session, session_id: str, issuer_id: str, unit: TacticalUnit) -> None:
+def _check_permission(
+    db: Session,
+    session_id: str,
+    issuer_id: str,
+    unit: TacticalUnit,
+    order_type: OrderType,
+) -> None:
     participant = db.scalar(
         select(SessionParticipant).where(
             SessionParticipant.id == issuer_id,
@@ -93,6 +101,15 @@ def _check_permission(db: Session, session_id: str, issuer_id: str, unit: Tactic
         raise OrderPermissionError(
             "此帳號僅獲授權指揮部分單位，不含此單位",
             details={"unit_id": unit.id, "unit_scope": [str(x) for x in scope]},
+        )
+    # 席位職掌（WP-B5.1）。放在陣營/unit_scope 之後：「這不是你的單位」比
+    # 「這不是你的職掌」更根本，先報前者比較好懂。
+    # **未指派席位（None）不在此設限**——見 app.seats 的說明。
+    seat = participant.seat_role
+    if seat is not None and not seat_may_order(seat, order_type):
+        raise OrderSeatDeniedError(
+            f"{SEAT_LABELS.get(seat, seat.value)} 不得下「{order_type.value}」令",
+            details={"seat_role": seat.value, "order_type": order_type.value},
         )
 
 
