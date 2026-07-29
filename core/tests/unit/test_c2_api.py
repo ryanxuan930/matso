@@ -217,5 +217,81 @@ def test_quota_view_reports_limits(session_factory: sessionmaker[Session]) -> No
     c = _client(session_factory)
     body = c.get(f"/api/v1/sessions/{world.session_id}/requests", headers=_cmdr(world)).json()
     kinds = {q["kind"] for q in body["quotas"]}
-    assert kinds == {"AIR_RECON", "FIRE_SUPPORT", "RESUPPLY_VOUCHER"}
+    assert kinds == {"AIR_RECON", "FIRE_SUPPORT", "RESUPPLY_VOUCHER", "CALL_FOR_FIRE"}
     assert all(q["limit"] is None for q in body["quotas"])  # 未宣告＝不限
+
+
+# ---- WP-C10.1 臨機火力：沒有觀測就叫不動火力 ----
+
+
+def _override_gateway(visible: bool) -> None:
+    """注入假 gateway：控制 LOS 結果。"""
+    from app.api.deps import get_gateway
+    from app.orders.precheck import LosOutcome
+
+    class _G:
+        def path_reachable(self, a: str, b: str, c: str) -> tuple[bool, str]:
+            return True, ""
+
+        def has_los(self, o: tuple[float, float, float], t: tuple[float, float, float]) -> object:
+            return LosOutcome(visible=visible, clearance_m=10.0)
+
+        def elevation(self, lat: float, lng: float) -> float:
+            return 0.0
+
+    app.dependency_overrides[get_gateway] = lambda: _G()
+
+
+def test_call_for_fire_needs_target_coords(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    _override_gateway(True)
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/requests",
+        json={"kind": "CALL_FOR_FIRE"},  # 沒帶目標
+        headers=_cmdr(world),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "REQUEST_NO_OBSERVER"
+
+
+def test_call_for_fire_blocked_without_observer(session_factory: sessionmaker[Session]) -> None:
+    """**沒有觀測就叫不動火力**——[JCATS-F p.12] 觀測所在整條鏈裡不是形式。"""
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    _override_gateway(False)  # 全陣營對該點皆無視線
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/requests",
+        json={"kind": "CALL_FOR_FIRE", "params": {"target_lat": 23.8, "target_lng": 121.3}},
+        headers=_cmdr(world),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "REQUEST_NO_OBSERVER"
+
+
+def test_call_for_fire_accepted_with_observer(session_factory: sessionmaker[Session]) -> None:
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    _override_gateway(True)
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/requests",
+        json={"kind": "CALL_FOR_FIRE", "params": {"target_lat": 23.8, "target_lng": 121.3}},
+        headers=_cmdr(world),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "PENDING"
+
+
+def test_other_request_kinds_unaffected_by_observer_rule(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """觀測條件只綁 CALL_FOR_FIRE——別的申請種類不受影響。"""
+    world = seed_world(session_factory)
+    c = _client(session_factory)
+    _override_gateway(False)
+    r = c.post(
+        f"/api/v1/sessions/{world.session_id}/requests",
+        json={"kind": "AIR_RECON"},
+        headers=_cmdr(world),
+    )
+    assert r.status_code == 201, r.text

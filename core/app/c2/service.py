@@ -160,3 +160,49 @@ def expend_request(db: Session, request_id: str) -> Request | None:
     db.commit()
     db.refresh(req)
     return req
+
+
+def has_observer_on(
+    db: Session,
+    session_id: str,
+    faction: str,
+    target: tuple[float, float],
+    gateway: object,
+) -> bool:
+    """該陣營是否有任一單位對目標點有視線（WP-C10.1）。
+
+    **LOS 一律走與交戰預檢同一個 `PhysicsGateway`**，不另寫一套——兩份 LOS 實作
+    就是兩份會漂移的物理，這個 repo 已經有 fog of war 因此出事的前例（WP-C5）。
+
+    gateway 缺 `has_los`（測試用的極簡假件）→ 視為有觀測，不讓缺方法變成硬失敗。
+
+    **不吞例外**：terrain 不可達要讓 `TerrainUnavailableError` 往上拋（API 轉 503），
+    而不是靜靜回「沒有觀測」。兩者對使用者的意義天差地遠——前者是系統故障該修，
+    後者是戰術判定該換位置。寫這段時原本用了 `except Exception`，
+    結果自己測試裡一個建構子筆誤被吞成「沒有觀測」，正是這個模式會造成的誤導。
+    """
+    from app.models.tables import TacticalUnit
+
+    has_los = getattr(gateway, "has_los", None)
+    if has_los is None:
+        return True
+    units = db.scalars(
+        select(TacticalUnit).where(
+            TacticalUnit.session_id == session_id,
+            TacticalUnit.faction == faction,
+        )
+    ).all()
+    tlat, tlng = target
+    for u in units:
+        if u.current_lat is None or u.current_lng is None:
+            continue
+        try:
+            outcome = has_los(
+                (float(u.current_lat), float(u.current_lng), float(u.elevation or 0.0)),
+                (tlat, tlng, 0.0),
+            )
+        except Exception:
+            continue
+        if getattr(outcome, "visible", False):
+            return True
+    return False

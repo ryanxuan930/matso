@@ -167,6 +167,17 @@ class FireApprovalRequiredError(MatsoError):
     http_status = 422
 
 
+class RequestNoObserverError(MatsoError):
+    """臨機火力申請缺觀測（WP-C10.1）——沒有任何友軍單位對該目標有視線。
+
+    [JCATS-F p.12] 的觀測所在整條火力鏈裡不是形式：沒有觀測就沒有修正，
+    也就不該叫得動火力。
+    """
+
+    error_code = "REQUEST_NO_OBSERVER"
+    http_status = 422
+
+
 class PrecheckFailedError(MatsoError):
     """物理預檢不可行（步驟 [2]）——立即 REJECTED，回 422 + 具體 code + 各項結果。"""
 

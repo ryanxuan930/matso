@@ -301,6 +301,10 @@ enum RequestKind {
   AIR_RECON
   FIRE_SUPPORT
   RESUPPLY_VOUCHER
+  /// 臨機火力申請（WP-C10.1）：觀測單位對已發現目標叫火力。
+  /// 與 FIRE_SUPPORT 分開：後者是「解鎖一次曲射任務」的授權，
+  /// 這個是「我看到目標、請對這裡射擊」的具體任務單。
+  CALL_FOR_FIRE
 }
 
 /// PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED（終態）。

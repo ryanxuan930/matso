@@ -73,6 +73,9 @@ class RequestKind(enum.StrEnum):
     AIR_RECON = "AIR_RECON"
     FIRE_SUPPORT = "FIRE_SUPPORT"
     RESUPPLY_VOUCHER = "RESUPPLY_VOUCHER"
+    # 臨機火力申請（WP-C10.1）。與 FIRE_SUPPORT 分開：後者是「解鎖一次曲射任務」的授權，
+    # 這個是「我看到目標、請對這裡射擊」的具體任務單（帶目標座標，且須有觀測）。
+    CALL_FOR_FIRE = "CALL_FOR_FIRE"
 
 
 class RequestStatus(enum.StrEnum):

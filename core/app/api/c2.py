@@ -20,15 +20,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db, get_settings
+from app.api.deps import get_current_user, get_db, get_gateway, get_settings
 from app.auth.schemas import CurrentUser
-from app.c2.service import decide_request, quota_limits, quota_used, submit_request
+from app.c2.service import (
+    decide_request,
+    has_observer_on,
+    quota_limits,
+    quota_used,
+    submit_request,
+)
 from app.cache import make_redis
 from app.config import Settings
-from app.errors import AuthForbiddenError, SessionNotFoundError
+from app.errors import AuthForbiddenError, RequestNoObserverError, SessionNotFoundError
 from app.models import SessionParticipant, User, WargameSession
 from app.models.enums import MessageKind, RequestKind, SeatRole
 from app.models.tables import Message, Request
+from app.orders.precheck import PhysicsGateway
 from app.stream.faction_filter import is_omniscient, is_visible
 from app.stream.publish import publish_event
 
@@ -297,10 +304,23 @@ def post_request(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    gateway: PhysicsGateway = Depends(get_gateway),
 ) -> RequestView:
     part, _ = _require_member(db, session_id, user)
     if part is None:
         raise AuthForbiddenError("全知角色未加入本局，無法以席位身分送出申請")
+    # 臨機火力（WP-C10.1）：**沒有觀測就不能叫火力**（[JCATS-F p.12] 觀測所的角色）。
+    # 擋在送出端而非核覆端：FSO 看到的申請單都該是觀測上成立的，
+    # 不成立的擋在更前面才不會浪費核覆者的注意力。
+    if req.kind is RequestKind.CALL_FOR_FIRE:
+        lat, lng = req.params.get("target_lat"), req.params.get("target_lng")
+        if not isinstance(lat, int | float) or not isinstance(lng, int | float):
+            raise RequestNoObserverError("臨機火力申請須指定目標座標（target_lat/target_lng）")
+        if not has_observer_on(db, session_id, part.faction, (float(lat), float(lng)), gateway):
+            raise RequestNoObserverError(
+                "本陣營無任何單位對該目標有視線——沒有觀測就叫不動火力",
+                details={"target_lat": float(lat), "target_lng": float(lng)},
+            )
     r = submit_request(
         db,
         session_id,
