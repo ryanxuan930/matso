@@ -1,6 +1,6 @@
 ---
 task: WP-B1          # SPEC_V2 §6 WP-B1（演習專案實體與生命週期）
-status: IN_PROGRESS
+status: DONE
 started: 2026-07-31T16:10+08:00
 updated: 2026-07-31T16:10+08:00
 agent: Opus 5
@@ -175,3 +175,42 @@ FirePlanTarget**——這四張在 prisma 裡沒有 FK，所以不會噴錯，�
 （`grant_ledger_readonly.sql`，帳本 append-only 是刻意的防線）。這個限制在既有的
 `delete_session` 就存在；本卡**不繞過它**，真要銷毀帳本得由 DBA 依 runbook 執行。
 dev compose 跑 root 故本機不會踩到——**這代表本機測不出那條路徑**，如實記在這裡。
+
+
+### B1c 完成（lobby 演習分頁）
+
+**新檔**：`platform/app/composables/useExercises.ts`、`platform/app/components/ExercisePanel.vue`。
+
+**推演清單留在預設分頁**。`session-list` / `session-item` / `new-session-name` /
+`create-session` 這四個 testid 被 `auth.spec` 與 `map.spec` 斷言——把既有清單藏到
+非預設分頁後面，那些測試會在**沒改一行測試碼**的情況下轉紅。
+
+**分頁用手工按鈕不用 PrimeVue Tabs**：全 app 唯一的分頁是 `C2Panel.vue` 的同款做法
+（grep 確認 Tabs/TabList/Tab/TabPanels/TabPanel/TabView 一個都沒用過）。
+為兩個分頁引進新的元件家族不划算，視覺上也會與既有面板不一致。
+
+### 順手修掉：`ApiError` 一直把 `details` 丟掉
+
+`toApiError` 只取 `code`/`message`——**契約的 `Error.details` 整個沒有到達前端過**。
+後端一直在 details 裡放結構化資訊（預檢逐項結果、被擋的整備鍵、席位越權原因…）。
+
+`useCopOrdering` 甚至**已經在讀** `err.details.precheck`，讀到的永遠是 undefined——
+所以「下令被拒」的 toast 一直只顯示一行通用訊息，那個為了逐項列出失敗原因寫的分支
+（`lines`）從來沒有執行過。本卡的整備訊息需要 details 才能逐鍵列出，故一併修掉。
+
+修之前：「離開 PREP 前還有 4 項必要整備未完成」（要自己猜是哪四項）
+修之後：「尚有整備未完成：prep_meeting_1、prep_meeting_2、prep_meeting_3、scenario_published」
+
+### 容器實測
+
+`docker compose up -d --build frontend core` 後在真環境走完整流程：
+
+- 四個既有 e2e testid 仍在預設分頁（`session-list` 2 筆）。
+- 建演習 → 階段徽章「整備」、0 局。
+- 未勾整備就推階段 → 逐鍵擋下（上面那條訊息）。
+- 勾完 4 項 → 推到「預推」→ 按「簽證鎖定」→ `params_sealed` **自動打勾**、
+  簽證狀態顯示「✓ 參數與簽證相符」、下一步變成「推進到「正式實施」」。
+- 稽核軌跡依序：建立演習 → 整備勾稽 ×4 → 階段推進（整備→預推）→ 參數簽證。
+- **簽證真的鎖住了活系統**：`POST /equipment-templates` 回
+  `403 PARAMS_SEALED → 參數已於演習「光復演習-B1驗證」簽證鎖定（REHEARSAL）…`
+- 解簽 + 刪演習後武器庫恢復可寫（201）。驗證用的演習與範本**已全部清掉**。

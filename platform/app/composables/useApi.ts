@@ -7,6 +7,15 @@ export interface ApiError {
   status: number
   code: string
   message: string
+  /**
+   * 契約 `Error.details`——**在此之前這一欄整個被丟掉**。
+   *
+   * 後端一直在 details 裡放結構化資訊（預檢逐項結果、被擋下的整備鍵、席位越權原因…），
+   * 而 `toApiError` 只取 code/message，於是那些資訊在前端從來沒有到達過。
+   * `useCopOrdering` 甚至已經在讀 `err.details.precheck`——它讀到的永遠是 undefined，
+   * 所以下令被拒的 toast 一直只顯示一行通用訊息，逐項失敗原因從未出現過。
+   */
+  details?: Record<string, unknown>
 }
 
 interface AuthTokens {
@@ -36,12 +45,17 @@ function apiUrl(path: string): string {
 
 /** 從 $fetch 錯誤萃取契約 Error 格式（{error:{code,message}}）。 */
 function toApiError(err: unknown): ApiError {
-  const e = err as { status?: number; response?: { status?: number }; data?: { error?: { code?: string; message?: string } } }
+  const e = err as {
+    status?: number
+    response?: { status?: number }
+    data?: { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
+  }
   const status = e.status ?? e.response?.status ?? 0
   return {
     status,
     code: e.data?.error?.code ?? 'NETWORK_ERROR',
     message: e.data?.error?.message ?? '無法連線至伺服器',
+    details: e.data?.error?.details,
   }
 }
 

@@ -22,6 +22,10 @@ const canEditScenario = computed(() =>
   ['EXERCISE_DIRECTOR', 'WHITE_CELL_STAFF', 'ADMIN'].includes(auth.user?.role ?? ''),
 )
 const sessions = ref<SessionSummary[]>([])
+// WP-B1c 分頁。**推演清單留在預設分頁**——`session-list` / `session-item` /
+// `new-session-name` / `create-session` 這四個 testid 被 auth.spec 與 map.spec 斷言，
+// 把既有清單藏到非預設分頁後面，那些測試會在沒改一行測試碼的情況下轉紅。
+const tab = ref<'sessions' | 'exercises'>('sessions')
 const newName = ref('')
 const loading = ref(true)
 const creating = ref(false)
@@ -290,6 +294,25 @@ onMounted(async () => {
       </div>
     </header>
 
+    <!-- WP-B1c：演習分頁限白軍/統裁/管理（演習層是導演工具；後端對其他人回 404）。 -->
+    <div v-if="canEditScenario" class="lobby-tabs" data-testid="lobby-tabs">
+      <button
+        :class="{ on: tab === 'sessions' }"
+        data-testid="tab-sessions"
+        @click="tab = 'sessions'"
+      >推演局</button>
+      <button
+        :class="{ on: tab === 'exercises' }"
+        data-testid="tab-exercises"
+        @click="tab = 'exercises'"
+      >演習專案</button>
+    </div>
+
+    <ClientOnly v-if="tab === 'exercises'">
+      <ExercisePanel :sessions="sessions" @changed="refresh" />
+    </ClientOnly>
+
+    <template v-else>
     <section class="create">
       <input v-model="newName" data-testid="new-session-name" placeholder="新推演名稱" @keyup.enter="createSession">
       <button data-testid="create-session" :disabled="creating" @click="createSession">建立推演</button>
@@ -389,6 +412,8 @@ onMounted(async () => {
       </ul>
       <p v-else-if="showHistory" class="hist-empty" data-testid="history-empty">（無封存推演）</p>
     </section>
+
+    </template>
 
     <!-- 參與者名冊——指派帳號↔陣營↔角色（決定操控/查看範圍） -->
     <div v-if="rosterFor" class="modal-overlay" data-testid="roster-modal" @click.self="rosterFor = null">
@@ -617,6 +642,27 @@ ul {
 }
 .session:hover {
   border-color: #2563eb;
+}
+/* WP-B1c 分頁。手工按鈕而非 PrimeVue Tabs：全 app 唯一的分頁是 C2Panel 的同款做法，
+   引進新的元件家族只為兩個分頁不划算，視覺上也會與既有面板不一致。 */
+.lobby-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+.lobby-tabs button {
+  flex: 1;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #334155;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+.lobby-tabs button.on {
+  border-color: #2563eb;
+  background: #1e293b;
+  color: #e2e8f0;
 }
 .name {
   font-weight: 600;
