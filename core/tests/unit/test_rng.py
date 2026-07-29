@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.engine.rng import DeterministicRNG
@@ -89,3 +91,71 @@ def test_negative_master_seed_supported() -> None:
     a = DeterministicRNG(master_seed=-42, stream_id="test")
     b = DeterministicRNG(master_seed=-42, stream_id="test")
     assert _draw(a) == _draw(b)
+
+
+# --- WP-E1：狀態序列化（崩潰復原用）---
+
+
+def test_get_set_state_resumes_mid_stream() -> None:
+    # 崩潰復原的核心保證：從快照續跑 == 沒崩潰過
+    rng = DeterministicRNG(master_seed=7, stream_id="adjudication")
+    _draw(rng, 13)
+    snapshot = rng.get_state()
+    expected = _draw(rng, 20)
+
+    restored = DeterministicRNG(master_seed=7, stream_id="adjudication")
+    restored.set_state(snapshot)
+    assert _draw(restored, 20) == expected
+
+
+def test_restored_rng_diverges_from_fresh_one() -> None:
+    # 反證：不還原狀態就重啟 → 重播同一段序列（這正是 WP-E1 前的活局行為）
+    rng = DeterministicRNG(master_seed=7, stream_id="adjudication")
+    _draw(rng, 13)
+    fresh = DeterministicRNG(master_seed=7, stream_id="adjudication")
+    assert _draw(fresh, 20) != _draw(rng, 20)
+
+
+def test_state_survives_canonical_json_roundtrip() -> None:
+    # checkpoint 走 canonical_json → zstd；PCG64 的 state/inc 是 128-bit 整數，
+    # 若哪天序列化改走會失精度的路徑（JS Number / DB JSON 欄），這條會先紅。
+    from app.state.ledger import canonical_json
+
+    rng = DeterministicRNG(master_seed=7, stream_id="movement")
+    rng.choice([1, 2, 3])  # 走 32-bit 路徑 → 留下 has_uint32 快取
+    snapshot = json.loads(canonical_json(rng.get_state()))
+    expected = _draw(rng, 20)
+
+    restored = DeterministicRNG(master_seed=7, stream_id="movement")
+    restored.set_state(snapshot)
+    assert _draw(restored, 20) == expected
+
+
+def test_get_state_returns_a_copy_not_a_live_reference() -> None:
+    rng = DeterministicRNG(master_seed=7, stream_id="sensors")
+    snapshot = rng.get_state()
+    before = json.dumps(snapshot, sort_keys=True)
+    _draw(rng, 50)
+    assert json.dumps(snapshot, sort_keys=True) == before
+
+
+def test_set_state_rejects_foreign_stream() -> None:
+    # 靜默失效防線：把 movement 的狀態灌進 adjudication，numpy 會照收
+    other = DeterministicRNG(master_seed=7, stream_id="movement")
+    rng = DeterministicRNG(master_seed=7, stream_id="adjudication")
+    with pytest.raises(ValueError, match="stream 不符"):
+        rng.set_state(other.get_state())
+
+
+def test_set_state_rejects_wrong_bit_generator() -> None:
+    rng = DeterministicRNG(master_seed=7, stream_id="adjudication")
+    bad = rng.get_state()
+    bad["numpy"]["bit_generator"] = "MT19937"
+    with pytest.raises(ValueError, match="bit generator"):
+        rng.set_state(bad)
+
+
+def test_set_state_rejects_missing_numpy_section() -> None:
+    rng = DeterministicRNG(master_seed=7, stream_id="adjudication")
+    with pytest.raises(ValueError, match="numpy"):
+        rng.set_state({"stream_id": "adjudication"})

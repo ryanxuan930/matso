@@ -10,15 +10,18 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 T = TypeVar("T")
+
+_BIT_GENERATOR = "PCG64"
 
 
 def _derive_seed(master_seed: int, stream_id: str) -> int:
@@ -48,6 +51,46 @@ class DeterministicRNG:
     @property
     def stream_id(self) -> str:
         return self._stream_id
+
+    def get_state(self) -> dict[str, Any]:
+        """回傳可序列化的產生器狀態快照（WP-E1；checkpoint 用）。
+
+        `numpy` 區段即 `bit_generator.state`——全為 Python `str`/`int`（含兩個 128-bit 整數），
+        經 canonical JSON 往返無損（有測試釘住）。`has_uint32`/`uinteger` 是 numpy 的半顆
+        32-bit 快取，**必須一併保存**：漏了它，復原後第一次 `choice()`（走 32-bit 路徑）
+        就會與崩潰前分歧。
+
+        回傳的是深拷貝——不可讓呼叫端拿到內部參照，否則後續抽樣會就地改寫「快照」。
+        `stream_id` 一併帶出供 `set_state` 驗身分（見該方法）。
+        """
+        return {
+            "stream_id": self._stream_id,
+            "numpy": copy.deepcopy(self._gen.bit_generator.state),
+        }
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        """由 `get_state()` 的快照還原產生器（WP-E1；崩潰復原用）。
+
+        **只還原位置、不重建產生器**——`master_seed`/`stream_id` 不變。
+
+        兩道驗身分：stream 不符或 bit generator 型別不符一律拒絕。把 movement 的狀態
+        灌進 adjudication 的產生器不會報錯（numpy 照收），但整局的隨機序列就此偏離
+        「同種子同結果」的保證，而且**沒有任何症狀**——這種靜默失效必須在入口擋掉。
+        """
+        stream = state.get("stream_id")
+        if stream is not None and stream != self._stream_id:
+            raise ValueError(
+                f"RNG 狀態 stream 不符：快照為 {stream!r}，本產生器為 {self._stream_id!r}"
+            )
+        numpy_state = state.get("numpy")
+        if not isinstance(numpy_state, dict):
+            raise ValueError("RNG 狀態缺少 numpy 區段")
+        if numpy_state.get("bit_generator") != _BIT_GENERATOR:
+            raise ValueError(
+                f"RNG 狀態的 bit generator 為 {numpy_state.get('bit_generator')!r}，"
+                f"本實作為 {_BIT_GENERATOR}"
+            )
+        self._gen.bit_generator.state = copy.deepcopy(numpy_state)
 
     def random(self) -> float:
         """回傳 [0.0, 1.0) 的均勻亂數。"""
