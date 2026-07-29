@@ -112,6 +112,7 @@ components:
                 - EXERCISE_PHASE_INVALID
                 - EXERCISE_CHECKLIST_INCOMPLETE
                 - EXERCISE_SESSION_CONFLICT
+                - EXERCISE_DESTROY_UNCONFIRMED
             message: { type: string }
             details: { type: object }
     UserRole:
@@ -300,6 +301,25 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/SessionRole" }
             - { type: "null" }
+    DestroyExerciseDataRequest:
+      type: object
+      description: >-
+        銷毀模式（[JCATS-A p.16] 資安要求）。`confirm_name` **必須與演習名稱逐字相符**——
+        二次確認若只是「再按一次是」，那不是確認、是多按一次。
+      required: [confirm_name]
+      properties:
+        confirm_name: { type: string }
+    DestroyResult:
+      type: object
+      description: 銷毀結果摘要（同時寫入稽核軌跡）
+      required: [sessions_destroyed]
+      properties:
+        sessions_destroyed: { type: integer }
+        rows_deleted:
+          type: object
+          additionalProperties: { type: integer }
+          description: 各表刪除筆數
+        redis_keys_deleted: { type: integer, description: 清掉的 Redis 活狀態鍵數 }
     ExerciseAuditEntry:
       type: object
       description: >-
@@ -1298,6 +1318,59 @@ paths:
               schema: { $ref: "#/components/schemas/ExerciseView" }
         "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/bundle:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getExerciseBundle
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: >-
+        撤收建檔（WP-B1）：整場演習的歸檔封包——帳本**原樣**（不做 ADR 007 邏輯截斷，
+        故 `verify_chain` 驗得過）+ AAR 統計 + 想定包 + 稽核軌跡，單一 JSON 信封。
+        **封包是 ground truth**（不套陣營投影）故限全知；匯出本身也留痕。
+      responses:
+        "200":
+          description: Archive bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                description: 歸檔封包（`content_hash` 為除自己以外全部內容的 canonical JSON sha256）
+        "403": { description: Not white cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /exercises/{exercise_id}/destroy:
+    parameters:
+      - name: exercise_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: destroyExerciseData
+      security: [{ bearerAuth: [] }]
+      tags: [exercises]
+      description: >-
+        銷毀模式：硬刪本演習所有 session 的資料（DB 列 + Redis 活狀態）。
+        **限 ADMIN**（不是 `is_omniscient`——那包含每一位白軍幕僚）、
+        **須已 ARCHIVED**、且 `confirm_name` 逐字相符。
+        演習專案與稽核軌跡**留下來**：「這場演習存在過、被誰在何時銷毀」正是稽核要保留的。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DestroyExerciseDataRequest" }
+      responses:
+        "200":
+          description: Destroyed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DestroyResult" }
+        "403": { description: Not admin / not archived, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Confirmation name mismatch, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /exercises/{exercise_id}/audit:
     parameters:
       - name: exercise_id

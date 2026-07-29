@@ -222,6 +222,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/exercises/{exercise_id}/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description 撤收建檔（WP-B1）：整場演習的歸檔封包——帳本**原樣**（不做 ADR 007 邏輯截斷， 故 `verify_chain` 驗得過）+ AAR 統計 + 想定包 + 稽核軌跡，單一 JSON 信封。 **封包是 ground truth**（不套陣營投影）故限全知；匯出本身也留痕。 */
+        get: operations["getExerciseBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exercises/{exercise_id}/destroy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 銷毀模式：硬刪本演習所有 session 的資料（DB 列 + Redis 活狀態）。 **限 ADMIN**（不是 `is_omniscient`——那包含每一位白軍幕僚）、 **須已 ARCHIVED**、且 `confirm_name` 逐字相符。 演習專案與稽核軌跡**留下來**：「這場演習存在過、被誰在何時銷毀」正是稽核要保留的。 */
+        post: operations["destroyExerciseData"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/exercises/{exercise_id}/audit": {
         parameters: {
             query?: never;
@@ -1137,7 +1175,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_FIRE_APPROVAL_REQUIRED" | "REQUEST_NO_OBSERVER" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND" | "EXERCISE_NOT_FOUND" | "EXERCISE_PHASE_INVALID" | "EXERCISE_CHECKLIST_INCOMPLETE" | "EXERCISE_SESSION_CONFLICT";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_FIRE_APPROVAL_REQUIRED" | "REQUEST_NO_OBSERVER" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND" | "EXERCISE_NOT_FOUND" | "EXERCISE_PHASE_INVALID" | "EXERCISE_CHECKLIST_INCOMPLETE" | "EXERCISE_SESSION_CONFLICT" | "EXERCISE_DESTROY_UNCONFIRMED";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -1288,6 +1326,20 @@ export interface components {
         AttachSessionRequest: {
             session_id: string;
             session_role?: components["schemas"]["SessionRole"] | null;
+        };
+        /** @description 銷毀模式（[JCATS-A p.16] 資安要求）。`confirm_name` **必須與演習名稱逐字相符**—— 二次確認若只是「再按一次是」，那不是確認、是多按一次。 */
+        DestroyExerciseDataRequest: {
+            confirm_name: string;
+        };
+        /** @description 銷毀結果摘要（同時寫入稽核軌跡） */
+        DestroyResult: {
+            sessions_destroyed: number;
+            /** @description 各表刪除筆數 */
+            rows_deleted?: {
+                [key: string]: number;
+            };
+            /** @description 清掉的 Redis 活狀態鍵數 */
+            redis_keys_deleted?: number;
         };
         /** @description 演習稽核軌跡（WP-B1）。**刻意不寫 TacticalEventLog**：那是 golden 會驗的雜湊鏈， 而階段推進是牆鐘的、人為的、局外的事件——寫進鏈裡會擾動決定性重播。 */
         ExerciseAuditEntry: {
@@ -2551,6 +2603,99 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getExerciseBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archive bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Not white cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    destroyExerciseData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exercise_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DestroyExerciseDataRequest"];
+            };
+        };
+        responses: {
+            /** @description Destroyed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestroyResult"];
+                };
+            };
+            /** @description Not admin / not archived */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Confirmation name mismatch */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

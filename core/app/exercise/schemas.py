@@ -70,3 +70,15 @@ class ExerciseAuditEntry(BaseModel):
     from_phase: ExercisePhase | None = None
     to_phase: ExercisePhase | None = None
     detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class DestroyExerciseDataRequest(BaseModel):
+    """銷毀確認。`confirm_name` 必須與演習名稱**逐字相符**。"""
+
+    confirm_name: str = Field(min_length=1)
+
+
+class DestroyResult(BaseModel):
+    sessions_destroyed: int
+    rows_deleted: dict[str, int] = Field(default_factory=dict)
+    redis_keys_deleted: int = 0

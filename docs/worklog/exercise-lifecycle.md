@@ -119,3 +119,59 @@ WP-B4（參數簽證）另開卡，接在 B1a 的階段機上。
 - **掛 session 用既有的局，不用 `clone_session`**。那條路徑會掉七個想定衍生欄，
   預推局會沒有 MSEL、沒有 ROE、沒有禁射區地跑（記入 Backlog）。
 - **階段不可倒退**。WP-B4 的簽證與稽核軌跡的意義都來自單調；要重來就開新演習。
+
+
+### B1b 完成（撤收建檔 + 銷毀模式）
+
+**新檔**：`core/app/exercise/archive.py`（歸檔封包）、`core/app/lobby/purge.py`（資料清除）。
+**新端點**：`GET /exercises/{id}/bundle`、`POST /exercises/{id}/destroy`。
+**測試**：`test_exercise_archive.py`（10）。
+
+#### 單一 JSON 信封，不做 zip
+
+repo 裡**完全沒有任何 zip/stream/attachment 機制**（`zipfile`/`tarfile`/`gzip`/
+`StreamingResponse`/`FileResponse`/`Content-Disposition` 在 core 與 ops 底下一個都搜不到），
+而前端唯一的下載路徑 `useAar.ts::aarExportDownload` 走 `apiFetch`——**它會 parse body**，
+拿二進位直接壞。為一張卡引進整套二進位下載管線，代價遠大於它買到的東西。
+
+#### 帳本要「原樣」，AAR 要「投影」——不可混用
+
+- 歸檔的帳本用 `TacticalEventLog` 依 seq 的原樣。用 `aar/events.read_events` 會少掉
+  被回滾棄置的世代（ADR 007 邏輯截斷），於是產出一條 **`verify_chain` 必定拒絕**的鏈
+  ——歸檔出一份驗不過的證據是最糟的結果。鏈驗結果**一起寫進封包**：
+  事後有人問「這份資料可信嗎」，答案要在封包裡，不是要對方自己再跑一次工具。
+- AAR 統計用 `read_events` 的投影：那才是「實際發生過什麼」的時間軸。
+
+#### 匯出原本會改變自己的雜湊
+
+`content_hash` 要能當「歸檔後有沒有被動過」的比對基準。但匯出會寫一筆
+`BUNDLE_EXPORTED` 稽核，而稽核軌跡也在封包裡——**每匯出一次，下一次的雜湊就變一次**，
+於是雜湊失去它存在的唯一理由。**是測試逼出來的**（`test_bundle_hash_is_stable_across_calls`）。
+修法：匯出紀錄不進封包。封包記錄的是「這場演習怎麼進行的」；
+「誰在什麼時候把資料帶走」屬存取紀錄，留在 `/audit`（那份不會被帶走）。
+
+#### 銷毀模式的三道閘門
+
+1. **限 ADMIN**——`is_omniscient` 包含每一位白軍幕僚，用它等於把不可逆的銷毀
+   開放給整個統裁組。這是 repo 裡第一個嚴格 ADMIN 閘門。
+2. **必須已 ARCHIVED**——要求先走完階段機，就保證了「該匯出的有機會匯出」。
+3. **`confirm_name` 逐字相符**——二次確認若只是「再按一次是」，那不是確認、是多按一次。
+
+演習專案與稽核軌跡**留下來**：「這場演習存在過、被誰在何時銷毀」正是稽核要保留的東西。
+
+#### 修掉的既有 bug：刪除推演會留下孤兒
+
+`delete_session` 的刪除清單是手寫的，而它已經漏了 **Message / Request / FirePlan /
+FirePlanTarget**——這四張在 prisma 裡沒有 FK，所以不會噴錯，列就這樣**永遠孤兒化**。
+對「刪除推演」而言那是遺漏；對銷毀模式而言，那是**資料殘留**。
+另外 `delete_session` **完全不清 Redis**（整局活狀態都在 `session:{id}:*`）。
+
+改成由 SQLAlchemy 的 **mapper registry** 自省導出。
+⚠ 第一版寫的是 `app.models.__all__`——而 `Message`/`Request` **根本不在 `__all__` 裡**，
+那份「自省」會漏掉的剛好就是要修的那幾張。**自省若建在另一份手寫清單上，
+它只是把手寫清單換了個地方藏。**（順手把兩個模型補進 `__all__`。）
+
+⚠ **已知界線**：正式部署的應用帳號對 `TacticalEventLog` 沒有 DELETE 權
+（`grant_ledger_readonly.sql`，帳本 append-only 是刻意的防線）。這個限制在既有的
+`delete_session` 就存在；本卡**不繞過它**，真要銷毀帳本得由 DBA 依 runbook 執行。
+dev compose 跑 root 故本機不會踩到——**這代表本機測不出那條路徑**，如實記在這裡。

@@ -257,3 +257,13 @@ class ExerciseSessionConflictError(MatsoError):
 
     error_code = "EXERCISE_SESSION_CONFLICT"
     http_status = 409
+
+
+class ExerciseDestroyConfirmError(MatsoError):
+    """銷毀確認名稱不符。
+
+    二次確認若只是「再按一次是」，那不是確認、是多按一次——故要求逐字打出演習名稱。
+    """
+
+    error_code = "EXERCISE_DESTROY_UNCONFIRMED"
+    http_status = 409

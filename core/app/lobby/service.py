@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.schemas import CurrentUser
 from app.factions import WHITE_CELL
+from app.lobby.purge import purge_session_rows
 from app.lobby.schemas import (
     CloneSessionRequest,
     CreateSessionRequest,
@@ -428,35 +429,8 @@ class LobbyService:
         直接刪 session 會觸發 FK 違反 → 500。故此依 FK 安全順序先清子表再刪 session；
         EquipmentInstance / 單位階層由 TacticalUnit 的 ondelete=CASCADE 一併帶走。
         """
-        from sqlalchemy import delete as sa_delete
-
-        from app.models import (
-            AARReport,
-            AIInvocationLog,
-            IntelContact,
-            MapFeature,
-            Order,
-            SessionParticipant,
-            SimCheckpoint,
-            TacticalEventLog,
-            TacticalUnit,
-        )
-
-        session = self._require_director(user, session_id)
-        # 先清 referencing units 的表（Order/IntelContact），再清單位，最後刪 session。
-        for model in (
-            AARReport,
-            AIInvocationLog,
-            SimCheckpoint,
-            IntelContact,
-            Order,
-            TacticalEventLog,
-            SessionParticipant,
-            MapFeature,
-            TacticalUnit,
-        ):
-            self._db.execute(sa_delete(model).where(model.session_id == session_id))
-        self._db.delete(session)
+        self._require_director(user, session_id)
+        purge_session_rows(self._db, session_id)
         self._db.commit()
 
 

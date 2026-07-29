@@ -16,6 +16,7 @@ ADMIN 是系統管理而非統裁（`stream/faction_filter` 的既有裁示）�
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 from typing import Any
 
@@ -26,10 +27,12 @@ from app.auth.schemas import CurrentUser
 from app.errors import (
     AuthForbiddenError,
     ExerciseChecklistIncompleteError,
+    ExerciseDestroyConfirmError,
     ExerciseNotFoundError,
     ExercisePhaseInvalidError,
     ExerciseSessionConflictError,
 )
+from app.exercise.archive import ACTION_BUNDLE_EXPORTED, build_bundle
 from app.exercise.phases import default_checklist, is_valid_transition, missing_required
 from app.exercise.schemas import (
     AdvancePhaseRequest,
@@ -40,7 +43,8 @@ from app.exercise.schemas import (
     ExerciseSessionRef,
     ExerciseView,
 )
-from app.models import Exercise, ExerciseAuditLog, ExercisePhase, WargameSession
+from app.lobby.purge import purge_session_redis, purge_session_rows
+from app.models import Exercise, ExerciseAuditLog, ExercisePhase, UserRole, WargameSession
 from app.stream.faction_filter import is_omniscient, is_white_cell
 
 # 稽核 action 常數——字串散在各處會拼錯，而稽核軌跡拼錯了沒有人會發現。
@@ -49,6 +53,7 @@ ACTION_PHASE_ADVANCED = "PHASE_ADVANCED"
 ACTION_CHECKLIST_TICKED = "CHECKLIST_TICKED"
 ACTION_SESSION_ATTACHED = "SESSION_ATTACHED"
 ACTION_SESSION_DETACHED = "SESSION_DETACHED"
+ACTION_DESTROYED = "DATA_DESTROYED"
 
 
 def _now() -> _dt.datetime:
@@ -227,6 +232,77 @@ class ExerciseService:
         )
         self._db.commit()
         return self._view(exercise)
+
+    # ---- 撤收建檔與銷毀（WP-B1b）----
+
+    def build_archive_bundle(self, user: CurrentUser, exercise_id: str) -> dict[str, Any]:
+        """撤收建檔：整場演習的歸檔封包（帳本原樣 + AAR 統計 + 想定包 + 稽核軌跡）。
+
+        **封包是 ground truth**（不套陣營投影），故限全知。匯出本身也留痕——
+        「誰在什麼時候把整場演習的完整資料帶走了」是資安要問的第一個問題。
+        """
+        self._require_view(user)
+        exercise = self._get(exercise_id)
+        bundle = build_bundle(self._db, exercise)
+        self._audit(
+            exercise_id,
+            user.id,
+            ACTION_BUNDLE_EXPORTED,
+            detail={
+                "content_hash": bundle["content_hash"],
+                "sessions": len(bundle["sessions"]),
+            },
+        )
+        self._db.commit()
+        return bundle
+
+    def destroy_data(
+        self, user: CurrentUser, exercise_id: str, confirm_name: str, redis_url: str
+    ) -> dict[str, Any]:
+        """銷毀模式（[JCATS-A p.16] 的資安要求）：硬刪本演習所有 session 的資料。
+
+        三道閘門，每一道都擋掉一種真實的誤操作：
+
+        1. **限 ADMIN**。`is_omniscient` 包含每一位白軍幕僚——用它等於把不可逆的銷毀
+           開放給整個統裁組。這是 repo 裡第一個嚴格 ADMIN 閘門（既有的三份角色集都不是）。
+        2. **必須已經 ARCHIVED**。還在跑的演習不會有人想銷毀資料；反過來說，
+           要求先走完階段機，就保證了「該匯出的已經匯出」有機會發生。
+        3. **`confirm_name` 必須與演習名稱逐字相符**。二次確認若只是「再按一次是」，
+           那不是確認，是多按一次。
+
+        **演習專案本身留下來**（連同稽核軌跡）——銷毀的是推演資料，
+        而「這場演習存在過、在什麼時候被誰銷毀」正是稽核要保留的東西。
+        """
+        if user.role is not UserRole.ADMIN:
+            raise AuthForbiddenError("銷毀推演資料限系統管理員（ADMIN）")
+        exercise = self._get(exercise_id)
+        if exercise.phase is not ExercisePhase.ARCHIVED:
+            raise ExercisePhaseInvalidError(
+                "只有已撤收（ARCHIVED）的演習可以銷毀資料",
+                details={"phase": exercise.phase.value},
+            )
+        if confirm_name != exercise.name:
+            raise ExerciseDestroyConfirmError(
+                "確認名稱與演習名稱不符", details={"expected": exercise.name}
+            )
+        sessions = self._sessions_of(exercise_id)
+        rows: dict[str, int] = {}
+        redis_keys = 0
+        for session in sessions:
+            for table, n in purge_session_rows(self._db, session.id).items():
+                rows[table] = rows.get(table, 0) + n
+            with contextlib.suppress(Exception):
+                # Redis 連不上不該讓 DB 那半邊回滾——**DB 才是真相**，
+                # 而殘留的 Redis 鍵沒有 session 可依附，下一次 runner 掃描就不會碰它們。
+                redis_keys += purge_session_redis(redis_url, session.id)
+        summary = {
+            "sessions_destroyed": len(sessions),
+            "rows_deleted": rows,
+            "redis_keys_deleted": redis_keys,
+        }
+        self._audit(exercise_id, user.id, ACTION_DESTROYED, detail=summary)
+        self._db.commit()
+        return summary
 
     # ---- 供 WP-B4 的程式端掛點 ----
 

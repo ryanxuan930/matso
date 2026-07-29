@@ -6,16 +6,21 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_settings
 from app.auth.schemas import CurrentUser
+from app.config import Settings
 from app.exercise.schemas import (
     AdvancePhaseRequest,
     AttachSessionRequest,
     ChecklistTickRequest,
     CreateExerciseRequest,
+    DestroyExerciseDataRequest,
+    DestroyResult,
     ExerciseAuditEntry,
     ExerciseView,
 )
@@ -118,3 +123,27 @@ def get_exercise_audit(
     svc: ExerciseService = Depends(get_exercise_service),
 ) -> list[ExerciseAuditEntry]:
     return svc.get_audit(user, exercise_id)
+
+
+@router.get("/{exercise_id}/bundle")
+def get_exercise_bundle(
+    exercise_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    svc: ExerciseService = Depends(get_exercise_service),
+) -> dict[str, Any]:
+    """撤收建檔：整場演習的歸檔封包（單一 JSON 信封）。"""
+    return svc.build_archive_bundle(user, exercise_id)
+
+
+@router.post("/{exercise_id}/destroy", response_model=DestroyResult)
+def destroy_exercise_data(
+    exercise_id: str,
+    req: DestroyExerciseDataRequest,
+    user: CurrentUser = Depends(get_current_user),
+    svc: ExerciseService = Depends(get_exercise_service),
+    settings: Settings = Depends(get_settings),
+) -> DestroyResult:
+    """銷毀模式：硬刪本演習所有 session 的資料。限 ADMIN + 已 ARCHIVED + 名稱逐字確認。"""
+    return DestroyResult(
+        **svc.destroy_data(user, exercise_id, req.confirm_name, settings.redis_url)
+    )
