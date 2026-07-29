@@ -86,43 +86,43 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 嚴重度：★★★＝擋住系統定位升級（引擎→演習/分析系統）；★★＝顯著保真/能力缺口；★＝完善項。
 「現況」欄引用 README 對應章節的盤點事實。
 
-| # | 差距 | 文獻依據 | 現況 | 嚴重度 | WP |
-|---|------|----------|------|--------|-----|
-| 1 | AI 敵情用 ground truth，迷霧對 AI 不成立 | —（內部盤點；[IST160 p.6] 分層 AI 原則） | `ai_loop/worker.py` 的 `enemy_visibility` 預設 `ground_truth_enemies`；IntelService 已上線未接 | ★★★ | A1 |
-| 2 | 只有低階令（MOVE/ENGAGE/RESUPPLY），無任務級下令與準則分解 | [IST160 p.4–5]（Attack 任務自動展開）；[JCATS-F p.12–13] | orders 僅三型＋fire_policy；AI 逐令微操 | ★★★ | A2 |
-| 3 | G4 no-strike 形同空轉（欄位不匹配＋無資料源） | —（內部盤點） | G4 只認 `target_h3`，AI 令帶 `target_lat/lng`；`no_strike_hexes` 恆空 | ★★★ | A3 |
-| 4 | MSEL 排程執行引擎缺位 | [JTLS-F p.1053,1059]；[JCATS-A p.14–15] | `TriggerChecker` NoOp；inject 無世界效果；DSL 無時間/持續條件 | ★★★ | B2 |
-| 5 | 無演習生命週期管理（整備→實施→撤收） | [JCATS-A p.9–16 圖7] | 無演習專案實體；session 即全部 | ★★ | B1 |
-| 6 | 無想定文書層（一般/特別狀況、訓令、反想定） | [JCATS-A p.10–11,16–21] | 想定=資料 JSON；無敘事文件與發佈節奏 | ★★ | B3 |
-| 7 | 無參數凍結/簽證治理 | [JCATS-A p.14,25–26] | 裝備庫/參數隨時可改；演習公正性與重播性無保障 | ★★ | B4 |
-| 8 | 無申請-核覆工作流（空偵/火協/申補） | [JCATS-A p.13,15,26]；[JCATS-F p.12–14] | 下令即時生效，無異步審批鏈 | ★★ | B5 |
-| 9 | 壓制/姿態係數恆 1.0；無隊形；無乘駐車 | [JCATS-A p.7,12,25,26] | `EnvSnapshot` 兩係數無來源；TacticalUnit 無 posture/formation/mounted | ★★★ | C1/C3 |
-| 10 | 無障礙工事/工兵裁決（雷區/斷橋/鐵絲網） | [JCATS-A p.5–6,12]；[JTLS-F p.1058] | MapFeature OBSTACLE 只是圖形，不參與裁決 | ★★★ | C2 |
-| 11 | 天氣單快照；無晝夜/照明；無煙幕 | [JCATS-A p.7,19] | weather 啟動讀一次；SimClock 有時刻但不影響偵測 | ★★ | C4 |
-| 12 | comms 粒度後果未接投影（位置凍結/敵情粗化） | —（內部盤點；SPEC_FULL §6.2 MUST） | `intel_granularity`/`position_report_*` 已定義無消費者 | ★★ | C5 |
-| 13 | 多方混戰未接線；聚合門檻寫死；#48 未做 | —（內部盤點） | `resolve_multiway_tick` 已實作未用；threshold 忽略想定欄位 | ★★ | C6 |
-| 14 | 後勤只有油料；無 Class 體系/彈藥人員裝備補充/修復 | [JTLS-F p.1058]；[JCATS-A p.26–27] | `ResupplySystem` 撥交油料+彈藥；無再訂購水位、無修復、無整補時間 | ★★★ | C7 |
-| 15 | 無 MRM（聚合↔實體解聚合） | [JTLS-F p.1056–1058]；[IST160 p.4] | 兩種裁決並存但單位粒度固定 | ★★ | C8 |
-| 16 | 友軍誤傷語意：關係矩陣「阻止」而非「照裁」 | [JCATS-A p.5–6] | precheck 擋友軍目標；成熟系統語意是命令照執行後果照裁 | ★ | C9 |
-| 17 | 無計畫火力/call-for-fire 鏈/BDA 回報 | [JCATS-F p.12–13]；[JCATS-A p.24,26] | 砲兵是即時 ENGAGE 一種 | ★★ | C10 |
-| 18 | 無蒙地卡羅批次/參數掃描 | [INDSR] 全書方法論（30–50 次/組） | 一次一局；決定性引擎已是完美地基 | ★★★ | D1 |
-| 19 | 無 MOE 框架/成本效益指標 | [INDSR p.19–20]（MER/DR/KR、hit/kill/destroy） | 勝負 DSL 只裁勝負；AAR 統計初階 | ★★★ | D2 |
-| 20 | 無態勢分析圖層/自動戰術線 | [IST160 p.15–17,20] | 單一單位 viewshed/射界有；聯集與戰力比分區無 | ★★ | D3 |
-| 21 | 無 what-if 分支推演 | [IST160 p.19] | 只能整局重跑；clone+決定性引擎地基已備 | ★★★ | D4 |
-| 22 | 可行性檢查缺時間維度；無補給支撐時間分析 | [IST160 p.14,18,21] | precheck 只判「打得到/走得到」，不判「趕得及/撐多久」 | ★★ | D5 |
-| 23 | AAR 無地圖重播；統計有帳目瑕疵；無匯出管線 | [INDSR p.43–46,57–59]；README §5 盤點 | `scrubTick` 不驅動視覺；聚合戰損歸帳單側；無 CSV/批次匯出 | ★★ | D6 |
-| 24 | 無情境化警告/報告分級 | [IST160 p.14,21] | 事件流平鋪，指揮官自行掃 | ★ | D7 |
-| 25 | 活 session 無 checkpoint/前滾 | —（內部盤點；SPEC_FULL §3.4） | `sim_runtime` 未傳 checkpointer；RNG 狀態不序列化 | ★★ | E1 |
-| 26 | refresh token 無撤銷/無帳號鎖定 | —（內部盤點） | logout no-op；無 brute-force 防護 | ★★ | E2 |
-| 27 | RESYNC 契約半套（無 /state 快照端點） | —（內部盤點） | 前端收到後丟棄結果、靠週期重抓兜底 | ★ | E3 |
-| 28 | 監控空殼 | —（內部盤點） | prometheus/grafana 目錄只有 .gitkeep | ★★ | E4 |
-| 29 | 無負載測試/LOD 降載 | [JCATS-A p.12]（飽和測試×2） | 無工具鏈；TickPacer 只會全域降頻 | ★ | E5 |
-| 30 | RAG 嵌入器佔位、語料近空、SPEC_INGEST 未實作 | SPEC_INGEST 全份；README §10 | hash 嵌入器；語料 1 份合成檔；eval 3 例 | ★★★ | F1/F2 |
-| 31 | RoleManager/InvocationLog 未接活執行期 | README §10 | LlmFactionDecider 直連 client；活期無 AI 稽核記錄 | ★★ | F3 |
-| 32 | 訓後評量（training audience）缺位 | [JCATS-A p.15]；[JTLS-F p.1052–1053] | AAR 不評受訓者；評估點無法預埋想定 | ★★★ | F5 |
-| 33 | cop.vue 4311 行單體等前端債 | README §8 | 詳見 §WP-G 清單 | ★★ | G1–G6 |
-| 34 | 無多站演習/DIS-HLA 互通 | [MASA-MS]；[JTLS-F p.1054–1056]；[JCATS-F p.6–7,17] | 單站部署；無狀態複製層 | ★★ | H1–H3 |
-| 35 | 無民事/CBRN/災防想定能力 | [JTLS-F p.1058–1059]；[INDSR p.37–40] | 引擎綁陸戰交戰 | ★ | H4（遠期） |
+| # | 差距 | 文獻依據 | 現況 | 嚴重度 | WP | 狀態 |
+|---|------|----------|------|--------|-----|------|
+| 1 | AI 敵情用 ground truth，迷霧對 AI 不成立 | —（內部盤點；[IST160 p.6] 分層 AI 原則） | `ai_loop/worker.py` 的 `enemy_visibility` 預設 `ground_truth_enemies`；IntelService 已上線未接 | ★★★ | A1 | ✅ 2026-07-29 |
+| 2 | 只有低階令（MOVE/ENGAGE/RESUPPLY），無任務級下令與準則分解 | [IST160 p.4–5]（Attack 任務自動展開）；[JCATS-F p.12–13] | orders 僅三型＋fire_policy；AI 逐令微操 | ★★★ | A2 |  |
+| 3 | G4 no-strike 形同空轉（欄位不匹配＋無資料源） | —（內部盤點） | G4 只認 `target_h3`，AI 令帶 `target_lat/lng`；`no_strike_hexes` 恆空 | ★★★ | A3 | ✅ 2026-07-29 |
+| 4 | MSEL 排程執行引擎缺位 | [JTLS-F p.1053,1059]；[JCATS-A p.14–15] | `TriggerChecker` NoOp；inject 無世界效果；DSL 無時間/持續條件 | ★★★ | B2 |  |
+| 5 | 無演習生命週期管理（整備→實施→撤收） | [JCATS-A p.9–16 圖7] | 無演習專案實體；session 即全部 | ★★ | B1 |  |
+| 6 | 無想定文書層（一般/特別狀況、訓令、反想定） | [JCATS-A p.10–11,16–21] | 想定=資料 JSON；無敘事文件與發佈節奏 | ★★ | B3 |  |
+| 7 | 無參數凍結/簽證治理 | [JCATS-A p.14,25–26] | 裝備庫/參數隨時可改；演習公正性與重播性無保障 | ★★ | B4 |  |
+| 8 | 無申請-核覆工作流（空偵/火協/申補） | [JCATS-A p.13,15,26]；[JCATS-F p.12–14] | 下令即時生效，無異步審批鏈 | ★★ | B5 |  |
+| 9 | 壓制/姿態係數恆 1.0；無隊形；無乘駐車 | [JCATS-A p.7,12,25,26] | `EnvSnapshot` 兩係數無來源；TacticalUnit 無 posture/formation/mounted | ★★★ | C1/C3 |  |
+| 10 | 無障礙工事/工兵裁決（雷區/斷橋/鐵絲網） | [JCATS-A p.5–6,12]；[JTLS-F p.1058] | MapFeature OBSTACLE 只是圖形，不參與裁決 | ★★★ | C2 |  |
+| 11 | 天氣單快照；無晝夜/照明；無煙幕 | [JCATS-A p.7,19] | weather 啟動讀一次；SimClock 有時刻但不影響偵測 | ★★ | C4 |  |
+| 12 | comms 粒度後果未接投影（位置凍結/敵情粗化） | —（內部盤點；SPEC_FULL §6.2 MUST） | `intel_granularity`/`position_report_*` 已定義無消費者 | ★★ | C5 |  |
+| 13 | 多方混戰未接線；聚合門檻寫死；#48 未做 | —（內部盤點） | `resolve_multiway_tick` 已實作未用；threshold 忽略想定欄位 | ★★ | C6 |  |
+| 14 | 後勤只有油料；無 Class 體系/彈藥人員裝備補充/修復 | [JTLS-F p.1058]；[JCATS-A p.26–27] | `ResupplySystem` 撥交油料+彈藥；無再訂購水位、無修復、無整補時間 | ★★★ | C7 |  |
+| 15 | 無 MRM（聚合↔實體解聚合） | [JTLS-F p.1056–1058]；[IST160 p.4] | 兩種裁決並存但單位粒度固定 | ★★ | C8 |  |
+| 16 | 友軍誤傷語意：關係矩陣「阻止」而非「照裁」 | [JCATS-A p.5–6] | precheck 擋友軍目標；成熟系統語意是命令照執行後果照裁 | ★ | C9 |  |
+| 17 | 無計畫火力/call-for-fire 鏈/BDA 回報 | [JCATS-F p.12–13]；[JCATS-A p.24,26] | 砲兵是即時 ENGAGE 一種 | ★★ | C10 |  |
+| 18 | 無蒙地卡羅批次/參數掃描 | [INDSR] 全書方法論（30–50 次/組） | 一次一局；決定性引擎已是完美地基 | ★★★ | D1 |  |
+| 19 | 無 MOE 框架/成本效益指標 | [INDSR p.19–20]（MER/DR/KR、hit/kill/destroy） | 勝負 DSL 只裁勝負；AAR 統計初階 | ★★★ | D2 |  |
+| 20 | 無態勢分析圖層/自動戰術線 | [IST160 p.15–17,20] | 單一單位 viewshed/射界有；聯集與戰力比分區無 | ★★ | D3 |  |
+| 21 | 無 what-if 分支推演 | [IST160 p.19] | 只能整局重跑；clone+決定性引擎地基已備 | ★★★ | D4 |  |
+| 22 | 可行性檢查缺時間維度；無補給支撐時間分析 | [IST160 p.14,18,21] | precheck 只判「打得到/走得到」，不判「趕得及/撐多久」 | ★★ | D5 |  |
+| 23 | AAR 無地圖重播；統計有帳目瑕疵；無匯出管線 | [INDSR p.43–46,57–59]；README §5 盤點 | `scrubTick` 不驅動視覺；聚合戰損歸帳單側；無 CSV/批次匯出 | ★★ | D6 |  |
+| 24 | 無情境化警告/報告分級 | [IST160 p.14,21] | 事件流平鋪，指揮官自行掃 | ★ | D7 |  |
+| 25 | 活 session 無 checkpoint/前滾 | —（內部盤點；SPEC_FULL §3.4） | `sim_runtime` 未傳 checkpointer；RNG 狀態不序列化 | ★★ | E1 | ✅ 2026-07-29 |
+| 26 | refresh token 無撤銷/無帳號鎖定 | —（內部盤點） | logout no-op；無 brute-force 防護 | ★★ | E2 |  |
+| 27 | RESYNC 契約半套（無 /state 快照端點） | —（內部盤點） | 前端收到後丟棄結果、靠週期重抓兜底 | ★ | E3 |  |
+| 28 | 監控空殼 | —（內部盤點） | prometheus/grafana 目錄只有 .gitkeep | ★★ | E4 |  |
+| 29 | 無負載測試/LOD 降載 | [JCATS-A p.12]（飽和測試×2） | 無工具鏈；TickPacer 只會全域降頻 | ★ | E5 |  |
+| 30 | RAG 嵌入器佔位、語料近空、SPEC_INGEST 未實作 | SPEC_INGEST 全份；README §10 | hash 嵌入器；語料 1 份合成檔；eval 3 例 | ★★★ | F1/F2 |  |
+| 31 | RoleManager/InvocationLog 未接活執行期 | README §10 | LlmFactionDecider 直連 client；活期無 AI 稽核記錄 | ★★ | F3 |  |
+| 32 | 訓後評量（training audience）缺位 | [JCATS-A p.15]；[JTLS-F p.1052–1053] | AAR 不評受訓者；評估點無法預埋想定 | ★★★ | F5 |  |
+| 33 | cop.vue 4311 行單體等前端債 | README §8 | 詳見 §WP-G 清單 | ★★ | G1–G6 |  |
+| 34 | 無多站演習/DIS-HLA 互通 | [MASA-MS]；[JTLS-F p.1054–1056]；[JCATS-F p.6–7,17] | 單站部署；無狀態複製層 | ★★ | H1–H3 |  |
+| 35 | 無民事/CBRN/災防想定能力 | [JTLS-F p.1058–1059]；[INDSR p.37–40] | 引擎綁陸戰交戰 | ★ | H4（遠期） |  |
 
 ## 5. V2 設計不變量
 
@@ -147,7 +147,11 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 <a id="wp-a"></a>
 ### WP-A：AI 誠實化與任務級指揮
 
-#### WP-A1 AI 敵情接上真實情報（迷霧誠實化）　★★★｜golden：不動（AI 不在 golden 路徑）
+#### ✅ WP-A1 AI 敵情接上真實情報（迷霧誠實化）　★★★｜golden：不動（AI 不在 golden 路徑）
+
+> **✅ 已完成（2026-07-29）**——worklog `docs/worklog/ai-fog-honesty.md`。實測：RED 見 22/真實 23、YELLOW 25/26。
+> 追加的退回開關 `ai_ground_truth`（預設 false）供 WP-D1 的有無迷霧對照實驗。
+
 
 **動機**：`ai_loop/orchestrator.py` 組 `FactionWorkerDeps` 時，`enemy_visibility` 仍用感測 NoOp 時代的
 `ground_truth_enemies`——AI 指揮官全知敵方存活單位位置。SensorSweepSystem（#97）與 `IntelService` 已上線，
@@ -214,7 +218,11 @@ LLM 每個心跳要重新推理「下一步走哪」，呼叫頻率高、幻覺�
 **陷阱**：分解器讀的 world_view 必須走迷霧投影，否則 AI 經由任務分解「偷看」ground truth，A1 白做。
 任務狀態機不要做成 async——它是 tick 內的純狀態轉移，進 Kernel 流程。
 
-#### WP-A3 修復 G4 no-strike 護欄（欄位匹配＋資料源）　★★★｜golden：不動
+#### ✅ WP-A3 修復 G4 no-strike 護欄（欄位匹配＋資料源）　★★★｜golden：不動
+
+> **✅ 已完成（2026-07-29）**——worklog `docs/worklog/g4-no-strike.md`。規格點出兩個斷點，實作時發現**第三個**：
+> `GUARDRAIL_INTERVENTION` 自 O6.2 起無任何 production 呼叫端 → AAR 的「護欄攔截 N 次」恆為 0。
+
 
 **動機**：內部盤點發現 G4 只認 `target_h3`，而 AI 令實際帶 `target_lat/lng`（MOVE）或 `target_unit_id`（ENGAGE）——
 **G4 從未真正攔過任何東西**；且 `no_strike_hexes` 由 deps 傳入但恆為空（想定/白軍都沒有寫入路徑）。
@@ -362,7 +370,13 @@ runner 啟動時建構的 WeaponResolver 快取要能吸收局中新單位（連
 （COMMANDER/S2_INTEL/S3_OPS/FSO_FIRES/S4_LOG/OBSERVER），下令與審批權按 seat_role 細分——
 此為 WP-B5 的第一張卡。
 
-#### WP-B6 想定資產補齊　★｜golden：不動
+#### ✅ WP-B6 想定資產補齊　★｜golden：不動
+
+> **✅ 已完成（2026-07-29）**——worklog `docs/worklog/scenario-assets.md`。四項全做，另補**規格未列但必要**的兩項：
+> orbat `equipment`（沒有它「兩個新官方想定」只能全員同一把步槍）與 condition DSL 的**載入時驗證**
+> （`tutorial-platoon` 用了不存在的 type `eliminate`，想定照樣載入、整局不判勝負）。
+> ⚠ 機動覆寫**不得改變可通行性**——A* 在 terrain 容器看不到想定覆寫，改了會讓規劃與執行分歧。
+
 
 盤點欠帳的收尾卡：`roe.yaml` 的 JSON schema（規格宣告了、schema 缺）；battalion-defense 與
 joint-defense 兩個官方想定建置（[JCATS-A] 的裝甲旅突穿攻擊想定結構——一般/特別狀況、對稱兵力、
@@ -660,7 +674,14 @@ LLM 參謀摘要屬 WP-F 範疇。
 <a id="wp-e"></a>
 ### WP-E：工程韌性與維運
 
-#### WP-E1 活 session checkpoint 與崩潰復原　★★｜golden：不動（新增快照不影響行為）
+#### ✅ WP-E1 活 session checkpoint 與崩潰復原　★★｜golden：不動（新增快照不影響行為）
+
+> **✅ 已完成（2026-07-29）**——worklog `docs/worklog/live-checkpoint.md`、**ADR 007**。
+> 規格四項外另修三個未列斷點，最嚴重者：`SimClock` 每次 runner 重建都回 tick 0（**不需崩潰，每次重啟都發生**）。
+> ⚠ 規格要求的「Ledger 尾段截斷」**未採用**：實體刪除會讓 hash chain 的防竄改性歸零，
+> 改採**邏輯截斷**（ROLLBACK 事件記被棄 seq 區間，AAR 據此濾除）——完整論證見 ADR 007。
+> 已知界線：RNG 只還原到**快照當下**（快照後消耗的抽樣次數無處可考），最多倒退一個間隔。
+
 
 盤點事實：`sim_runtime` 建 Kernel 未傳 `checkpointer`——活局不落快照；RNG 狀態不序列化，
 mid-interval 崩潰只能回到 checkpoint 重放。**規格**：(1) runner 組裝時掛 checkpointer
@@ -821,15 +842,19 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 ### V2.0「誠實的引擎」（基礎修正＋高槓桿接線）
 
 ```
-A1 AI 迷霧接線          ── 無依賴，第一張卡
-A3 G4 no-strike 修復    ── 無依賴
-B6 想定資產修復（fixed 旗標 roundtrip bug 先修）
-E1 活 checkpoint + RNG 序列化（D4 的前置）
-E3 /state 快照端點（H1 亦復用）
-C5 comms 後果閉環（投影層）
-G1 cop.vue 拆分（後續前端卡的前置）
-D6.1 AAR 地圖重播（量綱修正先行）
+[x] A1 AI 迷霧接線          ── 無依賴，第一張卡           （2026-07-29）
+[x] A3 G4 no-strike 修復    ── 無依賴                     （2026-07-29）
+[x] E1 活 checkpoint + RNG 序列化（D4 的前置）            （2026-07-29；ADR 007）
+[x] B6 想定資產修復（fixed 旗標 roundtrip bug 先修）      （2026-07-29）
+[ ] E3 /state 快照端點（H1 亦復用）                        ← 下一張
+[ ] C5 comms 後果閉環（投影層）
+[ ] G1 cop.vue 拆分（後續前端卡的前置）
+[ ] D6.1 AAR 地圖重播（量綱修正先行）
 ```
+
+> 進度標記規則：完成後於此勾選、於 §4 差距總表的「狀態」欄標日期、於 §6 該 WP 標題加 ✅ 並附
+> worklog 路徑與**與規格不同的實作裁決**（例如 E1 的 Ledger 邏輯截斷）。三處要一起改，
+> 否則下一個接手的 agent 會照著沒更新的那一處重做。
 
 ### V2.1「演習系統」（CPX 能力成形）
 
