@@ -1178,50 +1178,26 @@ onBeforeUnmount(() => {
         <!-- 線條粗細/顏色（#22）已併入「圖層」小工具，不再獨立浮動 modal。 -->
 
         <!-- 右鍵選單（#3，ATAK 式移動/攻擊）：右鍵單位/地圖 → 移動/攻擊 → 十字準星 → 點目標。 -->
-        <template v-if="ctxMenu">
-          <div class="ctx-backdrop" @click="closeCtx" @contextmenu.prevent="closeCtx" />
-          <div
-            class="ctx-menu"
-            data-testid="ctx-menu"
-            :style="{ left: `${ctxMenu.x}px`, top: `${ctxMenu.y}px` }"
-          >
-            <!-- #99 右鍵控制點：刪點優先於一般物件選單（游標下同時有頂點與圖形本體）。 -->
-            <template v-if="ctxMenu?.vertexIndex != null && canEditSelectedFeature">
-              <div class="ctx-title">控制點 #{{ ctxMenu.vertexIndex + 1 }}</div>
-              <button class="ctx-danger" data-testid="ctx-vertex-del" @click="ctxDeleteVertex">
-                <i class="pi pi-trash" /> 刪除控制點
-              </button>
-            </template>
-            <template v-else-if="ctxMenu?.featureId && canDraw">
-              <div class="ctx-title">地圖物件</div>
-              <button data-testid="ctx-feat-edit" @click="ctxEditFeature">
-                <i class="pi pi-pencil" /> 編輯形狀 / 屬性
-              </button>
-              <button data-testid="ctx-feat-rot-ccw" @click="ctxRotateFeature(-15)"><i class="pi pi-undo" /> 旋轉 15°</button>
-              <button data-testid="ctx-feat-rot-cw" @click="ctxRotateFeature(15)"><i class="pi pi-refresh" /> 旋轉 15°</button>
-              <button class="ctx-danger" data-testid="ctx-feat-del" @click="ctxDeleteFeature"><i class="pi pi-trash" /> 刪除</button>
-            </template>
-            <template v-else-if="ctxIsMine">
-              <div class="ctx-title">{{ ctxUnitName }}</div>
-              <button data-testid="ctx-move" @click="ctxArmMove"><i class="pi pi-arrow-right" /> 移動</button>
-              <button data-testid="ctx-attack" @click="ctxArmAttack"><i class="pi pi-bullseye" /> 攻擊</button>
-            </template>
-            <template v-else-if="ctxIsEnemy && selectedId">
-              <div class="ctx-title">目標：{{ ctxUnitName }}</div>
-              <button data-testid="ctx-lock-target" @click="ctxLockTarget">
-                <i class="pi pi-bullseye" /> 以「{{ selectedUnit?.designation ?? selectedId }}」攻擊
-              </button>
-            </template>
-            <template v-else-if="selectedId">
-              <div class="ctx-title">{{ selectedUnit?.designation ?? selectedId }}</div>
-              <button data-testid="ctx-move-here" @click="ctxMoveHere"><i class="pi pi-arrow-right" /> 移動至此</button>
-              <button data-testid="ctx-attack" @click="ctxArmAttack"><i class="pi pi-bullseye" /> 攻擊…</button>
-            </template>
-            <template v-else>
-              <div class="ctx-empty">先選取我方單位</div>
-            </template>
-          </div>
-        </template>
+        <MapContextMenu
+          v-if="ctxMenu"
+          :menu="ctxMenu"
+          :is-mine="ctxIsMine"
+          :is-enemy="ctxIsEnemy"
+          :unit-name="ctxUnitName"
+          :has-selection="!!selectedId"
+          :selected-name="selectedUnit?.designation ?? selectedId ?? ''"
+          :can-draw="canDraw"
+          :can-edit-feature="canEditSelectedFeature"
+          @close-ctx="closeCtx"
+          @ctx-arm-move="ctxArmMove"
+          @ctx-arm-attack="ctxArmAttack"
+          @ctx-move-here="ctxMoveHere"
+          @ctx-lock-target="ctxLockTarget"
+          @ctx-edit-feature="ctxEditFeature"
+          @ctx-delete-feature="ctxDeleteFeature"
+          @ctx-delete-vertex="ctxDeleteVertex"
+          @ctx-rotate-feature="ctxRotateFeature"
+        />
 
         <!-- 地圖編輯器（stage ③b）：繪製標註/工事/武器據點。 -->
         <ClientOnly>
@@ -1516,54 +1492,6 @@ onBeforeUnmount(() => {
 .linewidth-btn:hover {
   border-color: #2563eb;
   color: #e2e8f0;
-}
-/* 右鍵選單（#3）——ATAK 式移動/攻擊。 */
-.ctx-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1090; /* 壓過停靠側欄(40)/Unit 卡(45)/浮動視窗，避免右鍵選單被遮住（#3） */
-}
-.ctx-menu {
-  position: absolute;
-  z-index: 1091;
-  min-width: 8rem;
-  transform: translate(2px, 2px);
-  display: flex;
-  flex-direction: column;
-  padding: 0.25rem;
-  border: 1px solid #334155;
-  border-radius: 0.4rem;
-  background: rgba(15, 23, 42, 0.97);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-}
-.ctx-title {
-  padding: 0.25rem 0.5rem 0.35rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: #7dd3fc;
-  border-bottom: 1px solid #1e293b;
-  margin-bottom: 0.2rem;
-}
-.ctx-menu button {
-  text-align: left;
-  padding: 0.4rem 0.55rem;
-  border: 0;
-  border-radius: 0.25rem;
-  background: transparent;
-  color: #e2e8f0;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-.ctx-menu button.ctx-danger {
-  color: #fca5a5;
-}
-.ctx-menu button:hover {
-  background: #1d4ed8;
-}
-.ctx-empty {
-  padding: 0.4rem 0.55rem;
-  font-size: 0.75rem;
-  color: #94a3b8;
 }
 /* 通用 modal（#5 線寬 / 其他 COP 設定）。 */
 .modal-overlay {
