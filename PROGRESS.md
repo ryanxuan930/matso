@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**WP-G1a cop.vue 拆分：狀態與面板層**（SPEC_V2 §WP-G；使用者裁示把 G1 拆成 G1a/G1b）。cop.vue **4419→2181**：六個 composable（`useCopWidgets`/`useCopPrefs`/`useWeaponTracks`/`useUnitCardDrag`/`useCopOrdering`/`useMapEditor`）＋三個面板元件（MapEditorPanel/UnitsOrderPanel/UnitDetailCard）。子元件以 **`reactive(composable)` 單一 prop** 收狀態——逐欄位開 prop+emit 就是把 MapCanvas 那個「50 個 props」的毛病複製一份（樣板**不會 unwrap 巢狀 ref**，故必須 `reactive` 而非直接傳 composable 回傳值）。**最重要的發現：`npm run typecheck` 一直是空轉**——`tsconfig.json` 是 `"files": []` + project references，而 `vue-tsc --noEmit` 不跟隨 references，`app/` 底下的 `.vue`/`.ts` **從來沒被 type check 過**（近期每份 worklog 的「vue-tsc 綠」對前端都是空話，含我自己在 WP-C5 寫的那句）。改成 `--build` 後跑出 6 個錯全部清掉（MapCanvas 的 `queryRenderedFeatures(e.point)` ×3 與 `watch(…, syncUnits)` 把新值陣列當 posOverride 傳；契約 `OrderRequest.payload` 裸 object → `Record<string, never>`；`acknowledge_restricted` 的 default 讓產生器標成必填）。**三類安全網缺口各自被不同工具抓到**：型別錯要 typecheck（修好之後）、元件名解析失敗只有瀏覽器看得到（Vue 把不認識的標籤當原生元素）、scoped CSS 切壞只有 build 會擋。收尾跑 **ultracode 多 agent 等價性稽核**（8 位逐塊比對拆分前原始碼 + 對抗式反駁 + 漏網掃描）：**確認 5 個我自己沒看見的回歸**且對抗階段一個都沒反駁掉——`class`/`data-testid="precheck"` 被字串取代波及（會弄壞 3 條 e2e）、`.ord-*`/`.events`/`.ws` 搬成死規則、父層 `.orders`/`.empty` **憑印象重寫**而非逐字照抄、`.unit-card .lowfuel` 落在沒有 `.unit-card` 的元件，全部已修（一律回 `git show d5c585a` 取原文）。e2e 在 `.env`-free worktree 內與拆分前**逐條相同**（各 4 failed / 14 passed，同樣四條）。worklog: docs/worklog/cop-decomposition.md。
 - 2026-07-30：**WP-C5 通聯後果閉環：位置凍結與敵情粗化**（SPEC_V2 第六張卡；branch `main`）。SPEC_FULL §6.2 三種戰術後果只做了 `order_admissible`，`position_report_*` 與 `intel_granularity` 定義了卻沒有任何消費者。**掃描抓到規格四項之外的紅線違反**：STATE_DIFF 的信封**從來沒有陣營受眾標籤**（`build_state_diff_envelope` 不設 `factions`）→ `is_visible` 對所有人回 True → **敵軍即時 lat/lng/health/fuel/ammo 一直廣播給每個連線的 client**，前端只是「沒把不認識的 unit 畫出來」（紅線 3：fog 過濾只能在後端）。這不是順手修：一個廣播給所有人的信封**沒有「己方視角」可言**，不先做每陣營投影就做不了規格要求的「STATE_DIFF 己方視角凍結」。做法：每 tick 發 N+1 份（每陣營一份已投影 + 一份 `factions:[]` 真實副本），新增 `exclusive` 受眾語義**關掉全知旁通**（否則統裁同時收到 N 份互相矛盾的副本，先到先贏）。**核心不變量：凍結的是視野不是單位**——新增 `report_lat/lng/tick` 熱狀態欄位（CommsSystem 依 `position_report_interval` 落：ONLINE 每 interval、DEGRADED ×3、OFFLINE 永不），真實 lat/lng 照常演進；直接凍住熱狀態座標會連射程/LOS 裁決一起騙到。「無回報」時 REST 回 null、STATE_DIFF **移除**欄位而非送 null（送 null 會清掉 client 最後已知位置＝單位憑空消失）。粗化把身分欄位一起收回（只量化座標卻留番號＝fidelity 與內容不符）並放大 `error_radius_m`。另修兩個沉默失效：`TacticalUnit.comms_status` **播種後從未被寫過**（`/units` 的通聯狀態改讀熱狀態）、`cop.vue` 的 `currentTick` 是**寫死的 `ref(100)`**（地圖「OFFLINE +Nt」與敵情老化淡出都拿假 tick 算）。AI 走同一份投影且 briefing 明講「斷聯＝新令無法送達」。pytest **1289 passed**（+45）、golden 6 未破。**容器實測**：真實 3 陣營局輸出 4 份正確分眾信封；`report_*` 已在正式環境按 ONLINE 節奏寫入。worklog: docs/worklog/comms-consequences.md。
 - 2026-07-29：**WP-E3 /state 原子快照與 RESYNC 閉環**（SPEC_V2 第五張卡；branch `main`）。`RESYNC_REQUIRED` 說「client 走 GET /state 全量重同步」，但該端點在契約只是一行佔位、**後端沒實作**，前端收到 RESYNC 把結果丟掉、靠每 10 秒重抓**六個獨立 GET** 兜底（拼出「單位是新的、敵情是舊的」的畫面）。**最關鍵的設計**：快照**呼叫既有 handler**而非重寫過濾——掃描發現三個端點的規則本來就不一致（units 可見集含盟軍且以全域 user.role 判全知、map-features 不含盟軍、intel 以 participant.role 判且無條件 require_participant），另寫一份必然漂移，而**迷霧過濾的漂移就是資安漏洞**（重連後看到的比正常時多＝洩漏、少＝誤殺）。為讓快照能一致，先把 `/intel` 對齊其餘三者（未加入該局的白軍觀察員不再 403；無測試釘住原行為＝非刻意設計）。`last_seq` **必須在讀狀態之前**取樣，否則兩次讀取之間送出的 diff 會既不在快照裡、seq 又 ≤ last_seq 而被 client 丟棄＝遺失更新（有測試以呼叫順序釘住）。前端：RESYNC 走原子重建、STATE_DIFF 依 last_seq 去重（server 送 RESYNC 後**不停止推播**）、白軍視角跟著進快照請求。週期重取**保留節奏、拿掉拼裝**（指令列表沒有 WS 推播，那個 timer 是它唯一更新來源）。順帶把散在 3 個模組的 8 處串流鍵字面值收斂。pytest **1244 passed**、golden 6 未破。worklog: docs/worklog/state-snapshot.md。
 - 2026-07-29：**WP-B6 想定資產補齊**（SPEC_V2 第四張卡；branch `main`）。規格四項：roe schema／官方想定補到三個／修 `fixed` roundtrip bug／`overrides/` 載入端。**掃描發現規格點名的 `fixed` 只是冰山一角**——匯出路徑全面失真（`description`、`factions[].display_name` 連 `LoadedScenario` 都沒欄位承接），而**最嚴重的是前端編輯器**：用它開一個有禁射區的想定再存回去，保護區整段消失且無錯誤訊息（WP-A3 自己標為最危險的沉默失效，發生在另一條路徑）。驗收條文「位元一致」**單獨抓不到**這類 bug（掉的欄位兩次輸出都沒有），故改釘**無損＋冪等**兩條性質，且對 `scenarios/examples/` 自動參數化（新增想定自動納入驗收）。另抓到 **`tutorial-platoon` 的勝負條件寫著 `type: eliminate`——不是 `triggers.py` 支援的 type**，想定照樣載入、直到執行期才丟 TriggerError＝整局不會判勝負 → 新增 `validate_condition` 把 condition DSL 的驗證提前到載入時。roe.yaml **連生效一起做**（只交 schema 就是造一個宣告了不執行的安全機制）：裁決層逐武器篩（權威，人與 AI 同路徑）＋ precheck 早退留痕；刻意不做護欄 G4 第三點（AI 令不帶 weapon_id，換不到實際攔截）。`overrides/` 以 `MobilityRules` 值物件注入（**不清 lru_cache**——同行程跑 N 局會跨局污染），並**禁止改變可通行性**：A* 在 terrain 容器讀自己那份出貨矩陣、看不到覆寫，改了會讓規劃與執行對「走不走得通」分歧。順帶補 orbat `equipment`（規格四項外的第五項，但沒有它「兩個新官方想定」只能全員同一把步槍）。新增 `battalion-defense`（27 單位／大漢溪—石門隘口）與 `joint-defense`（29 單位／高雄西南沿海，三方＋旅級）。pytest **1232 passed**、golden 6 未破、schema-sync 144 欄。worklog: docs/worklog/scenario-assets.md。
@@ -131,6 +132,20 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-20：契約 fuzz 用 schemathesis **v4**（v3 不支援 FastAPI 產生的 OpenAPI 3.1）；order 端點只斷言「不 5xx」。ruff B008 放行 FastAPI `Depends()` 慣例。
 
 ## Backlog / 發現的問題
+
+### 🧪 e2e 既有紅燈四條（WP-G1a 對等比較時確認，屬 G3）
+`.env`-free 環境下，拆分前後**同樣四條**失敗，與重構無關：`map.spec:71 地圖可縮放與平移`、
+`orders.spec:24 下 MOVE 令全流程`、`orders.spec:47 下 ENGAGE 令`、`smoke.spec:11 M4 全鏈路`。
+後三條的共同前置是 `ws-status` 等不到 `live`（e2e harness 的 WS/Redis 未就緒）。
+⚠ 另注意：本機 `platform/.env` 有 `NUXT_PUBLIC_TILE_URL`，會讓
+`map.spec:53「離線：無 tile server」`**在本機必紅**——那是環境不是程式碼，
+比對 e2e 一律用不帶 `.env` 的 worktree。
+
+### 🧩 前端工程債（WP-G1a 期間發現，未修）
+- WP-A3 的 `acknowledge_restricted`（限制射擊區明確 override）**前端完全沒有呼叫端**，
+  等於那條「人類確認後仍可射擊」的路徑沒有 UI（屬 G4 白軍控制台成熟化）。
+- `platform/tsconfig.json` 的 project-reference 結構讓 `vue-tsc --noEmit` 空轉；已改用
+  `--build`，但 CI 是否也跑到這條要再確認（本卡未查 CI 設定）。
 
 ### 📡 WP-C5 掃描留下的三項（範圍外，未修）
 - **敵情粗化只到陣營層**：`IntelContact` 沒有觀測者單位欄位（只有 `faction`），做不到

@@ -1,13 +1,13 @@
 ---
-task: "WP-G1 cop.vue 拆分（前端工程健全化第一張）"
-status: IN_PROGRESS
+task: "WP-G1a cop.vue 拆分：狀態與面板層（前端工程健全化）"
+status: DONE
 started: 2026-07-30T01:40+08:00
-updated: 2026-07-30T01:40+08:00
+updated: 2026-07-30T09:10+08:00
 agent: Opus 5
 spec: SPEC_V2.md §WP-G 表 G1；README §8 前端債盤點
 ---
 
-# WP-G1 cop.vue 拆分
+# WP-G1a cop.vue 拆分：狀態與面板層
 
 ## 目標摘要
 `cop.vue` 4419 行單體（script 1849 / template 1067 / style 1498）。以既有區塊邊界抽出
@@ -83,10 +83,20 @@ D6.1 AAR 地圖重播）的前置——在 4400 行的檔案裡加功能，每�
 往後每一步都以 `vue-tsc --build` 為準。
 
 ## 檔案異動
-（施工中）
+| 檔案 | 動作 |
+|------|------|
+| `composables/useCopWidgets.ts` / `useCopPrefs.ts` / `useWeaponTracks.ts` / `useUnitCardDrag.ts` / `useCopOrdering.ts` / `useMapEditor.ts` | **新增**（六個 composable） |
+| `components/cop/MapEditorPanel.vue` / `UnitsOrderPanel.vue` / `UnitDetailCard.vue` | **新增**（三個面板元件） |
+| `pages/session/[id]/cop.vue` | 4419 → 2181 |
+| `components/map/MapCanvas.vue` | 修 4 個型別錯（見下） |
+| `platform/package.json` | `typecheck` 由空轉的 `vue-tsc --noEmit` 改為 `vue-tsc --build` |
+| `contracts/core_api.yaml` | `OrderRequest.payload` 補 `additionalProperties`；`acknowledge_restricted` 拿掉 `default` |
 
 ## 測試證據
-（施工中）
+- `npm run lint` / `npm run typecheck`（**現在真的會檢查**）/ `npm run build` 全綠。
+- e2e：`.env`-free worktree 內基準線與 G1a **各 4 failed / 14 passed，失敗清單完全相同**。
+- 容器 + 瀏覽器逐步實測（每個 commit 一次），詳見下方進度表的「驗證」欄。
+- 多 agent 等價性稽核：確認 5 個回歸並全數修掉（見「收尾」節）。
 
 ## 進度（cop.vue 行數）
 | 步驟 | 行數 | 驗證 |
@@ -160,13 +170,54 @@ G1a（composables + 面板元件，已完成大半）與 G1b（版面/頂列/地
 - [x] `MapEditorPanel`（template 236 行 + CSS 314 行）
 - [x] `UnitsOrderPanel`（template 204 行 + CSS 318 行；`liveAmmo` 一併併入 `useCopOrdering`）
 - [x] `UnitDetailCard`（template 82 行 + CSS 158 行）
-- [ ] `LayersPanel`、其餘小工具（events/orders/coords）
-- [ ] `useMapStateEdit` / `useEquipMgr` / `useCtxMenu`（script 尾巴）
-- [ ] MapCanvas props 收斂
-- [ ] 容器逐項手測（清單見上）→ 更新 SPEC_V2 / PROGRESS / TASKS
+- [x] 修掉稽核確認的 5 個回歸
+- [x] e2e 與拆分前對等比較（`.env`-free worktree）
+- [x] 更新 SPEC_V2（G1 拆成 G1a/G1b）/ PROGRESS / TASKS
+- → 以下移交 **G1b**：`LayersPanel`、events/orders/coords、`CopHeader`、地圖區包裝、
+  `useMapStateEdit`/`useEquipMgr`/`useCtxMenu`、MapCanvas props 收斂
+
+## 收尾（G1a 完成）
+
+**使用者裁示（2026-07-30）**：G1 拆成 G1a（狀態與面板層，本卡）與 G1b（版面層，收到 < 800 行）。
+理由見上方推估——這張卡的實質工作是把 4400 行單體重寫成一組元件，一次收完不利驗證。
+G1a 已達成這張卡真正的目的：後續前端卡不必再讀 4400 行才敢動手。
+
+### 多 agent 稽核（ultracode workflow）——**抓到 5 個我自己沒看見的回歸**
+8 位審查者逐塊比對 `git show d5c585a` 的拆分前原始碼，每項指控再派一位**專門反駁**的
+審查者查證，另一位做漏網掃描。結果：**稽核與掃描各自獨立指向同一組 5 個缺陷**，
+對抗式階段一個都沒能反駁掉。全部出在 `UnitsOrderPanel` 那一步的 CSS 切分：
+
+| # | 缺陷 | 症狀 |
+|---|------|------|
+| 1 | `class="precheck"` / `data-testid="precheck"` 被字串取代波及成 `ordering.precheck` | 預檢綠/紅配色失效；**e2e 三處 `getByTestId('precheck')` 會找不到元素** |
+| 2 | `.ord-*` 整組搬進子元件變死規則 | 「指令」小工具失去雙層 flex、狀態徽章配色 |
+| 3 | `.events` / `.events li` / `.ws` 同上 | 「戰況事件」失去琥珀左邊條與深色底 |
+| 4 | 父層的 `.orders`/`.orders li`/`.empty` 是**憑印象重寫**而非逐字照抄 | 邊框、內距、`cursor` 覆寫被靜默改掉 |
+| 5 | `.unit-card .lowfuel` 落在沒有 `.unit-card` 的元件 | 油料歸零不再轉紅 |
+
+第 4 項是最該記住的：我在自己訂的「只搬不改」紀律下，仍然手抄了規則。
+**搬 CSS 一律 `git show <前一版>` 取原文，不得憑印象重寫。**
+
+### e2e：與拆分前逐條相同
+`platform/.env`（含 `NUXT_PUBLIC_TILE_URL`）會讓「離線：無 tile server」那條測試在本機必紅，
+**與程式碼無關**。故改在 `.env`-free 的 worktree 內同時跑基準線與 G1a：
+
+| | 結果 | 失敗清單 |
+|---|------|---------|
+| 拆分前 `d5c585a` | 4 failed / 14 passed | map:71 地圖縮放平移、orders:24、orders:47、smoke:11 |
+| G1a `7806d50` | 4 failed / 14 passed | **完全相同的四條** |
+
+即**重構帶來零 e2e 變化**。那四條在拆分前就是紅的（記入 PROGRESS backlog，屬 G3）。
 
 ## 中斷續作指引
-- **下一步第一件事**：`LayersPanel`（圖層/底圖小工具），之後 events/orders/coords 三個小工具。
+- **本卡（G1a）已完成**。下一張是 **G1b**：頂列 `CopHeader`、地圖區包裝、
+  `EquipManagerPanel`/`MapContextMenu`/`LayersPanel`/`OrdersPanel`/`EventsPanel`/`CoordReadout`、
+  `useCtxMenu`/`useEquipMgr`/`useMapStateEdit`，以及 MapCanvas props 收斂。行段測繪見上表。
+- **G1b 必守的四道驗證**（本卡用血換來的）：`lint → typecheck → build → 瀏覽器`。
+  三者各有盲區：typecheck 抓不到元件名解析失敗、build 才抓得到 scoped CSS 切壞、
+  瀏覽器才看得出面板整個是空的。
+- **搬 CSS 一律取原文**，並在搬完後跑一次等價性稽核（本卡的 workflow 腳本可重用：
+  `.claude/.../workflows/scripts/g1-refactor-equivalence-audit-*.js`）。
 - **scoped CSS 的必要重複**：`.units, .orders {…}` 這種共用規則搬走一半時，
   另一半要在父層留一份（已於 `UnitsOrderPanel` 那步處理，父層留 `.orders`/`.empty`）。
 - **紀律**：每搬一塊立刻 `npm run typecheck`（現在是 `vue-tsc --build`，真的會檢查）+ `npm run lint`，
