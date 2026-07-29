@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.aar import read_events
 from app.aar.export import export_csv, export_json
 from app.aar.narrative import generate_narrative, verify_citations
-from app.aar.replay import replay_summary
+from app.aar.replay import replay_summary, state_frames
 from app.aar.stats import compute_metrics
 from app.api.deps import get_current_user, get_db
 from app.auth.schemas import CurrentUser
@@ -64,6 +64,93 @@ def get_replay(
         "bookmarks": [{"seq": b.seq, "tick": b.tick, "label": b.label} for b in s.bookmarks],
         "total_events": s.total_events,
         "max_tick": s.max_tick,
+    }
+
+
+@router.get("/{session_id}/aar/replay/states")
+def get_replay_states(
+    session_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:  # type: ignore[type-arg]
+    """地圖重播的狀態流（WP-D6.1）：靜態底本 + 逐 tick 差異，整場一次給。
+
+    **tick 0 基準位置是近似值，這是帳本的限制不是實作偷懶**：帳本裡沒有「部署」事件，
+    白軍在「地圖狀態編輯」拖動單位也不落帳（`reposition_unit` 只寫 DB + 命令通道）。
+    故基準取法為：
+      * 該單位在帳本中**最早一筆有座標的事件** → 用它（離 tick 0 最近的已記錄真相；
+        誤差最多一個移動步長，且僅影響它第一次移動之前的畫面）；
+      * 完全沒有座標事件（從沒動過）→ 用 DB 現值（沒動過＝現值即初始，精確）。
+    """
+    require_aar_access(db, user, session_id)
+    events = read_events(db, session_id)
+
+    rows = (
+        db.execute(
+            select(
+                TacticalUnit.id,
+                TacticalUnit.designation,
+                TacticalUnit.faction,
+                TacticalUnit.unit_level,
+                TacticalUnit.is_fixed,
+                TacticalUnit.authorized_strength,
+                TacticalUnit.current_lat,
+                TacticalUnit.current_lng,
+            ).where(TacticalUnit.session_id == session_id)
+        )
+        .tuples()
+        .all()
+    )
+    authorized = {r[0]: float(r[5]) for r in rows if r[5] is not None}
+    frames = state_frames(events, authorized)
+
+    # 每個單位最早一筆有座標的事件（見 docstring 的基準取法）。
+    first_pos: dict[str, tuple[float, float]] = {}
+    for e in events:
+        src = e.detail if ("lat" in e.detail and "lng" in e.detail) else e.ai_decision
+        if e.initiator_id and e.initiator_id not in first_pos and "lat" in src and "lng" in src:
+            first_pos[e.initiator_id] = (float(src["lat"]), float(src["lng"]))
+
+    units = []
+    for uid, designation, faction, unit_level, is_fixed, auth, cur_lat, cur_lng in rows:
+        base = first_pos.get(uid)
+        units.append(
+            {
+                "id": uid,
+                "designation": designation,
+                "faction": faction,
+                "unit_level": unit_level.value,
+                "is_fixed": bool(is_fixed),
+                "authorized_strength": float(auth) if auth is not None else None,
+                "base_lat": base[0] if base else (float(cur_lat) if cur_lat is not None else None),
+                "base_lng": base[1] if base else (float(cur_lng) if cur_lng is not None else None),
+                "base_health": 100.0,
+            }
+        )
+    return {
+        "units": units,
+        "frames": [
+            {
+                "tick": f.tick,
+                "event_types": f.event_types,
+                "changes": [
+                    {
+                        k: v
+                        for k, v in (
+                            ("unit_id", c.unit_id),
+                            ("lat", c.lat),
+                            ("lng", c.lng),
+                            ("health", c.health),
+                            ("strength", c.strength),
+                        )
+                        if v is not None
+                    }
+                    for c in f.changes
+                ],
+            }
+            for f in frames
+        ],
+        "max_tick": frames[-1].tick if frames else 0,
     }
 
 

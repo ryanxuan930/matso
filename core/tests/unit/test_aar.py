@@ -5,7 +5,13 @@ from __future__ import annotations
 from app.aar.events import AarEvent
 from app.aar.export import export_csv, export_json
 from app.aar.narrative import generate_narrative, verify_citations
-from app.aar.replay import bookmarks, build_timeline, reconstruct_states, replay_summary
+from app.aar.replay import (
+    bookmarks,
+    build_timeline,
+    reconstruct_states,
+    replay_summary,
+    state_frames,
+)
 from app.aar.stats import compute_metrics
 from app.adjudication.effectiveness import effectiveness_pct
 
@@ -158,6 +164,65 @@ def test_position_still_read_from_ai_decision_when_present() -> None:
     evs = [_ev(1, 4, "SOME_EVENT", initiator="B2", dec={"lat": 23.0, "lng": 120.0})]
     st = reconstruct_states(evs, 4)
     assert (st["B2"].lat, st["B2"].lng) == (23.0, 120.0)
+
+
+def test_state_frames_only_list_changed_units_and_fields() -> None:
+    """逐 tick 差異：只列有動到的單位、只列真的變了的欄位。"""
+    evs = [
+        _ev(1, 2, "UNIT_MOVED", initiator="B1", detail={"lat": 24.1, "lng": 120.5}),
+        _ev(2, 2, "GUARDRAIL_INTERVENTION", dec={"check": "G4"}),
+        _ev(
+            3,
+            5,
+            "ENGAGEMENT_RESOLVED",
+            initiator="B1",
+            target="R1",
+            dmg=40.0,
+            dec={"target_health_after": 60.0},
+        ),
+    ]
+    frames = state_frames(evs)
+    assert [f.tick for f in frames] == [2, 5]
+    # tick 2：只有 B1 動了位置（護欄事件無單位）
+    assert [c.unit_id for c in frames[0].changes] == ["B1"]
+    assert (frames[0].changes[0].lat, frames[0].changes[0].lng) == (24.1, 120.5)
+    assert frames[0].changes[0].health is None  # 血量沒變就不列
+    # tick 5：只有 R1 掉血；B1 是攻擊方但狀態沒變 → 不列
+    assert [c.unit_id for c in frames[1].changes] == ["R1"]
+    assert frames[1].changes[0].health == 60.0
+    assert frames[1].changes[0].lat is None
+
+
+def test_state_frames_accumulate_to_same_result_as_reconstruct() -> None:
+    """差異流累加後必須等於同一 tick 的 reconstruct_states——兩條路徑共用套用邏輯。"""
+    evs = [
+        _ev(1, 2, "UNIT_MOVED", initiator="B1", detail={"lat": 24.1, "lng": 120.5}),
+        _ev(
+            2,
+            4,
+            "AGGREGATE_ENGAGEMENT_RESOLVED",
+            initiator="B-BN",
+            target="R-BN",
+            dmg=130.0,
+            dec={"initiator_strength_after": 450.0, "target_strength_after": 320.0},
+        ),
+        _ev(3, 6, "UNIT_ARRIVED", initiator="B1", detail={"lat": 24.9, "lng": 121.2}),
+    ]
+    auth = {"B-BN": 500.0, "R-BN": 400.0}
+    acc: dict[str, dict[str, float]] = {}
+    for f in state_frames(evs, auth):
+        if f.tick > 4:
+            break
+        for c in f.changes:
+            cur = acc.setdefault(c.unit_id, {})
+            for k in ("lat", "lng", "health", "strength"):
+                v = getattr(c, k)
+                if v is not None:
+                    cur[k] = v
+    direct = reconstruct_states(evs, 4, auth)
+    assert acc["B1"]["lat"] == direct["B1"].lat
+    assert acc["B-BN"]["strength"] == direct["B-BN"].strength
+    assert acc["R-BN"]["health"] == direct["R-BN"].health
 
 
 def test_replay_summary() -> None:

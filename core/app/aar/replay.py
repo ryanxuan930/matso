@@ -83,6 +83,52 @@ def bookmarks(events: Sequence[AarEvent]) -> list[Bookmark]:
     return out
 
 
+def _apply_event(e: AarEvent, states: dict[str, UnitState], auth: Mapping[str, float]) -> set[str]:
+    """把一個事件套到 states，回傳**被動到的單位 id**。
+
+    `reconstruct_states`（某一 tick 的全貌）與 `state_frames`（逐 tick 差異）共用這裡，
+    兩條路徑才不會各自演化出不同的重建規則。
+    """
+    touched: set[str] = set()
+    dec = e.ai_decision
+
+    def _st(uid: str) -> UnitState:
+        touched.add(uid)
+        return states.setdefault(uid, UnitState())
+
+    def _set_strength(uid: str, points: float) -> None:
+        s = _st(uid)
+        s.strength = points
+        a = auth.get(uid)
+        if a is not None and a > 0:
+            s.health = effectiveness_pct(points / a)
+
+    # 聚合交戰另有權威後態（戰力點），不能讓 damage_calc 的 fallback 先動到血量：
+    # 聚合事件的 damage_calc 是**雙方損失相加**（aggregate.py），拿它扣單側等於
+    # 把攻擊方的傷亡也記到守方頭上（§4 差距總表第 23 列「聚合戰損歸帳單側」）。
+    has_after = "target_health_after" in dec or "target_strength_after" in dec
+    # 個體交戰：權威後態（engagement.py 記 target_health_after，已是效能%）。
+    if e.target_id and "target_health_after" in dec:
+        _st(e.target_id).health = float(dec["target_health_after"])
+    elif e.target_id and e.damage_calc is not None and not has_after:
+        s = _st(e.target_id)
+        s.health = max(0.0, s.health - float(e.damage_calc))
+    # 聚合交戰：雙方後態皆為戰力點。
+    if "initiator_strength_after" in dec and e.initiator_id:
+        _set_strength(e.initiator_id, float(dec["initiator_strength_after"]))
+    if "target_strength_after" in dec and e.target_id:
+        _set_strength(e.target_id, float(dec["target_strength_after"]))
+    # 位置更新。**移動類事件把 lat/lng 記在 `detail` 而非 `ai_decision`**
+    # （movement.py 全部走 detail=）——本分支原本只看 ai_decision，於是自建立以來
+    # 從未對任何真實移動生效過，地圖重播會是「所有單位都不動」。
+    # 兩處都看：detail 優先（移動事件的真實來源），ai_decision 保留給有記位置的裁決事件。
+    pos = e.detail if ("lat" in e.detail and "lng" in e.detail) else dec
+    if e.initiator_id and "lat" in pos and "lng" in pos:
+        s = _st(e.initiator_id)
+        s.lat, s.lng = float(pos["lat"]), float(pos["lng"])
+    return touched
+
+
 def reconstruct_states(
     events: Sequence[AarEvent],
     up_to_tick: int,
@@ -98,45 +144,79 @@ def reconstruct_states(
     """
     states: dict[str, UnitState] = {}
     auth = authorized or {}
-
-    def _st(uid: str) -> UnitState:
-        return states.setdefault(uid, UnitState())
-
-    def _set_strength(uid: str, points: float) -> None:
-        s = _st(uid)
-        s.strength = points
-        a = auth.get(uid)
-        if a is not None and a > 0:
-            s.health = effectiveness_pct(points / a)
-
     for e in events:
         if e.tick > up_to_tick:
             break
-        dec = e.ai_decision
-        # 聚合交戰另有權威後態（戰力點），不能讓 damage_calc 的 fallback 先動到血量：
-        # 聚合事件的 damage_calc 是**雙方損失相加**（aggregate.py），拿它扣單側等於
-        # 把攻擊方的傷亡也記到守方頭上（§4 差距總表第 23 列「聚合戰損歸帳單側」）。
-        has_after = "target_health_after" in dec or "target_strength_after" in dec
-        # 個體交戰：權威後態（engagement.py 記 target_health_after，已是效能%）。
-        if e.target_id and "target_health_after" in dec:
-            _st(e.target_id).health = float(dec["target_health_after"])
-        elif e.target_id and e.damage_calc is not None and not has_after:
-            s = _st(e.target_id)
-            s.health = max(0.0, s.health - float(e.damage_calc))
-        # 聚合交戰：雙方後態皆為戰力點。
-        if "initiator_strength_after" in dec and e.initiator_id:
-            _set_strength(e.initiator_id, float(dec["initiator_strength_after"]))
-        if "target_strength_after" in dec and e.target_id:
-            _set_strength(e.target_id, float(dec["target_strength_after"]))
-        # 位置更新。**移動類事件把 lat/lng 記在 `detail` 而非 `ai_decision`**
-        # （movement.py 全部走 detail=）——本分支原本只看 ai_decision，於是自建立以來
-        # 從未對任何真實移動生效過，地圖重播會是「所有單位都不動」。
-        # 兩處都看：detail 優先（移動事件的真實來源），ai_decision 保留給有記位置的裁決事件。
-        pos = e.detail if ("lat" in e.detail and "lng" in e.detail) else dec
-        if e.initiator_id and "lat" in pos and "lng" in pos:
-            s = _st(e.initiator_id)
-            s.lat, s.lng = float(pos["lat"]), float(pos["lng"])
+        _apply_event(e, states, auth)
     return states
+
+
+@dataclass(frozen=True, slots=True)
+class StateChange:
+    """某單位在某 tick 結束時的變動（只帶真的變了的欄位由呼叫端決定要不要瘦身）。"""
+
+    unit_id: str
+    lat: float | None = None
+    lng: float | None = None
+    health: float | None = None
+    strength: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StateFrame:
+    tick: int
+    event_types: list[str]
+    changes: list[StateChange]
+
+
+def state_frames(
+    events: Sequence[AarEvent], authorized: Mapping[str, float] | None = None
+) -> list[StateFrame]:
+    """逐 tick 的狀態差異——地圖重播用（前端從基準累加到 scrubTick）。
+
+    只列**該 tick 真的被動到的單位**，且只列**與前一狀態不同的欄位**。
+    帳本本身就是這個形狀，所以整場一次傳完通常比逐格回後端小得多，
+    拖時間軸也不必等網路。
+    """
+    states: dict[str, UnitState] = {}
+    auth = authorized or {}
+    frames: list[StateFrame] = []
+    i = 0
+    n = len(events)
+    while i < n:
+        tick = events[i].tick
+        touched: set[str] = set()
+        types: list[str] = []
+        # 該 tick 之前的快照（只留待會要比的那幾個單位，避免整份深拷貝）。
+        before: dict[str, tuple[float | None, float | None, float, float | None]] = {}
+        j = i
+        while j < n and events[j].tick == tick:
+            e = events[j]
+            for uid in (e.initiator_id, e.target_id):
+                if uid and uid not in before:
+                    s = states.get(uid)
+                    before[uid] = (
+                        (s.lat, s.lng, s.health, s.strength) if s else (None, None, 100.0, None)
+                    )
+            touched |= _apply_event(e, states, auth)
+            types.append(e.event_type)
+            j += 1
+        changes: list[StateChange] = []
+        for uid in sorted(touched):
+            s = states[uid]
+            b = before.get(uid, (None, None, 100.0, None))
+            ch = StateChange(
+                unit_id=uid,
+                lat=s.lat if s.lat != b[0] else None,
+                lng=s.lng if s.lng != b[1] else None,
+                health=s.health if s.health != b[2] else None,
+                strength=s.strength if s.strength != b[3] else None,
+            )
+            if any(v is not None for v in (ch.lat, ch.lng, ch.health, ch.strength)):
+                changes.append(ch)
+        frames.append(StateFrame(tick=tick, event_types=types, changes=changes))
+        i = j
+    return frames
 
 
 @dataclass(frozen=True, slots=True)

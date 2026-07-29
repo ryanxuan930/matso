@@ -318,6 +318,56 @@ components:
         name: { type: string, minLength: 1 }
         category: { type: string, description: KINETIC / SENSOR / COMMS / LOGISTICS / DRONE }
         base_stats: { type: object }
+    AarReplayStates:
+      type: object
+      description: >-
+        地圖重播的完整資料：`units` 是靜態底本（含 tick 0 基準位置），
+        `frames` 只列**有變動的 tick 與有變動的單位**（帳本本身就是這個形狀）。
+        前端從基準累加到 scrubTick 即得該時刻全貌。
+      required: [units, frames, max_tick]
+      properties:
+        units: { type: array, items: { $ref: "#/components/schemas/AarReplayUnit" } }
+        frames: { type: array, items: { $ref: "#/components/schemas/AarReplayFrame" } }
+        max_tick: { type: integer, description: 帳本最後一個事件的 tick }
+    AarReplayUnit:
+      type: object
+      description: 重播底本的單位（靜態屬性 + tick 0 基準狀態）。
+      required: [id, faction, base_health]
+      properties:
+        id: { type: string }
+        designation: { type: string }
+        faction: { type: string }
+        unit_level: { type: string, description: 建制級別（SQUAD/PLATOON/…） }
+        is_fixed: { type: boolean }
+        authorized_strength:
+          type: [number, "null"]
+          description: >-
+            滿編戰力。聚合交戰的效能% 由「當前戰力 ÷ 此值」導出；
+            為 null 時 `strength` 仍會給，但 `health` 無從導出（不猜）。
+        base_lat: { type: [number, "null"] }
+        base_lng: { type: [number, "null"] }
+        base_health: { type: number, description: "tick 0 效能%（帳本無傷即 100）" }
+    AarReplayFrame:
+      type: object
+      description: 一個有事件的 tick，及該 tick 結束時**狀態有變**的單位。
+      required: [tick, changes]
+      properties:
+        tick: { type: integer }
+        event_types: { type: array, items: { type: string } }
+        changes: { type: array, items: { $ref: "#/components/schemas/AarReplayChange" } }
+    AarReplayChange:
+      type: object
+      description: >-
+        單一單位在該 tick 的變動。**只列真的變了的欄位**，未列＝沿用前一狀態。
+        `health` 是效能%（0–100）、`strength` 是戰力點——**兩者量綱不同不可互換**
+        （這正是本卡修掉的既有錯誤）。
+      required: [unit_id]
+      properties:
+        unit_id: { type: string }
+        lat: { type: number }
+        lng: { type: number }
+        health: { type: number, description: "效能%（0–100）" }
+        strength: { type: number, description: 戰力點（人員/平台數量級） }
     StateSnapshotView:
       type: object
       description: >-
@@ -1373,6 +1423,22 @@ paths:
   /sessions/{id}/aar:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get: { operationId: getAAR, responses: { "200": { description: AAR report } } }
+  /sessions/{id}/aar/replay/states:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getAarReplayStates
+      description: >-
+        AAR 地圖重播的狀態流（WP-D6.1）。回傳**靜態底本 + 逐 tick 差異**，
+        讓前端一次取得整場、拖動時間軸時本地重算，不必每格回後端。
+        存取控制與其他 AAR 端點相同（結束的推演、參與者或全知）。
+      responses:
+        "200":
+          description: Replay states
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AarReplayStates" }
+        "403": { description: Forbidden }
+        "404": { description: Session not found }
   /scenarios:
     get: { operationId: listScenarios, responses: { "200": { description: Scenarios } } }
     post: { operationId: uploadScenario, responses: { "201": { description: Validated & stored } } }
