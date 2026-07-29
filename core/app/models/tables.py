@@ -106,6 +106,10 @@ class WargameSession(Base):
     mobility_overrides: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
         "mobilityOverrides", JSON, nullable=True
     )
+    # WP-C10.5 陣地變換（NULL＝停用，既有局零遷移）。解析見 fires/survivability.py。
+    survivability_move: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
+        "survivabilityMove", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):

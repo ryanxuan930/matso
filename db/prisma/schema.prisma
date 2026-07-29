@@ -53,6 +53,9 @@ model WargameSession {
   // WP-B6 想定機動覆寫（overrides/mobility_matrix.json）：**局部**覆寫，深合併於出貨預設。
   // null = 用出貨預設（既有局零遷移）。⚠ 不得改變可通行性——A* 在 terrain 服務看不到本欄。
   mobilityOverrides Json?
+  /// 陣地變換（WP-C10.5）：{enabled, missions_before_move, min_km, max_km}。
+  /// NULL＝停用（既有局零遷移）。開局從想定快照一份，不即時讀想定。
+  survivabilityMove Json?
 
   units                        TacticalUnit[]
   eventLogs                    TacticalEventLog[]

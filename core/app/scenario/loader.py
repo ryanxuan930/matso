@@ -73,6 +73,8 @@ class LoadedScenario:
     indirect_fire_requires_approval: bool = False
     # WP-B6 想定機動覆寫（overrides/mobility_matrix.json 原樣帶入；**局部**覆寫，深合併於預設）。
     mobility_overrides: dict[str, Any] = field(default_factory=dict)
+    # 陣地變換（WP-C10.5）：{enabled, missions_before_move, min_km, max_km}。空＝停用。
+    survivability_move: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -130,6 +132,7 @@ def _build(
         request_quotas={str(k): int(v) for k, v in (sc.get("request_quotas") or {}).items()},
         indirect_fire_requires_approval=bool(sc.get("indirect_fire_requires_approval", False)),
         mobility_overrides=mobility_overrides,
+        survivability_move=dict(sc.get("survivability_move") or {}),
         description=sc.get("description"),
         faction_display_names={
             f["id"]: f["display_name"] for f in sc["factions"] if "display_name" in f
@@ -392,6 +395,8 @@ def create_session_from_scenario(
         request_quotas=loaded.request_quotas or None,
         # WP-B5.3 曲射火協落地：未宣告存 None ＝ 不設限（既有局零變更）。
         indirect_fire_requires_approval=loaded.indirect_fire_requires_approval or None,
+        # WP-C10.5 陣地變換落地：未宣告存 None ＝ 停用（既有局零變更）。
+        survivability_move=loaded.survivability_move or None,
     )
     db.add(session)
     db.flush()

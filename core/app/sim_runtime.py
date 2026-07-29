@@ -50,7 +50,9 @@ from app.engine.subsystems import (
 from app.factions.relations import FactionRelations
 from app.factions.session_store import load_session_relations
 from app.factions.visibility import visible_factions
+from app.fires.displacement import run_due_displacements
 from app.fires.scheduler import run_due_fire_missions
+from app.fires.survivability import load_session_survivability
 from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
@@ -264,7 +266,14 @@ class SimManager:
             # 讓它自種子開始（不會失敗）——加 stream 不需要重錄 checkpoint。
             rngs = {
                 stream: DeterministicRNG(seed, stream)
-                for stream in ("adjudication", "movement", "sensors", "area_fire", "bda")
+                for stream in (
+                    "adjudication",
+                    "movement",
+                    "sensors",
+                    "area_fire",
+                    "bda",
+                    "survivability",
+                )
             }
             # WP-E1：白軍排入的回滾在此執行（此刻世上只有這一個熱狀態寫入者）。
             await asyncio.to_thread(apply_pending_rollback, self._factory, client, session_id, hot)
@@ -293,8 +302,18 @@ class SimManager:
             mobility_rules = await asyncio.to_thread(
                 load_session_mobility_rules, engage_db, session_id
             )
+            # WP-C10.5 陣地變換：**runner 啟動讀一次**（同 ROE/mobility 紀律）。
+            surviv = await asyncio.to_thread(load_session_survivability, engage_db, session_id)
             if roe.any_rules:
                 _LOG.info("session %s 套用想定 ROE（交戰規則）", session_id)
+            if surviv.enabled:
+                _LOG.info(
+                    "session %s 啟用陣地變換（每 %d 次火力任務後位移 %.1f–%.1f km）",
+                    session_id,
+                    surviv.missions_before_move,
+                    surviv.min_km,
+                    surviv.max_km,
+                )
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
             if resumed.start_tick:
@@ -408,6 +427,21 @@ class SimManager:
             # 迴圈輪詢此鍵 → 暫停時凍結活模擬。
             pause_key = session_pause_key(session_id)
 
+            def _displacement_tick(tick: int) -> list[LedgerEvent]:
+                # WP-C10.5：與火力排程同紀律——自己的 DB session、經 OrderService.submit。
+                if not surviv.enabled:
+                    return []
+                with self._factory() as sdb:
+                    return run_due_displacements(
+                        sdb,
+                        hot,
+                        session_id,
+                        tick,
+                        surviv,
+                        rngs["survivability"],
+                        lambda s: OrderService(s, _fire_plan_gateway(), lambda: tick),
+                    )
+
             def _fire_plan_tick(tick: int) -> int:
                 # WP-C10.3：**另開一條 DB session**——不可借用 engage_db，那條被 order source
                 # 在 tick 之中 commit，混用會把排程器的未完成寫入一起送出去。
@@ -433,6 +467,11 @@ class SimManager:
                 # `session:{id}:tick` 是廣播器在 tick 跑完之後才寫的，讀它會慢一拍。
                 # 在此落庫的令會被同一個 tick 的 drain 撿走（pre_tick 在 run_tick 之前）。
                 await asyncio.to_thread(_fire_plan_tick, sim_clock.now().tick)
+                # WP-C10.5 陣地變換：打夠次數的砲自動換位置。事件走 LedgerWriter，
+                # 因為 pre_tick 不在 Kernel 的事件蒐集路徑上。
+                moves = await asyncio.to_thread(_displacement_tick, sim_clock.now().tick)
+                if moves:
+                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, moves)
 
             # 自主推演（O11.4）：本 session 有 AI 指派（Redis ai_config）且 #54 AI 非 OFF 時，
             # 每個 AI 陣營起一條獨立 async 決策 worker（固定心跳、非 pre_tick → 不阻塞 tick）。

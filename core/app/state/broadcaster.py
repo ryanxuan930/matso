@@ -17,6 +17,7 @@ from typing import Any
 import redis
 
 from app.comms import REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY, project_position
+from app.fires.survivability import MISSION_COUNT_KEY
 from app.state.hot_state import SessionDiff, UnitDiff, session_tick_key
 from app.state.ledger import LedgerEvent
 from app.state.redis_stream import channel_key, publish_to_stream, ring_key, seq_key
@@ -145,7 +146,9 @@ def build_state_diff_envelope(
 
 # 位置回報的原始欄位是**投影的輸入**，不是要下發的狀態——契約沒有它們，且對陣營副本而言
 # 就是「凍結前的真實位置」。一律剝掉（含全知的真實副本：統裁看 lat/lng 就好）。
-_INTERNAL_FIELDS = frozenset({REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY})
+# ⚠ 這是 **denylist**：任何新的熱狀態鍵一被寫入就會自動出現在 STATE_DIFF 裡。
+# WP-C10.5 的陣地變換計數是引擎內部帳，沒有任何 client 消費者 → 剝掉。
+_INTERNAL_FIELDS = frozenset({REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY, MISSION_COUNT_KEY})
 
 
 def _public_fields(fields: UnitDiff) -> UnitDiff:

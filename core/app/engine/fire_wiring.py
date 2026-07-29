@@ -33,6 +33,7 @@ from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.engage_wiring import WeaponEntry
 from app.engine.rng import DeterministicRNG
+from app.fires.survivability import MISSION_COUNT_KEY
 from app.models.enums import OrderStatus
 from app.models.tables import EquipmentInstance, Order, TacticalUnit
 from app.orders.schemas import OrderType
@@ -235,6 +236,7 @@ class AreaFireAdjudicator:
             dispersion_mult=dispersion_multiplier(verdict),
         )
         self._spend_ammo(order.shooter_id, entry, fired)
+        self._count_mission(order.shooter_id)
         self._apply_losses(result.losses)
         event = result.event
         if event is not None:
@@ -385,6 +387,20 @@ class AreaFireAdjudicator:
         # 穩定序：純函數逐目標算距離不抽樣，順序不影響數值，但影響事件內字典的鍵序（hash chain）。
         targets.sort(key=lambda t: t.unit_id)
         return targets
+
+    def _count_mission(self, shooter_id: str) -> None:
+        """這門砲在這個陣地上又打了一次任務（WP-C10.5 陣地變換的計數）。
+
+        **計「任務次數」不是「發數」**：發數由下令者自填、`rounds_per_mission` 又沒有
+        任何程式讀，兩者都不是穩定的單位。計數落熱狀態——checkpoint 與 rollback 都會
+        連它一起帶走，不像 `MselEngine._fired` 那種只活在行程記憶體裡的 set。
+
+        射擊被物理擋下（`_reject`）不會走到這裡：沒打出去就不算暴露。
+        """
+        state = self._hot.get_unit(shooter_id) or {}
+        raw = state.get(MISSION_COUNT_KEY, 0)
+        current = int(raw) if isinstance(raw, (int, float)) else 0
+        self._hot.update_unit(shooter_id, {MISSION_COUNT_KEY: current + 1})
 
     def _live_ammo(self, shooter_id: str, entry: WeaponEntry) -> int:
         state = self._hot.get_unit(shooter_id) or {}

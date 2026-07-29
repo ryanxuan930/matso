@@ -248,6 +248,34 @@
     "indirect_fire_requires_approval": {
       "type": "boolean",
       "description": "曲射火協（WP-B5.3）：開啟時 ARTILLERY/MISSILE 的 ENGAGE 令須掛已核准的 FIRE_SUPPORT 申請單，否則預檢拒絕。省略＝false＝不設限（既有想定零變更）。"
+    },
+    "survivability_move": {
+      "type": "object",
+      "description": "陣地變換（WP-C10.5）：砲兵打了 N 次火力任務後自動位移，避免被反砲兵火力找到。省略＝停用（既有想定零變更）。**計的是「火力任務次數」不是「發數」**——發數由下令者自填、`rounds_per_mission` 又沒有任何程式讀，兩者都不是穩定的單位。只有能自走的砲（TRACKED/WHEELED）會被排程；牽引砲需要牽引車，那條路徑尚無資料模型。",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "missions_before_move": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "打幾次火力任務後換陣地"
+        },
+        "min_km": {
+          "type": "number",
+          "minimum": 0.1,
+          "description": "位移距離下限（km）"
+        },
+        "max_km": {
+          "type": "number",
+          "minimum": 0.1,
+          "description": "位移距離上限（km）"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
