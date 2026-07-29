@@ -278,7 +278,17 @@ MATSO 現在 session 即全部——沒有把多次預推、正式局、檢討�
 **驗收**：建演習→掛 2 個預推局＋1 正式局→階段推進留痕→撤收產出 bundle；
 獨立 session 流程完全不受影響（回歸測試）。
 
-#### WP-B2 MSEL 排程執行引擎與白軍誘導迴圈　★★★｜golden：重錄（TriggerChecker 接入 tick）
+#### WP-B2 MSEL 排程執行引擎與白軍誘導迴圈　★★★｜golden：重錄（TriggerChecker 接入 tick）　✅ 2026-07-31（B2a/b/c）
+
+> ✅ **2026-07-31 完成 B2a/B2b/B2c**——worklog `docs/worklog/msel-runtime.md`。
+> 動手前 MSEL **三層都是斷的**：`check()` 只回 LedgerEvent（改變不了世界）、
+> 活執行期傳 `NoOpTriggerChecker`（從未被呼叫）、且 `create_session_from_scenario`
+> **從不持久化 `loaded.msel`**（執行期讀不到任何腳本事件）。三個斷點各自獨立。
+> **與規格不同的實作裁決**：`held_for`/`after_ticks_of` 需要跨 tick 記憶，
+> 而條件評估是純函數——記憶放進 `TriggerContext` 由引擎維護，並**進 checkpoint 信封**
+> （不進的話重啟會把所有 `once` 條目重新武裝，D+2 增援每次重啟都再來一次）。
+> **golden 未重錄**：無 MSEL 的既有案例中 `MselRuntime.check()` 第一行就回 `[]`，位元不變。
+> 剩餘：含 MSEL 的 golden 案例、白軍 `delay`（目前只有 fire/skip）。
 
 **動機**：[JTLS-F p.1053,1059]：「不適合模擬的想定元素以 MSEL 腳本事件注入，且注入與否視演習流程動態決定」；
 [JCATS-F p.9–10] 的教官誘導迴圈（狀況發佈→處置→回報→AAR→下一狀況）。MATSO 的 MSEL 只有 schema 雛形，
@@ -947,7 +957,7 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 
 ```
 B5.1 ✅ 席位模型 → B5.2 ✅ 信文/申請核覆 → B5.3 ✅ 火協 gate → C10.1 ✅ 臨機火力申請（2026-07-30）→ C10.2 FirePlan/排程
-B2 MSEL 執行引擎 → B1 演習專案 → B4 參數凍結簽證
+B2 ✅ MSEL 執行引擎（2026-07-31）→ B1 演習專案 → B4 參數凍結簽證
 A2 任務級下令（decomposer → runtime → LLM → UI 四卡）
 C1 壓制/姿態 → C3 乘駐車/隊形 → C2 障礙工兵 → C9 誤傷語意
 C4 環境演進（天氣 tick 化/晝夜/煙幕）
