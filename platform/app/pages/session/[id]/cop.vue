@@ -8,7 +8,6 @@ import type { ApiError } from '~/composables/useApi'
 import type { ContactView } from '~/composables/useIntel'
 import { toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
-import { buildBasemapSources } from '~/composables/useMapStyle'
 import {
   cancelOrder,
   fetchOrders,
@@ -73,141 +72,62 @@ const canControl = computed(() =>
   ['EXERCISE_DIRECTOR', 'WHITE_CELL_STAFF'].includes(auth.user?.role ?? ''),
 )
 
-const hex = ref(false)
-const hillshade = ref(false)
-const contour = ref(false)
-// 圖層透明度乘數 + 套疊順序（#9）+ 主/次等高線間距（#8）——localStorage 持久化。
-const layerOpacity = ref<Record<string, number>>({ basemap: 1, hillshade: 1, contour: 1, hex: 1 })
-const layerOrder = ref<string[]>(['hex', 'contour', 'hillshade'])
-const contourMajor = ref(100)
-const contourMinor = ref(50)
-// 座標網格（#9）+ 座標查詢（#10）
-const latlngGrid = ref(false)
-const mgrsGrid = ref(false)
-const gridStepDeg = ref(0.5)
+// #12 浮動工具視窗（六個小工具皆可拖拉/縮放/關閉）＋操作員偏好持久化。
+// coordQuery/mapEditorOpen 是對應 widget 的開關別名。
+const {
+  widgets,
+  widgetMenuOpen,
+  hasLeftDock,
+  hasRightDock,
+  focusWidget,
+  toggleWidget,
+  setWidgetGeom,
+  onWidgetGrab,
+  onWidgetDrop,
+  openFlag,
+} = useCopWidgets()
+const coordQuery = openFlag('coords')
+const mapEditorOpen = openFlag('mapedit')
+const {
+  hex,
+  hillshade,
+  contour,
+  layerOpacity,
+  layerOrder,
+  contourMajor,
+  contourMinor,
+  latlngGrid,
+  mgrsGrid,
+  gridStepDeg,
+  hexMaxRes,
+  hexLimitKm,
+  dayNight,
+  timeOfDay,
+  hexLineWidth,
+  contourMajorWidth,
+  contourMinorWidth,
+  hexLineColor,
+  contourColor,
+  gridColor,
+  gridWidth,
+  mgrsColor,
+  preciseMove,
+  basemapSources,
+  basemap,
+  hasTiles,
+  onBasemapError,
+} = useCopPrefs(widgets)
+
+// 座標查詢（#10）：點地圖 → 該點經緯度 + MGRS。
 const queryPoint = ref<{ lng: number; lat: number } | null>(null)
 const queryMgrs = ref('')
-const hexMaxRes = ref(8) // 六角網格最細解析度上限（設定最小網格）
-const hexLimitKm = ref(0) // 交戰範圍限制（km；0=不限）
-const dayNight = ref(false) // 日照視覺（#6）
-const timeOfDay = ref(12) // 一日時間 0–24（#6）
-// 線條粗細設定（#5）：六角網格線 + 主/次等高線線寬（px）——專屬 modal 調整、localStorage 持久化。
-const hexLineWidth = ref(0.5)
-const contourMajorWidth = ref(1.2)
-const contourMinorWidth = ref(0.5)
-// #22 線條顏色 + 座標網格線寬（併入圖層小工具，取代舊 modal）。
-const hexLineColor = ref('#38bdf8')
-const contourColor = ref('#c9a15c')
-const gridColor = ref('#5b7fa6')
-const gridWidth = ref(0.5)
-const mgrsColor = ref('#facc15')
-// #12 浮動工具視窗：六個小工具皆可拖拉/縮放/關閉，並以工具選單勾選開關；幾何+開關持久化。
-// 取代舊的左右固定面板/換邊。coordQuery/mapEditorOpen 改為對應 widget 的開關別名。
-type WidgetId = 'layers' | 'units' | 'events' | 'orders' | 'mapedit' | 'coords'
-type DockSide = 'left' | 'right' | 'float'
-interface WStat {
-  open: boolean
-  dock: DockSide
-  x: number
-  y: number
-  w: number
-  h: number
-  z: number
-}
-const WIDGET_DEFS: { id: WidgetId; title: string; label: string }[] = [
-  { id: 'layers', title: '圖層 / 底圖', label: '圖層' },
-  { id: 'units', title: '單位 / 下令', label: '單位' },
-  { id: 'events', title: '戰況事件', label: '戰況事件' },
-  { id: 'orders', title: '指令', label: '指令' },
-  { id: 'mapedit', title: '地圖編輯', label: '地圖編輯' },
-  { id: 'coords', title: '座標查詢', label: '座標' },
-]
-const DOCK_EDGE = 72 // 拖到最左/右 DOCK_EDGE px 內即停靠成側欄
-function defaultWidgets(): Record<WidgetId, WStat> {
-  const vw = import.meta.client ? window.innerWidth : 1280
-  const rx = Math.max(324, vw - 320)
-  return {
-    layers: { open: true, dock: 'left', x: 12, y: 60, w: 296, h: 470, z: 11 },
-    units: { open: true, dock: 'right', x: rx, y: 60, w: 300, h: 300, z: 12 },
-    events: { open: true, dock: 'right', x: rx, y: 372, w: 300, h: 148, z: 13 },
-    orders: { open: true, dock: 'right', x: rx, y: 532, w: 300, h: 180, z: 14 },
-    mapedit: { open: false, dock: 'float', x: 12, y: 60, w: 326, h: 540, z: 15 },
-    coords: { open: false, dock: 'float', x: 12, y: 540, w: 260, h: 170, z: 16 },
-  }
-}
-const widgets = ref<Record<WidgetId, WStat>>(defaultWidgets())
-const widgetZTop = ref(20)
-const widgetMenuOpen = ref(false)
-const DOCK_W = 320 // 停靠側欄寬（含邊距）——供地圖控制項讓位
-const hasLeftDock = computed(() =>
-  WIDGET_DEFS.some((d) => widgets.value[d.id].open && widgets.value[d.id].dock === 'left'),
-)
-const hasRightDock = computed(() =>
-  WIDGET_DEFS.some((d) => widgets.value[d.id].open && widgets.value[d.id].dock === 'right'),
-)
-function focusWidget(id: WidgetId) {
-  widgetZTop.value += 1
-  widgets.value[id].z = widgetZTop.value
-}
-function toggleWidget(id: WidgetId) {
-  const w = widgets.value[id]
-  w.open = !w.open
-  if (w.open) focusWidget(id)
-}
-function setWidgetGeom(id: WidgetId, g: { x: number; y: number; w: number; h: number }) {
-  Object.assign(widgets.value[id], g)
-}
-// 拖曳起手：先脫離停靠變浮動，落在目前螢幕位置跟著游標走。
-function onWidgetGrab(id: WidgetId, g: { x: number; y: number; w: number; h: number }) {
-  const w = widgets.value[id]
-  w.dock = 'float'
-  w.x = g.x
-  w.y = g.y
-  w.h = g.h
-  focusWidget(id)
-}
-// 拖曳落下：靠最左/右緣 → 停靠成側欄；否則維持浮動於落點。
-function onWidgetDrop(id: WidgetId, g: { x: number; y: number; w: number; h: number }) {
-  const w = widgets.value[id]
-  const vw = window.innerWidth
-  if (g.x <= DOCK_EDGE) w.dock = 'left'
-  else if (g.x + g.w >= vw - DOCK_EDGE) w.dock = 'right'
-  else {
-    w.dock = 'float'
-    w.x = g.x
-    w.y = g.y
-  }
-}
-const coordQuery = computed({
-  get: () => widgets.value.coords.open,
-  set: (v: boolean) => {
-    widgets.value.coords.open = v
-  },
-})
+
 const hiddenFeatureIds = ref<string[]>([]) // session-local：隱藏的地圖元素
 function toggleFeatureHidden(id: string) {
   const i = hiddenFeatureIds.value.indexOf(id)
   if (i >= 0) hiddenFeatureIds.value.splice(i, 1)
   else hiddenFeatureIds.value.push(id)
 }
-const LAYER_PREFS_KEY = 'matso.cop.layers'
-
-// 底圖來源（可抽換，#2）：離線 / 街道 / 衛星 / 軍用…由 runtimeConfig 注入。
-const _pub = useRuntimeConfig().public
-const basemapSources = buildBasemapSources({
-  tileUrl: _pub.tileUrl as string,
-  satelliteUrl: _pub.satelliteUrl as string | undefined,
-  basemaps: _pub.basemaps as never,
-  onlineBasemaps: _pub.onlineBasemaps as boolean,
-})
-// 預設用「街道」（有本地 tileserver 時）；載不到才回退離線格線。
-const basemap = ref(basemapSources.some((s) => s.id === 'street') ? 'street' : 'offline')
-function onBasemapError() {
-  if (basemap.value !== 'offline') basemap.value = 'offline'
-}
-
-// 是否已設定離線 tile server（有 .mbtiles）。未設 → 顯示離線底圖提示（SPEC §13.2）。
-const hasTiles = computed(() => !!_pub.tileUrl)
 
 const TYPES = ['INFANTRY', 'ARMOR', 'ARTILLERY', 'RECON', 'HQ']
 
@@ -248,12 +168,6 @@ const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 
 // 地圖編輯器（stage ③b）——標註/工事/武器據點的繪製與管理。
 const mapFeatures = ref<MapFeature[]>([])
-const mapEditorOpen = computed({
-  get: () => widgets.value.mapedit.open,
-  set: (v: boolean) => {
-    widgets.value.mapedit.open = v
-  },
-})
 const drawKind = ref<DraftKind | null>(null)
 const drawFeatureKind = ref('OBSTACLE')
 const drawWeaponTemplate = ref('')
@@ -297,10 +211,6 @@ const selectedId = ref<string | null>(null)
 const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
 const destH3 = ref<string | null>(null)
 const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
-// 精確移動預設「開」：跳過六角格心吸附，單位精確走到點擊處。六角格心吸附在 <1km 近距作戰
-// （校園/大樓）會把落點吸回格心（≈原位）造成「下令後跑回原位」的錯覺（#2/#15）；預設關閉吸附
-// 消除此問題。需大範圍推演的粗略化/省算時，可取消勾選改回六角吸附。
-const preciseMove = ref(true)
 const targeting = ref(false)
 // #28 移動路徑預覽：目的地/自訂路徑 → 試算距離/tick/油耗/可行性/強穿阻礙。
 const movePreview = ref<MovementPreview | null>(null)
@@ -1725,128 +1635,6 @@ onBeforeUnmount(() => {
   if (resyncTimer) clearInterval(resyncTimer)
   if (trackTimer) clearInterval(trackTimer) // #95 軌跡淡出計時器
 })
-
-// 圖層/底圖偏好持久化（#3/#9）：載入 → 存檔（跨換頁/重整保留操作員的 COP 設定：
-// 開啟的圖層、底圖、透明度、套疊順序、等高線間距）。
-onMounted(() => {
-  if (!import.meta.client) return
-  try {
-    const p = JSON.parse(localStorage.getItem(LAYER_PREFS_KEY) ?? '{}')
-    if (typeof p.hex === 'boolean') hex.value = p.hex
-    if (typeof p.hillshade === 'boolean') hillshade.value = p.hillshade
-    if (typeof p.contour === 'boolean') contour.value = p.contour
-    // 底圖：僅在該來源仍存在時還原（線上底圖可能已關閉 → 回退預設）。
-    if (typeof p.basemap === 'string' && basemapSources.some((s) => s.id === p.basemap)) {
-      basemap.value = p.basemap
-    }
-    if (p.layerOpacity) layerOpacity.value = { ...layerOpacity.value, ...p.layerOpacity }
-    if (Array.isArray(p.layerOrder) && p.layerOrder.length) layerOrder.value = p.layerOrder
-    if (typeof p.contourMajor === 'number') contourMajor.value = p.contourMajor
-    if (typeof p.contourMinor === 'number') contourMinor.value = p.contourMinor
-    if (typeof p.latlngGrid === 'boolean') latlngGrid.value = p.latlngGrid
-    if (typeof p.mgrsGrid === 'boolean') mgrsGrid.value = p.mgrsGrid
-    if (typeof p.gridStepDeg === 'number') gridStepDeg.value = p.gridStepDeg
-    if (typeof p.hexMaxRes === 'number') hexMaxRes.value = p.hexMaxRes
-    if (typeof p.hexLimitKm === 'number') hexLimitKm.value = p.hexLimitKm
-    if (typeof p.dayNight === 'boolean') dayNight.value = p.dayNight
-    if (typeof p.timeOfDay === 'number') timeOfDay.value = p.timeOfDay
-    if (typeof p.preciseMove === 'boolean') preciseMove.value = p.preciseMove
-    if (p.widgets && typeof p.widgets === 'object') {
-      for (const id of Object.keys(widgets.value) as WidgetId[]) {
-        const s = p.widgets[id]
-        if (!s || typeof s !== 'object') continue
-        const cur = widgets.value[id]
-        const dock = s.dock === 'left' || s.dock === 'right' || s.dock === 'float' ? s.dock : cur.dock
-        widgets.value[id] = {
-          open: typeof s.open === 'boolean' ? s.open : cur.open,
-          dock,
-          x: typeof s.x === 'number' ? s.x : cur.x,
-          y: typeof s.y === 'number' ? s.y : cur.y,
-          w: typeof s.w === 'number' ? s.w : cur.w,
-          h: typeof s.h === 'number' ? s.h : cur.h,
-          z: cur.z,
-        }
-      }
-    }
-    if (typeof p.hexLineWidth === 'number') hexLineWidth.value = p.hexLineWidth
-    if (typeof p.contourMajorWidth === 'number') contourMajorWidth.value = p.contourMajorWidth
-    if (typeof p.contourMinorWidth === 'number') contourMinorWidth.value = p.contourMinorWidth
-    if (typeof p.hexLineColor === 'string') hexLineColor.value = p.hexLineColor
-    if (typeof p.contourColor === 'string') contourColor.value = p.contourColor
-    if (typeof p.gridColor === 'string') gridColor.value = p.gridColor
-    if (typeof p.gridWidth === 'number') gridWidth.value = p.gridWidth
-    if (typeof p.mgrsColor === 'string') mgrsColor.value = p.mgrsColor
-  } catch {
-    /* 壞資料忽略，用預設 */
-  }
-})
-watch(
-  [
-    hex,
-    hillshade,
-    contour,
-    basemap,
-    layerOpacity,
-    layerOrder,
-    contourMajor,
-    contourMinor,
-    latlngGrid,
-    mgrsGrid,
-    gridStepDeg,
-    hexMaxRes,
-    hexLimitKm,
-    dayNight,
-    timeOfDay,
-    preciseMove,
-    hexLineWidth,
-    contourMajorWidth,
-    contourMinorWidth,
-    hexLineColor,
-    contourColor,
-    gridColor,
-    gridWidth,
-    mgrsColor,
-    widgets,
-  ],
-  () => {
-    if (!import.meta.client) return
-    try {
-      localStorage.setItem(
-        LAYER_PREFS_KEY,
-        JSON.stringify({
-          hex: hex.value,
-          hillshade: hillshade.value,
-          contour: contour.value,
-          basemap: basemap.value,
-          layerOpacity: layerOpacity.value,
-          layerOrder: layerOrder.value,
-          contourMajor: contourMajor.value,
-          contourMinor: contourMinor.value,
-          latlngGrid: latlngGrid.value,
-          mgrsGrid: mgrsGrid.value,
-          gridStepDeg: gridStepDeg.value,
-          hexMaxRes: hexMaxRes.value,
-          hexLimitKm: hexLimitKm.value,
-          dayNight: dayNight.value,
-          timeOfDay: timeOfDay.value,
-          preciseMove: preciseMove.value,
-          widgets: widgets.value,
-          hexLineWidth: hexLineWidth.value,
-          contourMajorWidth: contourMajorWidth.value,
-          contourMinorWidth: contourMinorWidth.value,
-          hexLineColor: hexLineColor.value,
-          contourColor: contourColor.value,
-          gridColor: gridColor.value,
-          gridWidth: gridWidth.value,
-          mgrsColor: mgrsColor.value,
-        }),
-      )
-    } catch {
-      /* 配額/隱私模式忽略 */
-    }
-  },
-  { deep: true },
-)
 </script>
 
 <template>
