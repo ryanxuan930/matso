@@ -17,11 +17,15 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.adjudication.suppression import Posture, posture_modifier
 from app.adjudication.weapon import WeaponProfile
 from app.engine.rng import DeterministicRNG
 from app.state.ledger import LedgerEvent
 
 _EARTH_R_M = 6_371_000.0
+# 壓制半徑 ÷ 殺傷半徑（WP-C1）。砲彈在你旁邊 100 m 炸開沒傷到你，你照樣得趴下——
+# 壓制的作用範圍本來就遠大於殺傷範圍，這正是「砲兵主要用來壓制而非殲滅」的物理來源。
+SUPPRESSION_RADIUS_MULT = 3.0
 # CEP（含 50% 落點的圓半徑）→ 二維常態的 sigma。Rayleigh 分布中位數 = sigma * sqrt(2 ln 2)。
 _CEP_TO_SIGMA = 1.0 / 1.1774
 
@@ -38,14 +42,20 @@ class AreaTarget:
     current_strength: float | None = None
     authorized_strength: float | None = None
     platform_count: int = 1
+    # WP-C1 姿態。**掘壕對砲擊的防護最有意義**——不接這條的話，構工只擋得住直射火力，
+    # 那把「為什麼要挖散兵坑」整個弄反了。中性預設 MOVING ⇒ 修正 1.0，既有局位元不變。
+    posture: str = "MOVING"
 
 
 @dataclass(frozen=True, slots=True)
 class AreaFireResult:
     impact_lat: float
     impact_lng: float
-    # unit_id → 戰力損失（0 表示在半徑內但未造成損失）
+    # unit_id → 戰力損失。**只含真的挨了損失的單位**（殺傷半徑內）。
     losses: dict[str, float] = field(default_factory=dict)
+    # unit_id → 落在其壓制半徑內的發數（WP-C1）。是 `losses` 的超集：
+    # 沒被傷到但被打得抬不起頭的單位只出現在這裡。**不入帳本事件**（不改 hash chain）。
+    suppressed: dict[str, int] = field(default_factory=dict)
     event: LedgerEvent | None = None
 
 
@@ -98,7 +108,15 @@ def _loss_for(weapon: WeaponProfile, target: AreaTarget, distance_m: float) -> f
         pk = weapon.damage_by_armor_class.get(target.armor_class, 0.0) / 100.0
     auth = target.authorized_strength
     cp_per_platform = (auth / max(1, target.platform_count)) if auth else 1.0
-    return max(0.0, pk * falloff * cp_per_platform)
+    return max(0.0, pk * falloff * cp_per_platform * _cover(target))
+
+
+def _cover(target: AreaTarget) -> float:
+    """姿態 → 承受戰損的修正（WP-C1）。未知字串一律中性——裁決層不因資料髒而爆掉。"""
+    try:
+        return posture_modifier(Posture(target.posture))
+    except ValueError:
+        return 1.0
 
 
 def resolve_area_fire(
@@ -130,6 +148,8 @@ def resolve_area_fire(
     aim_lat, aim_lng = aim
     cep_m = weapon.dispersion_cep_m * dispersion_mult
     losses: dict[str, float] = {}
+    suppressed: dict[str, int] = {}
+    sup_radius = weapon.lethal_radius_m * SUPPRESSION_RADIUS_MULT
     impacts: list[tuple[float, float]] = []
     for _ in range(max(1, rounds)):
         ilat, ilng = sample_impact(aim_lat, aim_lng, cep_m, rng)
@@ -139,6 +159,8 @@ def resolve_area_fire(
             loss = _loss_for(weapon, t, d)
             if loss > 0:
                 losses[t.unit_id] = losses.get(t.unit_id, 0.0) + loss
+            if d <= sup_radius:
+                suppressed[t.unit_id] = suppressed.get(t.unit_id, 0) + 1
 
     # 損失封頂在目標當前戰力：齊射累加很容易超過殘存戰力，不封頂的話帳本上的
     # damage_calc 會比實際被扣掉的還多——AAR 的傷亡統計就成了假的。
@@ -175,4 +197,10 @@ def resolve_area_fire(
         damage_calc=round(sum(losses.values()), 3),
         ai_decision=decision,
     )
-    return AreaFireResult(impact_lat=first_lat, impact_lng=first_lng, losses=losses, event=event)
+    return AreaFireResult(
+        impact_lat=first_lat,
+        impact_lng=first_lng,
+        losses=losses,
+        suppressed=suppressed,
+        event=event,
+    )

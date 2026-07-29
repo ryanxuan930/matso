@@ -174,3 +174,66 @@ def test_render_prompt_contains_key_sections() -> None:
 )
 def test_unit_status_derivation(state: dict, expected: str) -> None:
     assert unit_status(state) == expected
+
+
+# ---- WP-C1 壓制與姿態進 AI context ----
+
+
+def _ctx_with(state_patch: dict) -> dict:
+    hot = _hot()
+    hot["b1"].update(state_patch)
+    return build_faction_context(
+        faction="BLUFOR",
+        tick=5,
+        hot_snapshot=hot,
+        unit_meta=_meta(),
+        known_enemies=[],
+        relations=_relations(),
+    )
+
+
+def test_neutral_suppression_and_posture_leave_the_prompt_bit_identical() -> None:
+    """**這是本組最重要的一條**：既有局的熱狀態沒有這兩個鍵，prompt 必須一個位元都不變。
+
+    `ReplayClient` 按 prompt 雜湊重播；prompt 一動，所有已錄的 golden 自主場次全部作廢。
+    顯式寫 0/MOVING（中性值）也必須不變——否則「單位曾被壓制過又恢復」就會改變 prompt。
+    """
+    base = render_context_prompt(_ctx_with({}))
+    assert render_context_prompt(_ctx_with({"suppression": 0.0, "posture": "MOVING"})) == base
+
+
+def test_suppression_renders_its_consequence_not_just_the_number() -> None:
+    """「0.5」對 LLM 沒有意義；「射擊效能剩約 70%」才推得出「先撤出被壓制區」。"""
+    ctx = _ctx_with({"suppression": 0.5})
+    assert ctx["own_units"][0]["suppression"] == 0.5
+    line = next(ln for ln in render_context_prompt(ctx).splitlines() if ln.startswith("- b1"))
+    assert "壓制 0.5" in line
+    assert "70%" in line  # 1 - 0.6*0.5 = 0.7
+
+
+def test_posture_renders_its_modifier_and_the_cost_of_moving() -> None:
+    ctx = _ctx_with({"posture": "DUG_IN"})
+    assert ctx["own_units"][0]["posture"] == "DUG_IN"
+    line = next(ln for ln in render_context_prompt(ctx).splitlines() if ln.startswith("- b1"))
+    assert "DUG_IN" in line and "×0.5" in line
+    assert "重新構工" in line  # 移動會作廢——不講的話 LLM 會把挖好的單位隨手調走
+
+
+def test_enemy_suppression_never_reaches_the_context() -> None:
+    """敵方壓制度＝免費的即時戰果評估（WP-C10.4 擋的正是這個）。
+
+    `known_enemies` 走情報路徑、`_own_unit_view` 只投影本陣營——這裡釘住「就算敵方熱狀態
+    有壓制度，本陣營 context 也拿不到」。
+    """
+    hot = _hot()
+    hot["r1"].update({"suppression": 0.9, "posture": "DUG_IN"})
+    ctx = build_faction_context(
+        faction="BLUFOR",
+        tick=5,
+        hot_snapshot=hot,
+        unit_meta=_meta(),
+        known_enemies=[{"unit_id": "r1", "lat": 24.3, "lng": 121.3}],
+        relations=_relations(),
+    )
+    assert "0.9" not in json.dumps(ctx, ensure_ascii=False)
+    assert "DUG_IN" not in render_context_prompt(ctx)

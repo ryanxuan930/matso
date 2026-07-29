@@ -177,8 +177,137 @@ def build_order_replay_kernel() -> Kernel:
     )
 
 
+# --------------------------------------------------------------------------
+# 壓制與姿態（WP-C1，SPEC_V2 §6 明列須有 golden 案例）。
+#
+# 這個想定把 C1 的四件事一次跑進 stateHash：面射擊落點抽樣、姿態的**轉換要時間**、
+# 壓制在半徑內的累積、以及每 tick 的衰減。全在記憶體（無 DB/Redis/牆鐘）。
+#
+# 姿態刻意用 DEFENSE（30 tick）而不是 DUG_IN（240 tick）：60 tick 的視窗內收斂得完，
+# 於是「未就位仍算前一級」與「就位後才享有防護」兩種行為都進了同一個 hash。
+# --------------------------------------------------------------------------
+
+_C1_TICKS = 60
+_C1_AIM = (24.0, 121.0)
+_C1_ROUNDS = 4
+# 前三輪落在姿態就位（tick 30）之前、後三輪之後——轉換那一刻的行為差異才進得了 hash。
+_C1_FIRE_TICKS = (5, 10, 15, 35, 40, 45)
+
+
+def _c1_weapon() -> Any:
+    from app.adjudication.weapon import WeaponProfile
+
+    return WeaponProfile.from_base_stats(
+        {
+            "max_range_m": 20000,
+            "ph_by_range_band": [[20000, 0.5]],
+            "damage_by_armor_class": {"SOFT": 60.0},
+            "pk_by_armor_class": {"SOFT": 0.6},
+            "ammo_types": ["HE"],
+            "dispersion_cep_m": 100.0,
+            "lethal_radius_m": 50.0,
+        }
+    )
+
+
+class _C1FireOrders:
+    """固定 tick 開火（無 RNG、無牆鐘）。"""
+
+    def __init__(self, clock: SimClock) -> None:
+        self._clock = clock
+
+    async def drain(self) -> list[int]:
+        tick = self._clock.now().tick
+        return [tick] if tick in _C1_FIRE_TICKS else []
+
+
+class _C1FireAdjudicator:
+    """一次面射擊：`resolve_area_fire` → 扣戰力 → `apply_area_suppression`。
+
+    走的是與活執行期 `AreaFireAdjudicator` 相同的純函數與接線函式，只是不碰 DB。
+    """
+
+    def __init__(self, hot: InMemoryHotState, rng: DeterministicRNG) -> None:
+        self._hot = hot
+        self._rng = rng
+
+    def resolve(self, _order: int, now: SimTime) -> list[LedgerEvent]:
+        from app.adjudication.area_fire import AreaTarget, resolve_area_fire
+        from app.engine.suppression_wiring import POSTURE_KEY, apply_area_suppression
+
+        state = self._hot.get_unit("INF") or {}
+        target = AreaTarget(
+            unit_id="INF",
+            faction="RED",
+            lat=float(state["lat"]),
+            lng=float(state["lng"]),
+            armor_class="SOFT",
+            current_strength=float(state["strength"]),
+            authorized_strength=120.0,
+            platform_count=120,
+            posture=str(state.get(POSTURE_KEY) or "MOVING"),
+        )
+        result = resolve_area_fire(
+            _c1_weapon(),
+            _C1_AIM,
+            [target],
+            self._rng,
+            now.tick,
+            shooter_id="GUN",
+            shooter_faction="BLUE",
+            rounds=_C1_ROUNDS,
+        )
+        loss = result.losses.get("INF", 0.0)
+        if loss:
+            self._hot.update_unit("INF", {"strength": target.current_strength - loss})
+        apply_area_suppression(self._hot, result.suppressed, "ARTILLERY")
+        return [result.event] if result.event is not None else []
+
+
+class _C1Decay:
+    """每 tick 的衰減與姿態收斂（活執行期跑在 pre_tick，這裡掛 movement 槽）。"""
+
+    def __init__(self, hot: InMemoryHotState) -> None:
+        self._hot = hot
+
+    async def step(self, now: SimTime) -> list[LedgerEvent]:
+        from app.engine.suppression_wiring import tick_suppression
+
+        tick_suppression(self._hot, now.tick)
+        return []
+
+
+def build_suppression_defense_kernel() -> Kernel:
+    from app.adjudication.suppression import Posture
+    from app.engine.suppression_wiring import set_posture
+
+    hot = InMemoryHotState()
+    hot.put_unit("GUN", {"lat": 24.1, "lng": 121.0, "strength": 6.0})
+    hot.put_unit("INF", {"lat": _C1_AIM[0], "lng": _C1_AIM[1], "strength": 120.0})
+    set_posture(hot, "INF", Posture.DEFENSE, tick=0)  # tick 30 才就位
+    clock = SimClock()
+    return Kernel(
+        session_id="replay",
+        clock=clock,
+        order_source=_C1FireOrders(clock),
+        adjudicator=_C1FireAdjudicator(hot, DeterministicRNG(MASTER_SEED, "area_fire")),
+        movement=_C1Decay(hot),
+        sensors=NoOpSensorSystem(),
+        comms=NoOpCommsSystem(),
+        logistics=NoOpLogisticsSystem(),
+        trigger_checker=NoOpTriggerChecker(),
+        broadcaster=NoOpBroadcaster(),
+        event_sink=NoOpEventSink(),
+        hot_state=hot,
+        wall_clock=NullMonotonicClock(),
+    )
+
+
 SCENARIOS: dict[str, ReplayScenario] = {
     "empty_100": ReplayScenario("empty_100", 100, _build_empty),
     "rng_walk_100": ReplayScenario("rng_walk_100", 100, build_rng_walk_kernel),
     "order_replay_60": ReplayScenario("order_replay_60", _ORDER_TICKS, build_order_replay_kernel),
+    "suppression_defense_60": ReplayScenario(
+        "suppression_defense_60", _C1_TICKS, build_suppression_defense_kernel
+    ),
 }

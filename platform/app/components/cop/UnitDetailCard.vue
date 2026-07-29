@@ -6,7 +6,7 @@
  * `reactive(...)`，樣板不會 unwrap 巢狀 ref）。其餘是選取單位的衍生值，由頁面算好傳入
  * ——它們各自來源不同（DB 值、STATE_DIFF 活值、編裝權限），沒有共同的 composable 可收。
  */
-import { commsLabel, factionColor, unitLevelLabel } from '~/composables/useUnits'
+import { POSTURE_LABELS, commsLabel, factionColor, postureLabel, unitLevelLabel } from '~/composables/useUnits'
 import type { UnitView, WeaponView } from '~/composables/useOrders'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useUnitCardDrag } from '~/composables/useUnitCardDrag'
@@ -26,6 +26,9 @@ defineProps<{
   editable: boolean
   currentTick: number
   liveComms: (u: UnitView) => string
+  /** 活壓制度（0–1）與姿態（WP-C1）。敵方單位一律讀到中性值——後端不供應。 */
+  liveSuppression: (u: UnitView) => number
+  livePosture: (u: UnitView) => string
   liveStaleTick: (u: UnitView) => number | null
   liveFuel: (unitId: string | null) => number | null
   liveAmmo: (w: WeaponView) => number | null
@@ -59,9 +62,30 @@ const showOrbat = defineModel<boolean>('showOrbat', { required: true })
     <strong class="cname">{{ unit.designation }}</strong>
     <span class="clevel">{{ unitLevelLabel(unit.unit_level) }} · {{ unit.faction }}</span>
   </div>
+  <!-- WP-C1 姿態徽章：MOVING 不顯示（那是預設，每張卡都掛一個「行進」只是雜訊）。 -->
+  <div
+    v-if="livePosture(unit) !== 'MOVING'"
+    class="posture"
+    :class="`posture-${livePosture(unit).toLowerCase()}`"
+    :title="POSTURE_LABELS[livePosture(unit)]?.hint ?? ''"
+    data-testid="unit-posture"
+  >
+    <i class="pi pi-shield" /> {{ postureLabel(livePosture(unit)) }}
+  </div>
   <div class="hpbar" :title="`作戰效能 ${hpPct}%`">
     <div class="hpfill" :style="{ width: `${hpPct}%`, background: hpColor }" />
     <span class="hptxt">效能 {{ hpPct }}%</span>
+  </div>
+  <!-- WP-C1 壓制條：只在真的被壓制時出現。壓制是可逆的——停火就開始恢復，
+       所以它跟效能條是兩件事，不能塞進同一條裡混淆。 -->
+  <div
+    v-if="liveSuppression(unit) > 0"
+    class="supbar"
+    :title="`壓制 ${Math.round(liveSuppression(unit) * 100)}%：射擊效能 −${Math.round(liveSuppression(unit) * 60)}%、速度 −${Math.round(liveSuppression(unit) * 50)}%（停火後每分鐘衰減）`"
+    data-testid="unit-suppression"
+  >
+    <div class="supfill" :style="{ width: `${Math.round(liveSuppression(unit) * 100)}%` }" />
+    <span class="suptxt">壓制 {{ Math.round(liveSuppression(unit) * 100) }}%</span>
   </div>
   <dl class="card-meta">
     <div v-if="force">
@@ -123,6 +147,50 @@ const showOrbat = defineModel<boolean>('showOrbat', { required: true })
 </template>
 
 <style scoped>
+/* WP-C1 姿態徽章與壓制條。壓制用橘紅（與效能條的綠/黃/紅有別，避免誤讀成戰損）。 */
+.unit-card .posture {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.75rem;
+  font-size: 0.68rem;
+  border: 1px solid currentcolor;
+}
+.unit-card .posture-hasty {
+  color: #7dd3fc;
+}
+.unit-card .posture-defense {
+  color: #4ade80;
+}
+.unit-card .posture-dug_in {
+  color: #34d399;
+}
+.unit-card .supbar {
+  position: relative;
+  height: 0.85rem;
+  margin: 0.35rem 0 0.1rem;
+  border-radius: 0.25rem;
+  background: #1e293b;
+  overflow: hidden;
+}
+.unit-card .supfill {
+  height: 100%;
+  background: repeating-linear-gradient(45deg, #f97316, #f97316 4px, #c2410c 4px, #c2410c 8px);
+  transition: width 0.3s ease;
+}
+.unit-card .suptxt {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: #fff7ed;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+}
 /* WP-C5 位置凍結註記：與 .dim 同層級，但用琥珀色點出「這不是即時值」。 */
 .stale {
   color: #fbbf24;

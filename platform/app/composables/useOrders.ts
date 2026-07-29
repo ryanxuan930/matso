@@ -11,6 +11,7 @@ export const ORDER_TYPE_LABELS: Record<string, string> = {
   MOVE: '移動',
   ENGAGE: '交戰',
   FIRE_MISSION: '火力任務',
+  POSTURE: '姿態',
 }
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   PENDING: '等待中',

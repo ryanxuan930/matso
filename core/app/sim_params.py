@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.adjudication import suppression as _sup
 from app.movement import params as _mp
 
 _CONFIG_KEY = "sim"
@@ -72,6 +73,12 @@ class SimParams:
     # --- AI 自主推演 ---
     ai_heartbeat_s: float = 45.0
     ai_max_orders: int = 500
+    # --- 壓制與姿態（WP-C1）---
+    # SPEC_V2 §WP-C 的紀律：保真係數 MUST 進 SimParams，預設＝中性/現況，
+    # 讓「加保真」與「不破壞既有局」解耦。
+    suppression_decay: float = _sup.SUPPRESSION_DECAY
+    suppression_fire_penalty: float = _sup.SUPPRESSION_FIRE_PENALTY
+    suppression_move_penalty: float = _sup.SUPPRESSION_MOVE_PENALTY
     # --- 崩潰復原（WP-E1）---
     # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），
     # 而牆鐘會隨 TickPacer 的過載降頻漂移。600 tick ≈ 5 分鐘牆鐘（@ 預設 0.5s/tick）。

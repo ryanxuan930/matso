@@ -1,5 +1,5 @@
 /**
- * 「活值」讀取器——同一條規則的七個實例：**STATE_DIFF 串流推來的值優先，否則退回
+ * 「活值」讀取器——同一條規則的九個實例：**STATE_DIFF 串流推來的值優先，否則退回
  * GET /units 的初值**。分散在頁面裡時看不出它們是同一件事，湊在一起就一目了然，
  * 也讓下一個活值欄位知道該照哪個樣子加。
  *
@@ -43,6 +43,23 @@ export function useLiveState(stream: ReturnType<typeof useSessionStreamStore>) {
     return typeof f === 'number' ? f : null
   }
   /**
+   * 活壓制度（WP-C1）。0＝無壓制；被命中累積、停火後每 tick 衰減。
+   *
+   * **敵軍單位一律讀到 0**——後端不供應（`/units` 的 fog 規則 + STATE_DIFF 的可見集投影）。
+   * 這裡不做任何過濾：fog of war 只在後端（紅線 3）。
+   */
+  function liveSuppression(u: UnitView): number {
+    const p = stream.unitPatches[u.id]
+    const raw = typeof p?.suppression === 'number' ? p.suppression : u.suppression
+    return typeof raw === 'number' ? raw : 0
+  }
+  /** 活姿態（WP-C1）。**已就位**的那一級，不是正在挖的目標。 */
+  function livePosture(u: UnitView): string {
+    const p = stream.unitPatches[u.id]
+    const raw = typeof p?.posture === 'string' ? p.posture : u.posture
+    return typeof raw === 'string' && raw ? raw : 'MOVING'
+  }
+  /**
    * 位置凍結的時間戳（WP-C5）。非 null ＝ 圖上的座標是**最後一次位置回報**而非真實位置。
    *
    * patch 只要**有這個鍵**就以它為準（含恢復通聯時送來的 null）——只看 `typeof === 'number'`
@@ -57,5 +74,15 @@ export function useLiveState(stream: ReturnType<typeof useSessionStreamStore>) {
   // 於是地圖上「失聯 +Nt」與敵情老化淡出都是拿假 tick 算的。
   const currentTick = computed(() => stream.lastTick ?? 0)
 
-  return { livePos, liveHealth, liveStrength, liveComms, liveFuel, liveStaleTick, currentTick }
+  return {
+    livePos,
+    liveHealth,
+    liveStrength,
+    liveComms,
+    liveFuel,
+    liveSuppression,
+    livePosture,
+    liveStaleTick,
+    currentTick,
+  }
 }

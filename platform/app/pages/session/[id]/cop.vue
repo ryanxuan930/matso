@@ -208,8 +208,11 @@ const {
 // WS 串流（含活模擬 STATE_DIFF 位置）——先宣告以供 livePos 使用。
 const stream = useSessionStreamStore()
 // 活值讀取器（STATE_DIFF 優先、退回 GET /units 初值）——七個同規則欄位收在一處。
-const { livePos, liveHealth, liveStrength, liveComms, liveFuel, liveStaleTick, currentTick } =
-  useLiveState(stream)
+const live = useLiveState(stream)
+const {
+  liveHealth, liveStrength, liveComms, liveFuel,
+  liveSuppression, livePosture, liveStaleTick, currentTick,
+} = live
 
 /**
  * 單位量體＝加權平均的權重。用滿編戰力（TO&E 分母，與規模同單位）；
@@ -242,7 +245,7 @@ function factionPower(units: UnitView[]): { pct: number; mass: number; ko: numbe
 // 單位/敵情 → 地圖渲染模型（觀測者友我判準、fog 一律取後端 /intel）。見該模組說明。
 const demoMode = computed(() => route.query.demo === '1' || Number(route.query.units) > 0)
 const { isFriendly, ownUnits, contacts } = useCopUnits({
-  live: { livePos, liveHealth, liveStrength, liveComms, liveFuel, liveStaleTick, currentTick },
+  live,
   realUnits,
   intelContacts,
   viewpoint,
@@ -801,6 +804,8 @@ onBeforeUnmount(() => {
           :editable="selectedEditable"
           :current-tick="currentTick"
           :live-comms="liveComms"
+          :live-suppression="liveSuppression"
+          :live-posture="livePosture"
           :live-stale-tick="liveStaleTick"
           :live-fuel="liveFuel"
           :live-ammo="liveAmmo"

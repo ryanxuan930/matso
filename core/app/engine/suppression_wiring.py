@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from app.adjudication.suppression import (
@@ -59,7 +60,9 @@ def _write_posture(hot: HotStateStore, unit_id: str, st: PostureState) -> None:
     )
 
 
-def apply_hit_suppression(hot: HotStateStore, unit_id: str, weapon_category: str) -> float:
+def apply_hit_suppression(
+    hot: HotStateStore, unit_id: str, weapon_category: str, rounds: int = 1
+) -> float:
     """被命中 → 累積壓制。回新值。
 
     **由裁決層在命中後呼叫**，而不是每 tick 掃描——壓制的來源是具體的一次命中，
@@ -68,9 +71,31 @@ def apply_hit_suppression(hot: HotStateStore, unit_id: str, weapon_category: str
     state = hot.get_unit(unit_id) or {}
     raw = state.get(SUPPRESSION_KEY, 0.0)
     current = float(raw) if isinstance(raw, (int, float)) else 0.0
-    value = add_suppression(current, weapon_category)
+    value = add_suppression(current, weapon_category, rounds)
     hot.update_unit(unit_id, {SUPPRESSION_KEY: round(value, 3)})
     return value
+
+
+def apply_area_suppression(
+    hot: HotStateStore, rounds_by_unit: Mapping[str, int], weapon_category: str
+) -> int:
+    """面射擊 → 壓制半徑內每個單位都被壓制。回受影響的單位數。
+
+    `rounds_by_unit` ＝ `AreaFireResult.suppressed`：unit_id → 落進**它的**壓制半徑的發數。
+    逐單位帶發數而不是全體一律 `fired`——齊放外緣的單位不該與正中心的同等壓制。
+
+    **不是只壓制有戰損的單位**：砲彈在你旁邊炸開卻沒傷到你，你照樣得趴下，
+    那正是壓制射擊的定義（也是砲兵最主要的用途）。
+
+    也**不分敵我**：友軍在落點附近一樣抬不起頭。誤傷語意屬 WP-C9，物理在這裡就要對。
+    """
+    touched = 0
+    for unit_id, rounds in rounds_by_unit.items():
+        if rounds <= 0:
+            continue
+        apply_hit_suppression(hot, unit_id, weapon_category, rounds)
+        touched += 1
+    return touched
 
 
 def tick_suppression(hot: HotStateStore, tick: int) -> int:
@@ -121,6 +146,7 @@ __all__ = [
     "POSTURE_SINCE_KEY",
     "POSTURE_TARGET_KEY",
     "SUPPRESSION_KEY",
+    "apply_area_suppression",
     "apply_hit_suppression",
     "drain_posture_orders",
     "interrupt_posture",

@@ -6,7 +6,7 @@
  * prop。樣板不會 unwrap 巢狀 ref，故父層務必傳 `reactive(...)` 而非 composable 的原始回傳值。
  */
 import { computed } from 'vue'
-import { factionColor, healthColor } from '~/composables/useUnits'
+import { POSTURE_LABELS, factionColor, healthColor } from '~/composables/useUnits'
 import type { UnitView } from '~/composables/useOrders'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useCopOrdering } from '~/composables/useCopOrdering'
@@ -37,13 +37,18 @@ const SUBMIT_LABELS: Record<string, string> = {
   MOVE: '送出移動',
   ENGAGE: '送出交戰',
   FIRE_MISSION: '送出火力任務',
+  POSTURE: '送出姿態令',
 }
+
+/** WP-C1 姿態選項。順序＝防護由弱到強，也剛好是耗時由短到長。 */
+const POSTURE_OPTS = ['MOVING', 'HASTY', 'DEFENSE', 'DUG_IN'] as const
 
 /** 每種令型各自的最低必要條件。前端只是 UX 早退——後端 validator 才是權威閘門。 */
 const canSubmit = computed(() => {
   const o = props.ordering
   if (o.orderType === 'MOVE') return !!o.destH3
   if (o.orderType === 'FIRE_MISSION') return !!o.firePoint && o.fireRounds >= 1
+  if (o.orderType === 'POSTURE') return !!o.posture
   return !!o.targetUnitId
 })
 </script>
@@ -107,6 +112,7 @@ const canSubmit = computed(() => {
     <option value="MOVE">移動</option>
     <option value="ENGAGE">交戰</option>
     <option value="FIRE_MISSION">火力任務（打座標）</option>
+    <option value="POSTURE">姿態（掘壕/防禦）</option>
   </select>
   <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
     🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
@@ -250,6 +256,15 @@ const canSubmit = computed(() => {
     <p class="fm-warn" data-testid="fire-danger">
       ⚠ 落彈半徑內<b>敵我皆受損</b>——砲彈不會挑人。落點附近有友軍時請先確認。
     </p>
+  </template>
+  <!-- WP-C1 姿態令：宣告要進入的姿態。**轉換要時間**，這裡只是下令開始做。 -->
+  <template v-else-if="ordering.orderType === 'POSTURE'">
+    <div class="hint">構工要時間——下令當下不會立刻生效，期間仍以前一級計算。移動會讓進度作廢。</div>
+    <select v-model="ordering.posture" data-testid="posture-select">
+      <option v-for="p in POSTURE_OPTS" :key="p" :value="p">
+        {{ POSTURE_LABELS[p]?.text }} · {{ POSTURE_LABELS[p]?.hint }}
+      </option>
+    </select>
   </template>
   <template v-else>
     <div class="hint">點地圖上的敵方單位鎖定目標（紅環），或從清單選：</div>

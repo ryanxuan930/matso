@@ -67,6 +67,20 @@ export function unitLevelLabel(l?: string): string {
 export function commsLabel(c?: string): string {
   return c === 'ONLINE' ? '即時通聯' : c === 'DEGRADED' ? '通聯不良' : c === 'OFFLINE' ? '失聯' : c || '—'
 }
+/**
+ * 姿態（WP-C1）→ 中文 + 說明。**已就位**的那一級（轉換要時間，期間仍算前一級）。
+ * 括號裡的數字是被命中率修正——防禦方的準備工作值不值得，指揮官要看得到才決定得了。
+ */
+export const POSTURE_LABELS: Record<string, { text: string; hint: string }> = {
+  MOVING: { text: '行進', hint: '無掩蔽（被命中率 ×1.0）' },
+  HASTY: { text: '臨時掩蔽', hint: '就地臥倒/利用地物（×0.85，即時生效）' },
+  DEFENSE: { text: '準備陣地', hint: '構築中的陣地（×0.7，需 30 分鐘）' },
+  DUG_IN: { text: '掘壕固守', hint: '完整工事（×0.5，需 4 小時）' },
+}
+export function postureLabel(p?: string): string {
+  return (p && POSTURE_LABELS[p]?.text) || p || '—'
+}
+
 /** 血量 → 顏色帶（綠/琥珀/紅）——地圖血量環與資訊卡共用。 */
 export function healthColor(pct: number): string {
   return pct < 34 ? '#ef4444' : pct < 67 ? '#f59e0b' : '#22c55e'

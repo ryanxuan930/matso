@@ -105,10 +105,14 @@ class PostureState:
         return PostureState(current=Posture.MOVING, target=Posture.MOVING, since_tick=tick)
 
 
-def add_suppression(current: float, weapon_category: str) -> float:
-    """被命中 → 壓制累積。夾在 [0, 1]。"""
+def add_suppression(current: float, weapon_category: str, rounds: int = 1) -> float:
+    """被命中 → 壓制累積。夾在 [0, 1]。
+
+    `rounds` ＝這次落在該單位身上的發數（面射擊一次任務可能是一輪齊放）。
+    **會很快飽和，那是對的**：一個 4 發齊放落在你的陣地上，你就是抬不起頭。
+    """
     delta = SUPPRESSION_PER_HIT.get(weapon_category.upper(), _DEFAULT_PER_HIT)
-    return min(MAX_SUPPRESSION, max(0.0, current) + delta)
+    return min(MAX_SUPPRESSION, max(0.0, current) + delta * max(0, rounds))
 
 
 def decay_suppression(current: float, decay: float = SUPPRESSION_DECAY) -> float:

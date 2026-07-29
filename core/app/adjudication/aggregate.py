@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.adjudication.suppression import Posture, fire_modifier, posture_modifier
 from app.engine.rng import DeterministicRNG
 from app.factions import FactionRelations
 from app.models.enums import UnitLevel
@@ -36,6 +37,10 @@ class AggregateForce:
     faction: str
     strength: float  # 當前戰力（≥0）
     lethality: float  # 攻擊係數（每單位戰力對敵的殺傷率）
+    # WP-C1：壓制與姿態是**每一方各自**的屬性，不是環境——多方混戰裡每支部隊被壓制的程度
+    # 都不一樣。放進 `AggregateEnv` 會把它們攤平成全場一個值。中性預設 ⇒ 既有局位元不變。
+    suppression: float = 0.0  # 射手自己的壓制度（折減其輸出）
+    posture: str = "MOVING"  # 自己的姿態（折減自己承受的戰損）
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +63,22 @@ class AggregateResult:
     b_loss: float
     coefficients: dict[str, float]
     events: list[LedgerEvent]
+
+
+def _c1_coefficients(force_a: AggregateForce, force_b: AggregateForce) -> dict[str, float]:
+    """壓制/姿態係數——**只在非中性時才進 coefficients**。
+
+    無條件加四個 1.0 會改變既有局每一則 AGGREGATE_ENGAGEMENT_RESOLVED 的序列化內容，
+    連帶改掉 ledger 雜湊鏈——等於為了一個恆為 1 的欄位重錄所有 golden。
+    """
+    out: dict[str, float] = {}
+    for key, force in (("initiator", force_a), ("target", force_b)):
+        fire, cover = _fire_mod(force), _posture_mod(force)
+        if fire != 1.0:
+            out[f"{key}_suppression"] = fire
+        if cover != 1.0:
+            out[f"{key}_posture"] = cover
+    return out
 
 
 def _pair_event(
@@ -107,6 +128,7 @@ def resolve_aggregate_tick(
         "variance": env.variance,
         "initiator_lethality": force_a.lethality,
         "target_lethality": force_b.lethality,
+        **_c1_coefficients(force_a, force_b),
     }
     event = _pair_event(force_a, force_b, env, a_loss, b_loss, coefficients, tick)
     return AggregateResult(
@@ -160,6 +182,7 @@ def resolve_multiway_tick(
                 "variance": env.variance,
                 "initiator_lethality": force_a.lethality,
                 "target_lethality": force_b.lethality,
+                **_c1_coefficients(force_a, force_b),
             }
             events.append(_pair_event(force_a, force_b, env, la, lb, coefficients, tick))
 
@@ -170,10 +193,25 @@ def resolve_multiway_tick(
 def _incoming_loss(
     attacker: AggregateForce, defender: AggregateForce, env: AggregateEnv, roll: float
 ) -> float:
-    """defender 本 tick 承受的戰損（尚未夾上限）。square/linear 混合 × 環境 × 隨機化。"""
+    """defender 本 tick 承受的戰損（尚未夾上限）。square/linear 混合 × 環境 × 壓制/姿態 × 隨機化。
+
+    WP-C1 在聚合路徑的語義與逐平台路徑相同：**壓制折減攻方輸出、姿態折減守方承受**。
+    營級以上單位掘壕與被壓制，效果不該因為換了裁決路徑就消失。
+    """
     factor = 1.0 + env.variance * (2.0 * roll - 1.0)  # roll∈[0,1) → [1-variance, 1+variance)
     aimed = attacker.strength  # square law：殺傷率正比於攻方戰力
     area = attacker.strength * defender.strength / _AREA_SCALE  # linear law：正比於雙方
     base = env.aimed_fraction * aimed + (1.0 - env.aimed_fraction) * area
     loss = attacker.lethality * base * env.terrain_modifier * env.weather_modifier * factor
-    return max(0.0, loss)
+    return max(0.0, loss * _fire_mod(attacker) * _posture_mod(defender))
+
+
+def _fire_mod(force: AggregateForce) -> float:
+    return fire_modifier(force.suppression)
+
+
+def _posture_mod(force: AggregateForce) -> float:
+    try:
+        return posture_modifier(Posture(force.posture))
+    except ValueError:
+        return 1.0  # 姿態字串不認得 → 中性（裁決層不因資料髒而爆掉）

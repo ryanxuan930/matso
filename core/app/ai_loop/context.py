@@ -16,6 +16,7 @@ from typing import Any
 
 import h3
 
+from app.adjudication import suppression as _sup
 from app.factions.relations import FactionRelations
 from app.state.hot_state import UnitState
 
@@ -85,6 +86,16 @@ def _own_unit_view(unit_id: str, state: UnitState, meta: UnitMeta) -> dict[str, 
         num = _num(state.get(key))
         if num is not None:
             view[key] = round(num, 1)
+    # WP-C1 壓制與姿態。**只在非中性值時出現**（同 `comms` 的作法）：既有局的 prompt 位元不變，
+    # 於是 ReplayClient 的 prompt 雜湊不動、既有 golden 自主場次不必重錄。
+    #
+    # 敵方的壓制度不在此揭露——`known_enemies` 走情報路徑，那裡本來就沒有這個欄位。
+    sup = _num(state.get("suppression"))
+    if sup is not None and sup > 0:
+        view["suppression"] = round(sup, 2)
+    posture = state.get("posture")
+    if isinstance(posture, str) and posture and posture != "MOVING":
+        view["posture"] = posture
     ammo = state.get("ammo_by_weapon")
     if isinstance(ammo, dict):
         view["ammo_by_weapon"] = {
@@ -153,6 +164,24 @@ def _comms_note(u: dict[str, Any]) -> str:
     return f"｜【通聯 {comms}：{tail}{when}】"
 
 
+def _posture_note(u: dict[str, Any]) -> str:
+    """壓制與姿態的敘述（WP-C1）。中性值不出現——只有反常才值得佔 prompt 篇幅（同 `_comms_note`）。
+
+    **壓制要講後果而不只是數字**：「0.7」對 LLM 沒有意義，「射擊效能剩三成、停火約 2 分鐘鬆動」
+    才推得出「先撤出被壓制區或先反砲兵」這種決策。
+    """
+    parts = []
+    sup = u.get("suppression")
+    if isinstance(sup, int | float) and sup > 0:
+        pct = round((1.0 - _sup.SUPPRESSION_FIRE_PENALTY * float(sup)) * 100)
+        parts.append(f"【壓制 {sup}：射擊效能剩約 {pct}%、移動變慢；停火後每分鐘衰減】")
+    posture = u.get("posture")
+    if isinstance(posture, str) and posture and posture != "MOVING":
+        mod = _sup.POSTURE_MODIFIER.get(_sup.Posture(posture), 1.0)
+        parts.append(f"【姿態 {posture}：被命中率 ×{mod}；一旦移動即作廢，需重新構工】")
+    return "｜" + "".join(parts) if parts else ""
+
+
 def _fmt_own(u: dict[str, Any]) -> str:
     pos = f"({u['lat']:.4f},{u['lng']:.4f})" if "lat" in u else "位置未知"
     ammo = u.get("ammo_by_weapon") or {}
@@ -169,7 +198,7 @@ def _fmt_own(u: dict[str, Any]) -> str:
     return (
         f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('type', '?')}）{fixed}"
         f" {u.get('status', '?')} 戰力{u.get('strength', '?')} @ {pos}{mob}｜彈藥：{ammo_s}"
-        f"{_comms_note(u)}"
+        f"{_posture_note(u)}{_comms_note(u)}"
     )
 
 

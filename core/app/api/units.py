@@ -56,6 +56,9 @@ class UnitView(BaseModel):
     is_fixed: bool = False  # 固定單位（指揮部等）：不可下 MOVE 令；COP 顯示鎖定標記
     # WP-C5 位置凍結：非 None ＝ lat/lng 是「最後一次位置回報」而非真實位置，本欄為其 tick。
     stale_since_tick: int | None = None
+    # WP-C1 壓制與姿態。**只在自己陣營的單位上供應**——見 `_view` 的說明。
+    suppression: float = 0.0
+    posture: str = "MOVING"
 
 
 class WeaponView(BaseModel):
@@ -72,9 +75,20 @@ class WeaponView(BaseModel):
 
 
 def _view(
-    u: TacticalUnit, comms: CommsView = EMPTY_COMMS_VIEW, *, scoped: bool = False
+    u: TacticalUnit,
+    comms: CommsView = EMPTY_COMMS_VIEW,
+    *,
+    scoped: bool = False,
+    own: bool = True,
 ) -> UnitView:
-    """單位視圖。`scoped=True`（陣營視角）才套用位置凍結；god view 一律真實座標。"""
+    """單位視圖。`scoped=True`（陣營視角）才套用位置凍結；god view 一律真實座標。
+
+    `own=False`（他方單位）→ **不供應壓制度與姿態**：看得到敵軍被壓制多少，
+    等於一份免費的即時戰果評估——那正是 WP-C10.4 花整張卡在擋的東西。
+    姿態同理（對方掘壕到什麼程度是要靠偵察才知道的）。
+
+    盟軍算「己方」（聯絡官會回報）；god view 沒有他方，全供應。
+    """
     hot = comms.units.get(u.id)
     lat, lng, stale = u.current_lat, u.current_lng, None
     projected = project_position(hot) if scoped and hot is not None else None
@@ -95,7 +109,19 @@ def _view(
         comms=_comms_value(u, hot),
         is_fixed=u.is_fixed,
         stale_since_tick=stale,
+        suppression=_hot_float(hot, "suppression") if own else 0.0,
+        posture=(_hot_str(hot, "posture") or "MOVING") if own else "MOVING",
     )
+
+
+def _hot_float(hot: Mapping[str, Any] | None, key: str) -> float:
+    raw = (hot or {}).get(key)
+    return round(float(raw), 3) if isinstance(raw, (int, float)) else 0.0
+
+
+def _hot_str(hot: Mapping[str, Any] | None, key: str) -> str:
+    raw = (hot or {}).get(key)
+    return str(raw) if isinstance(raw, str) else ""
 
 
 def _comms_value(u: TacticalUnit, hot: Mapping[str, Any] | None) -> str:
@@ -147,17 +173,21 @@ def list_units(
     participant = None if omniscient else require_participant(db, user, session_id)
     stmt = select(TacticalUnit).where(TacticalUnit.session_id == session_id)
 
+    # 友軍陣營集合（自己＋盟軍）。None ＝ god view，無「他方」可言。
+    friendly: set[str] | None = None
     if as_faction is not None:
         # 視角切換（White Cell 控制台，O7.4）：僅全知可指定；非全知者禁止（防越權窺視）。
         if not omniscient:
             raise AuthForbiddenError("僅 White Cell 可切換視角")
-        stmt = stmt.where(TacticalUnit.faction.in_(_visible_factions(db, session_id, as_faction)))
-    elif not omniscient and not settings.stub_gateway:
-        # 一般角色：faction 過濾下推 SQL（C12）；STUB_GATEWAY E2E affordance 放行全單位。
+        friendly = set(_visible_factions(db, session_id, as_faction))
+        stmt = stmt.where(TacticalUnit.faction.in_(friendly))
+    elif not omniscient:
         assert participant is not None  # 非全知 → 必為參與者（上方已 require）
-        stmt = stmt.where(
-            TacticalUnit.faction.in_(_visible_factions(db, session_id, participant.faction))
-        )
+        friendly = set(_visible_factions(db, session_id, participant.faction))
+        if not settings.stub_gateway:
+            # 一般角色：faction 過濾下推 SQL（C12）；STUB_GATEWAY E2E affordance 放行全單位
+            # （但 `friendly` 仍是真的友軍集合——壓制度不因該 affordance 外洩）。
+            stmt = stmt.where(TacticalUnit.faction.in_(friendly))
     # else：全知且未指定視角 → 全部（god view）
 
     units = db.execute(stmt).scalars().all()
@@ -165,7 +195,11 @@ def list_units(
     # 白軍指定 as_faction 時**要**凍結：那正是「這一軍看得到什麼」的問題（與 O7.4 視角語義一致）。
     scoped = as_faction is not None or not omniscient
     comms = load_comms_view(make_redis(settings.redis_url), session_id, [u.id for u in units])
-    return [_view(u, comms, scoped=scoped) for u in units]
+    # `own`：壓制度只給友軍（含盟軍——那是聯絡官會回報的事）。god view 沒有他方，全給。
+    return [
+        _view(u, comms, scoped=scoped, own=(friendly is None or u.faction in friendly))
+        for u in units
+    ]
 
 
 @router.get("/{session_id}/units/{unit_id}/weapons", response_model=list[WeaponView])

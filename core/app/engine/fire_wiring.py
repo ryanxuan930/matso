@@ -33,6 +33,7 @@ from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.engage_wiring import WeaponEntry
 from app.engine.rng import DeterministicRNG
+from app.engine.suppression_wiring import POSTURE_KEY, apply_area_suppression
 from app.fires.survivability import MISSION_COUNT_KEY
 from app.models.enums import OrderStatus
 from app.models.tables import EquipmentInstance, Order, TacticalUnit
@@ -238,6 +239,11 @@ class AreaFireAdjudicator:
         self._spend_ammo(order.shooter_id, entry, fired)
         self._count_mission(order.shooter_id)
         self._apply_losses(result.losses)
+        # WP-C1：壓制半徑（＝殺傷半徑 ×3）內的每個單位都被壓制，不只挨了戰損的那些——
+        # 砲彈在旁邊炸開卻沒傷到你，你照樣得趴下。這是砲兵最主要的用途，
+        # 少了這一步「砲兵在模型裡就只剩一個效率很差的殺傷工具」（見 WP-C1 卡）。
+        # 每個單位各自帶「有幾發落進它的壓制半徑」——齊放外緣的單位不該與正中心同等壓制。
+        apply_area_suppression(self._hot, result.suppressed, entry.category)
         event = result.event
         if event is not None:
             if fired < order.rounds:
@@ -382,6 +388,8 @@ class AreaFireAdjudicator:
                     current_strength=float(cur) if isinstance(cur, (int, float)) else None,
                     authorized_strength=float(auth) if isinstance(auth, (int, float)) else None,
                     platform_count=int(state.get("platform_count") or 1),
+                    # WP-C1：**已就位**的姿態（缺鍵讀作 MOVING）。掘壕對砲擊的防護最有意義。
+                    posture=str(state.get(POSTURE_KEY) or "MOVING"),
                 )
             )
         # 穩定序：純函數逐目標算距離不抽樣，順序不影響數值，但影響事件內字典的鍵序（hash chain）。

@@ -187,3 +187,81 @@ def test_multiway_deterministic() -> None:
     a = resolve_multiway_tick(forces, FactionRelations(), AggregateEnv(variance=0.3), _rng(), 0)
     b = resolve_multiway_tick(forces, FactionRelations(), AggregateEnv(variance=0.3), _rng(), 0)
     assert a.strength_after == b.strength_after
+
+
+# ---------------- WP-C1 壓制與姿態 ----------------
+#
+# 營級以上單位掘壕與被壓制，效果不該因為換了裁決路徑（逐平台 → 聚合）就消失。
+# 這幾條釘住聚合路徑的三件事：中性不變、壓制折減輸出、姿態折減承受。
+
+
+# 低殺傷係數：戰損要遠小於戰力，否則雙方每 tick 都被夾到 0，比例關係全被夾掉看不出來。
+def _small(uid: str, faction: str, **kw: object) -> AggregateForce:
+    return replace(AggregateForce(uid, faction, 100.0, 0.05), **kw)  # type: ignore[arg-type]
+
+
+def _agg(a: AggregateForce, b: AggregateForce):  # type: ignore[no-untyped-def]
+    return resolve_aggregate_tick(a, b, AggregateEnv(), _rng(), tick=1)
+
+
+def test_neutral_c1_values_leave_the_result_bit_identical() -> None:
+    """既有局沒有這兩個欄位——結果必須連 coefficients 的鍵都一模一樣。
+
+    無條件加四個 1.0 進 coefficients 會改掉每一則 AGGREGATE_ENGAGEMENT_RESOLVED 的序列化
+    內容，連帶改掉 ledger 雜湊鏈：等於為了恆為 1 的欄位重錄所有 golden。
+    """
+    base = _agg(_small("b", "BLUE"), _small("r", "RED"))
+    explicit = _agg(
+        _small("b", "BLUE", suppression=0.0, posture="MOVING"),
+        _small("r", "RED", suppression=0.0, posture="MOVING"),
+    )
+    assert (base.a_loss, base.b_loss) == (explicit.a_loss, explicit.b_loss)
+    assert base.coefficients == explicit.coefficients
+    assert "initiator_suppression" not in base.coefficients
+
+
+def test_suppressed_attacker_inflicts_less() -> None:
+    clean = _agg(_small("b", "BLUE"), _small("r", "RED"))
+    suppressed = _agg(_small("b", "BLUE", suppression=1.0), _small("r", "RED"))
+    # 滿壓制 → 射擊效能剩 40%（SUPPRESSION_FIRE_PENALTY=0.6）。承受端（a_loss）不受影響。
+    assert suppressed.b_loss == clean.b_loss * 0.4
+    assert suppressed.a_loss == clean.a_loss
+    assert suppressed.coefficients["initiator_suppression"] == 0.4
+
+
+def test_dug_in_defender_takes_less() -> None:
+    clean = _agg(_small("b", "BLUE"), _small("r", "RED"))
+    dug_in = _agg(_small("b", "BLUE"), _small("r", "RED", posture="DUG_IN"))
+    assert dug_in.b_loss == clean.b_loss * 0.5
+    assert dug_in.a_loss == clean.a_loss  # 掘壕不會讓它打得更差，只是更難被打中
+    assert dug_in.coefficients["target_posture"] == 0.5
+
+
+def test_unknown_posture_string_is_neutral_not_a_crash() -> None:
+    """裁決層不因為資料髒就炸掉——未知姿態一律當 MOVING。"""
+    weird = _agg(_small("b", "BLUE"), _small("r", "RED", posture="ENTRENCHED_LOL"))
+    assert weird.b_loss == _agg(_small("b", "BLUE"), _small("r", "RED")).b_loss
+
+
+def test_multiway_suppression_is_per_force_not_per_env() -> None:
+    """多方混戰裡每支部隊被壓制的程度都不一樣——放進 env 會攤平成全場一個值。"""
+    forces = [
+        _small("b", "BLUE", suppression=1.0),
+        _small("r", "RED"),
+        _small("g", "GREEN"),
+    ]
+    rel = FactionRelations(
+        [
+            ("BLUE", "RED", Relation.HOSTILE),
+            ("BLUE", "GREEN", Relation.HOSTILE),
+            ("RED", "GREEN", Relation.HOSTILE),
+        ]
+    )
+    result = resolve_multiway_tick(forces, rel, AggregateEnv(), _rng(), tick=1)
+    clean = resolve_multiway_tick(
+        [replace(f, suppression=0.0) for f in forces], rel, AggregateEnv(), _rng(), tick=1
+    )
+    # 被壓制的藍軍打得少 → 紅/綠活得多；藍軍自己承受的沒變（壓制不增加被命中率）。
+    assert result.strength_after["r"] > clean.strength_after["r"]
+    assert result.strength_after["g"] > clean.strength_after["g"]
+    assert result.strength_after["b"] == clean.strength_after["b"]

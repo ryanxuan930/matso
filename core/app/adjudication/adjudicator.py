@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +38,7 @@ from app.adjudication.weapon import WeaponProfile
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
+from app.engine.suppression_wiring import POSTURE_KEY, SUPPRESSION_KEY
 from app.models.enums import OrderStatus
 from app.models.tables import EquipmentInstance, Order, TacticalUnit
 from app.orders.schemas import OrderType
@@ -137,6 +138,18 @@ class EngageOrderSource:
         state = self._hot.get_unit(order.unit_id) or {}
         link = parse_link_state(state.get("comms_state"))
         return order_admissible(link, int(order.issued_at_tick or 0), now_tick)
+
+
+def _c1_suppression(state: Mapping[str, Any]) -> float:
+    """熱狀態 → 壓制度。缺鍵讀作 0（既有局零行為變更，WP-C1）。"""
+    raw = state.get(SUPPRESSION_KEY)
+    return float(raw) if isinstance(raw, int | float) else 0.0
+
+
+def _c1_posture(state: Mapping[str, Any]) -> str:
+    """熱狀態 → **已就位**的姿態字串。缺鍵讀作 MOVING。"""
+    raw = state.get(POSTURE_KEY)
+    return str(raw) if isinstance(raw, str) and raw else "MOVING"
 
 
 class EngagementAdjudicator:
@@ -263,8 +276,24 @@ class EngagementAdjudicator:
         t_armor = str(target_state.get("armor_class", "INFANTRY"))
         # 攻擊係數：射手武器對目標裝甲的 pk × 尺度（下限保底）；目標返火用固定小係數。
         s_leth = max(_AGG_MIN_LETH, weapon.expected_casualties(t_armor) * _AGG_LETH_SCALE)
-        force_a = AggregateForce(order.shooter_id, shooter_unit.faction, s_str, s_leth)
-        force_b = AggregateForce(order.target_id, target_unit.faction, t_str, _AGG_RETURN_FIRE_LETH)
+        # WP-C1：壓制/姿態逐方各自帶入（射手的壓制折減其輸出、目標的姿態折減其承受）。
+        # 這裡讀的是熱狀態原值——寫入端是 `suppression_wiring`，中性缺鍵讀作 0/MOVING。
+        force_a = AggregateForce(
+            order.shooter_id,
+            shooter_unit.faction,
+            s_str,
+            s_leth,
+            suppression=_c1_suppression(shooter_state),
+            posture=_c1_posture(shooter_state),
+        )
+        force_b = AggregateForce(
+            order.target_id,
+            target_unit.faction,
+            t_str,
+            _AGG_RETURN_FIRE_LETH,
+            suppression=_c1_suppression(target_state),
+            posture=_c1_posture(target_state),
+        )
         agg_env = AggregateEnv(
             terrain_modifier=env.terrain_cover_modifier,
             weather_modifier=env.weather_modifier,

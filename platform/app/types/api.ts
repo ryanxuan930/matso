@@ -1157,6 +1157,13 @@ export interface components {
             comms: string;
             /** @description 固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記 */
             is_fixed?: boolean;
+            /** @description 壓制度（WP-C1）。0＝無壓制。被命中會累積（砲兵高、直射低），停火後每 tick 衰減 ——**壓制是可逆的**，那是它與戰損最根本的差別。射擊效能與移動速度都會被它折減。 **只在友軍（己方＋盟軍）單位上供應**，他方單位一律 0：看得到敵軍被壓制多少 等於一份免費的即時戰果評估，那正是 WP-C10.4 在擋的東西。白軍 god view 全供應。 */
+            suppression?: number;
+            /**
+             * @description **已就位**的姿態（WP-C1）。轉換要時間（HASTY 即時／DEFENSE 30 分／DUG_IN 4 小時）， 期間仍算前一級——本欄是「已經到位的那一級」，不是「正在挖的目標」。 移動會打回 MOVING（挖到一半的洞帶不走）。與 `suppression` 同一個 fog 規則： 他方單位一律回 MOVING（對方掘壕到什麼程度要靠偵察）。
+             * @enum {string}
+             */
+            posture?: "MOVING" | "HASTY" | "DEFENSE" | "DUG_IN";
             /** @description **位置凍結**（WP-C5，SPEC_FULL §6.2）。非 null 表示 `lat`/`lng` 不是真實位置， 而是該單位**最後一次位置回報**的內容，本欄為那次回報的 tick。 OFFLINE 單位不再回報（位置對己方 COP 凍結）；DEGRADED 降頻回報（位置落後）。 只出現在**陣營視角**（一般角色，或白軍指定 `as_faction`）；白軍 god view 一律真實位置。 */
             stale_since_tick?: number | null;
         };

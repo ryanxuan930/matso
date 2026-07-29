@@ -66,7 +66,7 @@ export function useCopOrdering(opts: {
 }) {
   const { sessionId, selectedId, selectedUnit, selectedUnitFixed, refresh, toasts } = opts
 
-  const orderType = ref<'MOVE' | 'ENGAGE' | 'FIRE_MISSION'>('MOVE')
+  const orderType = ref<'MOVE' | 'ENGAGE' | 'FIRE_MISSION' | 'POSTURE'>('MOVE')
   const destH3 = ref<string | null>(null)
   const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
   const targeting = ref(false)
@@ -238,7 +238,11 @@ export function useCopOrdering(opts: {
     if (t === 'FIRE_MISSION') void loadFireRequests()
   })
 
-  /** 依當前令型組 payload。三種令型各自獨立，不共用欄位——共用過的欄位最容易忘了清。 */
+  // ---- WP-C1 姿態令 ----
+  // 預設 DEFENSE 而不是 MOVING：下姿態令的人不會是為了叫單位站起來走（那是 MOVE 令的事）。
+  const posture = ref<'MOVING' | 'HASTY' | 'DEFENSE' | 'DUG_IN'>('DEFENSE')
+
+  /** 依當前令型組 payload。四種令型各自獨立，不共用欄位——共用過的欄位最容易忘了清。 */
   function buildPayload(): Record<string, unknown> {
     if (orderType.value === 'MOVE') {
       return {
@@ -251,6 +255,7 @@ export function useCopOrdering(opts: {
         ...(moveWaypoints.value.length ? { waypoints: moveWaypoints.value } : {}),
       }
     }
+    if (orderType.value === 'POSTURE') return { posture: posture.value }
     if (orderType.value === 'FIRE_MISSION') {
       return {
         target_lat: firePoint.value?.lat,
@@ -349,6 +354,7 @@ export function useCopOrdering(opts: {
     combinedMode,
     firePoint,
     fireRounds,
+    posture,
     fireRequestId,
     approvedFireRequests,
     loadFireRequests,

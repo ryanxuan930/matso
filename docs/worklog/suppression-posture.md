@@ -1,8 +1,8 @@
 ---
 task: WP-C1          # SPEC_V2 §6 WP-C1（壓制與姿態系統）
-status: IN_PROGRESS  # 後端完成；前端徽章與 SimParams 化未做
+status: DONE
 started: 2026-07-31T11:20+08:00
-updated: 2026-07-31T12:05+08:00
+updated: 2026-07-31T15:40+08:00
 agent: Opus 5
 ---
 
@@ -67,19 +67,89 @@ HASTY 即時 / DEFENSE 30 分 / DUG_IN 4 小時，**期間仍算前一級**。
 姿態令**沒有裁決階段**（不產生戰損、不抽隨機、不需要物理判定），
 所以走 pre_tick 而不是 Kernel 的裁決槽——塞進去只會讓那條路徑多一個與交戰無關的分支。
 
-## 未完成（本卡剩餘）
+### 砲兵路徑原本整條漏掉（本次補上）
 
-- [ ] **係數進 `SimParams`**（SPEC 明列的紀律：「每一項的係數 MUST 進 SimParams」）。
-      目前是模組常數，可讀可測但白軍調不了。
-- [ ] **契約 + 前端**：`UnitView` 增 `posture`/`suppression` 欄；COP 單位卡壓制條與姿態徽章；
-      下令面板的 POSTURE 令 UI。
-- [ ] **AI context 供應己方壓制度**（敵方不供應——觀測不到）。
-- [ ] 新增 golden 案例 `suppression-defense` 釘住啟用行為（SPEC 明列）。
-- [ ] 聚合裁決（`aggregate.py`）尚未消費壓制係數——目前只有逐平台路徑會用到。
+接線做完後跑驗收條文，第一次就紅——而且紅得很有價值：
+
+1. **`AreaFireAdjudicator` 完全沒有累積壓制**。壓制只掛在 `EngagementAdjudicator._apply`
+   （直射命中）。也就是說，「砲兵用來壓制」這句話的**砲兵那條路徑**根本沒接上。
+2. **`resolve_area_fire` 完全不看姿態**。掘壕與露天的傷亡一模一樣（118.717 vs 118.717）。
+   工事最該擋的就是砲擊，這等於把「為什麼要挖散兵坑」整個弄反。
+3. **壓制範圍不等於殺傷範圍**。原本只有挨了戰損的單位會被壓制，但砲彈在你旁邊 100 m
+   炸開沒傷到你，你照樣得趴下。現在 `SUPPRESSION_RADIUS_MULT = 3.0`，
+   `AreaFireResult.suppressed` 逐單位帶「有幾發落進**它的**壓制半徑」——
+   齊放外緣的單位不該與正中心同等壓制。
+
+`suppressed` 刻意**不入帳本事件**：那是給接線層用的中間量，塞進 `ai_decision`
+會改掉每一則 AREA_FIRE_RESOLVED 的雜湊。
+
+### 驗收實測
+
+20 發 155mm（5 輪 × 4 發齊放，輪距 2 分鐘）打一個滿編 120 的步兵連，
+CEP 100 m、殺傷半徑 50 m：
+
+| 姿態 | 傷亡 | 殘餘戰力 | 落彈當下的射擊效能修正 |
+|---|---|---|---|
+| DUG_IN | 0.64 | 119.36 / 120 | **0.40** |
+| DEFENSE | 0.90 | 119.10 / 120 | 0.40 |
+| HASTY | 1.09 | 118.91 / 120 | 0.40 |
+| MOVING（露天） | 1.28 | 118.72 / 120 | 0.40 |
+
+**驗收條文成立**：殲滅極慢（20 發打掉半個人），射擊效能卻只剩四成。
+掘壕的傷亡剛好是露天的一半（DUG_IN 修正 0.5），構工終於有意義。
+
+效能刻意量在**最後一輪落彈的當下**而不是其後的間隔之後——驗收問的是
+「被砲擊的時候還打不打得動」。停火後的恢復是另一條測試（13 分鐘清乾淨）。
+
+> ⚠ **絕對殺傷量偏低是 WP-C10.2 的 `_loss_for` 校準問題，不是本卡的**。
+> 20 發 155mm 對露天步兵連只造成 1.28 戰力損失，直覺上太少；但那條公式自己就標了
+> 「v0 佔位」。本卡只保證**相對關係**正確（掘壕≈露天的一半、壓制遠大於殺傷）。
+> 已記入 PROGRESS Backlog。
+
+### 其餘完成項
+
+- **係數進 `SimParams`**：`suppression_decay` / `suppression_fire_penalty` /
+  `suppression_move_penalty`（SPEC「每一項的係數 MUST 進 SimParams」）。
+- **契約 + 前端**：`UnitView` 增 `suppression`/`posture`；COP 單位卡壓制條（橘紅斜紋，
+  刻意與綠/黃/紅的效能條有別，避免被讀成戰損）與姿態徽章（MOVING 不顯示——
+  每張卡都掛一個「行進」只是雜訊）；下令面板的 POSTURE 令 UI。
+- **fog**：`/units` 的壓制度與姿態**只給友軍（己方＋盟軍）**，他方一律中性值。
+  看得到敵軍被壓制多少等於一份免費的即時戰果評估，那正是 WP-C10.4 花整張卡在擋的。
+  最要緊的一條是 **STUB_GATEWAY 的 e2e affordance**：它讓 faction 過濾整條 SQL where
+  消失，是唯一一條「敵軍單位真的會出現在作戰方回應裡」的路徑——壓制度不跟著放行。
+  （做過 mutation test：把 fog 拿掉，該條測試確實轉紅。）
+- **AI context**：己方壓制/姿態進 prompt，且**講後果不只講數字**
+  （「0.5」對 LLM 沒有意義，「射擊效能剩約 70%」才推得出「先撤出被壓制區」）。
+  中性值時 prompt **位元不變**——`ReplayClient` 按 prompt 雜湊重播，
+  prompt 一動所有已錄的 golden 自主場次全部作廢。
+- **聚合裁決**：`AggregateForce` 增 `suppression`/`posture`（**逐方各自**，不是放進
+  `AggregateEnv`——多方混戰裡每支部隊被壓制的程度都不一樣，攤成全場一個值就錯了）。
+  係數**只在非中性時才進 `coefficients`**，否則會改掉既有局每一則
+  AGGREGATE_ENGAGEMENT_RESOLVED 的序列化內容，連帶改掉 ledger 雜湊鏈。
+
+### golden 案例 `suppression_defense_60`
+
+SPEC_V2 明列本卡須有 golden。新增的想定把 C1 的四件事一次跑進 stateHash：
+面射擊落點抽樣、姿態的轉換要時間、壓制在半徑內的累積、每 tick 的衰減。
+
+姿態刻意用 **DEFENSE（30 tick）而不是 DUG_IN（240 tick）**：60 tick 的視窗內收斂得完，
+於是「未就位仍算前一級」與「就位後才享有防護」兩種行為都進得了同一個 hash
+（開火 tick 排在 5/10/15 與 35/40/45，剛好跨過就位點）。
+
+**做過 mutation test**：把 `POSTURE_MODIFIER[DEFENSE]` 由 0.7 改成 0.65 → golden 立刻轉紅。
+不是「有一個 hash 檔」就叫釘住了。
+
+其餘既有 golden（empty_100 / rng_walk_100 / order_replay_60）**完全未重錄**——
+中性預設守住了「加保真不破壞既有局」。
+
+## 完成
+
+本卡所有項目（含 SPEC 明列的 SimParams、契約/前端、AI context、聚合裁決、golden）皆已完成。
 
 ## 中斷續作指引
 
-- **下一步第一件事**：係數進 SimParams + 契約/前端欄位。兩者一起做比較省事
-  （契約改一次、前端只碰一次）。
-- 驗收條文尚未實測：「砲兵對 DUG_IN 步兵連射 5 輪——殲滅極慢但目標射擊效能顯著下降」，
-  數字要記進本檔。
+- 本卡已完成，無續作項。
+- 全關卡狀態：pytest 1596 綠、mypy 234、ruff、schema sync 20/197、
+  前端 lint/typecheck 綠、golden 4 案例（新增 1）。
+- 唯一移交出去的東西：面射擊的**絕對**殺傷量偏低（WP-C10.2 `_loss_for` 的 v0 校準），
+  已記入 PROGRESS Backlog。
