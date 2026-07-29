@@ -111,6 +111,9 @@ uv sync && uv run pytest
 # 服務（MariaDB/Redis/Qdrant/core/frontend；tiles 另有 profile）
 cd ops/compose && docker compose up -d --wait
 
+# 前端一律跑 container（不要 npm run dev）——改了前端要看效果：
+cd ops/compose && docker compose up -d --build frontend   # 單獨 build 不會換掉執行中的容器
+
 # 全部品質閘門
 uv run pytest ; uv run ruff check . ; uv run mypy
 npx @bufbuild/buf lint ; uv run python ops/tools/schema_sync_check.py
