@@ -146,6 +146,20 @@ class OrderSeatDeniedError(MatsoError):
     http_status = 403
 
 
+class RequestApprovalDeniedError(MatsoError):
+    """此席位/角色無權核覆該類申請（WP-B5.2）。"""
+
+    error_code = "REQUEST_APPROVAL_DENIED"
+    http_status = 403
+
+
+class RequestAlreadyDecidedError(MatsoError):
+    """該申請單已非 PENDING——核覆是一次性的，重複核覆會讓留痕失真。"""
+
+    error_code = "REQUEST_ALREADY_DECIDED"
+    http_status = 409
+
+
 class PrecheckFailedError(MatsoError):
     """物理預檢不可行（步驟 [2]）——立即 REJECTED，回 422 + 具體 code + 各項結果。"""
 
