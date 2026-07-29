@@ -142,6 +142,24 @@ SPEC_V2 明列本卡須有 golden。新增的想定把 C1 的四件事一次跑�
 其餘既有 golden（empty_100 / rng_walk_100 / order_replay_60）**完全未重錄**——
 中性預設守住了「加保真不破壞既有局」。
 
+### 容器實測（非只有測試綠）
+
+`docker compose up -d --build frontend` 後，往一個真 session 的熱狀態注入
+`suppression=0.62 / posture=DUG_IN`，逐項確認：
+
+- `GET /state`（COP 的單位來源，**不是** `/units`——`state.py` 複用 `list_units`，
+  所以欄位一次到位）回 `"suppression":0.62,"posture":"DUG_IN"`。
+- 單位卡：姿態徽章「掘壕固守」＋ tooltip「完整工事（×0.5，需 4 小時）」；
+  壓制條寬度 62%、標籤「壓制 62%」、tooltip 換算成後果
+  「射擊效能 −37%、速度 −31%（停火後每分鐘衰減）」。
+- 下令面板：令型多出「姿態（掘壕/防禦）」，四個選項各自帶修正與耗時；
+  實際送出 → `已下令（已驗證）`，DB 出現一筆 POSTURE VALIDATED。
+  （該 session 的 runner 沒在跑——17 筆 ENGAGE、13 筆 MOVE 同樣卡在 VALIDATED——
+  所以沒有觀察到執行；執行路徑由 `test_suppression_wiring` 覆蓋，
+  `sim_runtime` 的 pre_tick 接線也確認在位。）
+
+驗證用的注入與那筆測試令**已還原/取消**。
+
 ## 完成
 
 本卡所有項目（含 SPEC 明列的 SimParams、契約/前端、AI context、聚合裁決、golden）皆已完成。
