@@ -346,6 +346,14 @@ runner 啟動時建構的 WeaponResolver 快取要能吸收局中新單位（連
 
 #### WP-B5 申請-核覆工作流與 C2 信文　★★｜golden：不動（新令型不進現有 golden 路徑）
 
+> **B5.1（席位模型）✅ 已完成（2026-07-30）**——worklog `docs/worklog/seat-model.md`。
+> `SessionParticipant.seat_role`（可為 NULL）+ 下令權 registry（`core/app/seats`）+ 名冊 UI。
+> ⚠ **NULL ＝ 完全沿用 role 既有權限**（使用者裁示）：既有局零行為變更，有專門測試釘住。
+> 席位 → 可下令型別採保守表（COMMANDER 全／S3_OPS 機動／FSO_FIRES 火力／S2·S4·OBSERVER 無），
+> 收在單一 registry，調整分工只改那一張表。新錯誤碼 `ORDER_SEAT_DENIED`（與
+> `ORDER_PERMISSION_DENIED` 刻意分開：「不是你的單位」vs「不是你的職掌」處置不同）。
+> **審批權屬 B5.2**，本卡只做下令權。
+
 **動機**：[JCATS-A p.13,15,26] 的空偵申請/申補憑單/曲射火協核准；[JCATS-F p.10–14] 的信文下令與
 透明圖分發——「指參程序的磨練」靠的是異步審批鏈與 C2 工件流轉，不是即時生效的按鈕。
 
@@ -893,7 +901,7 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 ### V2.1「演習系統」（CPX 能力成形）
 
 ```
-B5.1 席位模型（seat_role）→ B5.2 信文/申請核覆 → C10 call-for-fire
+B5.1 ✅ 席位模型（seat_role，2026-07-30）→ B5.2 信文/申請核覆 → C10 call-for-fire
 B2 MSEL 執行引擎 → B1 演習專案 → B4 參數凍結簽證
 A2 任務級下令（decomposer → runtime → LLM → UI 四卡）
 C1 壓制/姿態 → C3 乘駐車/隊形 → C2 障礙工兵 → C9 誤傷語意

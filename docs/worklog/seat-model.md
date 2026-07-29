@@ -1,8 +1,8 @@
 ---
 task: WP-B5.1        # SPEC_V2 §6 WP-B5 第一張卡（席位模型）
-status: IN_PROGRESS
+status: DONE
 started: 2026-07-30T21:30+08:00
-updated: 2026-07-30T21:30+08:00
+updated: 2026-07-30T22:20+08:00
 agent: Opus 5
 ---
 
@@ -44,23 +44,51 @@ RBAC 目前是「角色 × 陣營」，同一陣營內所有人權限相同。�
 
 ## 計畫
 
-- [ ] 1. 契約先行：`contracts/core_api.yaml` 的 participants schema 加 `seat_role`（可為 null）→ 驗證。
-- [ ] 2. DB：`db/prisma/schema.prisma` 加 `seatRole SeatRole?` + enum → `prisma migrate`（紅線 4）。
-- [ ] 3. SQLAlchemy model + `SeatRole` enum；`schema_sync_check` 綠。
-- [ ] 4. 權限：單一 registry（席位 → 可下令型別），NULL 席位走既有邏輯。
-- [ ] 5. 下令端點接上 gate；越權回明確錯誤碼（不是泛用 403）。
-- [ ] 6. 前端：lobby 參與者面板可指派席位。
-- [ ] 7. 測試（含「NULL 席位行為與改版前完全相同」的回歸釘）+ 四道驗證。
+- [x] 1. 契約先行：`contracts/core_api.yaml` 的 participants schema 加 `seat_role`（可為 null）→ 驗證。
+- [x] 2. DB：`db/prisma/schema.prisma` 加 `seatRole SeatRole?` + enum → `prisma migrate`（紅線 4）。
+- [x] 3. SQLAlchemy model + `SeatRole` enum；`schema_sync_check` 綠。
+- [x] 4. 權限：單一 registry（席位 → 可下令型別），NULL 席位走既有邏輯。
+- [x] 5. 下令端點接上 gate；越權回明確錯誤碼（不是泛用 403）。
+- [x] 6. 前端：lobby 參與者面板可指派席位。
+- [x] 7. 測試（含「NULL 席位行為與改版前完全相同」的回歸釘）+ 四道驗證。
 
 ## 執行紀錄
 
-- `21:30` 開卡。讀 SPEC_V2 §6 WP-B5、現有 `SessionParticipant`（model + prisma）、
-  既有 participants 端點與 RBAC（O7.5 的 7 角色 × 4 端點矩陣）。
-  訂出「NULL ＝ 沿用現行權限」為硬性前提。
+- `21:30` 開卡，盤點現有 `SessionParticipant` 與 RBAC。訂出「NULL ＝ 沿用現行權限」硬性前提。
+- `21:5x` **資料層**（`dc8c4f4`）：契約先行（SeatRole enum + View/Assign 加可為 null 的 seat_role，
+  openapi-spec-validator 通過）→ `prisma migrate`（紅線 4）→ SQLAlchemy model。
+  **實測 migration 後 9 筆參與者全為 NULL**，零遷移確認。
+- `22:0x` **使用者裁示**：席位對應採我提的保守表；NULL 維持現狀不縮不放。
+- `22:1x` **權限 gate**（`d558f3e`）：`app/seats` 單一 registry；新錯誤碼 `ORDER_SEAT_DENIED`；
+  participants API 讀寫 seat_role。6 個測試。
+- `22:2x` **前端**：名冊每列加席位下拉（預設「（未指派席位）」）。
+  改陣營/角色時會帶上現有 seat_role，否則會把席位洗掉——這點差一步就漏了。
+  容器實測往返：設 S3_OPS → DB 落值；改回空 → DB 回 NULL（9/9）。
+
+## 收尾
+
+### 決策紀錄
+
+| 決策 | 選擇 | 理由 |
+|------|------|------|
+| 席位 → 可下令型別 | COMMANDER 全／S3_OPS 機動／FSO_FIRES 火力／S2·S4·OBSERVER 無 | 使用者確認；收在單一 registry，日後改一張表 |
+| 未指派席位 | 完全沿用角色既有權限 | 既有局零行為變更；有專門測試釘住 |
+| 錯誤碼 | 另立 `ORDER_SEAT_DENIED` | 「不是你的單位」與「不是你的職掌」在演習中處置不同，合併會讓前端無從區分 |
+| 檢查順序 | 陣營/unit_scope → 席位 | 「不是你的單位」更根本，先報比較好懂 |
+
+### 未做（刻意）
+
+- **S4_LOG 目前是空集合**——補給令型還不存在（WP-C7）。空集合＝不能下任何令，
+  與「未指派席位」是兩件不同的事，registry 裡沒有合併。
+- **審批權未做**：規格的「下令與審批權按 seat_role 細分」中，審批屬 B5.2（申請-核覆），
+  本卡只做下令權。
+- **前端未依席位隱藏 UI**：COP 仍會顯示下令面板，越權時由後端擋並回 `ORDER_SEAT_DENIED`。
+  後端是權威這點沒問題，但體驗上應該讓 S2 席次一開始就看不到下令按鈕——記為 B5.2 的順帶項。
 
 ## 中斷續作指引
 
-- 尚未動任何程式碼。上面的「席位 → 可下令型別」對應表是我推的、非規格明文，
-  動手前值得先跟使用者確認一次。
-- 順序有依賴：契約 → prisma migrate → model → 權限 registry → 端點 → 前端。
-- **既有局零行為變更**是這張卡最容易被犧牲掉的東西，請保留那條回歸測試。
+- **本卡（B5.1）已完成**。下一張是 **B5.2 信文/申請核覆**（`Message` / `Request` 實體 +
+  審批鏈），再來是 C10 臨機火力鏈。
+- 要調整席位分工只改 `core/app/seats/SEAT_ORDER_TYPES` 一張表，其餘不必動。
+- **別動 `test_no_seat_behaves_exactly_as_before`**：它釘住「NULL 席位不設限」，
+  那是既有推演局不被鎖死的唯一保證。

@@ -24,6 +24,20 @@ export const ASSIGNABLE_ROLES = [
   'EXERCISE_DIRECTOR',
 ]
 
+/**
+ * 席位（WP-B5.1）——同陣營內的參謀分工，與「參與角色」正交。
+ * **空字串／未指派＝沿用角色既有權限**（既有局零行為變更，見後端 app/seats）。
+ */
+export const SEAT_ROLE_LABELS: Record<string, string> = {
+  COMMANDER: '指揮官（可下全部令）',
+  S3_OPS: '作戰官 S3（僅機動令）',
+  FSO_FIRES: '火力支援協調官 FSO（僅火力令）',
+  S2_INTEL: '情報官 S2（不可下令）',
+  S4_LOG: '後勤官 S4（不可下令）',
+  OBSERVER: '觀察員（不可下令）',
+}
+export const ASSIGNABLE_SEATS = ['COMMANDER', 'S3_OPS', 'FSO_FIRES', 'S2_INTEL', 'S4_LOG', 'OBSERVER']
+
 export function fetchRoster(sessionId: string): Promise<ParticipantRoster> {
   return apiFetch<ParticipantRoster>(`/sessions/${sessionId}/participants`)
 }
@@ -36,10 +50,13 @@ export function assignParticipant(
   faction: string,
   role: string,
   unitScope: string[] = [],
+  seatRole: string | null = null,
 ): Promise<SessionParticipantView> {
   return apiFetch<SessionParticipantView>(`/sessions/${sessionId}/participants/${userId}`, {
     method: 'PUT',
-    body: { faction, role, unit_scope: unitScope },
+    // seat_role 空字串一律送 null——「未指派席位」與「指派了某席位」是兩種語意，
+    // 送空字串會被後端 pydantic 當成非法 enum 值擋掉。
+    body: { faction, role, unit_scope: unitScope, seat_role: seatRole || null },
   })
 }
 export function removeParticipant(sessionId: string, userId: string): Promise<unknown> {

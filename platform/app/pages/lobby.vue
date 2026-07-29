@@ -3,7 +3,9 @@ import type { components } from '~/types/api'
 import { apiFetch } from '~/composables/useApi'
 import {
   ASSIGNABLE_ROLES,
+  ASSIGNABLE_SEATS,
   PARTICIPANT_ROLE_LABELS,
+  SEAT_ROLE_LABELS,
   assignParticipant,
   fetchAllUsers,
   fetchRoster,
@@ -198,12 +200,18 @@ async function doAssign() {
     rosterBusy.value = false
   }
 }
-async function doReassign(userId: string, faction: string, role: string, unitScope: string[] = []) {
+async function doReassign(
+  userId: string,
+  faction: string,
+  role: string,
+  unitScope: string[] = [],
+  seatRole: string | null = null,
+) {
   if (!rosterFor.value) return
   rosterBusy.value = true
   rosterErr.value = ''
   try {
-    await assignParticipant(rosterFor.value.id, userId, faction, role, unitScope)
+    await assignParticipant(rosterFor.value.id, userId, faction, role, unitScope, seatRole)
     roster.value = await fetchRoster(rosterFor.value.id)
   } catch (e) {
     rosterErr.value = `更新失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
@@ -398,7 +406,7 @@ onMounted(async () => {
                 class="r-sel"
                 data-testid="roster-faction"
                 :disabled="rosterBusy"
-                @change="doReassign(p.user_id, ($event.target as HTMLSelectElement).value, p.role, [])"
+                @change="doReassign(p.user_id, ($event.target as HTMLSelectElement).value, p.role, [], p.seat_role ?? null)"
               >
                 <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
               </select>
@@ -407,9 +415,23 @@ onMounted(async () => {
                 class="r-sel"
                 data-testid="roster-role"
                 :disabled="rosterBusy"
-                @change="doReassign(p.user_id, p.faction, ($event.target as HTMLSelectElement).value, p.unit_scope ?? [])"
+                @change="doReassign(p.user_id, p.faction, ($event.target as HTMLSelectElement).value, p.unit_scope ?? [], p.seat_role ?? null)"
               >
                 <option v-for="rr in ROLE_OPTIONS" :key="rr" :value="rr">{{ ROLE_LABELS[rr] ?? rr }}</option>
+              </select>
+              <!-- 席位（WP-B5.1）：空＝未指派＝沿用角色既有權限（不縮不放）。 -->
+              <select
+                :value="p.seat_role ?? ''"
+                class="r-sel"
+                data-testid="roster-seat"
+                :title="p.seat_role ? SEAT_ROLE_LABELS[p.seat_role] : '未指派席位（沿用角色權限）'"
+                :disabled="rosterBusy"
+                @change="doReassign(p.user_id, p.faction, p.role, p.unit_scope ?? [], ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">（未指派席位）</option>
+                <option v-for="sr in ASSIGNABLE_SEATS" :key="sr" :value="sr">
+                  {{ SEAT_ROLE_LABELS[sr] ?? sr }}
+                </option>
               </select>
               <button
                 v-if="unitsOfFaction(p.faction).length"

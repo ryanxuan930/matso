@@ -743,6 +743,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/aar/replay/states": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description AAR 地圖重播的狀態流（WP-D6.1）。回傳**靜態底本 + 逐 tick 差異**， 讓前端一次取得整場、拖動時間軸時本地重算，不必每格回後端。 存取控制與其他 AAR 端點相同（結束的推演、參與者或全知）。 */
+        get: operations["getAarReplayStates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scenarios": {
         parameters: {
             query?: never;
@@ -824,7 +843,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -971,12 +990,19 @@ export interface components {
             ammo_types: string[];
             ammo_remaining?: number | null;
         };
+        /**
+         * @description 席位（[JCATS-F p.9–10]）——同一陣營內的分工。與 `role`（系統角色）正交： role 決定「這個帳號在系統裡是誰」，seat_role 決定「他在這局的參謀席次」。 **可為 null＝未指派席位**，此時權限完全沿用 role 的既有規則（既有局零行為變更）。
+         * @enum {string}
+         */
+        SeatRole: "COMMANDER" | "S2_INTEL" | "S3_OPS" | "FSO_FIRES" | "S4_LOG" | "OBSERVER";
         /** @description 推演參與者名冊條目——哪個帳號以哪個陣營/角色參與（決定操控/查看範圍） */
         SessionParticipantView: {
             user_id: string;
             username: string;
             faction: components["schemas"]["Faction"];
             role: components["schemas"]["UserRole"];
+            /** @description 席位；null＝未指派（權限沿用 role 既有規則） */
+            seat_role?: components["schemas"]["SeatRole"] | null;
             /** @description 限指揮之單位 id 子集（空＝整個陣營） */
             unit_scope?: string[];
         };
@@ -996,6 +1022,8 @@ export interface components {
         AssignParticipantRequest: {
             faction: components["schemas"]["Faction"];
             role: components["schemas"]["UserRole"];
+            /** @description 席位；省略/null＝不指派席位（沿用 role 既有規則） */
+            seat_role?: components["schemas"]["SeatRole"] | null;
             /** @description 限指揮之單位 id 子集（空/省略＝整個陣營） */
             unit_scope?: string[];
         };
@@ -1037,6 +1065,44 @@ export interface components {
             /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
             category: string;
             base_stats: Record<string, never>;
+        };
+        /** @description 地圖重播的完整資料：`units` 是靜態底本（含 tick 0 基準位置）， `frames` 只列**有變動的 tick 與有變動的單位**（帳本本身就是這個形狀）。 前端從基準累加到 scrubTick 即得該時刻全貌。 */
+        AarReplayStates: {
+            units: components["schemas"]["AarReplayUnit"][];
+            frames: components["schemas"]["AarReplayFrame"][];
+            /** @description 帳本最後一個事件的 tick */
+            max_tick: number;
+        };
+        /** @description 重播底本的單位（靜態屬性 + tick 0 基準狀態）。 */
+        AarReplayUnit: {
+            id: string;
+            designation?: string;
+            faction: string;
+            /** @description 建制級別（SQUAD/PLATOON/…） */
+            unit_level?: string;
+            is_fixed?: boolean;
+            /** @description 滿編戰力。聚合交戰的效能% 由「當前戰力 ÷ 此值」導出； 為 null 時 `strength` 仍會給，但 `health` 無從導出（不猜）。 */
+            authorized_strength?: number | null;
+            base_lat?: number | null;
+            base_lng?: number | null;
+            /** @description tick 0 效能%（帳本無傷即 100） */
+            base_health: number;
+        };
+        /** @description 一個有事件的 tick，及該 tick 結束時**狀態有變**的單位。 */
+        AarReplayFrame: {
+            tick: number;
+            event_types?: string[];
+            changes: components["schemas"]["AarReplayChange"][];
+        };
+        /** @description 單一單位在該 tick 的變動。**只列真的變了的欄位**，未列＝沿用前一狀態。 `health` 是效能%（0–100）、`strength` 是戰力點——**兩者量綱不同不可互換** （這正是本卡修掉的既有錯誤）。 */
+        AarReplayChange: {
+            unit_id: string;
+            lat?: number;
+            lng?: number;
+            /** @description 效能%（0–100） */
+            health?: number;
+            /** @description 戰力點（人員/平台數量級） */
+            strength?: number;
         };
         /** @description 重連用的**單一原子快照**（WP-E3；ws_protocol.md 的 RESYNC_REQUIRED 指向此端點）。 內容＝該觀測者當下看得見的全部狀態：units + contacts + map features + 陣營關係， 外加 `tick`（sim 時間）與 `last_seq`（傳輸層計數器）。 **fog of war 過濾一律在後端**（紅線 3）：本端點不自行實作過濾，而是複用 /units、/intel、/map-features、/relations 的同一份邏輯，故其可見範圍與各端點**逐項相同**。 `last_seq` 的用途：client 套用快照後，只接受 seq 大於它的 STATE_DIFF——否則 「RESYNC 送出後、快照回來前」抵達的新 diff 會被隨後回來的舊快照蓋掉。 */
         StateSnapshotView: {
@@ -3094,6 +3160,42 @@ export interface operations {
         responses: {
             /** @description AAR report */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getAarReplayStates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Replay states */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AarReplayStates"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Session not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
