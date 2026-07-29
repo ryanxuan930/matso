@@ -4,23 +4,59 @@
   "title": "ScenarioPackage",
   "description": "scenario.yaml 的驗證 schema（SPEC_FULL §11.1、§12.1）。載入器 MUST 回報精確錯誤路徑。orbat 各檔見 orbat.schema.json；roe/msel 的 $defs 於 O7.2/O7.3 補完。",
   "type": "object",
-  "required": ["name", "version", "bbox", "mode", "tick_rate_ms", "factions", "victory_conditions"],
+  "required": [
+    "name",
+    "version",
+    "bbox",
+    "mode",
+    "tick_rate_ms",
+    "factions",
+    "victory_conditions"
+  ],
   "properties": {
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "type": "string" },
-    "description": { "type": "string" },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
     "bbox": {
       "type": "array",
       "description": "[min_lng, min_lat, max_lng, max_lat] WGS84",
-      "items": { "type": "number" },
+      "items": {
+        "type": "number"
+      },
       "minItems": 4,
       "maxItems": 4
     },
-    "mode": { "enum": ["REALTIME", "WEGO", "IGO_UGO"] },
-    "tick_rate_ms": { "type": "integer", "minimum": 100, "default": 1000 },
-    "hex_resolution": { "type": "integer", "minimum": 7, "maximum": 9, "default": 8 },
+    "mode": {
+      "enum": [
+        "REALTIME",
+        "WEGO",
+        "IGO_UGO"
+      ]
+    },
+    "tick_rate_ms": {
+      "type": "integer",
+      "minimum": 100,
+      "default": 1000
+    },
+    "hex_resolution": {
+      "type": "integer",
+      "minimum": 7,
+      "maximum": 9,
+      "default": 8
+    },
     "aggregate_adjudication_level": {
-      "enum": ["BATTALION", "BRIGADE", "DIVISION"],
+      "enum": [
+        "BATTALION",
+        "BRIGADE",
+        "DIVISION"
+      ],
       "default": "BATTALION",
       "description": "此層級(含)以上使用 Lanchester 聚合裁決（SPEC_FULL §7.1）"
     },
@@ -30,12 +66,22 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,31}$" },
-          "display_name": { "type": "string" },
-          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,31}$"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          }
         }
       }
     },
@@ -45,9 +91,19 @@
       "items": {
         "type": "array",
         "prefixItems": [
-          { "type": "string" },
-          { "type": "string" },
-          { "enum": ["ALLIED", "NEUTRAL", "HOSTILE"] }
+          {
+            "type": "string"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "enum": [
+              "ALLIED",
+              "NEUTRAL",
+              "HOSTILE"
+            ]
+          }
         ],
         "minItems": 3,
         "maxItems": 3
@@ -58,10 +114,19 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["faction", "condition"],
+        "required": [
+          "faction",
+          "condition"
+        ],
         "properties": {
-          "faction": { "type": "string", "description": "須為 factions 宣告的陣營 id（載入器語意驗證）" },
-          "condition": { "type": "object", "description": "條件 DSL 於 O7.2 定義（與 MSEL trigger 共用）" }
+          "faction": {
+            "type": "string",
+            "description": "須為 factions 宣告的陣營 id（載入器語意驗證）"
+          },
+          "condition": {
+            "type": "object",
+            "description": "條件 DSL 於 O7.2 定義（與 MSEL trigger 共用）"
+          }
         }
       }
     },
@@ -72,12 +137,93 @@
         "orbat": {
           "type": "object",
           "description": "faction id → orbat yaml 相對路徑",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         },
-        "roe": { "type": "string", "default": "roe.yaml" },
-        "msel": { "type": "string", "default": "msel.yaml" },
-        "weather_script": { "type": "string" },
-        "overrides_dir": { "type": "string" }
+        "roe": {
+          "type": "string",
+          "default": "roe.yaml"
+        },
+        "msel": {
+          "type": "string",
+          "default": "msel.yaml"
+        },
+        "weather_script": {
+          "type": "string"
+        },
+        "overrides_dir": {
+          "type": "string"
+        }
+      }
+    },
+    "no_strike_zones": {
+      "type": "array",
+      "description": "禁射區（WP-A3）。護欄 G4 與人類下令 precheck 皆以此判定：目標**實際位置**落在區內即攔。NO_STRIKE＝硬阻擋（AI 令被剔除、人類令被拒）；RESTRICTED_FIRE＝不硬擋，升白軍確認（人類需明確 override，且 override 記入 Ledger 供 AAR 追究）。",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "zone_class",
+          "geometry"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "區域名稱（醫院、文化資產、平民聚落…）"
+          },
+          "zone_class": {
+            "type": "string",
+            "enum": [
+              "NO_STRIKE",
+              "RESTRICTED_FIRE"
+            ]
+          },
+          "geometry": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "description": "GeoJSON 慣例的 [lng, lat] 順序（與 MapFeature 一致）",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "polygon",
+                  "circle"
+                ]
+              },
+              "ring": {
+                "type": "array",
+                "minItems": 3,
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "description": "polygon：開放環 [[lng,lat],…]（不閉合，同 MapFeature）"
+              },
+              "center": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "number"
+                },
+                "description": "circle：[lng, lat]"
+              },
+              "radius_m": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "circle：半徑（公尺）"
+              }
+            }
+          }
+        }
       }
     }
   },

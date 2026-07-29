@@ -25,15 +25,21 @@ from sqlalchemy.orm import Session
 
 from app.ai_loop.context import UnitMeta, build_faction_context
 from app.ai_loop.opfor import AiTurnResult, OpforDecider, run_faction_turn
-from app.ai_loop.orders_bridge import BridgeResult, PrecheckFeasibility, submit_faction_orders
+from app.ai_loop.orders_bridge import (
+    BridgeResult,
+    PrecheckFeasibility,
+    UnitTargetLocator,
+    submit_faction_orders,
+)
 from app.ai_loop.world_view import allied_units, recent_events
 from app.factions.relations import FactionRelations
-from app.guardrails import GuardrailGateway
+from app.guardrails import GuardrailGateway, intervention_events
 from app.guardrails.schemas import CitationVerifier
 from app.models.enums import AiMode
 from app.models.tables import TacticalUnit
 from app.movement.fuel import load_unit_fuel
 from app.movement.mobility import resolve_session_mobility
+from app.orders.no_strike import load_no_strike_cells
 from app.orders.precheck import PhysicsGateway
 from app.state.hot_state import HotStateStore
 
@@ -127,8 +133,10 @@ def run_decision_cycle(
     objectives: list[dict[str, Any]] | None = None,
     tick: int = 0,
     no_strike_hexes: frozenset[str] = frozenset(),
+    restricted_fire_hexes: frozenset[str] = frozenset(),
     enemy_visibility: EnemyVisibility = ground_truth_enemies,
     citation_verifier: CitationVerifier | None = None,
+    event_sink: Any = None,
 ) -> DecisionOutcome:
     """一個陣營的一次決策週期（同步；async worker 於 to_thread 內呼叫）。
 
@@ -159,15 +167,29 @@ def run_decision_cycle(
         mission=mission,
     )
     feasibility = PrecheckFeasibility(db, session_id, phys_gateway, relations)
+    # WP-A3：禁射格集每週期現讀（白軍可局中增修禁射區，快取會讓變更不生效）。
+    # deps 帶進來的值僅作為 fallback（測試/合成想定可直接指定格）。
+    zones = load_no_strike_cells(db, session_id)
     turn = run_faction_turn(
         decider,
         guardrail,
         mode=mode,
         context=context,
-        no_strike_hexes=no_strike_hexes,
+        no_strike_hexes=zones.no_strike or no_strike_hexes,
+        restricted_fire_hexes=zones.restricted or restricted_fire_hexes,
+        target_locator=UnitTargetLocator(db, session_id, hot),
         feasibility=feasibility,
         citation_verifier=citation_verifier,
     )
+    # WP-A3：護欄攔截落帳。`intervention_events` 自 O6.2 就存在，但**從無 production 呼叫端**
+    # → 活執行期從未寫過一筆 GUARDRAIL_INTERVENTION，AAR 的「護欄攔截 N 次」恆為 0、
+    # 重播書籤也永遠標不出來。這裡補上（寫入端比照 sim_runtime 的 SESSION_CONCLUDED：
+    # 非 Kernel 路徑亦可 append，LedgerWriter 自身處理 seq/tip 衝突）。
+    if event_sink is not None:
+        events_out = intervention_events(turn.findings, tick, initiator_id=None)
+        if events_out:
+            event_sink.append(session_id, events_out)
+
     bridge = BridgeResult()
     if turn.accepted and turn.orders:
         bridge = submit_faction_orders(
@@ -199,9 +221,12 @@ class FactionWorkerDeps:
     mission: str = ""
     objectives: list[dict[str, Any]] = field(default_factory=list)
     no_strike_hexes: frozenset[str] = frozenset()
+    restricted_fire_hexes: frozenset[str] = frozenset()
     tick_source: Callable[[], int] = lambda: 0
     enemy_visibility: EnemyVisibility = ground_truth_enemies
     citation_verifier: CitationVerifier | None = None
+    # WP-A3：護欄攔截事件的落帳出口（LedgerWriter）。None＝不落帳（測試/合成想定）。
+    event_sink: Any = None
 
 
 def _cycle_with_db(deps: FactionWorkerDeps) -> DecisionOutcome:
@@ -223,7 +248,9 @@ def _cycle_with_db(deps: FactionWorkerDeps) -> DecisionOutcome:
             objectives=deps.objectives,
             tick=deps.tick_source(),
             no_strike_hexes=deps.no_strike_hexes,
+            restricted_fire_hexes=deps.restricted_fire_hexes,
             enemy_visibility=deps.enemy_visibility,
+            event_sink=deps.event_sink,
             citation_verifier=deps.citation_verifier,
         )
         return outcome

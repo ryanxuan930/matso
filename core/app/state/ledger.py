@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.models import TacticalEventLog
 
@@ -110,7 +110,9 @@ class LedgerWriter:
     支援跨行程重啟接續（DB 為權威）。
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: Callable[[], Session]) -> None:
+        # 型別放寬為 Callable：`sessionmaker[Session]` 本就滿足它，但 AI worker 那條路徑
+        # （orders 走 db_factory: Callable[[], Session]）也需要能建 writer（WP-A3 護欄落帳）。
         self._session_factory = session_factory
         self._tips: dict[str, tuple[int, str]] = {}
 

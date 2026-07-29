@@ -80,6 +80,10 @@ class WargameSession(Base):
     faction_relations: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "factionRelations", JSON, nullable=True
     )
+    # WP-A3 禁射區宣告（NULL＝無禁射區，既有局零遷移）。格集由 orders/no_strike.py 導出。
+    no_strike_zones: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
+        "noStrikeZones", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):

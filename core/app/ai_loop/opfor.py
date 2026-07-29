@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.guardrails import GuardrailGateway, require_ai_enabled
-from app.guardrails.gateway import OrderFeasibilityChecker
+from app.guardrails.gateway import OrderFeasibilityChecker, TargetLocator
 from app.guardrails.schemas import CitationVerifier, GuardrailFinding
 from app.models.enums import AiMode
 
@@ -52,6 +52,8 @@ def run_opfor_turn(
     context: dict[str, Any],
     schema_ref: str = "opfor_decision",
     no_strike_hexes: frozenset[str] = frozenset(),
+    restricted_fire_hexes: frozenset[str] = frozenset(),
+    target_locator: TargetLocator | None = None,
     feasibility: OrderFeasibilityChecker | None = None,
     citation_verifier: CitationVerifier | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
@@ -69,6 +71,8 @@ def run_opfor_turn(
             schema_ref=schema_ref,
             mode=mode,
             no_strike_hexes=no_strike_hexes,
+            restricted_fire_hexes=restricted_fire_hexes,
+            target_locator=target_locator,
             feasibility=feasibility,
             citation_verifier=citation_verifier,
         )

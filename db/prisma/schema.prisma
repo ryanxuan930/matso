@@ -42,6 +42,10 @@ model WargameSession {
   // 想定載入時寫入；**null = 未宣告 → 全 HOSTILE 預設**（既有局零遷移、語義與過去一致）。
   // 存在此處而非只靠 scenarioId，是因為：無想定的局也要能有關係、且白軍可局中宣戰/停火。
   factionRelations Json?
+  // WP-A3 禁射區（SPEC_V2 §6 WP-A3）：[{name, zone_class: NO_STRIKE|RESTRICTED_FIRE, geometry}]。
+  // 想定載入時寫入、白軍可局中增修；**null = 無禁射區**（既有局零遷移）。
+  // 存宣告而非 h3 格集——格集由幾何於讀取時導出（見 core/app/orders/no_strike.py）。
+  noStrikeZones Json?
 
   units       TacticalUnit[]
   eventLogs   TacticalEventLog[]

@@ -26,6 +26,7 @@ from app.errors import MatsoError
 from app.factions.relations import FactionRelations
 from app.models.tables import TacticalUnit
 from app.movement.mobility import resolve_unit_mobility
+from app.orders.no_strike import NO_STRIKE_H3_RES
 from app.orders.precheck import PhysicsGateway, run_precheck
 from app.orders.schemas import EngagePayload, MovePayload, OrderRequest, OrderType
 from app.orders.service import OrderService
@@ -218,3 +219,44 @@ def submit_faction_orders(
             _LOG.warning("AI 落單非預期失敗（%s），歸為 rejected 續跑", type(exc).__name__)
             result.rejected.append({"order": order, "reason": f"落單失敗：{type(exc).__name__}"})
     return result
+
+
+class UnitTargetLocator:
+    """護欄 G4：把一道打擊令解析成其**目標實際所在的 h3 格**（WP-A3）。
+
+    改版前 G4 只比對令面自帶的 `target_h3`，而 AI 的 ENGAGE 令帶 `target_unit_id`
+    → 永遠對不上、G4 從未攔過任何東西。本類補上那一步：unit → 當前座標 → h3。
+
+    座標優先讀**熱狀態**（活模擬中單位會移動，DB 的 current_lat/lng 是上次落盤值）；
+    熱狀態缺值才退回 DB。查不到一律回 None（不擋——真正的把關在 submit 端 precheck）。
+    """
+
+    def __init__(self, db: Any, session_id: str, hot: Any = None) -> None:
+        self._db = db
+        self._session_id = session_id
+        self._hot = hot
+
+    def _unit_latlng(self, unit_id: str) -> tuple[float, float] | None:
+        if self._hot is not None:
+            state = self._hot.get(self._session_id, unit_id) or {}
+            lat, lng = state.get("lat"), state.get("lng")
+            if isinstance(lat, int | float) and isinstance(lng, int | float):
+                return float(lat), float(lng)
+        unit = self._db.get(TacticalUnit, unit_id)
+        if unit is None or unit.session_id != self._session_id:
+            return None
+        if unit.current_lat is None or unit.current_lng is None:
+            return None
+        return float(unit.current_lat), float(unit.current_lng)
+
+    def locate(self, order: dict[str, Any]) -> str | None:
+        target_id = order.get("target_unit_id")
+        if isinstance(target_id, str) and target_id:
+            pos = self._unit_latlng(target_id)
+            if pos is not None:
+                return str(h3.latlng_to_cell(pos[0], pos[1], NO_STRIKE_H3_RES))
+        # 直接給座標的令（未來的 MISSION objective / 面射擊）也支援。
+        lat, lng = _num(order.get("target_lat")), _num(order.get("target_lng"))
+        if lat is not None and lng is not None:
+            return str(h3.latlng_to_cell(lat, lng, NO_STRIKE_H3_RES))
+        return None

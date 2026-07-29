@@ -32,6 +32,27 @@ class OrderFeasibilityChecker(Protocol):
     def is_feasible(self, order: dict[str, Any]) -> tuple[bool, str]: ...  # pragma: no cover
 
 
+class TargetLocator(Protocol):
+    """G4 目標定位介面（WP-A3）：把一道令解析成其**實際打擊位置**的 h3 格。
+
+    為何需要注入：AI 令帶的是 `target_unit_id`（ENGAGE）或 `target_lat/lng`，要換成格得查 DB /
+    算 h3，而本套件是零 DB 零 I/O 的純規則層（同 G3 以 Protocol 注入的紀律）。
+    回 None ＝ 無法定位（不擋——寧可漏擋也不要因為查不到就誤殺合法令；真正的把關在 precheck）。
+    """
+
+    def locate(self, order: dict[str, Any]) -> str | None: ...  # pragma: no cover
+
+
+# 會造成毀傷的令型——只有這些受禁射區約束。
+# 規格明訂 **MOVE 不擋**：開進禁射區不是違規，打進去才是。
+_STRIKE_ORDER_TYPES = frozenset({"ENGAGE"})
+# 禁射級別字面值。**刻意不 import app.orders.no_strike 的 ZoneClass**——那個模組會讀 DB，
+# 而本套件的既有紀律是零 DB 零 I/O（外部能力一律 Protocol 注入）。兩處值必須一致，
+# 已由 test_no_strike_zones.py 的一條測試釘住。
+_ZONE_NO_STRIKE = "NO_STRIKE"
+_ZONE_RESTRICTED = "RESTRICTED_FIRE"
+
+
 @lru_cache(maxsize=1)
 def _schema_defs() -> dict[str, Any]:
     doc = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -85,6 +106,8 @@ class GuardrailGateway:
         schema_ref: str,
         mode: AiMode,
         no_strike_hexes: frozenset[str] = frozenset(),
+        restricted_fire_hexes: frozenset[str] = frozenset(),
+        target_locator: TargetLocator | None = None,
         feasibility: OrderFeasibilityChecker | None = None,
         citation_verifier: CitationVerifier | None = None,
     ) -> GuardrailOutcome:
@@ -107,9 +130,11 @@ class GuardrailGateway:
         # G3 — 物理可行性：逐條剔除不可行 order（非致命）。
         findings.append(self._g3_physics(sanitized, feasibility))
 
-        # G4 — IHL/ROE：打擊保護目標 → 硬阻擋 + 升 White Cell。
-        g4 = self._g4_ihl_roe(sanitized, no_strike_hexes)
-        findings.append(g4)
+        # G4 — IHL/ROE：NO_STRIKE 硬阻擋 + 升 White Cell；RESTRICTED_FIRE 保留但升 White Cell。
+        g4_findings = self._g4_ihl_roe(
+            sanitized, no_strike_hexes, restricted_fire_hexes, target_locator
+        )
+        findings.extend(g4_findings)
 
         # G6 — 量化加嚴：ENGAGE 令改白軍逐條確認（升 White Cell，不移除）。
         g6 = self._g6_quantized(sanitized)
@@ -118,8 +143,12 @@ class GuardrailGateway:
         # G5 — 引用查核（模式感知）。
         findings.append(self._g5_citations(sanitized, mode, citation_verifier))
 
-        escalate = g4.blocked or g6.blocked
-        accepted = not g4.blocked  # G4 硬阻擋 → fallback；其餘（G3/G5/G6）為清洗/標記
+        # 只有 NO_STRIKE 會讓整批不被接受；RESTRICTED_FIRE 僅升級白軍（令仍保留）。
+        hard_blocked = any(
+            f.blocked and f.detail.get("zone_class") == _ZONE_NO_STRIKE for f in g4_findings
+        )
+        escalate = any(f.blocked for f in g4_findings) or g6.blocked
+        accepted = not hard_blocked  # 其餘（G3/G5/G6/限制射擊）為清洗/標記
         return GuardrailOutcome(
             accepted=accepted, sanitized=sanitized, findings=findings, escalate_white_cell=escalate
         )
@@ -171,21 +200,61 @@ class GuardrailGateway:
         return GuardrailFinding("G3", False, "所有 order 物理可行")
 
     def _g4_ihl_roe(
-        self, output: dict[str, Any], no_strike_hexes: frozenset[str]
-    ) -> GuardrailFinding:
-        violations = [
-            o.get("target_h3") for o in _orders_of(output) if o.get("target_h3") in no_strike_hexes
-        ]
-        if violations:
-            # 硬阻擋：移除違規 order 並升 White Cell。
-            _filter_orders(output, lambda o: o.get("target_h3") not in no_strike_hexes)
-            return GuardrailFinding(
-                "G4",
-                True,
-                "打擊保護目標（No-Strike）——硬阻擋，升 White Cell",
-                {"targets": violations},
+        self,
+        output: dict[str, Any],
+        no_strike_hexes: frozenset[str],
+        restricted_fire_hexes: frozenset[str],
+        locator: TargetLocator | None,
+    ) -> list[GuardrailFinding]:
+        """IHL/ROE：打擊令的**目標實際位置**是否落在保護區（WP-A3）。
+
+        改版前只比對令面自帶的 `target_h3`，但 AI 的 ENGAGE 令帶的是 `target_unit_id`、
+        MOVE 帶 `target_lat/lng`——**永遠對不上，G4 從未攔過任何東西**。現在以 locator 解析
+        目標實際所在格；`target_h3` 仍優先採用（合成想定/測試會直接給格）。
+        """
+        if not no_strike_hexes and not restricted_fire_hexes:
+            return [GuardrailFinding("G4", False, "本局未宣告禁射區")]
+
+        hard: list[dict[str, Any]] = []
+        soft: list[dict[str, Any]] = []
+        hard_ids: set[int] = set()
+        for o in _orders_of(output):
+            if str(o.get("order_type", "")) not in _STRIKE_ORDER_TYPES:
+                continue  # MOVE 等非打擊令不受禁射區約束（規格：開進去不違規，打進去才是）
+            cell = o.get("target_h3")
+            if not isinstance(cell, str) or not cell:
+                cell = locator.locate(o) if locator is not None else None
+            if not isinstance(cell, str) or not cell:
+                continue  # 定位不到就不擋（真正的把關在 precheck；寧漏擋不誤殺）
+            hit = {"unit_id": o.get("unit_id"), "cell": cell, "target": o.get("target_unit_id")}
+            if cell in no_strike_hexes:
+                hard.append(hit)
+                hard_ids.add(id(o))
+            elif cell in restricted_fire_hexes:
+                soft.append(hit)
+
+        findings: list[GuardrailFinding] = []
+        if hard:
+            _filter_orders(output, lambda o: id(o) not in hard_ids)
+            findings.append(
+                GuardrailFinding(
+                    "G4",
+                    True,
+                    "打擊保護目標（No-Strike）——硬阻擋，升 White Cell",
+                    {"zone_class": _ZONE_NO_STRIKE, "targets": hard},
+                )
             )
-        return GuardrailFinding("G4", False, "無 IHL/ROE 違規")
+        if soft:
+            # 不移除：限制射擊區是「需要人類判斷」而非「絕對禁止」，交白軍逐條確認。
+            findings.append(
+                GuardrailFinding(
+                    "G4",
+                    True,
+                    "限制射擊區（Restricted-Fire）——保留但升 White Cell 確認",
+                    {"zone_class": _ZONE_RESTRICTED, "targets": soft},
+                )
+            )
+        return findings or [GuardrailFinding("G4", False, "無 IHL/ROE 違規")]
 
     def _g6_quantized(self, output: dict[str, Any]) -> GuardrailFinding:
         if not self._profile.adapter_quantized:

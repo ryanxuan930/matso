@@ -32,6 +32,7 @@ from app.models.tables import SessionParticipant, SystemConfiguration, User
 from app.orders.precheck import PhysicsGateway
 from app.sim_params import load_sim_params
 from app.state.hot_state import HotStateStore
+from app.state.ledger import LedgerWriter
 
 _LOG = logging.getLogger("app.ai_orchestrator")
 
@@ -190,6 +191,8 @@ def start_ai_workers(
             relations=relations,
             mode=mode,
             enemy_visibility=enemy_visibility,  # WP-A1：預設真實偵測（見上）
+            # WP-A3：護欄攔截事件落帳（禁射格集由 worker 每週期自 DB 現讀，故不在此傳）。
+            event_sink=LedgerWriter(db_factory),
             mission=str(fc.get("mission") or ""),
             objectives=list(fc.get("objectives") or []),
             # session_id 於本迴圈固定（只有 faction 變），直接閉包即可。
