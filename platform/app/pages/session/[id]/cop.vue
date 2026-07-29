@@ -864,15 +864,7 @@ onBeforeUnmount(() => {
         <!-- 座標查詢讀值（#10）：點地圖任一點顯示經緯度 + MGRS。 -->
         <ClientOnly>
         <CopWidget id="coords" :ui="copUiView" :open="coordQuery">
-          <div class="coord-readout" data-testid="coord-readout">
-            <div class="cr-hd">座標查詢 · 點地圖任一點</div>
-            <template v-if="queryPoint">
-              <div class="cr-row"><span>緯度</span><code>{{ queryPoint.lat.toFixed(5) }}</code></div>
-              <div class="cr-row"><span>經度</span><code>{{ queryPoint.lng.toFixed(5) }}</code></div>
-              <div class="cr-row"><span>MGRS</span><code data-testid="coord-mgrs">{{ queryMgrs }}</code></div>
-            </template>
-            <div v-else class="cr-hint">尚未點選</div>
-          </div>
+          <CoordReadout :point="queryPoint" :mgrs="queryMgrs" />
         </CopWidget>
         </ClientOnly>
 
@@ -1062,42 +1054,6 @@ onBeforeUnmount(() => {
   transition: margin 0.12s ease;
 }
 /* 座標查詢讀值（#10）——浮在地圖上緣中央。 */
-.coord-readout {
-  position: absolute;
-  top: 1rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 11;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
-  border: 1px solid #6b2a52;
-  background: rgba(15, 23, 42, 0.95);
-  color: #e2e8f0;
-  font-size: 0.78rem;
-  min-width: 12rem;
-}
-.coord-readout .cr-hd {
-  color: #f472b6;
-  font-size: 0.72rem;
-  margin-bottom: 0.3rem;
-}
-.coord-readout .cr-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.coord-readout .cr-row span {
-  color: #94a3b8;
-}
-.coord-readout code {
-  font-family: ui-monospace, monospace;
-  color: #e2e8f0;
-}
-.coord-readout .cr-hint {
-  color: #64748b;
-}
-
-
 /* 單位詳細資訊圖卡（#5）——浮在地圖左下。 */
 /* Unit 資訊卡：懸浮於選取圖標旁（#Fix C；定位由 inline unitCardStyle 提供 fixed left/top）。 */
 .map-loading {
