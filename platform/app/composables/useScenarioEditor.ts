@@ -7,7 +7,7 @@ export type UnitLevel =
   | 'THEATER' | 'CORPS' | 'DIVISION' | 'BRIGADE' | 'BATTALION'
   | 'COMPANY' | 'PLATOON' | 'SQUAD' | 'FIRETEAM' | 'INDIVIDUAL'
 
-export interface EditorFaction { id: string; color?: string }
+export interface EditorFaction { id: string; displayName?: string; color?: string }
 export interface EditorUnit {
   faction: string
   designation: string
@@ -24,14 +24,21 @@ export interface EditorVictory { faction: string; condition: Condition }
 export interface ScenarioModel {
   name: string
   version: string
+  description?: string
   bbox: [number, number, number, number]
   mode: 'REALTIME' | 'WEGO' | 'IGO_UGO'
   tickRateMs: number
+  hexResolution?: number
+  aggregateAdjudicationLevel?: 'BATTALION' | 'BRIGADE' | 'DIVISION'
   factions: EditorFaction[]
   relations: EditorRelation[]
   units: EditorUnit[]
   msel: EditorMsel[]
   victoryConditions: EditorVictory[]
+  // WP-B6：編輯器不編輯禁射區（那是 COP 地圖編輯器的事，WP-A3），但**必須原樣帶著**。
+  // 過去這裡沒有這個欄位 → 用編輯器開一個有保護區的想定再存回去，禁射區整段消失，
+  // 而且不會有任何錯誤訊息。安全機制的沉默失效。
+  noStrikeZones?: Array<Record<string, unknown>>
 }
 
 export function emptyScenario(): ScenarioModel {
@@ -61,12 +68,22 @@ export function exportScenario(m: ScenarioModel): {
   const scenario: Record<string, unknown> = {
     name: m.name,
     version: m.version,
+    ...(m.description !== undefined ? { description: m.description } : {}),
     bbox: m.bbox,
     mode: m.mode,
     tick_rate_ms: m.tickRateMs,
-    factions: m.factions.map((f) => (f.color ? { id: f.id, color: f.color } : { id: f.id })),
+    ...(m.hexResolution !== undefined ? { hex_resolution: m.hexResolution } : {}),
+    ...(m.aggregateAdjudicationLevel !== undefined
+      ? { aggregate_adjudication_level: m.aggregateAdjudicationLevel }
+      : {}),
+    factions: m.factions.map((f) => ({
+      id: f.id,
+      ...(f.displayName ? { display_name: f.displayName } : {}),
+      ...(f.color ? { color: f.color } : {}),
+    })),
     relations: m.relations.map((r) => [r.a, r.b, r.relation]),
     victory_conditions: m.victoryConditions.map((v) => ({ faction: v.faction, condition: v.condition })),
+    ...(m.noStrikeZones?.length ? { no_strike_zones: m.noStrikeZones } : {}),
     files: {
       ...(factionsWithUnits.length
         ? { orbat: Object.fromEntries(factionsWithUnits.map((f) => [f, `orbat/${f.toLowerCase()}.yaml`])) }
@@ -129,13 +146,25 @@ export function importScenario(bundle: {
   return {
     name: s.name as string,
     version: s.version as string,
+    ...(s.description !== undefined ? { description: s.description as string } : {}),
     bbox: s.bbox as [number, number, number, number],
     mode: (s.mode as ScenarioModel['mode']) ?? 'REALTIME',
     tickRateMs: (s.tick_rate_ms as number) ?? 1000,
-    factions: (s.factions as EditorFaction[]).map((f) => ({ id: f.id, color: f.color })),
+    ...(s.hex_resolution !== undefined ? { hexResolution: s.hex_resolution as number } : {}),
+    ...(s.aggregate_adjudication_level !== undefined
+      ? { aggregateAdjudicationLevel: s.aggregate_adjudication_level as ScenarioModel['aggregateAdjudicationLevel'] }
+      : {}),
+    factions: (s.factions as Array<{ id: string; display_name?: string; color?: string }>).map((f) => ({
+      id: f.id,
+      ...(f.display_name ? { displayName: f.display_name } : {}),
+      ...(f.color ? { color: f.color } : {}),
+    })),
     relations: ((s.relations as Array<[string, string, RelationValue]>) ?? []).map(([a, b, relation]) => ({ a, b, relation })),
     units,
     msel,
     victoryConditions: ((s.victory_conditions as EditorVictory[]) ?? []),
+    ...(Array.isArray(s.no_strike_zones) && s.no_strike_zones.length
+      ? { noStrikeZones: s.no_strike_zones as Array<Record<string, unknown>> }
+      : {}),
   }
 }

@@ -18,6 +18,10 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
     factions: list[dict[str, Any]] = []
     for fid in loaded.faction_ids:
         entry: dict[str, Any] = {"id": fid}
+        # 鍵序對齊 scenario.schema.json 的宣告序（id → display_name → color），
+        # 讓 dump 的輸出可預測、diff 乾淨。
+        if fid in loaded.faction_display_names:
+            entry["display_name"] = loaded.faction_display_names[fid]
         if fid in loaded.faction_colors:
             entry["color"] = loaded.faction_colors[fid]
         factions.append(entry)
@@ -29,9 +33,10 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
     if loaded.msel:
         files["msel"] = "msel.yaml"
 
-    out: dict[str, Any] = {
-        "name": loaded.name,
-        "version": loaded.version,
+    out: dict[str, Any] = {"name": loaded.name, "version": loaded.version}
+    if loaded.description is not None:
+        out["description"] = loaded.description
+    out |= {
         "bbox": list(loaded.bbox),
         "mode": loaded.mode,
         "tick_rate_ms": loaded.tick_rate_ms,
@@ -71,6 +76,11 @@ def _orbat_dict(loaded: LoadedScenario, faction: str) -> dict[str, Any]:
             unit["lng"] = u.lng
         if u.parent is not None:
             unit["parent"] = u.parent
+        # WP-B6 修：`fixed` 過去在此遺失——loader 讀得進來、DB 也存得下去，就是匯出時掉了。
+        # 症狀是「把想定匯出再匯入，指揮部就開始會移動」。只在 True 時輸出（預設 false，
+        # 省略即等價）——與前端編輯器 `...(u.fixed ? { fixed: true } : {})` 同一慣例。
+        if u.fixed:
+            unit["fixed"] = True
         units.append(unit)
     return {"faction": faction, "units": units}
 

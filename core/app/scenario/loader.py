@@ -56,6 +56,9 @@ class LoadedScenario:
     units: list[ScenarioUnit] = field(default_factory=list)
     msel: list[MselEntry] = field(default_factory=list)
     victory_conditions: list[dict[str, Any]] = field(default_factory=list)
+    # WP-B6：schema 有、過去卻沒被模型承接的兩欄。沒承接 → dump 寫不出來 → 匯出即遺失。
+    description: str | None = None
+    faction_display_names: dict[str, str] = field(default_factory=dict)
     # WP-A3 禁射區宣告（原樣帶入；幾何→h3 格集由 orders/no_strike.py 於讀取時導出）。
     no_strike_zones: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
@@ -82,6 +85,41 @@ def _validate_schema(data: dict[str, Any], schema_name: str, label: str) -> None
         raise ScenarioError(f"{label}: {path}: {e.message}")
 
 
+def _build(
+    sc: dict[str, Any],
+    faction_ids: list[str],
+    relations: FactionRelations,
+    units: list[ScenarioUnit],
+    msel: list[MselEntry],
+) -> LoadedScenario:
+    """由已驗證的 scenario dict 組 LoadedScenario。
+
+    **兩條載入入口（package / bundle）共用這一個組裝點**——過去兩邊各抄一份建構式，
+    新增欄位很容易只改一邊；`fixed` 當年就是這樣在 dump 那一側漏掉的（WP-B6）。
+    """
+    return LoadedScenario(
+        name=sc["name"],
+        version=sc["version"],
+        mode=sc["mode"],
+        bbox=list(sc["bbox"]),
+        tick_rate_ms=sc["tick_rate_ms"],
+        hex_resolution=sc.get("hex_resolution", 8),
+        aggregate_adjudication_level=sc.get("aggregate_adjudication_level", "BATTALION"),
+        faction_ids=faction_ids,
+        faction_colors={f["id"]: f["color"] for f in sc["factions"] if "color" in f},
+        relations=relations,
+        units=units,
+        msel=msel,
+        victory_conditions=list(sc["victory_conditions"]),
+        no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
+        description=sc.get("description"),
+        faction_display_names={
+            f["id"]: f["display_name"] for f in sc["factions"] if "display_name" in f
+        },
+        raw=sc,
+    )
+
+
 def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
     """載入並全量驗證一個 scenario package 目錄，回 LoadedScenario。任何錯誤 → ScenarioError。"""
     root = Path(package_dir)
@@ -95,24 +133,7 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
     units = _load_orbats(root, sc.get("files", {}).get("orbat", {}), faction_ids)
     msel = _load_msel(root, sc.get("files", {}).get("msel"))
 
-    colors = {f["id"]: f["color"] for f in sc["factions"] if "color" in f}
-    return LoadedScenario(
-        name=sc["name"],
-        version=sc["version"],
-        mode=sc["mode"],
-        bbox=list(sc["bbox"]),
-        tick_rate_ms=sc["tick_rate_ms"],
-        hex_resolution=sc.get("hex_resolution", 8),
-        aggregate_adjudication_level=sc.get("aggregate_adjudication_level", "BATTALION"),
-        faction_ids=faction_ids,
-        faction_colors=colors,
-        relations=relations,
-        units=units,
-        msel=msel,
-        victory_conditions=list(sc["victory_conditions"]),
-        no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
-        raw=sc,
-    )
+    return _build(sc, faction_ids, relations, units, msel)
 
 
 def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
@@ -130,24 +151,7 @@ def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
     _validate_victory(sc["victory_conditions"], faction_ids)
     units = _units_from_orbat_dict(bundle.get("orbat") or {}, faction_ids)
     msel = _msel_from_dict(bundle.get("msel"))
-    colors = {f["id"]: f["color"] for f in sc["factions"] if "color" in f}
-    return LoadedScenario(
-        name=sc["name"],
-        version=sc["version"],
-        mode=sc["mode"],
-        bbox=list(sc["bbox"]),
-        tick_rate_ms=sc["tick_rate_ms"],
-        hex_resolution=sc.get("hex_resolution", 8),
-        aggregate_adjudication_level=sc.get("aggregate_adjudication_level", "BATTALION"),
-        faction_ids=faction_ids,
-        faction_colors=colors,
-        relations=relations,
-        units=units,
-        msel=msel,
-        victory_conditions=list(sc["victory_conditions"]),
-        no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
-        raw=sc,
-    )
+    return _build(sc, faction_ids, relations, units, msel)
 
 
 def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> list[ScenarioUnit]:
