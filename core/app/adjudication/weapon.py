@@ -57,6 +57,11 @@ class WeaponProfile:
     missile: bool = False
     maneuverable: bool = True
     apex_ratio: float = 0.25  # 拋物線頂高比（45° 發射≈0.25；低伸彈道用較小值）
+    # 面目標射擊（WP-C10.2）：CEP＝含 50% 落點的圓半徑；lethal＝殺傷半徑。
+    # 兩者早就在 weaponeering schema 與種子資料裡，只是過去沒有裁決路徑用到。
+    # 0＝未提供 → 面目標射擊視為點命中（退化但不崩潰）。
+    dispersion_cep_m: float = 0.0
+    lethal_radius_m: float = 0.0
 
     @property
     def ballistic(self) -> bool:
@@ -93,6 +98,8 @@ class WeaponProfile:
                 str(k): float(v) for k, v in (stats.get("pk_by_armor_class") or {}).items()
             },
             kinetic_kind=str(stats.get("kinetic_kind", "GENERIC")),
+            dispersion_cep_m=float(stats.get("dispersion_cep_m", 0.0) or 0.0),
+            lethal_radius_m=float(stats.get("lethal_radius_m", 0.0) or 0.0),
             # 飛彈類：以 missile_kind 存在判定為飛彈；maneuverable 預設 True（巡弋式，僅判射程），
             # 彈道飛彈於 baseStats 設 maneuverable=false → ballistic（走拋物線）。
             missile="missile_kind" in stats,
