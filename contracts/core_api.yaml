@@ -250,6 +250,13 @@ components:
         min_range_m: { type: number }
         ammo_types: { type: array, items: { type: string } }
         ammo_remaining: { type: [integer, "null"] }
+    SeatRole:
+      type: string
+      description: >-
+        席位（[JCATS-F p.9–10]）——同一陣營內的分工。與 `role`（系統角色）正交：
+        role 決定「這個帳號在系統裡是誰」，seat_role 決定「他在這局的參謀席次」。
+        **可為 null＝未指派席位**，此時權限完全沿用 role 的既有規則（既有局零行為變更）。
+      enum: [COMMANDER, S2_INTEL, S3_OPS, FSO_FIRES, S4_LOG, OBSERVER]
     SessionParticipantView:
       type: object
       description: 推演參與者名冊條目——哪個帳號以哪個陣營/角色參與（決定操控/查看範圍）
@@ -259,6 +266,11 @@ components:
         username: { type: string }
         faction: { $ref: "#/components/schemas/Faction" }
         role: { $ref: "#/components/schemas/UserRole" }
+        seat_role:
+          oneOf:
+            - { $ref: "#/components/schemas/SeatRole" }
+            - { type: "null" }
+          description: 席位；null＝未指派（權限沿用 role 既有規則）
         unit_scope: { type: array, items: { type: string }, description: "限指揮之單位 id 子集（空＝整個陣營）" }
     RosterUnit:
       type: object
@@ -282,6 +294,11 @@ components:
       properties:
         faction: { $ref: "#/components/schemas/Faction" }
         role: { $ref: "#/components/schemas/UserRole" }
+        seat_role:
+          oneOf:
+            - { $ref: "#/components/schemas/SeatRole" }
+            - { type: "null" }
+          description: 席位；省略/null＝不指派席位（沿用 role 既有規則）
         unit_scope: { type: array, items: { type: string }, description: "限指揮之單位 id 子集（空/省略＝整個陣營）" }
     EquipmentTemplateView:
       type: object

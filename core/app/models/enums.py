@@ -42,6 +42,22 @@ class UserRole(enum.StrEnum):
     ADMIN = "ADMIN"
 
 
+class SeatRole(enum.StrEnum):
+    """席位（WP-B5.1，[JCATS-F p.9–10]）——同一陣營內的參謀席次。
+
+    與 `UserRole` **正交**：UserRole 說「這個帳號在系統裡是誰」，
+    SeatRole 說「他在這一局坐哪個位子」。
+    參與者的 seat_role **可為 None＝未指派**，此時權限完全沿用 UserRole 的既有規則。
+    """
+
+    COMMANDER = "COMMANDER"
+    S2_INTEL = "S2_INTEL"
+    S3_OPS = "S3_OPS"
+    FSO_FIRES = "FSO_FIRES"
+    S4_LOG = "S4_LOG"
+    OBSERVER = "OBSERVER"
+
+
 class OrderStatus(enum.StrEnum):
     PENDING = "PENDING"
     VALIDATED = "VALIDATED"

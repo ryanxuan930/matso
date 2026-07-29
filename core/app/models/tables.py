@@ -31,6 +31,7 @@ from app.models.enums import (
     CommsState,
     IntelFidelity,
     OrderStatus,
+    SeatRole,
     SessionMode,
     UnitLevel,
     UserRole,
@@ -225,6 +226,9 @@ class SessionParticipant(Base):
     # faction＝想定定義字串 id（SPEC §12.1/ADR 006）；驗證於 app.factions
     faction: Mapped[str] = mapped_column("faction", String(191))
     role: Mapped[UserRole] = mapped_column("role", SAEnum(UserRole))
+    # 席位（WP-B5.1）：同陣營內的參謀分工，與 role 正交。
+    # **None＝未指派席位 → 權限沿用 role 既有規則**（既有局零行為變更）。
+    seat_role: Mapped[SeatRole | None] = mapped_column("seatRole", SAEnum(SeatRole))
     # unit_scope＝限指揮之單位 id 清單（JSON 陣列；空＝整個陣營）。以 Any 容納 JSON 值。
     unit_scope: Mapped[Any] = mapped_column("unitScope", JSON, default=list)
 

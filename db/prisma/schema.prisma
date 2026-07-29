@@ -229,15 +229,30 @@ model User {
 }
 
 model SessionParticipant {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
   sessionId String
-  faction   String   // 想定定義字串 id（SPEC §12.1/ADR 006）；WHITE_CELL 保留字
+  faction   String    // 想定定義字串 id（SPEC §12.1/ADR 006）；WHITE_CELL 保留字
   role      UserRole
+  // 席位（WP-B5.1，[JCATS-F p.9–10]）：同陣營內的參謀分工，與 role 正交。
+  // **可為 NULL＝未指派席位 → 權限完全沿用 role 的既有規則**。
+  // 既有局零遷移：上線時所有既有參與者都是 NULL，行為與改版前逐項相同。
+  seatRole  SeatRole?
   unitScope Json // 可指揮的單位 id 白名單（null = 全軍）
 
   @@unique([userId, sessionId])
+}
+
+/// 席位（WP-B5.1）：同一陣營內的參謀席次。與 UserRole 正交——
+/// UserRole 說「這個帳號在系統裡是誰」，SeatRole 說「他在這局坐哪個位子」。
+enum SeatRole {
+  COMMANDER
+  S2_INTEL
+  S3_OPS
+  FSO_FIRES
+  S4_LOG
+  OBSERVER
 }
 
 // ==========================================
