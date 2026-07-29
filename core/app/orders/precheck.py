@@ -100,21 +100,22 @@ class PhysicsGateway(Protocol):
     def elevation(self, lat: float, lng: float) -> float: ...
 
 
-def _precheck_no_strike(
-    db: Session, unit: TacticalUnit, payload: EngagePayload, acknowledged: bool
+def _no_strike_at(
+    db: Session, session_id: str, lat: float, lng: float, acknowledged: bool
 ) -> list[PrecheckCheck]:
-    """WP-A3 禁射區：目標**實際所在位置**是否落在保護區。
+    """WP-A3 禁射區：**某個座標**是否落在保護區。
 
     與護欄 G4 同一份格集、同一條規則——人與 AI 受同樣約束（差別只在人可對 RESTRICTED_FIRE
     明確 override，AI 則是升白軍確認）。無宣告禁射區的局：一律通過（零行為變更）。
+
+    **以座標為介面而不是以「目標單位」為介面**（WP-C10 收尾時改）：原本只吃 `EngagePayload`，
+    於是面目標射擊（打座標）整個沒有禁射區保護——同一個座標，`ENGAGE` 打不了、
+    `FIRE_MISSION` 卻可以。禁射區保護的是那塊地，不是站在上面的人。
     """
-    zones = load_no_strike_cells(db, unit.session_id)
+    zones = load_no_strike_cells(db, session_id)
     if not zones.any_cells:
         return []
-    target = db.get(TacticalUnit, payload.target_unit_id)
-    if target is None or target.current_lat is None or target.current_lng is None:
-        return []  # 目標不存在/無座標 → 交由既有的 target_exists / position 檢查回報
-    zone = zones.classify_latlng(float(target.current_lat), float(target.current_lng))
+    zone = zones.classify_latlng(lat, lng)
     if zone is None:
         return []
     if zone is ZoneClass.NO_STRIKE:
@@ -136,6 +137,32 @@ def _precheck_no_strike(
             detail="目標位於限制射擊區（Restricted-Fire）；確認仍要射擊請重送並勾選確認",
         )
     ]
+
+
+def _precheck_no_strike(
+    db: Session, unit: TacticalUnit, payload: EngagePayload, acknowledged: bool
+) -> list[PrecheckCheck]:
+    """ENGAGE 的禁射區檢查：以**目標單位當下的座標**判定。"""
+    target = db.get(TacticalUnit, payload.target_unit_id)
+    if target is None or target.current_lat is None or target.current_lng is None:
+        return []  # 目標不存在/無座標 → 交由既有的 target_exists / position 檢查回報
+    return _no_strike_at(
+        db,
+        unit.session_id,
+        float(target.current_lat),
+        float(target.current_lng),
+        acknowledged,
+    )
+
+
+def _precheck_fire_mission_no_strike(
+    db: Session, unit: TacticalUnit, payload: FireMissionPayload, acknowledged: bool
+) -> list[PrecheckCheck]:
+    """FIRE_MISSION 的禁射區檢查：直接判**瞄準點**。
+
+    比 ENGAGE 那條還單純——面射擊本來就是打一個座標，不必先找出目標單位在哪。
+    """
+    return _no_strike_at(db, unit.session_id, payload.target_lat, payload.target_lng, acknowledged)
 
 
 def _precheck_roe_weapon(
@@ -308,6 +335,11 @@ def run_precheck(
         checks = _precheck_move(validated.unit, payload, gateway)
     elif isinstance(payload, FireMissionPayload):
         checks = _precheck_fire_mission(db, validated.unit, payload)
+        # WP-C10 收尾：面射擊一樣要過禁射區。少了這行的話，同一個座標
+        # `ENGAGE` 打不了、`FIRE_MISSION` 卻可以——那不是保護，是繞道。
+        checks.extend(
+            _precheck_fire_mission_no_strike(db, validated.unit, payload, acknowledge_restricted)
+        )
         checks.extend(_precheck_fire_approval(db, validated.unit, payload))
     elif isinstance(payload, EngagePayload):
         checks = _precheck_engage(db, validated.unit, payload, gateway, rel)

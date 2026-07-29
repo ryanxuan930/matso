@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.aar import read_events
 from app.aar.export import export_csv, export_json
+from app.aar.fog import project_events
 from app.aar.narrative import generate_narrative, verify_citations
 from app.aar.replay import replay_summary, state_frames
 from app.aar.stats import compute_metrics
@@ -24,10 +25,14 @@ from app.stream.faction_filter import is_omniscient
 router = APIRouter(prefix="/api/v1/sessions", tags=["aar"])
 
 
-def require_aar_access(db: Session, user: CurrentUser, session_id: str) -> None:
-    """AAR 存取：全知 / ANALYST / 本 session 參與者。其餘 → 403。"""
+def require_aar_access(db: Session, user: CurrentUser, session_id: str) -> str | None:
+    """AAR 存取：全知 / ANALYST / 本 session 參與者。其餘 → 403。
+
+    回**觀看者的陣營**（全知/ANALYST 回 None ＝不受迷霧限制）。呼叫端據此投影事件——
+    參與者在演習**進行中**就能 poll AAR，不投影的話等於一個沒有上鎖的敵情窗口。
+    """
     if is_omniscient(user.role) or user.role is UserRole.ANALYST:
-        return
+        return None
     participant = db.execute(
         select(SessionParticipant).where(
             SessionParticipant.user_id == user.id,
@@ -36,6 +41,20 @@ def require_aar_access(db: Session, user: CurrentUser, session_id: str) -> None:
     ).scalar_one_or_none()
     if participant is None:
         raise AuthForbiddenError("無 AAR 存取權（非參與者/ANALYST/統裁）")
+    return str(participant.faction)
+
+
+def _visible_events(db: Session, session_id: str, viewer_faction: str | None):  # type: ignore[no-untyped-def]
+    """該觀看者看得到的事件流。全知/ANALYST → 原樣；其餘走與 WS feed 同一條受眾規則。"""
+    events = read_events(db, session_id)
+    if viewer_faction is None:
+        return events
+    return project_events(
+        events,
+        faction=viewer_faction,
+        omniscient=False,
+        faction_for=_unit_faction(db, session_id),
+    )
 
 
 def _unit_faction(db: Session, session_id: str) -> dict[str, str]:
@@ -57,8 +76,8 @@ def get_replay(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:  # type: ignore[type-arg]
-    require_aar_access(db, user, session_id)
-    s = replay_summary(read_events(db, session_id))
+    viewer = require_aar_access(db, user, session_id)
+    s = replay_summary(_visible_events(db, session_id, viewer))
     return {
         "frames": [{"tick": f.tick, "event_types": f.event_types} for f in s.frames],
         "bookmarks": [{"seq": b.seq, "tick": b.tick, "label": b.label} for b in s.bookmarks],
@@ -82,8 +101,8 @@ def get_replay_states(
         誤差最多一個移動步長，且僅影響它第一次移動之前的畫面）；
       * 完全沒有座標事件（從沒動過）→ 用 DB 現值（沒動過＝現值即初始，精確）。
     """
-    require_aar_access(db, user, session_id)
-    events = read_events(db, session_id)
+    viewer = require_aar_access(db, user, session_id)
+    events = _visible_events(db, session_id, viewer)
 
     rows = (
         db.execute(
@@ -160,8 +179,8 @@ def get_stats(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:  # type: ignore[type-arg]
-    require_aar_access(db, user, session_id)
-    m = compute_metrics(read_events(db, session_id), _unit_faction(db, session_id))
+    viewer = require_aar_access(db, user, session_id)
+    m = compute_metrics(_visible_events(db, session_id, viewer), _unit_faction(db, session_id))
     return {
         "total_events": m.total_events,
         "engagements": m.engagements,
@@ -179,8 +198,8 @@ def get_report(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:  # type: ignore[type-arg]
-    require_aar_access(db, user, session_id)
-    events = read_events(db, session_id)
+    viewer = require_aar_access(db, user, session_id)
+    events = _visible_events(db, session_id, viewer)
     narrative = generate_narrative(events)
     invalid = verify_citations(narrative, events)
     return {
@@ -199,8 +218,8 @@ def get_export(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    require_aar_access(db, user, session_id)
-    events = read_events(db, session_id)
+    viewer = require_aar_access(db, user, session_id)
+    events = _visible_events(db, session_id, viewer)
     if fmt == "csv":
         return Response(export_csv(events, anonymize=anonymize), media_type="text/csv")
     return Response(export_json(events, anonymize=anonymize), media_type="application/json")

@@ -431,3 +431,97 @@ def test_zones_survive_export_import_roundtrip() -> None:
     assert exported["no_strike_zones"] == [zone]
     again = load_scenario_bundle({"scenario": exported, "orbat": {}})
     assert again.no_strike_zones == [zone]
+
+
+# ---- 面目標射擊也要過禁射區（Backlog 清理；缺口自 WP-C10.2 就存在）----
+
+_HOWITZER_NS = {
+    "max_range_m": 25000,
+    "ph_by_range_band": [[25000, 0.5]],
+    "damage_by_armor_class": {"INFANTRY": 60},
+    "ammo_types": ["HE"],
+    "indirect_fire": True,
+    "dispersion_cep_m": 100,
+    "lethal_radius_m": 50,
+}
+
+
+def _give_howitzer_ns(factory: sessionmaker[Session], unit_id: str) -> None:
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    with factory() as db:
+        t = EquipmentTemplate(name="M109-ns", category="ARTILLERY", base_stats=_HOWITZER_NS)
+        db.add(t)
+        db.flush()
+        db.add(EquipmentInstance(template_id=t.id, owner_id=unit_id, current_state={"ammo": 40}))
+        db.commit()
+
+
+def _fire_mission_at(world: Any, lat: float, lng: float, ack: bool = False) -> OrderRequest:
+    return OrderRequest(
+        unit_id=world.blue_unit_id,
+        order_type=OrderType.FIRE_MISSION,
+        payload={"target_lat": lat, "target_lng": lng, "rounds": 2},
+        acknowledge_restricted=ack,
+    )
+
+
+def _red_pos(factory: sessionmaker[Session], unit_id: str) -> tuple[float, float]:
+    with factory() as db:
+        u = db.get(TacticalUnit, unit_id)
+        assert u is not None and u.current_lat is not None and u.current_lng is not None
+        return float(u.current_lat), float(u.current_lng)
+
+
+def test_fire_mission_into_a_no_strike_zone_is_rejected(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """**同一個座標，ENGAGE 打不了、FIRE_MISSION 卻可以——那不是保護，是繞道。**
+
+    禁射區保護的是那塊地，不是站在上面的人。
+    """
+    world = seed_world(session_factory)
+    _give_howitzer_ns(session_factory, world.blue_unit_id)
+    _set_zone(session_factory, world.session_id, world.red_unit_id, "NO_STRIKE")
+    lat, lng = _red_pos(session_factory, world.red_unit_id)
+    with session_factory() as db:
+        service = OrderService(db, FakeGateway())
+        with pytest.raises(PrecheckFailedError) as err:
+            service.submit(
+                world.session_id, _fire_mission_at(world, lat, lng), world.blue_issuer_id
+            )
+    assert err.value.error_code == "ORDER_NO_STRIKE_ZONE"
+
+
+def test_fire_mission_outside_the_zone_is_fine(session_factory: sessionmaker[Session]) -> None:
+    """保護區只保護那一塊——旁邊照打，否則整個功能等於關掉火力。"""
+    world = seed_world(session_factory)
+    _give_howitzer_ns(session_factory, world.blue_unit_id)
+    _set_zone(session_factory, world.session_id, world.red_unit_id, "NO_STRIKE")
+    lat, lng = _red_pos(session_factory, world.red_unit_id)
+    with session_factory() as db:
+        resp = OrderService(db, FakeGateway()).submit(
+            world.session_id, _fire_mission_at(world, lat + 0.02, lng), world.blue_issuer_id
+        )
+    assert resp.status == "VALIDATED"
+
+
+def test_fire_mission_into_restricted_fire_needs_acknowledgement(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """限制射擊區：與 ENGAGE 同一條規則——明確確認才放行。"""
+    world = seed_world(session_factory)
+    _give_howitzer_ns(session_factory, world.blue_unit_id)
+    _set_zone(session_factory, world.session_id, world.red_unit_id, "RESTRICTED_FIRE")
+    lat, lng = _red_pos(session_factory, world.red_unit_id)
+    with session_factory() as db, pytest.raises(PrecheckFailedError):
+        OrderService(db, FakeGateway()).submit(
+            world.session_id, _fire_mission_at(world, lat, lng), world.blue_issuer_id
+        )
+    with session_factory() as db:
+        resp = OrderService(db, FakeGateway()).submit(
+            world.session_id,
+            _fire_mission_at(world, lat, lng, ack=True),
+            world.blue_issuer_id,
+        )
+    assert resp.status == "VALIDATED"

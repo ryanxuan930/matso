@@ -26,6 +26,21 @@ class AarMetrics:
     max_tick: int
 
 
+def _area_losses(event: AarEvent) -> list[tuple[str, float]]:
+    """面射擊事件的逐單位戰損（`AREA_FIRE_RESOLVED.losses_by_unit`）。
+
+    ⚠ **只給 AAR 用**：這是 ground truth，不可經 `/aar` 端點下發給參與者
+    （`aar/fog.py` 會在投影時把這個鍵剝掉）。統計是在剝掉之前、
+    或以全知身分計算的——參與者看到的數字因此本來就會比較少，那是對的。
+    """
+    if event.event_type != "AREA_FIRE_RESOLVED":
+        return []
+    raw = event.ai_decision.get("losses_by_unit")
+    if not isinstance(raw, dict):
+        return []
+    return [(str(k), float(v)) for k, v in raw.items() if isinstance(v, (int, float))]
+
+
 def compute_metrics(
     events: Sequence[AarEvent], unit_faction: dict[str, str] | None = None
 ) -> AarMetrics:
@@ -51,6 +66,13 @@ def compute_metrics(
         if dmg and e.target_id and e.target_id in faction_of:
             f = faction_of[e.target_id]
             damage_by_faction[f] = damage_by_faction.get(f, 0.0) + dmg
+        # 面射擊沒有單一 `target_id`（打的是座標），所以上面那條歸不了帳——
+        # 砲兵造成的戰損在「各陣營承受多少」這張表上會整個消失。
+        # `losses_by_unit` 早就寫在事件裡，只是從來沒有人讀。
+        for unit_id, loss in _area_losses(e):
+            owner = faction_of.get(unit_id)
+            if owner:
+                damage_by_faction[owner] = damage_by_faction.get(owner, 0.0) + loss
 
     individual = counts.get("ENGAGEMENT_RESOLVED", 0)
     return AarMetrics(
