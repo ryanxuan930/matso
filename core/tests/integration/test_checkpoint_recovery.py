@@ -6,20 +6,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 import redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.engine.clock import SimClock, SimTime
+from app.engine.kernel import Kernel
+from app.engine.rng import DeterministicRNG
 from app.errors import RollbackTargetNotFoundError
-from app.models import SimCheckpoint, TacticalEventLog, WargameSession
+from app.models import SimCheckpoint, TacticalEventLog, TacticalUnit, WargameSession
+from app.models.enums import UnitLevel
 from app.state.broadcaster import RedisBroadcaster
 from app.state.checkpoint import CheckpointManager, compute_state_hash, recover, rollback
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter, verify_chain
+from app.state.resume import resume_session
 
 pytestmark = pytest.mark.integration
 
@@ -33,8 +39,21 @@ def session_id(session_factory: sessionmaker[Session], redis_client: redis.Redis
         db.add(ws)
         db.commit()
         sid = ws.id
+        # WP-E1 的活 Kernel 測試會寫 initiatorId=u1 的事件，而 TacticalEventLog.initiatorId
+        # 對 TacticalUnit 有 FK（MariaDB 才擋得到，SQLite 不會）。
+        db.add(
+            TacticalUnit(
+                id="u1",
+                session_id=sid,
+                designation="U1",
+                unit_level=UnitLevel.SQUAD,
+                faction="BLUE",
+            )
+        )
+        db.commit()
     yield sid
     with session_factory() as db:
+        db.execute(TacticalUnit.__table__.delete().where(TacticalUnit.session_id == sid))
         db.execute(SimCheckpoint.__table__.delete().where(SimCheckpoint.session_id == sid))
         db.execute(TacticalEventLog.__table__.delete().where(TacticalEventLog.session_id == sid))
         db.execute(WargameSession.__table__.delete().where(WargameSession.id == sid))
@@ -193,3 +212,131 @@ def test_rollback_unknown_tick_raises(
     )
     with pytest.raises(RollbackTargetNotFoundError, match="無 tick=99"):
         rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=99)
+
+
+# --- WP-E1 驗收：真 Kernel 落快照 → 崩潰 → 復原，狀態雜湊一致 ---
+
+
+class _WalkMovement:
+    """每 tick 依 RNG 走一步並發 UNIT_MOVED（帶 lat/lng）——足以驗前滾與 RNG 續接。"""
+
+    _STEPS = ((1, 0), (0, 1), (-1, 0), (0, -1))
+
+    def __init__(self, hot: RedisHotState, rng: DeterministicRNG, unit_id: str = "u1") -> None:
+        self._hot, self._rng, self._unit = hot, rng, unit_id
+
+    async def step(self, now: SimTime) -> list[LedgerEvent]:
+        dlat, dlng = self._rng.choice(self._STEPS)
+        cur = self._hot.get_unit(self._unit) or {"lat": 0, "lng": 0}
+        lat, lng = int(cur["lat"]) + dlat, int(cur["lng"]) + dlng  # 整數格點：避開浮點格式化
+        self._hot.update_unit(self._unit, {"lat": lat, "lng": lng})
+        return [
+            LedgerEvent(
+                event_type="UNIT_MOVED",
+                tick=now.tick,
+                initiator_id=self._unit,
+                detail={"lat": lat, "lng": lng},
+            )
+        ]
+
+
+def _build_kernel(
+    build_noop_kernel: Callable[..., Kernel],
+    session_factory: sessionmaker[Session],
+    redis_client: redis.Redis,
+    sid: str,
+    rngs: dict[str, DeterministicRNG],
+    interval: int,
+    start_tick: int = 0,
+) -> tuple[Kernel, RedisHotState]:
+    hot = RedisHotState(redis_client, sid)
+    kernel = build_noop_kernel(
+        session_id=sid,
+        clock=SimClock(tick_rate_ms=1000, start_tick=start_tick),
+        movement=_WalkMovement(hot, rngs["movement"]),
+        hot_state=hot,
+        broadcaster=RedisBroadcaster(redis_client, sid),  # 真廣播器才會寫 tick 鍵
+        event_sink=LedgerWriter(session_factory),
+        checkpointer=CheckpointManager(
+            session_factory,
+            extras_provider=lambda: {"rng": {k: r.get_state() for k, r in rngs.items()}},
+        ),
+        checkpoint_interval=interval,
+    )
+    return kernel, hot
+
+
+def test_live_kernel_crash_and_resume_matches_state_hash(
+    build_noop_kernel: Callable[..., Kernel],
+    session_factory: sessionmaker[Session],
+    redis_client: redis.Redis,
+    session_id: str,
+) -> None:
+    """WP-E1 驗收：活 Kernel 落快照 → 清 Redis（模擬 kill -9）→ resume → 雜湊一致、tick 續接。
+
+    刻意讓崩潰落在**快照之後**（tick 5 快照、跑到 tick 7）——只還原快照會少兩步，
+    要靠前滾投影 Ledger 尾段才對得上。
+    """
+    rngs = {s: DeterministicRNG(11, s) for s in ("movement", "adjudication")}
+    kernel, hot = _build_kernel(
+        build_noop_kernel, session_factory, redis_client, session_id, rngs, interval=5
+    )
+    hot.put_unit("u1", {"lat": 0, "lng": 0})
+    asyncio.run(kernel.run(8))  # tick 0..7；於 tick 0 與 5 落快照
+
+    pre_hash = compute_state_hash(hot.get_all())
+    # 崩潰**沒發生**的話，接下來三個 tick 會抽到的東西
+    live_next = [rngs["movement"].choice(_WalkMovement._STEPS) for _ in range(3)]
+
+    _wipe_redis(redis_client, session_id)  # kill -9：Redis 一併沒了
+    crashed = RedisHotState(redis_client, session_id)
+    assert crashed.get_all() == {}
+
+    fresh = {s: DeterministicRNG(11, s) for s in ("movement", "adjudication")}
+    result = resume_session(
+        session_factory=session_factory,
+        client=redis_client,
+        session_id=session_id,
+        hot=crashed,
+        rngs=fresh,
+    )
+    assert result.restored_from_checkpoint
+    assert result.restored_tick == 5
+    assert result.forward_rolled_events == 2  # tick 6、7 的兩步
+    assert result.rng_streams_restored == 2
+    assert result.start_tick == 8  # 續接點＝崩潰前跑完的最後一個 tick + 1
+    assert compute_state_hash(crashed.get_all()) == pre_hash
+    # RNG 接回**快照當下**（tick 5），不是崩潰當下——前滾能重建狀態，重建不了「抽過幾次」。
+    # 代價是倒退兩抽（tick 6、7 各一次）後重新併回同一條序列；相對於不還原（從 tick 0
+    # 整段重播）這是嚴格較好的。這條斷言把「最多倒退一個快照間隔」釘住。
+    replayed = [fresh["movement"].choice(_WalkMovement._STEPS) for _ in range(5)]
+    assert replayed[2:] == live_next
+
+
+def test_resume_keeps_surviving_hot_state_and_does_not_rewind(
+    build_noop_kernel: Callable[..., Kernel],
+    session_factory: sessionmaker[Session],
+    redis_client: redis.Redis,
+    session_id: str,
+) -> None:
+    """只有 core 掛掉（Redis 活著）：熱狀態比快照新，不得被快照倒退。"""
+    rngs = {"movement": DeterministicRNG(11, "movement")}
+    kernel, hot = _build_kernel(
+        build_noop_kernel, session_factory, redis_client, session_id, rngs, interval=5
+    )
+    hot.put_unit("u1", {"lat": 0, "lng": 0})
+    asyncio.run(kernel.run(8))
+    live_hash = compute_state_hash(hot.get_all())
+
+    survivor = RedisHotState(redis_client, session_id)
+    result = resume_session(
+        session_factory=session_factory,
+        client=redis_client,
+        session_id=session_id,
+        hot=survivor,
+        rngs={"movement": DeterministicRNG(11, "movement")},
+    )
+    assert not result.restored_from_checkpoint
+    assert result.rng_streams_restored == 1  # RNG 仍要還原（它只活在記憶體）
+    assert result.start_tick == 8
+    assert compute_state_hash(survivor.get_all()) == live_hash

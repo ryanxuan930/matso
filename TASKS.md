@@ -270,6 +270,7 @@
 
 | WP-A1 AI 敵情接真實情報 ✅ | SPEC_V2 §6 WP-A1 | AI 改走 IntelContact 投影（複用 IntelService）+ 盟軍共享視圖 + recent_events + ai_ground_truth 退回開關 | ✅ 實測 RED 見 22/真實 23、YELLOW 25/26；pytest 1116。worklog: ai-fog-honesty.md |
 | WP-A3 G4 禁射區護欄修復 ✅ | SPEC_V2 §6 WP-A3 | 三斷點（欄位不匹配/無資料源/**攔截從未落帳**）；契約+DB+幾何→h3+TargetLocator+人類 override+白軍 UI+想定 loader | ✅ 20 測試、pytest 1136、golden 6 未破；容器實測攔截成功。worklog: g4-no-strike.md |
+| WP-E1 活 session checkpoint 與崩潰復原 ✅ | SPEC_V2 §6 WP-E1 | 活局掛 checkpointer（間隔進 SimParams）+ RNG 狀態序列化 + 快照信封 v2（units/rng/orders）+ 重啟自動復原與前滾投影 + ROLLBACK 接活 + `GET /checkpoints`。**規格未列的四個斷點**：SimClock 每次重啟歸零、seed_combat_state 覆寫座標、tick 0 快照覆蓋、`load_latest` 同 ledgerSeq 未定序（實測發現） | ✅ 42 單元 + 2 整合；pytest 1183、golden 6 未破。容器實測 kill -9 後自動復原且雜湊一致、活回滾 7800→7451。規格要求的「Ledger 實體截斷」改為邏輯截斷（ADR 007）。worklog: live-checkpoint.md |
 
 ---
 

@@ -236,7 +236,8 @@ def test_forward_roll_projects_movement_and_engagement(
     hot = _hot()
     hot.put_unit("u1", {"lat": 24.0, "lng": 120.0, "health": 100.0, "strength": 30.0})
 
-    assert forward_roll(session_factory, session_id, hot, after) == 3
+    rolled = forward_roll(session_factory, session_id, hot, after)
+    assert (rolled.applied, rolled.last_tick) == (3, 3)
     assert hot.get_unit("u1") == {
         "lat": 24.9,  # 最後一則位置事件勝出（依 seq 順序套用）
         "lng": 120.9,
@@ -259,7 +260,7 @@ def test_forward_roll_ignores_events_before_the_checkpoint(
     )
     hot = _hot()
     hot.put_unit("u1", {"lat": 9.0, "lng": 9.0})
-    assert forward_roll(session_factory, session_id, hot, writer.tip_seq(session_id)) == 0
+    assert forward_roll(session_factory, session_id, hot, writer.tip_seq(session_id)).applied == 0
     assert hot.get_unit("u1") == {"lat": 9.0, "lng": 9.0}
 
 
@@ -284,7 +285,7 @@ def test_forward_roll_skips_events_without_state(
     )
     hot = _hot()
     hot.put_unit("u1", {"health": 100.0})
-    assert forward_roll(session_factory, session_id, hot, -1) == 0
+    assert forward_roll(session_factory, session_id, hot, -1).applied == 0
     assert hot.get_unit("u1") == {"health": 100.0}
 
 
@@ -312,7 +313,8 @@ def test_resume_restores_hot_state_when_redis_is_gone(
     assert result.restored_from_checkpoint
     assert result.restored_tick == 50
     assert result.forward_rolled_events == 1
-    assert result.start_tick == 51
+    # 前滾把狀態推到了 tick 51 → 續接點是 52，不是快照的 51（否則 51 會重跑）
+    assert result.start_tick == 52
     assert hot.get_unit("u1") == {"lat": 25.0, "lng": 121.0, "health": 80.0}
 
 
@@ -541,3 +543,36 @@ def test_no_pending_rollback_is_a_noop(
     session_factory: sessionmaker[Session], session_id: str
 ) -> None:
     assert apply_pending_rollback(session_factory, MutableFakeRedis(), session_id, _hot()) is None
+
+
+def test_latest_checkpoint_breaks_ledger_seq_ties_by_tick(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """實測發現：推演閒置時帳本沒有新事件，一整串快照共用同一個 ledgerSeq。
+
+    只依 ledgerSeq 排序時「最新」是未定義的——DB 想回哪筆就回哪筆，復原可能倒退一整個
+    快照間隔。tick 在同一世代內單調，是這裡正確的決勝鍵。
+    """
+    mgr = CheckpointManager(session_factory)
+    for tick in (100, 125, 150):
+        mgr.checkpoint(session_id, tick=tick, state={"u1": {"health": tick}}, ledger_seq=42)
+    record = mgr.load_latest(session_id)
+    assert record is not None and record.tick == 150
+    assert resume_tick(session_factory, FakeRedis(), session_id) == 151
+
+
+def test_rollback_discards_same_seq_later_ticks(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """tick 決勝的另一半：回滾必須把「同 seq 但 tick 更晚」的快照也丟掉，否則
+    load_latest 會挑回剛被回滾掉的那一個。"""
+    mgr = CheckpointManager(session_factory)
+    for tick in (100, 125, 150):
+        mgr.checkpoint(session_id, tick=tick, state={"u1": {"health": tick}}, ledger_seq=42)
+
+    result = rollback(
+        session_factory, LedgerWriter(session_factory), session_id, _hot(), target_tick=100
+    )
+    assert result.checkpoints_discarded == 2
+    record = mgr.load_latest(session_id)
+    assert record is not None and record.tick == 100

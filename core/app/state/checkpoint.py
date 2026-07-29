@@ -239,12 +239,18 @@ class CheckpointManager:
             db.commit()
 
     def load_latest(self, session_id: str) -> CheckpointRecord | None:
-        """最近的 checkpoint——依 ledgerSeq（單調）排序，非 tick（rollback 後非單調）。"""
+        """最近的 checkpoint——依 ledgerSeq（單調）排序，非 tick（rollback 後非單調）。
+
+        **同 ledgerSeq 以 tick 決勝**（WP-E1，實測發現）：帳本沒有新事件時（推演閒置、
+        單位沒動），連續數個快照的 ledgerSeq 完全相同，此時「最新」是未定義的——DB 想回
+        哪筆就回哪筆，復原可能倒退一整個間隔。tick 在同一世代內單調，正是這裡要的決勝鍵；
+        跨世代的干擾由 `rollback` 一併刪掉「同 seq 但 tick 更晚」的快照來排除。
+        """
         with self._session_factory() as db:
             stmt = (
                 select(SimCheckpoint)
                 .where(SimCheckpoint.session_id == session_id)
-                .order_by(SimCheckpoint.ledger_seq.desc())
+                .order_by(SimCheckpoint.ledger_seq.desc(), SimCheckpoint.tick.desc())
                 .limit(1)
             )
             return _to_record(db.execute(stmt).scalars().first())
@@ -385,7 +391,16 @@ def rollback(
             db.execute(
                 delete(SimCheckpoint).where(
                     (SimCheckpoint.session_id == session_id)
-                    & (SimCheckpoint.ledger_seq > record.ledger_seq)
+                    & (
+                        (SimCheckpoint.ledger_seq > record.ledger_seq)
+                        # 同 seq 但 tick 更晚者也屬被棄世代：帳本閒置時（沒有新事件）
+                        # 一整串快照會共用同一個 ledgerSeq，只比 seq 會把它們全留下來，
+                        # 而 load_latest 的 tick 決勝就會挑到被回滾掉的那一個。
+                        | (
+                            (SimCheckpoint.ledger_seq == record.ledger_seq)
+                            & (SimCheckpoint.tick > target_tick)
+                        )
+                    )
                 )
             ),
         )

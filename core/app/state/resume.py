@@ -39,7 +39,7 @@ from app.models import TacticalEventLog
 from app.sim_control import session_rollback_key
 from app.state.checkpoint import CheckpointManager, CheckpointRecord, rollback
 from app.state.hot_state import HotStateStore, UnitState, session_tick_key
-from app.state.ledger import LedgerWriter
+from app.state.ledger import LedgerWriter, superseded_seqs
 
 _LOG = logging.getLogger("app.resume")
 
@@ -82,7 +82,9 @@ def _event_patch(row: TacticalEventLog) -> tuple[str | None, UnitState]:
         lat, lng = detail.get("lat"), detail.get("lng")
         if row.initiator_id is None or lat is None or lng is None:
             return None, {}
-        patch: UnitState = {"lat": float(lat), "lng": float(lng)}
+        # 直接用帳本記的值，不做型別正規化：事件記的就是當時寫進熱狀態的東西，
+        # 多一道 float() 會讓 canonical hash 與崩潰前對不上（0 vs 0.0）。
+        patch: UnitState = {"lat": lat, "lng": lng}
         if row.event_type == "MOVE_HALTED_FUEL":
             patch["fuel"] = 0.0  # 移動系統於斷油時把熱狀態的 fuel 歸零（engine/movement）
         return row.initiator_id, patch
@@ -92,17 +94,23 @@ def _event_patch(row: TacticalEventLog) -> tuple[str | None, UnitState]:
             return None, {}
         patch = {}
         if "target_health_after" in decision:
-            patch["health"] = float(decision["target_health_after"])
+            patch["health"] = decision["target_health_after"]
         if decision.get("target_strength_after") is not None:
-            patch["strength"] = float(decision["target_strength_after"])
+            patch["strength"] = decision["target_strength_after"]
         return (row.target_id, patch) if patch else (None, {})
     return None, {}
 
 
+@dataclass(frozen=True, slots=True)
+class ForwardRollResult:
+    applied: int
+    last_tick: int | None  # 尾段抵達的最後一個 tick（空尾段為 None）——續接點用
+
+
 def forward_roll(
     session_factory: sessionmaker[Session], session_id: str, hot: HotStateStore, after_seq: int
-) -> int:
-    """把 checkpoint 之後的 Ledger 尾段投影回熱狀態；回傳套用的事件數。
+) -> ForwardRollResult:
+    """把 checkpoint 之後的 Ledger 尾段投影回熱狀態。
 
     **這不是確定性重播**——Kernel 的輸入（DB 指令、感測掃描、AI 決策）沒有被錄下來，
     沒有東西可以「重跑」。能做的是另一件事：Ledger 事件本身就記著**結果值**
@@ -117,8 +125,10 @@ def forward_roll(
     - `comms_state`（純推導欄位，`CommsSystem` 下一個重算週期即回復）。
 
     依 seq 排序（非 tick）：rollback 後 tick 非單調，seq 才是帳本的時間軸身分。
+    **被回滾棄置的世代整段跳過**（ADR 007）——投影它等於把剛回滾掉的狀態又裝回來。
     """
     applied = 0
+    last_tick: int | None = None
     with session_factory() as db:
         rows = db.scalars(
             select(TacticalEventLog)
@@ -128,12 +138,16 @@ def forward_roll(
             )
             .order_by(TacticalEventLog.seq.asc())
         ).all()
+    dead = superseded_seqs(rows)
     for row in rows:
+        if row.seq in dead:
+            continue
+        last_tick = row.tick if last_tick is None else max(last_tick, row.tick)
         unit_id, patch = _event_patch(row)
         if unit_id and patch:
             hot.update_unit(unit_id, patch)
             applied += 1
-    return applied
+    return ForwardRollResult(applied, last_tick)
 
 
 def apply_pending_rollback(
@@ -199,6 +213,10 @@ def restore_rng(record: CheckpointRecord, rngs: Mapping[str, Any]) -> int:
     RNG 只活在記憶體裡，**任何**重啟都會失去它——這與 Redis 是否存活無關。不還原的話，
     重啟後整局會重播一段已經用過的隨機序列（同種子同結果），交戰命中判定會出現
     「重啟就重演」的可疑規律。
+
+    **精度上限**：還原到的是**快照當下**的位置，不是崩潰當下。快照之後消耗掉的抽樣
+    次數沒有任何地方記著（Ledger 記結果不記抽樣），前滾重建得了狀態、重建不了抽樣計數。
+    因此最多會倒退一個快照間隔的隨機序列。這仍嚴格優於從種子重來（整局重播）。
     """
     saved = record.rng_states()
     restored = 0
@@ -241,11 +259,17 @@ def resume_session(
     if transport_reset is not None:
         transport_reset()
     rolled = forward_roll(session_factory, session_id, hot, record.ledger_seq)
+    # 前滾把狀態推到了尾段的最後一個 tick——續接點必須跟著走，否則那幾個 tick 會重跑
+    # （Redis 的 tick 鍵在崩潰中一起沒了，`resume_tick` 只能退回快照的 tick）。
+    if rolled.last_tick is not None:
+        start = max(start, rolled.last_tick + 1)
     _LOG.warning(
-        "session %s 熱狀態已遺失，自 checkpoint tick=%d 復原（前滾 %d 則事件，RNG %d 條）",
+        "session %s 熱狀態已遺失，自 checkpoint tick=%d 復原"
+        "（前滾 %d 則事件至 tick=%s，RNG %d 條）",
         session_id,
         record.tick,
-        rolled,
+        rolled.applied,
+        rolled.last_tick,
         rng_restored,
     )
-    return ResumeResult(start, True, record.tick, rng_restored, rolled)
+    return ResumeResult(start, True, record.tick, rng_restored, rolled.applied)
