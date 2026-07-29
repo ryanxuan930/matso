@@ -11,7 +11,7 @@ from typing import Any
 import redis
 
 from app.state.broadcaster import RING_CAPACITY
-from app.state.redis_stream import publish_to_stream
+from app.state.redis_stream import channel_key, publish_to_stream, ring_key, seq_key
 
 
 def publish_event(
@@ -35,9 +35,9 @@ def publish_event(
         env["faction"] = faction
     return publish_to_stream(
         redis_client,
-        seq_key=f"session:{session_id}:broadcast_seq",
-        ring_key=f"session:{session_id}:ring",
-        channel=f"session:{session_id}:stream",
+        seq_key=seq_key(session_id),
+        ring_key=ring_key(session_id),
+        channel=channel_key(session_id),
         envelope=env,
         ring_capacity=RING_CAPACITY,
     )

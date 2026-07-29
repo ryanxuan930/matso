@@ -16,6 +16,13 @@
   `last_seq` **不在 ring buffer 現存 seq 範圍內**（缺口過大「或 seq 倒退」，即崩潰復原後的新串流）
   → 一律回 `RESYNC_REQUIRED`，client 走 `GET /sessions/{id}/state` 全量重同步。
   O4.3 實作 WS server 時 MUST 以「範圍檢查」而非「差值檢查」判斷（O1.7/R7）。
+- **RESYNC 閉環（WP-E3）**：`GET /sessions/{id}/state` 回**單一原子快照**
+  （`StateSnapshotView`：units＋contacts＋map features＋relations＋`tick`＋`last_seq`）。
+  client MUST 以它**一次性**重建全部狀態，並在套用後**丟棄 `seq ≤ last_seq` 的 STATE_DIFF**
+  ——server 送出 RESYNC 後**不會停止推播**（pub-sub 早在送 RESYNC 前就已訂閱），
+  快照回來時可能已比某些 diff 舊；不去重的話舊快照會蓋掉新位置。
+  快照的迷霧過濾與 `/units`、`/intel`、`/map-features`、`/relations` **逐項相同**
+  （後端複用同一份 handler，非另寫一套）。
 
 ## 訊息型別
 

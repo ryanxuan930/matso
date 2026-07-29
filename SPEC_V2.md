@@ -114,7 +114,7 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 | 24 | 無情境化警告/報告分級 | [IST160 p.14,21] | 事件流平鋪，指揮官自行掃 | ★ | D7 |  |
 | 25 | 活 session 無 checkpoint/前滾 | —（內部盤點；SPEC_FULL §3.4） | `sim_runtime` 未傳 checkpointer；RNG 狀態不序列化 | ★★ | E1 | ✅ 2026-07-29 |
 | 26 | refresh token 無撤銷/無帳號鎖定 | —（內部盤點） | logout no-op；無 brute-force 防護 | ★★ | E2 |  |
-| 27 | RESYNC 契約半套（無 /state 快照端點） | —（內部盤點） | 前端收到後丟棄結果、靠週期重抓兜底 | ★ | E3 |  |
+| 27 | RESYNC 契約半套（無 /state 快照端點） | —（內部盤點） | 前端收到後丟棄結果、靠週期重抓兜底 | ★ | E3 | ✅ 2026-07-29 |
 | 28 | 監控空殼 | —（內部盤點） | prometheus/grafana 目錄只有 .gitkeep | ★★ | E4 |  |
 | 29 | 無負載測試/LOD 降載 | [JCATS-A p.12]（飽和測試×2） | 無工具鏈；TickPacer 只會全域降頻 | ★ | E5 |  |
 | 30 | RAG 嵌入器佔位、語料近空、SPEC_INGEST 未實作 | SPEC_INGEST 全份；README §10 | hash 嵌入器；語料 1 份合成檔；eval 3 例 | ★★★ | F1/F2 |  |
@@ -697,7 +697,14 @@ mid-interval 崩潰只能回到 checkpoint 重放。**規格**：(1) runner 組�
 盤點欠帳打包：refresh token 旋轉＋撤銷表（logout 生效）；帳號鎖定（N 次失敗鎖 M 分鐘，防爆破）；
 `needs_rehash` 順手升級接線；JWT secret 生產模式強制。全屬 `core/app/auth/`，測試齊備即收。
 
-#### WP-E3 `/state` 快照端點與 RESYNC 閉環　★
+#### ✅ WP-E3 `/state` 快照端點與 RESYNC 閉環　★
+
+> **✅ 已完成（2026-07-29）**——worklog `docs/worklog/state-snapshot.md`。
+> 關鍵設計：快照**呼叫既有 handler**而非重寫過濾——三個端點的過濾規則本來就不一致
+> （units 含盟軍、map-features 不含、intel 以 participant.role 判全知），另寫一份必然漂移，
+> 而**迷霧過濾的漂移就是資安漏洞**。為此順帶把 `/intel` 對齊（非參與者的全知者不再 403）。
+> `last_seq` **必須在讀狀態之前**取樣，否則兩次讀取之間的 diff 會既不在快照裡又被 client 丟棄。
+
 
 ws_protocol 的 RESYNC_REQUIRED 契約補全：`GET /sessions/{id}/state?as_faction=` 回單一原子快照
 （units＋contacts＋map features＋sim time＋最後 event seq，後端迷霧過濾）；前端 `sessionStream`
@@ -846,8 +853,8 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 [x] A3 G4 no-strike 修復    ── 無依賴                     （2026-07-29）
 [x] E1 活 checkpoint + RNG 序列化（D4 的前置）            （2026-07-29；ADR 007）
 [x] B6 想定資產修復（fixed 旗標 roundtrip bug 先修）      （2026-07-29）
-[ ] E3 /state 快照端點（H1 亦復用）                        ← 下一張
-[ ] C5 comms 後果閉環（投影層）
+[x] E3 /state 快照端點（H1 亦復用）                       （2026-07-29）
+[ ] C5 comms 後果閉環（投影層）                             ← 下一張
 [ ] G1 cop.vue 拆分（後續前端卡的前置）
 [ ] D6.1 AAR 地圖重播（量綱修正先行）
 ```

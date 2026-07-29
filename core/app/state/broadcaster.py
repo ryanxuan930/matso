@@ -18,7 +18,7 @@ import redis
 
 from app.state.hot_state import SessionDiff, session_tick_key
 from app.state.ledger import LedgerEvent
-from app.state.redis_stream import publish_to_stream
+from app.state.redis_stream import channel_key, publish_to_stream, ring_key, seq_key
 
 RING_CAPACITY = 5000  # §16.2：保留最近 5000 條供重連補送
 
@@ -129,13 +129,13 @@ class RedisBroadcaster:
         self._faction_for = faction_for
 
     def _seq_key(self) -> str:
-        return f"session:{self._session_id}:broadcast_seq"
+        return seq_key(self._session_id)
 
     def _ring_key(self) -> str:
-        return f"session:{self._session_id}:ring"
+        return ring_key(self._session_id)
 
     def _channel(self) -> str:
-        return f"session:{self._session_id}:stream"
+        return channel_key(self._session_id)
 
     def _tick_key(self) -> str:
         return session_tick_key(self._session_id)

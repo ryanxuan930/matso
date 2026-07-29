@@ -30,6 +30,21 @@ return seq
 """
 
 
+def seq_key(session_id: str) -> str:
+    """傳輸層 seq 計數器鍵（與 Ledger seq 是不同計數器；見 ws_protocol.md）。"""
+    return f"session:{session_id}:broadcast_seq"
+
+
+def ring_key(session_id: str) -> str:
+    """重連補償用的 ring buffer 鍵（最近 RING_CAPACITY 條 envelope）。"""
+    return f"session:{session_id}:ring"
+
+
+def channel_key(session_id: str) -> str:
+    """live pub-sub channel 鍵。"""
+    return f"session:{session_id}:stream"
+
+
 def publish_to_stream(
     client: redis.Redis,
     *,

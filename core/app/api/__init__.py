@@ -16,6 +16,7 @@ from app.api.orders import router as orders_router
 from app.api.participants import router as participants_router
 from app.api.relations import router as relations_router
 from app.api.scenarios import router as scenarios_router
+from app.api.state import router as state_router
 from app.api.system import router as system_router
 from app.api.units import router as units_router
 from app.api.users import router as users_router
@@ -38,6 +39,7 @@ __all__ = [
     "participants_router",
     "relations_router",
     "scenarios_router",
+    "state_router",
     "system_router",
     "units_router",
     "users_router",

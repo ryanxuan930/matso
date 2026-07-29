@@ -248,7 +248,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description faction-scoped 全量快照（重連用） */
+        /** @description faction-scoped 全量原子快照（重連用，WP-E3）。WS 收到 RESYNC_REQUIRED 後以此端點 一次取回全部可見狀態並原子重建，取代「多個 GET 各自回來」的非原子拼裝。 帶 as_faction＝White Cell 視角切換，與 units/intel/map-features 同紀律。 */
         get: operations["getState"];
         put?: never;
         post?: never;
@@ -824,7 +824,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -1034,6 +1034,19 @@ export interface components {
             /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
             category: string;
             base_stats: Record<string, never>;
+        };
+        /** @description 重連用的**單一原子快照**（WP-E3；ws_protocol.md 的 RESYNC_REQUIRED 指向此端點）。 內容＝該觀測者當下看得見的全部狀態：units + contacts + map features + 陣營關係， 外加 `tick`（sim 時間）與 `last_seq`（傳輸層計數器）。 **fog of war 過濾一律在後端**（紅線 3）：本端點不自行實作過濾，而是複用 /units、/intel、/map-features、/relations 的同一份邏輯，故其可見範圍與各端點**逐項相同**。 `last_seq` 的用途：client 套用快照後，只接受 seq 大於它的 STATE_DIFF——否則 「RESYNC 送出後、快照回來前」抵達的新 diff 會被隨後回來的舊快照蓋掉。 */
+        StateSnapshotView: {
+            /** @description 快照當下的 sim tick（無活模擬的局為 0） */
+            tick: number;
+            /** @description 快照當下的傳輸層 seq（`session:{id}:broadcast_seq`）。**於讀取狀態之前取樣**—— 反過來的話，介於兩次讀取之間送出的 diff 會既不在快照裡、seq 又 ≤ last_seq， 被 client 丟棄即成為遺失的更新。 */
+            last_seq: number;
+            /** @description 本快照的觀測視角（全知且未指定 as_faction 時為 null＝god view） */
+            observer_faction: string | null;
+            units: components["schemas"]["UnitView"][];
+            contacts: components["schemas"]["ContactView"][];
+            map_features: components["schemas"]["MapFeatureView"][];
+            relations: components["schemas"]["FactionRelationsView"];
         };
         /** @description 推演參數（#93）。**未設定時等同原硬編碼常數**，故既有推演局與 golden replay 不受影響。 改動只在 session runner 啟動時讀取 → 進行中的局不受影響。 */
         SimParamsView: {
@@ -1902,7 +1915,10 @@ export interface operations {
     };
     getState: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description White Cell 視角切換——以該陣營視角取快照；一般角色帶他陣營→403 */
+                as_faction?: string;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["SessionId"];
@@ -1916,7 +1932,18 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["StateSnapshotView"];
+                };
+            };
+            /** @description Not a participant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };

@@ -29,15 +29,21 @@ def get_intel(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ContactView]:
-    participant = require_participant(db, user, session_id)
+    # 全知（統裁/白軍/管理）由**使用者全域角色**判定，且不要求是本局參與者——與 /units、
+    # /map-features、WS 的 resolve_ws_identity 一致（WP-E3）。過去這裡無條件先
+    # require_participant，導致「未加入該局的白軍觀察員」在 units 看得到、intel 卻 403；
+    # /state 快照要與各端點逐項一致，就必須先讓各端點彼此一致。
+    omniscient = is_omniscient(user.role)
+    participant = None if omniscient else require_participant(db, user, session_id)
     service = IntelService(db)
 
-    if is_omniscient(participant.role):
+    if omniscient:
         if as_faction is not None:
             return service.visible_contacts(session_id, validate_faction_id(as_faction))
         return service.god_view(session_id, WHITE_CELL)
 
     # 一般角色：只能查自己陣營；帶他陣營 as_faction → 403（fog of war 越權防護）。
+    assert participant is not None  # 非全知 → 必為參與者（上方已 require）
     if as_faction is not None and as_faction != participant.faction:
         raise AuthForbiddenError("僅 White Cell 可查他陣營情報")
     return service.visible_contacts(session_id, participant.faction)

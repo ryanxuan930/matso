@@ -1,5 +1,8 @@
 import { defineStore } from 'pinia'
 import { apiFetch, refreshAccessToken, useAuthTokens } from '~/composables/useApi'
+import type { components } from '~/types/api'
+
+export type StateSnapshot = components['schemas']['StateSnapshotView']
 
 // WS envelope（contracts/ws_protocol.md）
 interface Envelope {
@@ -29,19 +32,43 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
   const lastTick = ref<number | null>(null) // 最新 sim tick（供 COP 系統牆鐘顯示，#4；rollback 後可非單調）
   // 活模擬（O10.1）：STATE_DIFF 累積的 per-unit 最新欄位（lat/lng/health…）→ COP 據此即時移動圖標。
   const unitPatches = ref<Record<string, Record<string, unknown>>>({})
+  // WP-E3：最近一次原子快照。RESYNC 後由 store 抓取，畫面層 watch 它一次性重建全部狀態。
+  // 用 ref 而非事件：Vue 在同一 tick 內合併賦值，畫面只會渲染一次（不會閃過半套狀態）。
+  const snapshot = ref<StateSnapshot | null>(null)
 
   let ws: WebSocket | null = null
   let sessionId = ''
+  let viewpoint: string | null = null
   let backoff = 500
   let closedByUser = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-  function connect(id: string): void {
+  function connect(id: string, asFaction: string | null = null): void {
     if (import.meta.server) return // WebSocket 僅 client
     sessionId = id
+    // WP-E3：白軍的視角切換必須跟著進快照請求，否則切到某軍視角後重連會抓回**全知**快照
+    // ——那是迷霧漏洞（重連後看到的比正常時多）。
+    viewpoint = asFaction
     closedByUser = false
     unitPatches.value = {} // 換 session 清空舊位置
     open()
+  }
+
+  /** 取一份原子快照並發佈給畫面層（WP-E3）。回傳是否成功。 */
+  async function pullSnapshot(): Promise<boolean> {
+    const query = viewpoint ? `?as_faction=${encodeURIComponent(viewpoint)}` : ''
+    try {
+      const snap = await apiFetch<StateSnapshot>(`/sessions/${sessionId}/state${query}`)
+      // 快照即權威：先丟掉所有既有 patch，再以快照的 last_seq 當去重基準。
+      // 不清的話，RESYNC 前累積的舊 patch 會蓋在新快照上（顯示回到過去的位置）。
+      unitPatches.value = {}
+      lastSeq.value = snap.last_seq
+      if (typeof snap.tick === 'number') lastTick.value = snap.tick
+      snapshot.value = snap
+      return true
+    } catch {
+      return false
+    }
   }
 
   async function open(): Promise<void> {
@@ -86,9 +113,10 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
         break
       case 'RESYNC_REQUIRED':
         status.value = 'resyncing'
-        // ring 缺口過大 → 全量重同步（單位/狀態套用於後續卡；此處重置 last_seq）
-        await apiFetch(`/sessions/${sessionId}/state`).catch(() => undefined)
-        lastSeq.value = null
+        // ring 缺口過大／崩潰復原後的新串流 → 以原子快照重建（WP-E3）。
+        // 失敗才退回 last_seq=null（下次重連當新 client，不 backfill）——過去無論成敗都是這樣，
+        // 等於快照白抓了。
+        if (!(await pullSnapshot())) lastSeq.value = null
         break
       case 'CLOCK':
         // 閒置心跳：頂層 tick 已於上方更新牆鐘；seq 取單調最大，不塞入事件列。
@@ -97,6 +125,9 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
         }
         break
       case 'STATE_DIFF': {
+        // WP-E3：RESYNC 送出後 server 仍持續推播，快照可能比某些 diff 還舊。
+        // 丟棄 seq ≤ 快照 last_seq 者，避免舊 diff 覆蓋新快照。
+        if (typeof env.seq === 'number' && lastSeq.value !== null && env.seq <= lastSeq.value) break
         if (typeof env.seq === 'number') {
           lastSeq.value = lastSeq.value === null ? env.seq : Math.max(lastSeq.value, env.seq)
         }
@@ -132,5 +163,16 @@ export const useSessionStreamStore = defineStore('sessionStream', () => {
     status.value = 'closed'
   }
 
-  return { status, lastSeq, lastTick, events, faction, unitPatches, connect, disconnect }
+  return {
+    status,
+    lastSeq,
+    lastTick,
+    events,
+    faction,
+    unitPatches,
+    snapshot,
+    connect,
+    pullSnapshot,
+    disconnect,
+  }
 })

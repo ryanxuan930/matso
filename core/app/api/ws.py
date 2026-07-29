@@ -24,6 +24,7 @@ from app.api.deps import get_auth_service, get_db, get_settings
 from app.auth.service import AuthService
 from app.config import Settings
 from app.errors import MatsoError
+from app.state.redis_stream import channel_key, ring_key
 from app.stream.backfill import plan_resume, select_backfill, seq_range
 from app.stream.faction_filter import is_visible
 from app.stream.identity import WsIdentity, resolve_ws_identity
@@ -40,11 +41,11 @@ CLOSE_BACKPRESSURE = 4408  # 慢 client：斷線並要求重同步
 
 
 def _ring_key(session_id: str) -> str:
-    return f"session:{session_id}:ring"
+    return ring_key(session_id)
 
 
 def _channel(session_id: str) -> str:
-    return f"session:{session_id}:stream"
+    return channel_key(session_id)
 
 
 @router.websocket("/{session_id}/stream")

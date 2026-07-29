@@ -3,9 +3,10 @@ import type { Contact, OwnUnit, Relation } from '~/composables/useUnits'
 import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composables/useUnits'
 import type { UnitView, WeaponView, OrderResponse } from '~/composables/useOrders'
 import type { components } from '~/types/api'
+import type { StateSnapshot } from '~/stores/sessionStream'
 import type { ApiError } from '~/composables/useApi'
 import type { ContactView } from '~/composables/useIntel'
-import { fetchIntel, fetchRelations, toContact } from '~/composables/useIntel'
+import { toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
 import { buildBasemapSources } from '~/composables/useMapStyle'
 import {
@@ -528,17 +529,28 @@ const engageTargets = computed(() =>
   realUnits.value.filter((u) => u.id !== selectedId.value && !isFriendly(u.faction)),
 )
 
+// WP-E3：狀態（單位/敵情/關係/標註）改由**單一原子快照**取得。
+// 過去是四個獨立 GET 各自回來拼裝——彼此不同時，會拼出「單位是新的、敵情是舊的」的畫面。
+function applySnapshot(snap: StateSnapshot) {
+  realUnits.value = snap.units
+  intelContacts.value = snap.contacts
+  // #91 關係矩陣：決定友/中/敵符號。缺 → 空物件 → relationOf 退回 HOSTILE（保守標敵）。
+  factionRelations.value = snap.relations?.relations ?? {}
+  // 視角下拉的選項來源：只在全局視角時更新（切了視角後快照只回該陣營，會把清單縮成一項）。
+  if (!viewpoint.value) sessionFactions.value = [...(snap.relations?.factions ?? [])].sort()
+  applyFeatures(snap.map_features)
+}
+
+// 收到 RESYNC 後 store 會抓一份快照 → 此處一次性套用（同一 tick 內賦值，畫面只渲染一次）。
+watch(
+  () => stream.snapshot,
+  (snap) => {
+    if (snap) applySnapshot(snap as StateSnapshot)
+  },
+)
+
 async function refresh() {
-  realUnits.value = await fetchUnits(sessionId.value, viewpoint.value || null).catch(() => [])
-  intelContacts.value = await fetchIntel(sessionId.value, viewpoint.value || null).catch(() => [])
-  // #91 關係矩陣：決定友/中/敵符號。取不到 → 空物件 → relationOf 退回 HOSTILE（保守標敵）。
-  factionRelations.value = await fetchRelations(sessionId.value, viewpoint.value || null)
-    .then((r) => r.relations ?? {})
-    .catch(() => ({}))
-  // 視角下拉的選項來源：只在全局視角時更新（切了視角後 /units 只回該陣營，會把清單縮成一項）。
-  if (!viewpoint.value) {
-    sessionFactions.value = [...new Set(realUnits.value.map((u) => u.faction))].sort()
-  }
+  if (!(await stream.pullSnapshot())) return // 快照失敗就整批不動，不要留下半套狀態
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
   // 我方陣營（決定友/敵渲染與目標可選集）+ 開局時間（#4 執行時間）——由 session 摘要取得。
   const sessions = await apiFetch<
@@ -555,7 +567,6 @@ async function refresh() {
   sessionStart.value = me?.start_time ?? null
   orbatEdit.value = !!me?.orbat_edit
   myUnitScope.value = me?.my_unit_scope ?? []
-  await loadFeatures()
 }
 
 // 清空選取與下令子狀態（#6 點空白取消選取 / 選新單位前重置）。
@@ -1027,11 +1038,9 @@ const influenceFc = computed(() => influenceToFc(shownFeatures.value, terrainCli
 const draftFc = computed(() => draftToFc(drawKind.value, draftCoords.value))
 const drawableKinds = computed(() => FEATURE_KINDS.filter((k) => k.value !== 'WEAPON_EMPLACEMENT'))
 
-async function loadFeatures() {
-  // #92：帶視角 → 後端只回「共同 + 該陣營」的標註（過濾在後端，紅線 #3）。
-  mapFeatures.value = await fetchMapFeatures(sessionId.value, viewpoint.value || null).catch(
-    () => [],
-  )
+// 標註套用（WP-E3 抽出）：快照與單獨重載共用同一份，避免兩處各自還原裁切環而漂移。
+function applyFeatures(features: typeof mapFeatures.value) {
+  mapFeatures.value = features
   // 還原已持久化的地形裁切環（#43）：裁切射界存在 attributes.viewshed_ring，重新整理後仍在。
   const clips: Record<string, number[][]> = {}
   for (const f of mapFeatures.value) {
@@ -1039,6 +1048,13 @@ async function loadFeatures() {
     if (Array.isArray(ring) && ring.length >= 3) clips[f.id] = ring as number[][]
   }
   terrainClips.value = clips
+}
+
+async function loadFeatures() {
+  // #92：帶視角 → 後端只回「共同 + 該陣營」的標註（過濾在後端，紅線 #3）。
+  applyFeatures(
+    await fetchMapFeatures(sessionId.value, viewpoint.value || null).catch(() => []),
+  )
 }
 async function ensureWeaponTemplates() {
   if (!weaponTemplates.value.length) {
@@ -1674,13 +1690,15 @@ async function back() {
   await navigateTo('/lobby')
 }
 
-// 定時與核心系統重新同步（補充 2b/2c）：WS STATE_DIFF 已即時推變動，但週期性重抓
-// GET /units + orders 讓多機同時查看（教學情境）在初始狀態/漏收/DB 權威更新後仍趨於一致。
+// 定時與核心系統重新同步：WS STATE_DIFF 已即時推變動，但週期性重取讓多機同時查看
+// （教學情境）在初始狀態/漏收/DB 權威更新後仍趨於一致——且**指令列表沒有 WS 推播**，
+// 只有這條路徑會更新它。WP-E3 把它從「六個獨立 GET」改為「一次原子快照 + 指令」：
+// race 的來源是**非原子**，不是「有週期」，所以留下節奏、拿掉拼裝。
 let resyncTimer: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   if (!auth.user) await auth.fetchMe() // 直接開/重整 COP 時補抓使用者，讓角色相關入口（白軍控制台）正確顯示
   refresh()
-  stream.connect(sessionId.value)
+  stream.connect(sessionId.value, viewpoint.value || null)
   aiStatus.start() // #79 AI 決策狀態輪詢（思考中／倒數）
   if (import.meta.client) resyncTimer = setInterval(() => refresh(), 10_000)
 })
