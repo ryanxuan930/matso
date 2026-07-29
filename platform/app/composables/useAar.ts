@@ -7,6 +7,36 @@ export interface AarReplay {
   total_events: number
   max_tick: number
 }
+/** 地圖重播（WP-D6.1）：靜態底本 + 逐 tick 差異。 */
+export interface AarReplayUnit {
+  id: string
+  designation?: string
+  faction: string
+  unit_level?: string
+  is_fixed?: boolean
+  /** 滿編戰力；null 時後端不導出效能%（只給 strength）。 */
+  authorized_strength?: number | null
+  /** tick 0 基準位置——**近似值**：帳本沒有部署事件，白軍地圖狀態編輯也不落帳。
+   *  取該單位最早一筆有座標的事件；從沒動過的單位取 DB 現值（精確）。 */
+  base_lat?: number | null
+  base_lng?: number | null
+  base_health: number
+}
+export interface AarReplayChange {
+  unit_id: string
+  lat?: number
+  lng?: number
+  /** 效能%（0–100）。與 strength **量綱不同不可互換**。 */
+  health?: number
+  /** 戰力點（人員/平台數量級）。 */
+  strength?: number
+}
+export interface AarReplayStates {
+  units: AarReplayUnit[]
+  frames: Array<{ tick: number; event_types?: string[]; changes: AarReplayChange[] }>
+  max_tick: number
+}
+
 export interface AarStats {
   total_events: number
   engagements: number
@@ -24,6 +54,8 @@ export interface AarReport {
 }
 
 export const aarReplay = (id: string) => apiFetch<AarReplay>(`/sessions/${id}/aar/replay`)
+export const aarReplayStates = (id: string) =>
+  apiFetch<AarReplayStates>(`/sessions/${id}/aar/replay/states`)
 export const aarStats = (id: string) => apiFetch<AarStats>(`/sessions/${id}/aar/stats`)
 export const aarReport = (id: string) => apiFetch<AarReport>(`/sessions/${id}/aar/report`)
 /**

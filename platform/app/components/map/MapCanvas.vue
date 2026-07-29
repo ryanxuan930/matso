@@ -119,6 +119,10 @@ const props = withDefaults(
     hexLimitKm?: number // 交戰範圍：僅計算視野中心此半徑內的格（0=不限）
     dayNight?: boolean // 日照視覺（晨昏/夜間色調，#6）
     timeOfDay?: number // 一日時間 0–24（#6）
+    // 初始視野框 [[west, south], [east, north]]（WP-D6.1 AAR 重播用）。
+    // 不給＝維持台灣全景。給了才 fitBounds——AAR 的單位常擠在數百公尺內，
+    // 用全景會看不到任何東西。只在地圖初次 load 時套用，之後使用者的縮放平移不被搶走。
+    fitBounds?: [[number, number], [number, number]] | null
   }>(),
   {
     hexVisible: false,
@@ -166,6 +170,7 @@ const props = withDefaults(
     hexLimitKm: 0,
     dayNight: false,
     timeOfDay: 12,
+    fitBounds: null,
   },
 )
 
@@ -199,6 +204,7 @@ let basemapErrorHandled = false // 每次切底圖重置，避免 404 洪水重�
 // 故載入中的切換不會遺失。**不可改用 map.isStyleLoaded()**：它是「fully loaded」語意，任何來源
 // 尚在載瓦片時也回 false（實測加完 source 的下一拍即為 false），會誤擋正常的切底圖。
 let styleReady = false
+let resizeObs: ResizeObserver | null = null
 
 /** 移除現有底圖（raster 'basemap' 或 vector 'basemap-*' 圖層）+ 來源。 */
 function removeBasemap() {
@@ -691,6 +697,16 @@ onMounted(async () => {
     attributionControl: false,
   })
   ;(window as unknown as { __matsoMap?: MapLibreMap }).__matsoMap = map
+  // 容器尺寸變化 → 通知地圖（WP-D6.1）。**必須在這裡註冊，不能等 map.on('load')**：
+  // 地圖是在 onMounted 建立的，此時容器往往還沒完成版面（嵌在頁面裡時高度可能還是 0），
+  // 而 load 事件晚於那次尺寸變化——註冊太晚就永遠等不到，畫布尺寸從此對不上。
+  // 症狀是**整張圖全空**（資料/圖示都在、來源也都 loaded，就是不繪），
+  // 而 lint/typecheck/build 全綠——只有進瀏覽器看才會發現。
+  // COP 的地圖占滿視窗、尺寸自始固定，所以這個坑一直沒被踩到。
+  if (container.value && typeof ResizeObserver !== 'undefined') {
+    resizeObs = new ResizeObserver(() => map?.resize())
+    resizeObs.observe(container.value)
+  }
   // 縮放 + 指北針（top-left，避開右上 LayerToggles）+ 比例尺（bottom-right）。
   map.addControl(new NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), 'top-left')
   map.addControl(new ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-right')
@@ -707,6 +723,8 @@ onMounted(async () => {
   map.on('load', () => {
     if (!map) return
     styleReady = true // 自此可安全增刪圖層；下方 applyBasemap 會補套載入中被略過的切換
+    // 初始視野框（WP-D6.1）：只在 load 時套一次，之後不再搶使用者的縮放平移。
+    if (props.fitBounds) map.fitBounds(props.fitBounds, { padding: 48, duration: 0 })
     map.addSource(GRAT_SRC, { type: 'geojson', data: buildGraticule() })
     map.addLayer({
       id: 'graticule',
@@ -1534,6 +1552,8 @@ function applyTargetingCursor() {
 
 onBeforeUnmount(() => {
   window.removeEventListener('mouseup', endReshape) // #99 拖曳中被卸載也不留 listener
+  resizeObs?.disconnect()
+  resizeObs = null
   map?.remove()
   map = null
   styleReady = false

@@ -225,6 +225,52 @@ def test_state_frames_accumulate_to_same_result_as_reconstruct() -> None:
     assert acc["R-BN"]["health"] == direct["R-BN"].health
 
 
+def test_reconstruct_survives_non_monotonic_ticks() -> None:
+    """帳本依 seq 排，tick 未必單調——實測既有推演第一筆就是 tick 3700。
+
+    原本一遇到 `tick > up_to_tick` 就 break，這種帳本會立刻中斷回空狀態（地圖全空）。
+    """
+    evs = [
+        _ev(1, 3700, "TICK_OVERRUN", dec={"ms": 12}),  # seq 最小但 tick 最大
+        _ev(
+            2,
+            5,
+            "ENGAGEMENT_RESOLVED",
+            initiator="B1",
+            target="R1",
+            dmg=40.0,
+            dec={"target_health_after": 60.0},
+        ),
+        _ev(3, 8, "UNIT_MOVED", initiator="B1", detail={"lat": 24.5, "lng": 120.9}),
+    ]
+    st = reconstruct_states(evs, 10)
+    assert st["R1"].health == 60.0, "被 tick 3700 提前 break 了"
+    assert st["B1"].lat == 24.5
+    # 差異流也要照 tick 排
+    assert [f.tick for f in state_frames(evs)] == [5, 8, 3700]
+
+
+def test_recorded_health_wins_over_derived() -> None:
+    """事件同時記 health% 與戰力點時，**記錄值是權威**，不得被導出值覆寫。
+
+    目前兩者用同一條公式（engagement.py）所以數值相同；這條釘住的是**優先順序**，
+    以免日後效能曲線分歧時，重播悄悄顯示與帳本不同的數字。
+    """
+    evs = [
+        _ev(
+            1,
+            4,
+            "ENGAGEMENT_RESOLVED",
+            initiator="B1",
+            target="R1",
+            dec={"target_health_after": 77.0, "target_strength_after": 30.0},
+        ),
+    ]
+    st = reconstruct_states(evs, 4, authorized={"R1": 100.0})
+    assert st["R1"].health == 77.0, "被 effectiveness_pct(30/100) 覆寫了"
+    assert st["R1"].strength == 30.0
+
+
 def test_replay_summary() -> None:
     s = replay_summary(_events())
     assert s.total_events == 4 and s.max_tick == 10 and len(s.bookmarks) == 4

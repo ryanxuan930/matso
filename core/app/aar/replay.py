@@ -83,6 +83,18 @@ def bookmarks(events: Sequence[AarEvent]) -> list[Bookmark]:
     return out
 
 
+def sorted_by_tick(events: Sequence[AarEvent]) -> list[AarEvent]:
+    """依 (tick, seq) 排序——**重播不能假設帳本是照 tick 排的**。
+
+    `read_events` 依 `seq` 取（append-only 的證據順序），但 tick 未必隨 seq 單調：
+    實測一場既有推演的**第一筆事件就是 tick 3700**（WP-E1 之前 SimClock 每次 runner
+    重建都回 0，同一本帳因此混了新舊兩段時間軸）。原本 `reconstruct_states` 一遇到
+    `tick > up_to_tick` 就 break，碰到這種帳本會**立刻中斷並回空狀態**——地圖整個空白。
+    seq 仍是證據順序（同 tick 內以它保序），tick 才是重播的時間軸。
+    """
+    return sorted(events, key=lambda e: (e.tick, e.seq))
+
+
 def _apply_event(e: AarEvent, states: dict[str, UnitState], auth: Mapping[str, float]) -> set[str]:
     """把一個事件套到 states，回傳**被動到的單位 id**。
 
@@ -91,6 +103,10 @@ def _apply_event(e: AarEvent, states: dict[str, UnitState], auth: Mapping[str, f
     """
     touched: set[str] = set()
     dec = e.ai_decision
+    # 事件已記錄權威效能% 的單位——它們的 health 不得再被「由戰力點導出」的值覆寫。
+    # 個體交戰同時記 target_health_after 與 target_strength_after，目前兩者用同一條
+    # 公式（engagement.py:147）所以數值相同；但**記錄值才是權威**，導出只是缺值時的補救。
+    authoritative_health: set[str] = set()
 
     def _st(uid: str) -> UnitState:
         touched.add(uid)
@@ -100,7 +116,7 @@ def _apply_event(e: AarEvent, states: dict[str, UnitState], auth: Mapping[str, f
         s = _st(uid)
         s.strength = points
         a = auth.get(uid)
-        if a is not None and a > 0:
+        if a is not None and a > 0 and uid not in authoritative_health:
             s.health = effectiveness_pct(points / a)
 
     # 聚合交戰另有權威後態（戰力點），不能讓 damage_calc 的 fallback 先動到血量：
@@ -110,6 +126,7 @@ def _apply_event(e: AarEvent, states: dict[str, UnitState], auth: Mapping[str, f
     # 個體交戰：權威後態（engagement.py 記 target_health_after，已是效能%）。
     if e.target_id and "target_health_after" in dec:
         _st(e.target_id).health = float(dec["target_health_after"])
+        authoritative_health.add(e.target_id)
     elif e.target_id and e.damage_calc is not None and not has_after:
         s = _st(e.target_id)
         s.health = max(0.0, s.health - float(e.damage_calc))
@@ -144,7 +161,7 @@ def reconstruct_states(
     """
     states: dict[str, UnitState] = {}
     auth = authorized or {}
-    for e in events:
+    for e in sorted_by_tick(events):
         if e.tick > up_to_tick:
             break
         _apply_event(e, states, auth)
@@ -181,17 +198,18 @@ def state_frames(
     states: dict[str, UnitState] = {}
     auth = authorized or {}
     frames: list[StateFrame] = []
+    ordered = sorted_by_tick(events)
     i = 0
-    n = len(events)
+    n = len(ordered)
     while i < n:
-        tick = events[i].tick
+        tick = ordered[i].tick
         touched: set[str] = set()
         types: list[str] = []
         # 該 tick 之前的快照（只留待會要比的那幾個單位，避免整份深拷貝）。
         before: dict[str, tuple[float | None, float | None, float, float | None]] = {}
         j = i
-        while j < n and events[j].tick == tick:
-            e = events[j]
+        while j < n and ordered[j].tick == tick:
+            e = ordered[j]
             for uid in (e.initiator_id, e.target_id):
                 if uid and uid not in before:
                     s = states.get(uid)
