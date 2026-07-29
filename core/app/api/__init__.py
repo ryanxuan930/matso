@@ -3,6 +3,7 @@
 from app.api.aar import router as aar_router
 from app.api.auth import router as auth_router
 from app.api.autonomy import router as autonomy_router
+from app.api.c2 import router as c2_router
 from app.api.control import router as control_router
 from app.api.equipment import router as equipment_router
 from app.api.errors import install_error_handlers
@@ -26,6 +27,7 @@ __all__ = [
     "aar_router",
     "auth_router",
     "autonomy_router",
+    "c2_router",
     "control_router",
     "equipment_router",
     "inject_router",
