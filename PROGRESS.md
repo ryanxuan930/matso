@@ -222,6 +222,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - ~~**[O1.6/前滾待辦]** DeterministicRNG get_state/set_state + checkpoint 只含熱狀態~~ → **WP-E1 已解決**（2026-07-29）：RNG 狀態序列化完成、快照信封含 rng/orders、前滾以事件投影實作。殘留界線：RNG 只還原到**快照當下**（快照後消耗的抽樣次數無處可考），最多倒退一個快照間隔。
 - **[WP-E1 未做]** MSEL 已觸發集未進快照——`trigger_checker` 仍是 NoOp（WP-B2 之前沒有資料源）。信封是開放結構，屆時加 `msel` 區段即可。
 - **[WP-E1 未做]** 白軍 COP 的「挑書籤回滾」UI 未做；端點（POST /control ROLLBACK）與候選清單（GET /checkpoints）已備。
+- **[WP-E1 順帶觀察｜安全]** `SystemConfiguration.integrationConfig.ai.llm_api_key` 以**明文**存在 DB（API 回應有遮罩、但 DB 與備份沒有）。開發機上已存著一把真實的雲端 API key。屬 WP-E2（認證強化）範圍：至少該加密靜態儲存或改由 env/secret 注入。
 - **[事件 schema 議題]** TICK_OVERRUN 等引擎事件目前把結構化診斷塞進 `aiDecision` JSON 欄（schema 無中性欄）。事件類型變多前（O3 起），應檢討於 TacticalEventLog 加一個中性 `detail` JSON 欄（需 prisma migrate + ADR）。
 - **[O3.4 待辦]** 子系統（movement 等）實際寫入單位熱狀態的路徑未定；O1.4 只讓 Kernel 持有 hot_state 並 drain/broadcast，diff 現階段為空亦正確。single-writer 原則下子系統應經 Kernel 更新。
 - **[O1.4 已交付]** RedisBroadcaster 只到 Redis 落地（ring buffer/pub-sub）；WS 客戶端 fan-out（訂閱、faction 過濾、推前端）屬 O4.3。
