@@ -902,7 +902,7 @@ export interface components {
                  * @description error code 枚舉（O3.1 Order pipeline 部分）
                  * @enum {string}
                  */
-                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
+                code: "INTERNAL_ERROR" | "AUTH_INVALID_CREDENTIALS" | "AUTH_INVALID_TOKEN" | "AUTH_TOKEN_EXPIRED" | "AUTH_FORBIDDEN" | "SESSION_NOT_FOUND" | "SCENARIO_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_INVALID_PAYLOAD" | "ORDER_UNIT_NOT_FOUND" | "ORDER_PERMISSION_DENIED" | "ORDER_SEAT_DENIED" | "ORDER_FIRE_APPROVAL_REQUIRED" | "REQUEST_NO_OBSERVER" | "REQUEST_APPROVAL_DENIED" | "REQUEST_ALREADY_DECIDED" | "REQUEST_QUOTA_EXCEEDED" | "ORDER_INVALID_TRANSITION" | "ORDER_UNIT_NO_POSITION" | "ORDER_UNIT_FIXED" | "ORDER_UNREACHABLE" | "ORDER_TARGET_NOT_FOUND" | "ORDER_NO_LOS" | "ORDER_OUT_OF_RANGE" | "ORDER_NO_AMMO" | "ORDER_PRECHECK_FAILED" | "ORDER_ROE_VIOLATION" | "ORDER_NO_STRIKE_ZONE" | "ROLLBACK_TARGET_NOT_FOUND" | "TERRAIN_UNAVAILABLE" | "FACTION_INVALID" | "AI_DISABLED" | "AI_OUTPUT_REJECTED" | "USER_CONFLICT" | "USER_NOT_FOUND";
                 message: string;
                 details?: Record<string, never>;
             };
@@ -1060,7 +1060,7 @@ export interface components {
          * @description 申請單種類（[JCATS-A p.13,15,26]）。
          * @enum {string}
          */
-        RequestKind: "AIR_RECON" | "FIRE_SUPPORT" | "RESUPPLY_VOUCHER";
+        RequestKind: "AIR_RECON" | "FIRE_SUPPORT" | "RESUPPLY_VOUCHER" | "CALL_FOR_FIRE";
         /**
          * @description 申請單狀態機：PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED。 EXPENDED 是終態，不可再用——「已核准」與「還沒用掉」是兩件事，合併會讓一張核准單被用兩次。
          * @enum {string}
@@ -1523,13 +1523,13 @@ export interface components {
             created_at: string;
         };
         /** @enum {string} */
-        OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE";
+        OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE" | "FIRE_MISSION";
         /** @enum {string} */
         OrderStatus: "PENDING" | "VALIDATED" | "EXECUTING" | "COMPLETED" | "REJECTED" | "CANCELLED";
         OrderRequest: {
             unit_id: string;
             order_type: components["schemas"]["OrderType"];
-            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。 */
+            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。 */
             payload?: {
                 [key: string]: unknown;
             };

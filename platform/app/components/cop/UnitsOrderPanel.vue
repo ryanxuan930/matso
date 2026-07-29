@@ -5,12 +5,13 @@
  * 下令狀態同 `MapEditorPanel` 的作法：把 `reactive(useCopOrdering(...))` **整包**收成一個
  * prop。樣板不會 unwrap 巢狀 ref，故父層務必傳 `reactive(...)` 而非 composable 的原始回傳值。
  */
+import { computed } from 'vue'
 import { factionColor, healthColor } from '~/composables/useUnits'
 import type { UnitView } from '~/composables/useOrders'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useCopOrdering } from '~/composables/useCopOrdering'
 
-defineProps<{
+const props = defineProps<{
   ordering: UnwrapNestedRefs<ReturnType<typeof useCopOrdering>>
   /** 依陣營分組的單位（含戰力彙總）。 */
   unitsByFaction: { faction: string; units: UnitView[]; power: { pct: number; mass: number; ko: number } }[]
@@ -31,6 +32,20 @@ defineEmits<{ (e: 'select' | 'toggle-group', value: string): void }>()
 
 /** 精確移動是持久化偏好（`useCopPrefs`），故以 model 雙向綁回頁面。 */
 const preciseMove = defineModel<boolean>('preciseMove', { required: true })
+
+const SUBMIT_LABELS: Record<string, string> = {
+  MOVE: '送出移動',
+  ENGAGE: '送出交戰',
+  FIRE_MISSION: '送出火力任務',
+}
+
+/** 每種令型各自的最低必要條件。前端只是 UX 早退——後端 validator 才是權威閘門。 */
+const canSubmit = computed(() => {
+  const o = props.ordering
+  if (o.orderType === 'MOVE') return !!o.destH3
+  if (o.orderType === 'FIRE_MISSION') return !!o.firePoint && o.fireRounds >= 1
+  return !!o.targetUnitId
+})
 </script>
 
 <template>
@@ -91,6 +106,7 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
   <select v-model="ordering.orderType" data-testid="order-type">
     <option value="MOVE">移動</option>
     <option value="ENGAGE">交戰</option>
+    <option value="FIRE_MISSION">火力任務（打座標）</option>
   </select>
   <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
     🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
@@ -179,6 +195,62 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
       </div>
     </div>
   </template>
+  <!-- WP-C10.2 面目標射擊：打座標，不打單位。 -->
+  <template v-else-if="ordering.orderType === 'FIRE_MISSION'">
+    <div class="hint">點地圖設落點（紅色準星）。間瞄火力不需視線——打的就是看不見的地方。</div>
+    <div class="movebtns">
+      <button
+        data-testid="pick-fire-point"
+        :class="{ armed: ordering.targeting }"
+        @click="ordering.waypointMode = false; ordering.targeting = true"
+      >
+        {{ ordering.targeting ? '點地圖設落點…' : '設定落點' }}
+      </button>
+      <button
+        v-if="ordering.firePoint"
+        data-testid="clear-fire-point"
+        title="清除落點"
+        @click="ordering.firePoint = null"
+      >
+        <i class="pi pi-times" /> 清除
+      </button>
+    </div>
+    <div class="dest" data-testid="fire-point">
+      <template v-if="ordering.firePoint">
+        🎯 {{ ordering.firePoint.lat.toFixed(5) }}, {{ ordering.firePoint.lng.toFixed(5) }}
+      </template>
+      <template v-else>未設落點</template>
+    </div>
+    <label class="rounds">
+      發數
+      <input
+        v-model.number="ordering.fireRounds"
+        type="number"
+        min="1"
+        max="200"
+        data-testid="fire-rounds"
+      >
+      <span class="dim">· 每發各自散布，多發覆蓋一片</span>
+    </label>
+    <!-- 本局要求火協時要掛核准單；沒有可用的單就直說，別讓人對著空下拉猜。 -->
+    <select
+      v-if="ordering.approvedFireRequests.length"
+      v-model="ordering.fireRequestId"
+      data-testid="fire-request"
+    >
+      <option :value="null">不掛核准單</option>
+      <!-- 申請單本身沒有摘要欄位（附言是另一封 REQUEST 信文）——以申請者 + tick 辨識。 -->
+      <option v-for="r in ordering.approvedFireRequests" :key="r.id" :value="r.id">
+        火協核准 · T{{ r.requested_at_tick }} · {{ r.requested_by }}
+      </option>
+    </select>
+    <p v-else class="fm-warn dim" data-testid="no-fire-request">
+      無已核准的火力支援申請（本局若要求火協，此令會被預檢擋下——請先向 FSO 申請）。
+    </p>
+    <p class="fm-warn" data-testid="fire-danger">
+      ⚠ 落彈半徑內<b>敵我皆受損</b>——砲彈不會挑人。落點附近有友軍時請先確認。
+    </p>
+  </template>
   <template v-else>
     <div class="hint">點地圖上的敵方單位鎖定目標（紅環），或從清單選：</div>
     <select v-model="ordering.targetUnitId" data-testid="engage-target">
@@ -221,12 +293,8 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
       </select>
     </template>
   </template>
-  <button
-    data-testid="submit-order"
-    :disabled="ordering.orderType === 'MOVE' ? !ordering.destH3 : !ordering.targetUnitId"
-    @click="ordering.submit"
-  >
-    {{ ordering.orderType === 'MOVE' ? '送出移動' : '送出交戰' }}
+  <button data-testid="submit-order" :disabled="!canSubmit" @click="ordering.submit">
+    {{ SUBMIT_LABELS[ordering.orderType] }}
   </button>
   <p v-if="ordering.message" data-testid="order-message">{{ ordering.message }}</p>
   <div v-if="ordering.precheck" class="precheck" data-testid="precheck">
@@ -460,6 +528,34 @@ const preciseMove = defineModel<boolean>('preciseMove', { required: true })
   color: #94a3b8;
   font-size: 0.72rem;
   line-height: 1.4;
+}
+/* WP-C10.2 火力任務：發數輸入 + 誤傷警語。 */
+.order .rounds {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+.order .rounds input {
+  width: 4.5rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+}
+.order .dim {
+  color: #64748b;
+}
+.order .fm-warn {
+  margin: 0.2rem 0 0;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: #fca5a5;
+}
+.order .fm-warn.dim {
+  color: #94a3b8;
 }
 /* 聯合火力武器組合清單（P4）：顯示將一起開火的武器。 */
 .weapon-mix {

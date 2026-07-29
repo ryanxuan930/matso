@@ -18,7 +18,7 @@ async function loginToOrdersCop(page: Page): Promise<void> {
 
 test('單位列表載入真單位', async ({ page }) => {
   await loginToOrdersCop(page)
-  await expect(page.getByTestId('unit-item')).toHaveCount(4) // 3 藍軍
+  await expect(page.getByTestId('unit-item')).toHaveCount(5) // 3 藍軍 + 1 砲兵 + 1 紅軍
 })
 
 test('下 MOVE 令全流程：選單位 → 點地圖 → precheck 可行 → pending → 取消', async ({ page }) => {
@@ -52,4 +52,43 @@ test('下 ENGAGE 令：選單位 → 選目標 → precheck 可行', async ({ pa
   await page.getByTestId('submit-order').click()
   await expect(page.getByTestId('precheck')).toContainText('可行')
   await expect(page.getByTestId('order-list')).toContainText('ENGAGE')
+})
+
+// WP-C10.2 面目標射擊：打座標而非打單位。砲兵 ARTY 持 155 榴（曲射），故預檢可過。
+test('下 FIRE_MISSION 令：選砲兵 → 點地圖設落點 → precheck 可行', async ({ page }) => {
+  await loginToOrdersCop(page)
+  await page.getByTestId('unit-item').filter({ hasText: 'ARTY' }).click()
+  await page.getByTestId('order-type').selectOption('FIRE_MISSION')
+
+  // 未設落點 → 送出鈕停用（沒有目標座標的火力任務不成立）。
+  await expect(page.getByTestId('submit-order')).toBeDisabled()
+
+  await page.getByTestId('pick-fire-point').click()
+  await page.getByTestId('map-canvas').click({ position: { x: 400, y: 300 } })
+  await expect(page.getByTestId('fire-point')).toContainText('🎯')
+  await expect(page.getByTestId('submit-order')).toBeEnabled()
+
+  // 讀數對了不代表地圖上畫得出來——準星要真的被繪製，操作員才看得見自己要打哪裡。
+  // queryRenderedFeatures 只回「已繪製」的特徵（見 aar-replay.spec 的同一道理）。
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const m = (window as unknown as { __matsoMap?: maplibregl.Map }).__matsoMap
+          return m ? m.queryRenderedFeatures({ layers: ['fire-aim-ring'] }).length : 0
+        }),
+      { timeout: 10_000, message: '地圖上沒有畫出面射擊準星' },
+    )
+    .toBeGreaterThan(0)
+
+  await page.getByTestId('submit-order').click()
+  await expect(page.getByTestId('precheck')).toContainText('可行')
+  await expect(page.getByTestId('order-list')).toContainText('火力任務')
+})
+
+test('面射擊的誤傷警語一定看得到——這不是可選的提示', async ({ page }) => {
+  await loginToOrdersCop(page)
+  await page.getByTestId('unit-item').filter({ hasText: 'ARTY' }).click()
+  await page.getByTestId('order-type').selectOption('FIRE_MISSION')
+  await expect(page.getByTestId('fire-danger')).toContainText('敵我皆受損')
 })

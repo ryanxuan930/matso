@@ -7,7 +7,11 @@ export type OrderResponse = components['schemas']['OrderResponse']
 type OrderRequest = components['schemas']['OrderRequest']
 
 // 指令類型 / 狀態 → 中文（UI 顯示；後端 enum 值不變）。
-export const ORDER_TYPE_LABELS: Record<string, string> = { MOVE: '移動', ENGAGE: '交戰' }
+export const ORDER_TYPE_LABELS: Record<string, string> = {
+  MOVE: '移動',
+  ENGAGE: '交戰',
+  FIRE_MISSION: '火力任務',
+}
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   PENDING: '等待中',
   VALIDATED: '已驗證',

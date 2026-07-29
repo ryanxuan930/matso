@@ -4,6 +4,7 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-31：**WP-C10.2 面目標射擊（打座標）全數完成**（SPEC_V2 §6 WP-C10）。動 FirePlan 前先發現規格沒點破的缺口：火力計畫的目標是**座標**，但引擎的 `ENGAGE` 一律要 `target_unit_id`——FirePlan 不是缺一層排程包裝，是缺一個能力。四段：**裁決純函數** `adjudication/area_fire`（CEP→Rayleigh 抽落點、齊射**逐發**各抽一次[一發乘 N 會讓散布消失＝打得比實際準]、殺傷半徑內線性遞減、**敵我皆傷**）；**令型與准入**（`FIRE_MISSION` + 席位 registry 只改一張表 + 預檢**刻意不查 LOS**[間瞄打的就是看不見的地方] + 火協 gate 綁上新令型，否則等於用新令型繞過火協）；**引擎接線** `engine/fire_wiring`（`ChainedOrderSource`/`DispatchingAdjudicator` 讓 Kernel 的單一 order_source 容得下第二種令型；獨立 RNG stream `area_fire`——散布抽樣次數隨發數變動，共用 stream 會擾動所有交戰；蒐集目標**不做半徑預篩**，Rayleigh 尾巴無上界，任何猜的半徑都是把遠處傷亡悄悄吃掉）；**前端**（COP 點地圖設落點，紅準星與黃色移動目的地刻意不共用記號、誤傷警語常駐、核准單下拉只列 APPROVED——順帶補上 B5.2 留下的「沒 UI 可挑核准單」缺口）。**順手補三個洞**：①核准單對 FIRE_MISSION 從未兌現（`FireMissionPayload` 不是 `EngagePayload` 子類 → 一張單可掛無限次令；預檢擋得住「沒核准單」擋不住「用一百次」）；②曲射武器類別散成兩份（抽成 `weapon.INDIRECT_CATEGORIES`；判定一律看 `category` 不看使用者可自填的 `baseStats.indirect_fire`，漏填會變成「預檢說可以打、裁決找不到武器」的無聲失效）；③逐發落點原本放在**刻意不入 hash chain** 的 `detail`，證據放那裡等於可竄改而不觸發 verify。另把戰損封頂在目標當前戰力（否則帳本傷亡比實際扣掉的多，AAR 統計是假的）。**驗證紀律**：友軍傷害那條用變異測試驗過——把蒐集改成跳過同陣營會紅，而純函數層的 `test_friendly_units_are_also_hit` 照樣綠，這正是接線層要有自己測試的理由；e2e 用 `queryRenderedFeatures` 證明準星真的畫在畫布上（改成不存在的圖層名確實會紅）。**驗收**：pytest 1423（+23）、mypy 219、ruff、OpenAPI、前端 lint/typecheck 綠；新增 2 支 e2e 綠；容器已重建。**已知取捨**：面射擊戰果目前不需觀測就即時回饋給射方（`damage_calc` 進 WS feed）——那正是 C10.3 BDA 卡存在的理由，不在此半修。**另修正 Backlog 對 e2e 既有紅燈的誤判**：三條各自獨立（冷啟競態／中文標籤／射程矛盾），不是原本記的「共同前置 ws-status」；量的時候要先殺掉 :8100/:3100，`reuseExistingServer` 會讓你量到上一輪的世界。worklog: docs/worklog/area-fire.md。
 - 2026-07-30：**WP-G1a cop.vue 拆分：狀態與面板層**（SPEC_V2 §WP-G；使用者裁示把 G1 拆成 G1a/G1b）。cop.vue **4419→2181**：六個 composable（`useCopWidgets`/`useCopPrefs`/`useWeaponTracks`/`useUnitCardDrag`/`useCopOrdering`/`useMapEditor`）＋三個面板元件（MapEditorPanel/UnitsOrderPanel/UnitDetailCard）。子元件以 **`reactive(composable)` 單一 prop** 收狀態——逐欄位開 prop+emit 就是把 MapCanvas 那個「50 個 props」的毛病複製一份（樣板**不會 unwrap 巢狀 ref**，故必須 `reactive` 而非直接傳 composable 回傳值）。**最重要的發現：`npm run typecheck` 一直是空轉**——`tsconfig.json` 是 `"files": []` + project references，而 `vue-tsc --noEmit` 不跟隨 references，`app/` 底下的 `.vue`/`.ts` **從來沒被 type check 過**（近期每份 worklog 的「vue-tsc 綠」對前端都是空話，含我自己在 WP-C5 寫的那句）。改成 `--build` 後跑出 6 個錯全部清掉（MapCanvas 的 `queryRenderedFeatures(e.point)` ×3 與 `watch(…, syncUnits)` 把新值陣列當 posOverride 傳；契約 `OrderRequest.payload` 裸 object → `Record<string, never>`；`acknowledge_restricted` 的 default 讓產生器標成必填）。**三類安全網缺口各自被不同工具抓到**：型別錯要 typecheck（修好之後）、元件名解析失敗只有瀏覽器看得到（Vue 把不認識的標籤當原生元素）、scoped CSS 切壞只有 build 會擋。收尾跑 **ultracode 多 agent 等價性稽核**（8 位逐塊比對拆分前原始碼 + 對抗式反駁 + 漏網掃描）：**確認 5 個我自己沒看見的回歸**且對抗階段一個都沒反駁掉——`class`/`data-testid="precheck"` 被字串取代波及（會弄壞 3 條 e2e）、`.ord-*`/`.events`/`.ws` 搬成死規則、父層 `.orders`/`.empty` **憑印象重寫**而非逐字照抄、`.unit-card .lowfuel` 落在沒有 `.unit-card` 的元件，全部已修（一律回 `git show d5c585a` 取原文）。e2e 在 `.env`-free worktree 內與拆分前**逐條相同**（各 4 failed / 14 passed，同樣四條）。worklog: docs/worklog/cop-decomposition.md。
 - 2026-07-30：**WP-C5 通聯後果閉環：位置凍結與敵情粗化**（SPEC_V2 第六張卡；branch `main`）。SPEC_FULL §6.2 三種戰術後果只做了 `order_admissible`，`position_report_*` 與 `intel_granularity` 定義了卻沒有任何消費者。**掃描抓到規格四項之外的紅線違反**：STATE_DIFF 的信封**從來沒有陣營受眾標籤**（`build_state_diff_envelope` 不設 `factions`）→ `is_visible` 對所有人回 True → **敵軍即時 lat/lng/health/fuel/ammo 一直廣播給每個連線的 client**，前端只是「沒把不認識的 unit 畫出來」（紅線 3：fog 過濾只能在後端）。這不是順手修：一個廣播給所有人的信封**沒有「己方視角」可言**，不先做每陣營投影就做不了規格要求的「STATE_DIFF 己方視角凍結」。做法：每 tick 發 N+1 份（每陣營一份已投影 + 一份 `factions:[]` 真實副本），新增 `exclusive` 受眾語義**關掉全知旁通**（否則統裁同時收到 N 份互相矛盾的副本，先到先贏）。**核心不變量：凍結的是視野不是單位**——新增 `report_lat/lng/tick` 熱狀態欄位（CommsSystem 依 `position_report_interval` 落：ONLINE 每 interval、DEGRADED ×3、OFFLINE 永不），真實 lat/lng 照常演進；直接凍住熱狀態座標會連射程/LOS 裁決一起騙到。「無回報」時 REST 回 null、STATE_DIFF **移除**欄位而非送 null（送 null 會清掉 client 最後已知位置＝單位憑空消失）。粗化把身分欄位一起收回（只量化座標卻留番號＝fidelity 與內容不符）並放大 `error_radius_m`。另修兩個沉默失效：`TacticalUnit.comms_status` **播種後從未被寫過**（`/units` 的通聯狀態改讀熱狀態）、`cop.vue` 的 `currentTick` 是**寫死的 `ref(100)`**（地圖「OFFLINE +Nt」與敵情老化淡出都拿假 tick 算）。AI 走同一份投影且 briefing 明講「斷聯＝新令無法送達」。pytest **1289 passed**（+45）、golden 6 未破。**容器實測**：真實 3 陣營局輸出 4 份正確分眾信封；`report_*` 已在正式環境按 ONLINE 節奏寫入。worklog: docs/worklog/comms-consequences.md。
 - 2026-07-29：**WP-E3 /state 原子快照與 RESYNC 閉環**（SPEC_V2 第五張卡；branch `main`）。`RESYNC_REQUIRED` 說「client 走 GET /state 全量重同步」，但該端點在契約只是一行佔位、**後端沒實作**，前端收到 RESYNC 把結果丟掉、靠每 10 秒重抓**六個獨立 GET** 兜底（拼出「單位是新的、敵情是舊的」的畫面）。**最關鍵的設計**：快照**呼叫既有 handler**而非重寫過濾——掃描發現三個端點的規則本來就不一致（units 可見集含盟軍且以全域 user.role 判全知、map-features 不含盟軍、intel 以 participant.role 判且無條件 require_participant），另寫一份必然漂移，而**迷霧過濾的漂移就是資安漏洞**（重連後看到的比正常時多＝洩漏、少＝誤殺）。為讓快照能一致，先把 `/intel` 對齊其餘三者（未加入該局的白軍觀察員不再 403；無測試釘住原行為＝非刻意設計）。`last_seq` **必須在讀狀態之前**取樣，否則兩次讀取之間送出的 diff 會既不在快照裡、seq 又 ≤ last_seq 而被 client 丟棄＝遺失更新（有測試以呼叫順序釘住）。前端：RESYNC 走原子重建、STATE_DIFF 依 last_seq 去重（server 送 RESYNC 後**不停止推播**）、白軍視角跟著進快照請求。週期重取**保留節奏、拿掉拼裝**（指令列表沒有 WS 推播，那個 timer 是它唯一更新來源）。順帶把散在 3 個模組的 8 處串流鍵字面值收斂。pytest **1244 passed**、golden 6 未破。worklog: docs/worklog/state-snapshot.md。
@@ -135,10 +136,22 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - **e2e 必須在 `.env`-free worktree 跑**：`platform/.env` 的 `NUXT_PUBLIC_API_BASE` 會蓋掉 Playwright 傳給 Nuxt 的 :8100，使 e2e 前端連到 docker 後端（:8000），`e2e-orders` 那局不存在 → 多條 COP 測試假性失敗。舊紀錄只寫「影響底圖那條」，範圍其實大得多（WP-D6.1 發現）。
 - `MapEditorPanel.vue` 的 `.map-editor .me-hd` / `.me-x` 是死規則（面板搬進 FloatingWidget 後，自帶的標題列與關閉鈕變成多餘）。**早於 G1b**——G1a 從 cop.vue 帶過來時就已無使用者，故未順手修（紅線 5）。由 WP-G1b 的機械式孤兒掃描發現。
 
-### 🧪 e2e 既有紅燈四條（WP-G1a 對等比較時確認，屬 G3）
+### 🧪 e2e 既有紅燈（WP-G1a 對等比較時確認，屬 G3）
 `.env`-free 環境下，拆分前後**同樣四條**失敗，與重構無關：`map.spec:71 地圖可縮放與平移`、
 `orders.spec:24 下 MOVE 令全流程`、`orders.spec:47 下 ENGAGE 令`、`smoke.spec:11 M4 全鏈路`。
-後三條的共同前置是 `ws-status` 等不到 `live`（e2e harness 的 WS/Redis 未就緒）。
+
+**WP-C10.2 實測後修正上面對成因的判斷**（原本記「共同前置是 `ws-status` 等不到 `live`」，
+逐條看過後不是這樣；三條各自獨立、各自是小修）：
+
+| 測試 | 實際原因 | 該怎麼修 |
+|------|----------|----------|
+| `orders.spec:19 單位列表載入真單位` | 冷啟第一條測試斷言時單位清單還沒回來（`Received: 0`） | 改成 `expect.poll` / 等單位 API |
+| `orders.spec:24 下 MOVE 令全流程` | 斷言 `'MOVE'`，指令列顯示的是中文 `移動`（型別標籤中文化後沒跟上） | 斷言改中文標籤 |
+| `orders.spec:47 下 ENGAGE 令` | B1 只有步槍（600m），R1 在 7km 外 → `ORDER_OUT_OF_RANGE` | **先決定**改種子距離還是改測試期待，不是筆誤 |
+
+⚠ 量這件事時的陷阱：`playwright.config.ts` 的 `reuseExistingServer` 會留著上一輪的
+uvicorn，而它握著已被 `rm` 掉的 sqlite 檔控制代碼——**不先殺掉 :8100/:3100，
+量到的是上一輪的世界**（曾因此誤判「HEAD 的單位數是 5」）。
 ⚠ 另注意：本機 `platform/.env` 有 `NUXT_PUBLIC_TILE_URL`，會讓
 `map.spec:53「離線：無 tile server」`**在本機必紅**——那是環境不是程式碼，
 比對 e2e 一律用不帶 `.env` 的 worktree。

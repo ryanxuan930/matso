@@ -88,6 +88,16 @@ def _seed_session(db: Session, user: User) -> None:
             current_lng=121.30,
         )
     )
+    # WP-C10.2：一門砲兵——面目標射擊要求單位持有曲射武器，沒有砲就只能驗到「被預檢擋下」。
+    arty = TacticalUnit(
+        session_id=sid,
+        designation="ARTY",
+        unit_level=UnitLevel.PLATOON,
+        faction="BLUE",
+        current_lat=23.70,
+        current_lng=121.20,
+    )
+    db.add(arty)
     db.add(
         SessionParticipant(
             user_id=user.id,
@@ -99,10 +109,21 @@ def _seed_session(db: Session, user: User) -> None:
     )
     # 配發預設武器，讓 e2e-orders 單位有可選武器/彈種（資料驅動 ENGAGE）。
     from app.adjudication import seed_session_equipment
+    from app.adjudication.seed_equipment import ensure_mobility_templates
+    from app.models import EquipmentInstance
 
+    db.flush()
+    # 砲兵先單獨配 155 榴（seed_session_equipment 只補「尚無裝備」的單位，故此件先落）。
+    db.add(
+        EquipmentInstance(
+            template_id=ensure_mobility_templates(db)["HOWITZER_155_SP"],
+            owner_id=arty.id,
+            current_state={"ammo": 60},
+        )
+    )
     seed_session_equipment(db, sid)
     db.commit()
-    print(f"✓ 建立 E2E session {sid}（3 藍軍單位 + {user.username} 為 BLUE COMMANDER）")
+    print(f"✓ 建立 E2E session {sid}（3 藍軍 + 1 砲兵 + {user.username} 為 BLUE COMMANDER）")
 
 
 if __name__ == "__main__":

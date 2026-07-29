@@ -81,6 +81,9 @@ const props = withDefaults(
     basemapId?: string // 當前底圖來源 id（offline / street / satellite / 軍用…）
     destH3?: string | null // MOVE 目的格（res 8）——畫出吸附後的格與格心，讓「點哪→到哪」透明（#4b）
     destPoint?: { lng: number; lat: number } | null // 精確移動落點（#2）——有值時只畫精確點、不畫吸附格
+    // WP-C10.2 面目標射擊的瞄準點。**與 MOVE 目的地刻意不共用一個標記**：
+    // 黃色「走到這裡」與紅色「往這裡開砲」混在一起，點錯的代價是打自己人。
+    firePoint?: { lng: number; lat: number } | null
     movePath?: number[][] | null // #28 移動路徑預覽（[[lng,lat],…] 含起點）——畫出規劃路線
     moveForced?: boolean // #28 路徑是否需強穿阻礙（true→琥珀虛線警示）
     moveCrossings?: number[][] | null // #28 穿越阻礙的標記點（[[lng,lat],…]）
@@ -136,6 +139,7 @@ const props = withDefaults(
     basemapId: 'offline',
     destH3: null,
     destPoint: null,
+    firePoint: null,
     movePath: null,
     moveForced: false,
     moveCrossings: null,
@@ -424,6 +428,7 @@ const HILLSHADE_SRC = 'hillshade'
 const CONTOUR_SRC = 'contours'
 const UNITS_SRC = 'units'
 const DEST_SRC = 'move-dest'
+const FIRE_SRC = 'fire-aim' // WP-C10.2 面目標射擊瞄準點
 const MOVE_PATH_SRC = 'move-path' // #28 移動路徑預覽（線 + 強穿標記）
 const TRACK_SRC = 'weapon-tracks' // #95 武器軌跡（短暫顯示後淡出）
 const FEAT_SRC = 'mapfeatures' // 標註/工事幾何（stage ③b）
@@ -516,6 +521,23 @@ function destFeatures(
 function syncDest() {
   const src = map?.getSource(DEST_SRC) as GeoJSONSource | undefined
   src?.setData(destFeatures(props.destH3, props.destPoint ?? null) as never)
+}
+
+/** WP-C10.2 面目標射擊瞄準點：紅色十字環，與黃色移動目的地一眼可分。 */
+function syncFireAim() {
+  const src = map?.getSource(FIRE_SRC) as GeoJSONSource | undefined
+  if (!src) return
+  const p = props.firePoint ?? null
+  src.setData(
+    (p
+      ? {
+          type: 'FeatureCollection',
+          features: [
+            { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [p.lng, p.lat] } },
+          ],
+        }
+      : EMPTY_FC) as never,
+  )
 }
 
 /** #28 移動路徑預覽：畫規劃路線（forced→琥珀虛線）+ 強穿標記點。 */
@@ -1040,6 +1062,30 @@ onMounted(async () => {
         'circle-stroke-width': 1.5,
       },
     })
+    // WP-C10.2 面目標射擊瞄準點：紅色空心環 + 實心點（十字準星感），與黃色移動目的地區隔。
+    map.addSource(FIRE_SRC, { type: 'geojson', data: EMPTY_FC })
+    map.addLayer({
+      id: 'fire-aim-ring',
+      type: 'circle',
+      source: FIRE_SRC,
+      paint: {
+        'circle-radius': 12,
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-stroke-color': '#f87171',
+        'circle-stroke-width': 2,
+      },
+    })
+    map.addLayer({
+      id: 'fire-aim-center',
+      type: 'circle',
+      source: FIRE_SRC,
+      paint: {
+        'circle-radius': 3.5,
+        'circle-color': '#ef4444',
+        'circle-stroke-color': '#0a1626',
+        'circle-stroke-width': 1.5,
+      },
+    })
     // #28 移動路徑預覽：規劃路線（可行＝青、強穿＝琥珀虛線）+ 強穿標記。
     map.addSource(MOVE_PATH_SRC, { type: 'geojson', data: EMPTY_FC })
     map.addLayer({
@@ -1195,6 +1241,7 @@ onMounted(async () => {
     refreshHex()
     syncUnits()
     syncDest()
+    syncFireAim() // WP-C10.2 面射擊瞄準點
     syncMovePath() // #28 移動路徑預覽
     syncFeatures() // stage ③b 標註/工事
     refreshGrid() // #9 座標網格
@@ -1571,6 +1618,7 @@ watch(() => props.contourVisible, (v) => {
 })
 watch(() => props.basemapId, (v) => applyBasemap(v))
 watch([() => props.destH3, () => props.destPoint], syncDest)
+watch(() => props.firePoint, syncFireAim)
 watch(
   [() => props.movePath, () => props.moveForced, () => props.moveCrossings],
   syncMovePath,

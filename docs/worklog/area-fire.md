@@ -1,8 +1,8 @@
 ---
 task: WP-C10.2       # SPEC_V2 §6 WP-C10（面目標射擊，FirePlan 的前置）
-status: IN_PROGRESS
+status: DONE
 started: 2026-07-31T01:45+08:00
-updated: 2026-07-31T02:10+08:00
+updated: 2026-07-31T04:20+08:00
 agent: Opus 5
 ---
 
@@ -89,9 +89,26 @@ agent: Opus 5
 改成跳過同陣營單位後，該測試與 `friendly_losses` 那條確實會紅——而純函數那邊的
 `test_friendly_units_are_also_hit` 照樣綠燈。這正是接線層需要自己一條測試的理由。
 
-## 未完成（本卡剩餘）
+## 已完成：前端（COP 點地圖下火力任務）
 
-- [ ] 前端：COP 點地圖下火力任務
+`orderType` 加第三種 `FIRE_MISSION`：點「設定落點」→ 點地圖 → 送出。
+
+- **落點標記與移動目的地刻意不共用**（MapCanvas 新增 `firePoint` prop + `fire-aim-*` 圖層）：
+  黃色「走到這裡」與紅色「往這裡開砲」混成同一個記號，點錯的代價是打自己人。
+- **誤傷警語常駐**，不是 hover 才出現的提示。有 e2e 釘住它一定看得到。
+- **核准單下拉只列 APPROVED**：EXPENDED 一張只能兌現一次，列出用過的只會讓人選到
+  必被預檢打回的那張。送出成功後重抓一次——核准單在令被收下時就扣掉了。
+  （這同時補上了 B5.2 留下的「沒有 UI 可以挑核准單」缺口。）
+- `ORDER_TYPE_LABELS` 補 `FIRE_MISSION: 火力任務`（原本指令列顯示的是生的 enum 值）。
+
+### e2e 怎麼證明不是只有讀數對
+
+`queryRenderedFeatures({layers:['fire-aim-ring']})`——只回**已繪製**的特徵。
+把圖層名改成不存在的名字後該測試確實會紅，證明這條斷言不是空的。
+（同 WP-D6.1 學到的：in-app 瀏覽器 harness 的 rAF 停擺，地圖驗證只能用真 Playwright。）
+
+E2E 種子加一門砲兵 `ARTY`（155 榴）——沒有曲射武器的話只能驗到「被預檢擋下」，
+證明不了整條路徑走得通。
 
 ## 已知取捨（不在本卡修）
 
@@ -102,9 +119,25 @@ agent: Opus 5
 （受害方不會收到此事件：`event_audience` 只標 initiator 的陣營，對方是從自己的
 STATE_DIFF 看到戰力下降——那是對的。）
 
+## 撞見的既有紅燈（**不是本卡造成的**）
+
+`platform/e2e/orders.spec.ts` 原有 3 條測試在動手前就已經是紅的——動手前先 `git stash`
+在 HEAD 上跑過一次確認（**注意 `reuseExistingServer` 會留著上一輪的 uvicorn 與它的
+sqlite 檔控制代碼，不先殺掉 :8100/:3100 量到的是上一輪的世界**）：
+
+| 測試 | 實際原因 |
+|------|----------|
+| `單位列表載入真單位` | 冷啟第一條測試：斷言時單位清單還沒回來（`Received: 0`），是測試自身的競態 |
+| `下 MOVE 令全流程` | 斷言 `'MOVE'`，但指令列顯示的是中文 `移動`（型別標籤中文化後就沒跟上） |
+| `下 ENGAGE 令` | B1 只有步槍（600m），R1 在 7km 外 → `ORDER_OUT_OF_RANGE`；種子的幾何與測試的「可行」期待矛盾 |
+
+三條各自是獨立的小修（且第三條要先決定「該改種子距離還是改測試期待」，不是筆誤），
+依紅線 5 記入 PROGRESS Backlog，不在本卡順手改。本卡新增的 2 條 e2e 綠。
+
 ## 中斷續作指引
 
-- **後端已完整接線並綠燈**；剩下只有前端「COP 點地圖下火力任務」。
-- 前端要做的最小版：選定砲兵單位 → 地圖點目標 → 帶 `{target_lat,target_lng,rounds}` 送
-  `POST /sessions/{id}/orders`（order_type=FIRE_MISSION）。本局要求火協時還要能挑一張
-  已核准的 FIRE_SUPPORT 申請單（目前沒有任何 UI 可以挑，見 PROGRESS Backlog）。
+- **本卡（C10.2）已完成**：裁決核心 / 令型准入 / 引擎接線 / 前端，四段各自綠燈。
+- 下一張：**C10.3**（FirePlan + at_tick/on_call 排程），或先做 BDA
+  （上面「已知取捨」那段就是 BDA 卡存在的具體理由）。
+- 指令列目前顯示不出火力任務的落點座標——`OrderResponse` 只有 `target_unit_id`/`target_h3`，
+  要顯示座標得先動契約。不影響操作（落點畫在地圖上），列入後續。

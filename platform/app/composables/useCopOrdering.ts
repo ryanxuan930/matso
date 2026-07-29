@@ -24,6 +24,7 @@ import {
   type WeaponView,
 } from '~/composables/useOrders'
 import { fetchMovementPreview, type MovementPreview } from '~/composables/useMapFeatures'
+import { fetchRequests, type RequestView } from '~/composables/useC2'
 
 export type FirePolicy = components['schemas']['FirePolicy']
 
@@ -65,7 +66,7 @@ export function useCopOrdering(opts: {
 }) {
   const { sessionId, selectedId, selectedUnit, selectedUnitFixed, refresh, toasts } = opts
 
-  const orderType = ref<'MOVE' | 'ENGAGE'>('MOVE')
+  const orderType = ref<'MOVE' | 'ENGAGE' | 'FIRE_MISSION'>('MOVE')
   const destH3 = ref<string | null>(null)
   const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
   const targeting = ref(false)
@@ -93,6 +94,25 @@ export function useCopOrdering(opts: {
   // 聯合火力模式＝未指定單一武器（≥2 武器才有意義）；指定武器＝單武器射擊。
   const combinedMode = computed(() => weaponId.value === null && weapons.value.length >= 2)
 
+  // ---- WP-C10.2 面目標射擊（打座標，不打單位）----
+  const firePoint = ref<{ lng: number; lat: number } | null>(null)
+  const fireRounds = ref(4)
+  /** 本局要求火協時要掛的已核准 FIRE_SUPPORT 申請單。 */
+  const fireRequestId = ref<string | null>(null)
+  const approvedFireRequests = ref<RequestView[]>([])
+  /**
+   * 撈本陣營「已核准且還沒用掉」的火力支援申請。
+   *
+   * **EXPENDED 一定要排除**：一張核准單只能兌現一次，列出用過的只會讓下令者選到必被
+   * 預檢打回的那張。後端擋得住，但讓人選一個注定失敗的選項不是可用的介面。
+   */
+  async function loadFireRequests() {
+    const list = await fetchRequests(sessionId.value).catch(() => null)
+    approvedFireRequests.value = (list?.requests ?? []).filter(
+      (r) => r.kind === 'FIRE_SUPPORT' && r.status === 'APPROVED',
+    )
+  }
+
   /**
    * 活彈藥（#53）：交戰消耗即時反映——優先讀 STATE_DIFF 的 `ammo_by_weapon`（活模擬扣減），
    * 否則回 `w.ammo_remaining`（GET /weapons 的 DB 值）。
@@ -119,6 +139,8 @@ export function useCopOrdering(opts: {
     ammoType.value = null
     firePolicy.value = 'FREE'
     weapons.value = []
+    firePoint.value = null
+    fireRequestId.value = null
   }
 
   /** 抓此單位可用武器；失敗（他方/無裝備）→ 空清單，下拉隱藏。 */
@@ -211,6 +233,40 @@ export function useCopOrdering(opts: {
   watch([selectedId, orderType], () => {
     clearMovePath()
   })
+  // 切到火力任務才抓核准單清單——沒人下面射擊時不必每選一個單位就多打一次 API。
+  watch(orderType, (t) => {
+    if (t === 'FIRE_MISSION') void loadFireRequests()
+  })
+
+  /** 依當前令型組 payload。三種令型各自獨立，不共用欄位——共用過的欄位最容易忘了清。 */
+  function buildPayload(): Record<string, unknown> {
+    if (orderType.value === 'MOVE') {
+      return {
+        to_h3: destH3.value,
+        mobility_profile: 'FOOT',
+        ...(destLatLng.value
+          ? { to_lat: destLatLng.value.lat, to_lng: destLatLng.value.lng }
+          : {}),
+        // #28 自訂路徑：夾帶 waypoints 讓執行期沿折線前進 + 強穿耗損。
+        ...(moveWaypoints.value.length ? { waypoints: moveWaypoints.value } : {}),
+      }
+    }
+    if (orderType.value === 'FIRE_MISSION') {
+      return {
+        target_lat: firePoint.value?.lat,
+        target_lng: firePoint.value?.lng,
+        rounds: fireRounds.value,
+        ...(fireRequestId.value ? { fire_request_id: fireRequestId.value } : {}),
+      }
+    }
+    return {
+      target_unit_id: targetUnitId.value,
+      ...(weaponId.value ? { weapon_id: weaponId.value } : {}),
+      ...(ammoType.value ? { ammo_type: ammoType.value } : {}),
+      // 聯合火力（未指定單一武器）且政策非 FREE → 夾帶 fire_policy（SPEC_EXTEND P4）。
+      ...(!weaponId.value && firePolicy.value !== 'FREE' ? { fire_policy: firePolicy.value } : {}),
+    }
+  }
 
   async function submit() {
     if (!selectedId.value) return
@@ -226,26 +282,7 @@ export function useCopOrdering(opts: {
     }
     message.value = ''
     precheck.value = null
-    const payload =
-      orderType.value === 'MOVE'
-        ? {
-            to_h3: destH3.value,
-            mobility_profile: 'FOOT',
-            ...(destLatLng.value
-              ? { to_lat: destLatLng.value.lat, to_lng: destLatLng.value.lng }
-              : {}),
-            // #28 自訂路徑：夾帶 waypoints 讓執行期沿折線前進 + 強穿耗損。
-            ...(moveWaypoints.value.length ? { waypoints: moveWaypoints.value } : {}),
-          }
-        : {
-            target_unit_id: targetUnitId.value,
-            ...(weaponId.value ? { weapon_id: weaponId.value } : {}),
-            ...(ammoType.value ? { ammo_type: ammoType.value } : {}),
-            // 聯合火力（未指定單一武器）且政策非 FREE → 夾帶 fire_policy（SPEC_EXTEND P4）。
-            ...(!weaponId.value && firePolicy.value !== 'FREE'
-              ? { fire_policy: firePolicy.value }
-              : {}),
-          }
+    const payload = buildPayload()
     try {
       const resp = await submitOrder(sessionId.value, {
         unit_id: selectedId.value,
@@ -260,6 +297,12 @@ export function useCopOrdering(opts: {
         timeoutMs: 4000,
       })
       if (orderType.value === 'MOVE') clearMovePath() // #28 送出後清路徑預覽
+      if (orderType.value === 'FIRE_MISSION') {
+        // 核准單在令被收下時就兌現掉了（B5.3）——不重抓的話，下拉裡還留著那張已用掉的單。
+        firePoint.value = null
+        fireRequestId.value = null
+        await loadFireRequests()
+      }
       await refresh()
     } catch (e) {
       const err = e as ApiError & { message?: string }
@@ -304,6 +347,11 @@ export function useCopOrdering(opts: {
     ammoOptions,
     firePolicy,
     combinedMode,
+    firePoint,
+    fireRounds,
+    fireRequestId,
+    approvedFireRequests,
+    loadFireRequests,
     liveAmmo,
     resetOrderForm,
     loadWeapons,

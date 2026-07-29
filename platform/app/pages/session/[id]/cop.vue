@@ -162,6 +162,7 @@ const {
   movePathCoords,
   moveCrossPoints,
   weapons,
+  firePoint,
   resetOrderForm,
   loadWeapons,
   schedulePreview,
@@ -358,6 +359,12 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
     moveWaypoints.value = [] // 單點目的地→清自訂路徑
     targeting.value = false
     schedulePreview()
+    return
+  }
+  // WP-C10.2 面目標射擊：點地圖＝設落點（打座標，所以不需要點到任何單位）。
+  if (orderType.value === 'FIRE_MISSION' && targeting.value) {
+    firePoint.value = { lng: e.lng, lat: e.lat }
+    targeting.value = false
     return
   }
   // ENGAGE 瞄準中點到空白（未命中敵方單位）→ 取消瞄準但保留選取（避免誤點就丟失單位，#3）。
@@ -649,6 +656,7 @@ onBeforeUnmount(() => {
             :basemap-id="basemap"
             :dest-h3="destH3"
             :dest-point="destLatLng"
+            :fire-point="firePoint"
             :move-path="movePathCoords"
             :move-forced="movePreview?.forced ?? false"
             :move-crossings="moveCrossPoints"
