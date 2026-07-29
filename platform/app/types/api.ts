@@ -591,6 +591,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 可回滾的狀態快照點（WP-E1）。限統裁——快照點洩漏對手的推演節奏。 */
+        get: operations["listCheckpoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/orders": {
         parameters: {
             query?: never;
@@ -1260,8 +1279,23 @@ export interface components {
         ControlRequest: {
             /** @enum {string} */
             action: "PAUSE" | "RESUME" | "ROLLBACK";
-            /** @description ROLLBACK 目標 tick */
+            /** @description ROLLBACK 目標 tick——必須是既有快照的 tick（見 GET /sessions/{id}/checkpoints）。 回滾為非同步：端點驗證目標並排入請求 + 暫停該局，實際還原由重建後的 runner 在啟動階段執行（≤ 掃描間隔，約 3 秒）。回滾後該局維持暫停，需自行 RESUME。 */
             target_tick?: number | null;
+        };
+        ControlResponse: {
+            seq: number;
+            /** @description ROLLBACK 時回傳已受理的目標 tick（其餘動作為 null） */
+            rollback_requested_tick?: number | null;
+        };
+        /** @description 一個可回滾的狀態快照點（WP-E1）。 */
+        CheckpointView: {
+            /** @description 快照代表「此 tick 跑完後」的狀態 */
+            tick: number;
+            /** @description 快照當下的帳本鏈尾 seq（時間軸身分） */
+            ledger_seq: number;
+            state_hash: string;
+            /** Format: date-time */
+            created_at: string;
         };
         /** @enum {string} */
         OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE";
@@ -2747,7 +2781,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InjectResponse"];
+                    "application/json": components["schemas"]["ControlResponse"];
+                };
+            };
+            /** @description Not White Cell */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ROLLBACK 目標 tick 無對應快照 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listCheckpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Checkpoints（依 ledger_seq 由新到舊） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointView"][];
                 };
             };
             /** @description Not White Cell */

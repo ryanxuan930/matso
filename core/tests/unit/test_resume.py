@@ -9,19 +9,25 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.aar.events import read_events
 from app.engine.rng import DeterministicRNG
-from app.models import SimCheckpoint, WargameSession
+from app.models import Order, SimCheckpoint, TacticalEventLog, WargameSession
+from app.models.enums import OrderStatus
+from app.sim_control import session_rollback_key
 from app.state.checkpoint import (
     CheckpointManager,
     compute_state_hash,
+    rollback,
     serialize_state,
 )
 from app.state.hot_state import InMemoryHotState
-from app.state.ledger import LedgerEvent, LedgerWriter
+from app.state.ledger import LedgerEvent, LedgerWriter, superseded_seqs, verify_chain
 from app.state.resume import (
     ResumeResult,
+    apply_pending_rollback,
     forward_roll,
     read_live_tick,
     resume_session,
@@ -40,6 +46,13 @@ class FakeRedis:
         if self._explode:
             raise ConnectionError("redis down")
         return self._values.get(key)
+
+
+class MutableFakeRedis(FakeRedis):
+    """再加一個 delete()——回滾請求消費後要清掉。"""
+
+    def delete(self, key: str) -> None:
+        self._values.pop(key, None)
 
 
 @pytest.fixture
@@ -372,3 +385,159 @@ def test_resume_on_a_never_checkpointed_session(
         session_factory=session_factory, client=FakeRedis(), session_id=session_id, hot=_hot()
     )
     assert result == ResumeResult(0, False, None, 0, 0)
+
+
+# --- WP-E1 (5)：回滾接活（Order 回捲 + Ledger 邏輯截斷）---
+
+
+def _order(db: Session, sid: str, oid: str, status: OrderStatus, tick: int) -> None:
+    db.add(
+        Order(
+            id=oid,
+            session_id=sid,
+            unit_id="u1",
+            issuer_id="p1",
+            order_type="ENGAGE",
+            status=status,
+            payload={"target_unit_id": "u2"},
+            issued_at_tick=tick,
+        )
+    )
+
+
+def test_rollback_rewinds_order_status(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """回滾若不回捲令狀態，T 之後打完的交戰令仍是 COMPLETED——那場交戰再也不會發生。"""
+    with session_factory() as db:
+        _order(db, session_id, "o-early", OrderStatus.VALIDATED, 10)
+        db.commit()
+    CheckpointManager(session_factory).checkpoint(
+        session_id, tick=50, state={"u1": {"health": 100}}, ledger_seq=-1
+    )
+    with session_factory() as db:  # 快照之後：舊令打完、又下了一張新令
+        db.get(Order, "o-early").status = OrderStatus.COMPLETED
+        _order(db, session_id, "o-late", OrderStatus.VALIDATED, 60)
+        db.commit()
+
+    result = rollback(
+        session_factory, LedgerWriter(session_factory), session_id, _hot(), target_tick=50
+    )
+    assert (result.orders_restored, result.orders_cancelled) == (1, 1)
+    with session_factory() as db:
+        assert db.get(Order, "o-early").status == OrderStatus.VALIDATED
+        # 回滾點之後才下的令：世代已不存在 → CANCELLED（而非刪除，稽核紀錄要留）
+        assert db.get(Order, "o-late").status == OrderStatus.CANCELLED
+
+
+def test_rollback_with_a_v1_snapshot_leaves_orders_alone(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """v1 快照沒有 orders 區段——不可把「沒有記錄」誤解成「當時一張令都沒有」而全數取消。"""
+    with session_factory() as db:
+        _order(db, session_id, "o1", OrderStatus.VALIDATED, 10)
+        db.commit()
+    with session_factory() as db:
+        db.add(
+            SimCheckpoint(
+                session_id=session_id,
+                tick=7,
+                ledger_seq=-1,
+                state_blob=serialize_state({"u1": {"health": 100}}),
+                state_hash=compute_state_hash({"u1": {"health": 100}}),
+            )
+        )
+        db.commit()
+    result = rollback(
+        session_factory, LedgerWriter(session_factory), session_id, _hot(), target_tick=7
+    )
+    assert (result.orders_restored, result.orders_cancelled) == (0, 0)
+    with session_factory() as db:
+        assert db.get(Order, "o1").status == OrderStatus.VALIDATED
+
+
+def test_rollback_marks_the_superseded_range_without_deleting(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """ADR 007：帳本一列都不刪（verify_chain 要求 seq 連續），改以區間標記邏輯截斷。"""
+    writer = LedgerWriter(session_factory)
+    writer.append(session_id, [LedgerEvent(event_type="MOVEMENT_STEP", tick=t) for t in range(3)])
+    CheckpointManager(session_factory).checkpoint(
+        session_id, tick=2, state={"u1": {"health": 100}}, ledger_seq=writer.tip_seq(session_id)
+    )
+    writer.append(
+        session_id,
+        [LedgerEvent(event_type="ENGAGEMENT_RESOLVED", tick=t, target_id="u1") for t in (3, 4)],
+    )
+
+    result = rollback(session_factory, writer, session_id, _hot(), target_tick=2)
+    assert (result.superseded_from_seq, result.superseded_to_seq) == (3, 4)
+
+    with session_factory() as db:
+        rows = list(
+            db.scalars(
+                select(TacticalEventLog)
+                .where(TacticalEventLog.session_id == session_id)
+                .order_by(TacticalEventLog.seq)
+            )
+        )
+    assert [r.seq for r in rows] == [0, 1, 2, 3, 4, 5]  # 一列都沒少
+    assert verify_chain(rows).ok  # 鏈仍完整可驗（若實體刪除，這條會紅）
+    assert superseded_seqs(rows) == {3, 4}  # 但那兩則已不屬於現行時間軸
+
+
+def test_aar_excludes_superseded_events(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """被回滾的交戰不得再算進 AAR——否則戰損統計會把同一場打兩次。"""
+    writer = LedgerWriter(session_factory)
+    writer.append(session_id, [LedgerEvent(event_type="MOVEMENT_STEP", tick=0)])
+    CheckpointManager(session_factory).checkpoint(
+        session_id, tick=0, state={"u1": {"health": 100}}, ledger_seq=writer.tip_seq(session_id)
+    )
+    writer.append(
+        session_id,
+        [LedgerEvent(event_type="ENGAGEMENT_RESOLVED", tick=1, target_id="u1", damage_calc=30.0)],
+    )
+    rollback(session_factory, writer, session_id, _hot(), target_tick=0)
+
+    with session_factory() as db:
+        kinds = [e.event_type for e in read_events(db, session_id)]
+    assert "ENGAGEMENT_RESOLVED" not in kinds
+    assert kinds == ["MOVEMENT_STEP", "ROLLBACK"]
+
+
+def test_pending_rollback_is_applied_on_runner_restart(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """白軍排入請求 → runner 重建時執行；tick 鍵一併清掉，好讓續接點退回回滾目標。"""
+    CheckpointManager(session_factory).checkpoint(
+        session_id, tick=20, state={"u1": {"health": 100}}, ledger_seq=-1
+    )
+    client = MutableFakeRedis(
+        {
+            session_rollback_key(session_id): "20",
+            f"session:{session_id}:tick": "88",
+        }
+    )
+    hot = _hot()
+    hot.put_unit("u1", {"health": 5})  # 回滾前的慘況
+
+    assert apply_pending_rollback(session_factory, client, session_id, hot) == 20
+    assert hot.get_unit("u1") == {"health": 100}
+    assert client.get(session_rollback_key(session_id)) is None  # 請求已消費（不會重播）
+    assert resume_tick(session_factory, client, session_id) == 21
+
+
+def test_pending_rollback_with_a_vanished_target_is_dropped(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    client = MutableFakeRedis({session_rollback_key(session_id): "999"})
+    assert apply_pending_rollback(session_factory, client, session_id, _hot()) is None
+    assert client.get(session_rollback_key(session_id)) is None  # 不留下永遠做不了的請求
+
+
+def test_no_pending_rollback_is_a_noop(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    assert apply_pending_rollback(session_factory, MutableFakeRedis(), session_id, _hot()) is None

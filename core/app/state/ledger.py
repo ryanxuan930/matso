@@ -266,3 +266,28 @@ def verify_chain(events: Iterable[TacticalEventLog]) -> VerifyResult:
         prev_hash = ev.self_hash
         verified += 1
     return VerifyResult(ok=True, verified_count=verified)
+
+
+ROLLBACK_EVENT_TYPE = "ROLLBACK"
+
+
+def superseded_seqs(events: Iterable[TacticalEventLog]) -> set[int]:
+    """被白軍回滾棄置的事件 seq 集合（WP-E1／ADR 007：**邏輯**截斷）。
+
+    帳本是 append-only 的證據鏈，rollback 不刪任何一列——`verify_chain` 要求 seq 自 0
+    連續，刪一列就等於「被竄改」，而防竄改正是這條鏈存在的理由。取而代之：ROLLBACK
+    事件的 `detail` 記下被棄世代的 seq 區間，需要「現行時間軸」的消費端（AAR、重播）
+    據此濾除。稽核仍看得到完整歷史，包含被回滾掉的那一段。
+
+    多次回滾的區間直接聯集；後一次回滾把前一次的 ROLLBACK 事件也蓋掉是正常的
+    （它本來就屬於被棄的那一段）。
+    """
+    out: set[int] = set()
+    for ev in events:
+        if ev.event_type != ROLLBACK_EVENT_TYPE:
+            continue
+        detail = ev.detail or {}
+        lo, hi = detail.get("superseded_from_seq"), detail.get("superseded_to_seq")
+        if isinstance(lo, int) and isinstance(hi, int) and hi >= lo:
+            out.update(range(lo, hi + 1))
+    return out

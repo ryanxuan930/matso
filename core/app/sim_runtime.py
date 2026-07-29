@@ -51,7 +51,7 @@ from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
 from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
 from app.state.live_position import apply_pos_cmds, drain_pos_cmds
-from app.state.resume import read_live_tick, resume_session
+from app.state.resume import apply_pending_rollback, read_live_tick, resume_session
 from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
@@ -199,6 +199,8 @@ class SimManager:
                 stream: DeterministicRNG(seed, stream)
                 for stream in ("adjudication", "movement", "sensors")
             }
+            # WP-E1：白軍排入的回滾在此執行（此刻世上只有這一個熱狀態寫入者）。
+            await asyncio.to_thread(apply_pending_rollback, self._factory, client, session_id, hot)
             # WP-E1：從上次跑到的地方續接（core 重啟 / 崩潰 / restart 旗標 / rollback 都會走到）。
             # **必須在 seed_combat_state 之前**——後者會寫熱狀態，寫了就看不出「Redis 是否已空」。
             resumed = await asyncio.to_thread(

@@ -32,6 +32,7 @@ import json
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol, cast, runtime_checkable
 
 import zstandard
@@ -41,6 +42,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.errors import CheckpointTooLargeError, RollbackTargetNotFoundError
 from app.models import Order, SimCheckpoint, TacticalEventLog
+from app.models.enums import OrderStatus
 from app.state.hot_state import HotStateStore, UnitState
 from app.state.ledger import LedgerEvent, LedgerWriter, canonical_json
 
@@ -139,6 +141,16 @@ class CheckpointRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckpointPoint:
+    """快照點的中繼資料（不含狀態）——白軍挑回滾目標用。"""
+
+    tick: int
+    ledger_seq: int
+    state_hash: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class RecoveryResult:
     restored: bool
     restored_tick: int | None
@@ -152,6 +164,11 @@ class RollbackResult:
     rolled_back_to_tick: int
     state_hash: str
     checkpoints_discarded: int
+    orders_restored: int = 0
+    orders_cancelled: int = 0
+    # 被邏輯截斷的 seq 區間（含兩端）；from > to 表示沒有尾段（回滾到最新快照）。
+    superseded_from_seq: int = 0
+    superseded_to_seq: int = -1
 
 
 @runtime_checkable
@@ -232,6 +249,21 @@ class CheckpointManager:
             )
             return _to_record(db.execute(stmt).scalars().first())
 
+    def list_points(self, session_id: str) -> list[CheckpointPoint]:
+        """可回滾的快照點（新→舊，依 ledgerSeq）。**不解壓 blob**——列表端點不需要狀態。"""
+        with self._session_factory() as db:
+            rows = db.execute(
+                select(
+                    SimCheckpoint.tick,
+                    SimCheckpoint.ledger_seq,
+                    SimCheckpoint.state_hash,
+                    SimCheckpoint.created_at,
+                )
+                .where(SimCheckpoint.session_id == session_id)
+                .order_by(SimCheckpoint.ledger_seq.desc())
+            ).all()
+        return [CheckpointPoint(int(t), int(s), str(h), c) for t, s, h, c in rows]
+
     def load_at_tick(self, session_id: str, tick: int) -> CheckpointRecord | None:
         """指定 tick 的 checkpoint（(session, tick) 唯一）。rollback 目標查找用。"""
         with self._session_factory() as db:
@@ -252,6 +284,31 @@ def _to_record(row: SimCheckpoint | None) -> CheckpointRecord | None:
         state_hash=row.state_hash,
         extras=extras,
     )
+
+
+def _restore_orders(db: Session, session_id: str, snapshot: Mapping[str, Any]) -> tuple[int, int]:
+    """把 Order 狀態回捲到快照當時；回傳 (還原數, 取消數)。
+
+    **刻意繞過 `next_status` 狀態機**：狀態機管的是指令生命週期的合法前進，
+    而回滾是時間旅行——COMPLETED 退回 EXECUTING 在生命週期上非法，在時間軸上卻正確。
+    把時間旅行硬塞進生命週期會讓狀態機失去它真正的用途（擋住錯誤的前進）。
+
+    快照裡沒有的令＝回滾點之後才下的，其世代已不存在 → 標 CANCELLED 而非刪除：
+    「誰在什麼時候下了什麼令」是稽核紀錄，不因回滾而消失。
+    """
+    restored = cancelled = 0
+    for row in db.scalars(select(Order).where(Order.session_id == session_id)).all():
+        saved = snapshot.get(row.id)
+        if saved is None:
+            if row.status != OrderStatus.CANCELLED:
+                row.status = OrderStatus.CANCELLED
+                cancelled += 1
+            continue
+        row.status = OrderStatus(saved["status"])
+        row.payload = saved.get("payload") or {}
+        row.resolved_at_tick = saved.get("resolved_at_tick")
+        restored += 1
+    return restored, cancelled
 
 
 def _count_events_after_seq(db: Session, session_id: str, seq: int) -> int:
@@ -306,6 +363,12 @@ def rollback(
       checkpoint 是狀態快取，被棄世代的快照必須刪除，否則之後的 recover 會
       復活被回滾的狀態（O1.7/R2）。
     - ROLLBACK 中繼資料寫入 `detail`（非證據性診斷欄，不入 hash chain）。
+    - **邏輯截斷（WP-E1／ADR 007）**：`detail` 記下被棄世代的 seq 區間
+      `[superseded_from_seq, superseded_to_seq]`，消費端（AAR）據此濾除。實體刪除
+      不做——`verify_chain` 要求 seq 自 0 連續，刪一筆就等於「被竄改」，
+      而防竄改正是這條鏈存在的理由。
+    - **Order 狀態一併回捲**（WP-E1）：不然回到 tick T 之後，T 之後打完的交戰令仍是
+      COMPLETED，那場交戰再也不會發生。快照無 orders 區段（v1）→ 跳過，不動任何令。
     """
     manager = CheckpointManager(session_factory)
     record = manager.load_at_tick(session_id, target_tick)
@@ -313,6 +376,9 @@ def rollback(
         raise RollbackTargetNotFoundError(
             f"session {session_id} 無 tick={target_tick} 的 checkpoint 可回滾"
         )
+    superseded_from = record.ledger_seq + 1
+    superseded_to = ledger_writer.tip_seq(session_id)
+    restored_orders = cancelled_orders = 0
     with session_factory() as db:
         result = cast(
             "CursorResult[Any]",
@@ -323,6 +389,10 @@ def rollback(
                 )
             ),
         )
+        if "orders" in record.extras:
+            restored_orders, cancelled_orders = _restore_orders(
+                db, session_id, record.order_states()
+            )
         db.commit()
         discarded = int(result.rowcount or 0)
     hot_state.restore(record.state)
@@ -336,6 +406,11 @@ def rollback(
                     "rolled_back_to": target_tick,
                     "state_hash": record.state_hash,
                     "checkpoints_discarded": discarded,
+                    # 邏輯截斷區間（ADR 007）：這段事件仍在帳本（證據），但不再屬於現行時間軸。
+                    "superseded_from_seq": superseded_from,
+                    "superseded_to_seq": superseded_to,
+                    "orders_restored": restored_orders,
+                    "orders_cancelled": cancelled_orders,
                 },
             )
         ],
@@ -345,4 +420,8 @@ def rollback(
         rolled_back_to_tick=target_tick,
         state_hash=record.state_hash,
         checkpoints_discarded=discarded,
+        orders_restored=restored_orders,
+        orders_cancelled=cancelled_orders,
+        superseded_from_seq=superseded_from,
+        superseded_to_seq=superseded_to,
     )

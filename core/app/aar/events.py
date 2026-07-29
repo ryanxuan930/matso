@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import TacticalEventLog
+from app.state.ledger import superseded_seqs
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +40,12 @@ def _to_aar(row: TacticalEventLog) -> AarEvent:
 
 
 def read_events(db: Session, session_id: str) -> list[AarEvent]:
-    """依 seq 讀取 session 全部 Ledger 事件（append-only，順序即真相）。"""
+    """依 seq 讀取 session 的 Ledger 事件（append-only，順序即真相）。
+
+    **排除被白軍回滾棄置的世代**（WP-E1／ADR 007）：那些事件仍在帳本裡（證據不刪），
+    但它們描述的是一條已經不存在的時間軸——把它們算進 AAR 會讓戰損統計重複計算、
+    敘事出現「發生過又沒發生」的段落。稽核要看完整歷史請直接查 `TacticalEventLog`。
+    """
     rows = (
         db.execute(
             select(TacticalEventLog)
@@ -49,4 +55,5 @@ def read_events(db: Session, session_id: str) -> list[AarEvent]:
         .scalars()
         .all()
     )
-    return [_to_aar(r) for r in rows]
+    dead = superseded_seqs(rows)
+    return [_to_aar(r) for r in rows if r.seq not in dead]

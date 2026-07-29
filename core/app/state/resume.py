@@ -34,9 +34,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.errors import RollbackTargetNotFoundError
 from app.models import TacticalEventLog
-from app.state.checkpoint import CheckpointManager, CheckpointRecord
+from app.sim_control import session_rollback_key
+from app.state.checkpoint import CheckpointManager, CheckpointRecord, rollback
 from app.state.hot_state import HotStateStore, UnitState, session_tick_key
+from app.state.ledger import LedgerWriter
 
 _LOG = logging.getLogger("app.resume")
 
@@ -131,6 +134,54 @@ def forward_roll(
             hot.update_unit(unit_id, patch)
             applied += 1
     return applied
+
+
+def apply_pending_rollback(
+    session_factory: sessionmaker[Session], client: Any, session_id: str, hot: HotStateStore
+) -> int | None:
+    """runner 啟動時執行白軍排入的回滾請求；回傳目標 tick（無請求 → None）。
+
+    在 runner **自己的行程**做，而不是 API 行程：`RedisHotState` 有 in-process mirror
+    cache，跑中的 runner 看不到外部寫入。API 端只記請求 + 設 restart 旗標，舊 runner
+    收工後由掃描層重建，此時世上只有一個寫入者（紅線：Kernel 是熱狀態的唯一寫入者）。
+
+    回滾後清掉 tick 鍵，好讓 `resume_tick` 退回「最近快照」——rollback 已刪除較晚的
+    快照，故最近的就是回滾目標。暫停旗標**不清**：回滾完立刻繼續跑會很意外，
+    由白軍自行按 RESUME。
+    """
+    key = session_rollback_key(session_id)
+    try:
+        raw = client.get(key)
+    except Exception:
+        _LOG.exception("session %s 讀回滾請求失敗", session_id)
+        return None
+    if raw is None:
+        return None
+    try:
+        target = int(raw)
+    except (ValueError, TypeError):
+        _LOG.warning("session %s 的回滾請求值非法（%r），忽略", session_id, raw)
+        client.delete(key)
+        return None
+    try:
+        result = rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target)
+    except RollbackTargetNotFoundError:
+        _LOG.warning("session %s 的回滾目標 tick=%d 已無快照，略過", session_id, target)
+        client.delete(key)
+        return None
+    client.delete(key)
+    client.delete(session_tick_key(session_id))
+    _LOG.warning(
+        "session %s 已回滾至 tick=%d（棄置快照 %d 份、Ledger seq %d–%d、令還原 %d/取消 %d）",
+        session_id,
+        target,
+        result.checkpoints_discarded,
+        result.superseded_from_seq,
+        result.superseded_to_seq,
+        result.orders_restored,
+        result.orders_cancelled,
+    )
+    return target
 
 
 @dataclass(frozen=True, slots=True)

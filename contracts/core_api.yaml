@@ -95,6 +95,7 @@ components:
                 - ORDER_PRECHECK_FAILED
                 - ORDER_ROE_VIOLATION
                 - ORDER_NO_STRIKE_ZONE
+                - ROLLBACK_TARGET_NOT_FOUND
                 - TERRAIN_UNAVAILABLE
                 - FACTION_INVALID
                 - AI_DISABLED
@@ -525,7 +526,29 @@ components:
       required: [action]
       properties:
         action: { type: string, enum: [PAUSE, RESUME, ROLLBACK] }
-        target_tick: { type: [integer, "null"], description: ROLLBACK 目標 tick }
+        target_tick:
+          type: [integer, "null"]
+          description: >-
+            ROLLBACK 目標 tick——必須是既有快照的 tick（見 GET /sessions/{id}/checkpoints）。
+            回滾為非同步：端點驗證目標並排入請求 + 暫停該局，實際還原由重建後的 runner
+            在啟動階段執行（≤ 掃描間隔，約 3 秒）。回滾後該局維持暫停，需自行 RESUME。
+    ControlResponse:
+      type: object
+      required: [seq]
+      properties:
+        seq: { type: integer }
+        rollback_requested_tick:
+          type: [integer, "null"]
+          description: ROLLBACK 時回傳已受理的目標 tick（其餘動作為 null）
+    CheckpointView:
+      type: object
+      description: 一個可回滾的狀態快照點（WP-E1）。
+      required: [tick, ledger_seq, state_hash, created_at]
+      properties:
+        tick: { type: integer, description: 快照代表「此 tick 跑完後」的狀態 }
+        ledger_seq: { type: integer, description: 快照當下的帳本鏈尾 seq（時間軸身分） }
+        state_hash: { type: string }
+        created_at: { type: string, format: date-time }
     OrderType:
       type: string
       enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE]
@@ -1200,7 +1223,21 @@ paths:
           description: Control event emitted
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/InjectResponse" }
+              schema: { $ref: "#/components/schemas/ControlResponse" }
+        "403": { description: Not White Cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: ROLLBACK 目標 tick 無對應快照, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /sessions/{id}/checkpoints:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listCheckpoints
+      security: [{ bearerAuth: [] }]
+      description: 可回滾的狀態快照點（WP-E1）。限統裁——快照點洩漏對手的推演節奏。
+      responses:
+        "200":
+          description: Checkpoints（依 ledger_seq 由新到舊）
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/CheckpointView" } }
         "403": { description: Not White Cell, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /sessions/{id}/orders:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]

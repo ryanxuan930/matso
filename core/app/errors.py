@@ -34,6 +34,7 @@ class RollbackTargetNotFoundError(MatsoError):
     """指定的 rollback 目標 tick 沒有對應的 checkpoint。"""
 
     error_code = "ROLLBACK_TARGET_NOT_FOUND"
+    http_status = 404  # 白軍挑了一個不存在的快照點
 
 
 class TerrainUnavailableError(MatsoError):
