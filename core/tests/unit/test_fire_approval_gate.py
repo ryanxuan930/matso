@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
 from _order_fakes import OrderWorld, seed_world
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.errors import PrecheckFailedError
 from app.models.enums import RequestKind, RequestStatus
 from app.models.tables import (
     EquipmentInstance,
@@ -215,3 +217,75 @@ def test_fire_mission_gate_off_unaffected(session_factory: sessionmaker[Session]
         unit = db.get(TacticalUnit, world.blue_unit_id)
         assert unit is not None
         assert _precheck_fire_approval(db, unit, payload) == []
+
+
+# ---- 核准單的兌現（令被收下時扣掉，B5.3；FIRE_MISSION 一併，C10.2）----
+
+_HOWITZER_STATS = {
+    "max_range_m": 15000,
+    "ph_by_range_band": [[15000, 0.5]],
+    "damage_by_armor_class": {"INFANTRY": 60},
+    "ammo_types": ["HE"],
+    "indirect_fire": True,
+    "dispersion_cep_m": 50,
+    "lethal_radius_m": 60,
+}
+
+
+def _give_howitzer(factory: sessionmaker[Session], unit_id: str) -> str:
+    with factory() as db:
+        t = EquipmentTemplate(name="M109", category="ARTILLERY", base_stats=_HOWITZER_STATS)
+        db.add(t)
+        db.flush()
+        inst = EquipmentInstance(template_id=t.id, owner_id=unit_id, current_state={"ammo": 30})
+        db.add(inst)
+        db.commit()
+        return inst.id
+
+
+def _status_of(factory: sessionmaker[Session], request_id: str) -> RequestStatus:
+    with factory() as db:
+        req = db.get(Request, request_id)
+        assert req is not None
+        return req.status
+
+
+def test_fire_mission_expends_the_approval_it_used(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """**一張核准單掛一道令。**
+
+    `FireMissionPayload` 不是 `EngagePayload` 的子類，兌現那段若只判 EngagePayload，
+    同一張核准單可以無限次掛在面射擊令上——預檢擋得住「沒核准單」，
+    擋不住「一張單用一百次」。
+    """
+    from _order_fakes import FakeGateway
+
+    from app.orders.schemas import OrderRequest, OrderType
+    from app.orders.service import OrderService
+
+    world = seed_world(session_factory)
+    _give_howitzer(session_factory, world.blue_unit_id)
+    _enable_gate(session_factory, world)
+    rid = _make_request(session_factory, world, RequestStatus.APPROVED)
+
+    req = OrderRequest(
+        unit_id=world.blue_unit_id,
+        order_type=OrderType.FIRE_MISSION,
+        payload={
+            "target_lat": 23.76,
+            "target_lng": 121.26,
+            "rounds": 4,
+            "fire_request_id": rid,
+        },
+    )
+    with session_factory() as db:
+        resp = OrderService(db, FakeGateway()).submit(world.session_id, req, world.blue_issuer_id)
+    assert resp.status == "VALIDATED"
+    assert _status_of(session_factory, rid) is RequestStatus.EXPENDED
+
+    # 同一張單再掛第二道令 → 已 EXPENDED，預檢擋下。
+    # 目標座標故意換一個：payload 一模一樣會走去重路徑（回既有令、不跑預檢），驗不到這件事。
+    again = req.model_copy(update={"payload": {**req.payload, "target_lng": 121.27}})
+    with session_factory() as db, pytest.raises(PrecheckFailedError):
+        OrderService(db, FakeGateway()).submit(world.session_id, again, world.blue_issuer_id)

@@ -104,9 +104,49 @@ def test_multiple_rounds_each_get_own_impact() -> None:
     """齊射每發各自抽落點——用一發乘 N 會讓散布消失（等於打得比實際準）。"""
     w = _weapon(cep=150.0)
     out = resolve_area_fire(w, _AIM, [_target("R1", *_AIM)], _rng(), 5, shooter_id="B1", rounds=4)
-    impacts = out.event.detail["impacts"]  # type: ignore[union-attr,index]
+    impacts = out.event.ai_decision["impacts"]  # type: ignore[union-attr]
     assert len(impacts) == 4
     assert len({tuple(p) for p in impacts}) > 1, "四發落在同一點＝散布沒有生效"
+
+
+def test_impacts_are_evidence_not_diagnostics() -> None:
+    """落點放 `ai_decision`（入 hash chain），不放 `detail`——那裡刻意不入鏈，改得掉。"""
+    w = _weapon(cep=100.0)
+    out = resolve_area_fire(w, _AIM, [], _rng(), 5, shooter_id="B1", rounds=2)
+    assert "impacts" in (out.event.ai_decision or {})  # type: ignore[union-attr]
+    assert not (out.event.detail or {})  # type: ignore[union-attr]
+
+
+def test_losses_are_capped_at_the_target_current_strength() -> None:
+    """齊射累加很容易超過殘存戰力——不封頂的話帳本上的傷亡比實際被扣掉的還多。"""
+    w = _weapon(cep=0.0)
+    weak = AreaTarget(
+        unit_id="R1",
+        faction="RED",
+        lat=_AIM[0],
+        lng=_AIM[1],
+        armor_class="SOFT",
+        current_strength=5.0,
+        authorized_strength=100.0,
+        platform_count=1,
+    )
+    out = resolve_area_fire(w, _AIM, [weak], _rng(), 5, shooter_id="B1", rounds=20)
+    assert out.losses["R1"] == 5.0
+
+
+def test_friendly_losses_are_named_when_shooter_faction_is_known() -> None:
+    """誤傷要能事後追究；射手自己不算在「誤傷友軍」裡。"""
+    w = _weapon(cep=0.0)
+    out = resolve_area_fire(
+        w,
+        _AIM,
+        [_target("R1", *_AIM, faction="RED"), _target("B9", *_AIM, faction="BLUE")],
+        _rng(),
+        5,
+        shooter_id="B1",
+        shooter_faction="BLUE",
+    )
+    assert out.event.ai_decision["friendly_losses"] == ["B9"]  # type: ignore[union-attr]
 
 
 def test_event_carries_aim_and_impact() -> None:

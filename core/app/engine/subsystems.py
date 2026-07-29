@@ -115,6 +115,42 @@ class NoOpAdjudicator:
         return []
 
 
+# --------------------------------------------------------------------------
+# 組合器：Kernel 只有一個 order_source / 一個 adjudicator，但令型不只一種
+# --------------------------------------------------------------------------
+
+
+class ChainedOrderSource:
+    """依序 drain 多個來源，串成一條序列（WP-C10.2：ENGAGE 之外還有 FIRE_MISSION）。
+
+    順序即建構順序、各來源自身已是確定性排序 → 整串確定性，golden replay 不受影響。
+    """
+
+    def __init__(self, *sources: OrderSource) -> None:
+        self._sources = sources
+
+    async def drain(self) -> list[Any]:
+        out: list[Any] = []
+        for source in self._sources:
+            out.extend(await source.drain())
+        return out
+
+
+class DispatchingAdjudicator:
+    """依命令的型別派給對應裁決器（WP-C10.2）。
+
+    **未登錄的型別回空事件而非拋錯**是刻意的：Kernel 的 tick 迴圈不該因為某個令型忘了接線
+    就整局停擺。代價是「忘了接線」會安靜地什麼都不做——故接線本身要有測試釘住。
+    """
+
+    def __init__(self, routes: dict[type, Adjudicator]) -> None:
+        self._routes = routes
+
+    def resolve(self, order: Any, now: SimTime) -> list[LedgerEvent]:
+        adjudicator = self._routes.get(type(order))
+        return adjudicator.resolve(order, now) if adjudicator is not None else []
+
+
 class NoOpMovementSystem:
     async def step(self, now: SimTime) -> list[LedgerEvent]:
         return []

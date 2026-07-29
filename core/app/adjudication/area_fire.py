@@ -106,12 +106,16 @@ def resolve_area_fire(
     tick: int,
     *,
     shooter_id: str,
+    shooter_faction: str | None = None,
     rounds: int = 1,
 ) -> AreaFireResult:
     """一次面目標射擊。回落點、各單位戰力損失、與帳本事件。
 
     `rounds` 為齊射發數：每發各自抽落點，損失累加——這才是「多發覆蓋一片」的語意，
     用一發乘以 N 會讓散布消失（等於打得比實際準）。
+
+    `shooter_faction` 有給時，事件會另外標出**同陣營的傷亡**（誤傷）。這件事必須落在帳本上：
+    面射擊本來就會傷到自己人，而「有沒有傷到自己人」正是事後檢討火力協調的第一個問題。
     """
     aim_lat, aim_lng = aim
     losses: dict[str, float] = {}
@@ -125,22 +129,39 @@ def resolve_area_fire(
             if loss > 0:
                 losses[t.unit_id] = losses.get(t.unit_id, 0.0) + loss
 
-    # 事件記首發落點（供 AAR 標繪）；逐發落點放 detail 供重播畫散布。
+    # 損失封頂在目標當前戰力：齊射累加很容易超過殘存戰力，不封頂的話帳本上的
+    # damage_calc 會比實際被扣掉的還多——AAR 的傷亡統計就成了假的。
+    by_id = {t.unit_id: t for t in targets}
+    for uid, value in list(losses.items()):
+        cur = by_id[uid].current_strength
+        if cur is not None:
+            losses[uid] = min(value, max(0.0, cur))
+
     first_lat, first_lng = impacts[0]
     affected: dict[str, Any] = {uid: round(v, 3) for uid, v in losses.items()}
+    # 逐發落點放 ai_decision（不放 detail）：落點是決定性的**證據**，
+    # detail 刻意不入 hash chain（見 LedgerEvent 註解），證據性欄位不得放那裡。
+    decision: dict[str, Any] = {
+        "aim_lat": aim_lat,
+        "aim_lng": aim_lng,
+        "impact_lat": first_lat,
+        "impact_lng": first_lng,
+        "rounds": max(1, rounds),
+        "losses_by_unit": affected,
+        "impacts": [[la, ln] for la, ln in impacts],
+    }
+    if shooter_faction is not None:
+        friendly = sorted(
+            uid
+            for uid, v in losses.items()
+            if v > 0 and by_id[uid].faction == shooter_faction and uid != shooter_id
+        )
+        decision["friendly_losses"] = friendly
     event = LedgerEvent(
         event_type="AREA_FIRE_RESOLVED",
         tick=tick,
         initiator_id=shooter_id,
         damage_calc=round(sum(losses.values()), 3),
-        ai_decision={
-            "aim_lat": aim_lat,
-            "aim_lng": aim_lng,
-            "impact_lat": first_lat,
-            "impact_lng": first_lng,
-            "rounds": max(1, rounds),
-            "losses_by_unit": affected,
-        },
-        detail={"impacts": [[la, ln] for la, ln in impacts]},
+        ai_decision=decision,
     )
     return AreaFireResult(impact_lat=first_lat, impact_lng=first_lng, losses=losses, event=event)

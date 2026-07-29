@@ -19,7 +19,11 @@ from collections.abc import Callable, Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.adjudication.adjudicator import EngagementAdjudicator, EngageOrderSource
+from app.adjudication.adjudicator import (
+    EngageCommand,
+    EngagementAdjudicator,
+    EngageOrderSource,
+)
 from app.ai_loop.orchestrator import autonomy_config_key, start_ai_workers
 from app.ai_loop.victory import resolve_victory_conditions, run_victory_monitor
 from app.cache import make_redis
@@ -32,12 +36,17 @@ from app.engine.engage_wiring import (
     make_engage_env,
     seed_combat_state,
 )
+from app.engine.fire_wiring import AreaFireAdjudicator, FireMissionCommand, FireMissionOrderSource
 from app.engine.kernel import Kernel
 from app.engine.logistics import ResupplySystem
 from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
-from app.engine.subsystems import NoOpTriggerChecker
+from app.engine.subsystems import (
+    ChainedOrderSource,
+    DispatchingAdjudicator,
+    NoOpTriggerChecker,
+)
 from app.factions.relations import FactionRelations
 from app.factions.session_store import load_session_relations
 from app.factions.visibility import visible_factions
@@ -226,9 +235,11 @@ class SimManager:
             resolver, seed = await asyncio.to_thread(self._prepare_engage, engage_db, session_id)
             # WP-E1：各子系統的 RNG 由 runner 持有（子系統把它藏成私有欄位，Kernel 拿不到）
             # ——快照要存它們的位置、復原要灌回去，都得有這份參照。
+            # WP-C10.2 起多一條 "area_fire"：舊快照沒有這個鍵，restore_rng 會略過該 stream
+            # 讓它自種子開始（不會失敗）——加 stream 不需要重錄 checkpoint。
             rngs = {
                 stream: DeterministicRNG(seed, stream)
-                for stream in ("adjudication", "movement", "sensors")
+                for stream in ("adjudication", "movement", "sensors", "area_fire")
             }
             # WP-E1：白軍排入的回滾在此執行（此刻世上只有這一個熱狀態寫入者）。
             await asyncio.to_thread(apply_pending_rollback, self._factory, client, session_id, hot)
@@ -270,18 +281,37 @@ class SimManager:
                 session_id=session_id,
                 clock=sim_clock,
                 # #33b 通信閘門：OFFLINE/DEGRADED 時 ENGAGE 延後送達（傳 hot + 同一 clock）。
-                order_source=EngageOrderSource(engage_db, session_id, hot, sim_clock),
-                adjudicator=EngagementAdjudicator(
-                    engage_db,
-                    hot,
-                    rngs["adjudication"],
-                    resolver.weapon_for,
-                    make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
-                    quantity_for=resolver.quantity_for,  # #30 squad 齊射
-                    # SPEC_EXTEND P2 聯合兵種：≥2 武器系統 → 武器組合加總（帶熱狀態活彈藥）。
-                    combined_weapons_for=make_combined_weapons_for(resolver, hot),
-                    # WP-B6：射手陣營的 ROE（預設火力政策 + 被禁武器）。無宣告→(None, 空集)。
-                    roe_for=_make_roe_lookup(roe, sensor_resolver.faction_for),
+                # WP-C10.2：ENGAGE 之後串 FIRE_MISSION（面目標射擊）。順序固定 → 決定性不變；
+                # 既有局沒有 FIRE_MISSION 令，故 golden replay 逐位元不受影響。
+                order_source=ChainedOrderSource(
+                    EngageOrderSource(engage_db, session_id, hot, sim_clock),
+                    FireMissionOrderSource(engage_db, session_id, hot, sim_clock),
+                ),
+                adjudicator=DispatchingAdjudicator(
+                    {
+                        EngageCommand: EngagementAdjudicator(
+                            engage_db,
+                            hot,
+                            rngs["adjudication"],
+                            resolver.weapon_for,
+                            make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
+                            quantity_for=resolver.quantity_for,  # #30 squad 齊射
+                            # SPEC_EXTEND P2 聯合兵種：≥2 武器系統 → 武器組合加總（帶活彈藥）。
+                            combined_weapons_for=make_combined_weapons_for(resolver, hot),
+                            # WP-B6：射手陣營的 ROE（預設火力政策 + 被禁武器）。
+                            # 無宣告→(None, 空集)。
+                            roe_for=_make_roe_lookup(roe, sensor_resolver.faction_for),
+                        ),
+                        # WP-C10.2 面目標射擊：**獨立的 RNG stream**——散布抽樣次數會隨發數變動，
+                        # 與交戰共用 stream 的話，打一次砲就會擾動所有交戰的隨機序列。
+                        FireMissionCommand: AreaFireAdjudicator(
+                            engage_db,
+                            hot,
+                            rngs["area_fire"],
+                            resolver.weapons_for,
+                            faction_for=sensor_resolver.faction_for,
+                        ),
+                    }
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,

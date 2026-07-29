@@ -20,7 +20,7 @@ import h3
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.adjudication.weapon import WeaponProfile
+from app.adjudication.weapon import INDIRECT_CATEGORIES, WeaponProfile
 from app.factions import FactionRelations
 from app.models.enums import RequestKind, RequestStatus
 from app.models.tables import (
@@ -171,15 +171,11 @@ def _precheck_roe_weapon(
     ]
 
 
-# 曲射武器類別（WP-B5.3）——與 engage_wiring 的 _WEAPON_CATEGORIES 同一組名稱。
-_INDIRECT_CATEGORIES = frozenset({"ARTILLERY", "MISSILE"})
-
-
 def _unit_has_indirect(db: Session, unit: TacticalUnit) -> bool:
     rows = db.scalars(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)).all()
     for inst in rows:
         tmpl = db.get(EquipmentTemplate, inst.template_id)
-        if tmpl is not None and str(tmpl.category) in _INDIRECT_CATEGORIES:
+        if tmpl is not None and str(tmpl.category) in INDIRECT_CATEGORIES:
             return True
     return False
 
@@ -210,7 +206,7 @@ def _precheck_fire_approval(
     elif payload.weapon_id:
         inst = db.get(EquipmentInstance, payload.weapon_id)
         tmpl = db.get(EquipmentTemplate, inst.template_id) if inst is not None else None
-        if tmpl is None or str(tmpl.category) not in _INDIRECT_CATEGORIES:
+        if tmpl is None or str(tmpl.category) not in INDIRECT_CATEGORIES:
             return []  # 指名的是直射武器 → 不需火協
     elif not _unit_has_indirect(db, unit):
         return []  # 未指名，且該單位根本沒有曲射武器 → 不需火協
@@ -265,7 +261,7 @@ def _precheck_fire_mission(
     best_range = 0.0
     for inst in rows:
         tmpl = db.get(EquipmentTemplate, inst.template_id)
-        if tmpl is None or str(tmpl.category) not in _INDIRECT_CATEGORIES:
+        if tmpl is None or str(tmpl.category) not in INDIRECT_CATEGORIES:
             continue
         try:
             profile = WeaponProfile.from_base_stats(dict(tmpl.base_stats))

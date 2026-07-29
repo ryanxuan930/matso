@@ -14,6 +14,12 @@ from typing import Any
 # 拉格朗日多項式穿過全部控制點（曲線平滑，#4）。未知值退回 linear。
 _PH_INTERP_MODES = ("linear", "polynomial")
 
+# 曲射（間瞄）武器的裝備類別。**判定一律看 category，不看 baseStats.indirect_fire**：
+# 後者是使用者可在軍械庫自行填的旗標，漏填時「預檢說可以打、裁決卻找不到武器」——
+# 令會通過卻毫無效果，而且沒有任何錯誤訊息。預檢（orders/precheck）與面射擊裁決接線
+# （engine/fire_wiring）**必須共用這一份**，兩邊各寫一份就是兩份會漂移的規則。
+INDIRECT_CATEGORIES = frozenset({"ARTILLERY", "MISSILE"})
+
 
 def _clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x

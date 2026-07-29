@@ -762,7 +762,7 @@ components:
         created_at: { type: string, format: date-time }
     OrderType:
       type: string
-      enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE]
+      enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE, FIRE_MISSION]
     OrderStatus:
       type: string
       enum: [PENDING, VALIDATED, EXECUTING, COMPLETED, REJECTED, CANCELLED]
@@ -775,7 +775,7 @@ components:
         payload:
           type: object
           additionalProperties: true
-          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。"
+          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。"
         acknowledge_restricted:
           type: boolean
           description: "WP-A3（省略＝false）：下令者明確確認『目標位於限制射擊區（RESTRICTED_FIRE）仍要射擊』。僅對 RESTRICTED_FIRE 有效——NO_STRIKE 不可 override。為 true 且確實落在限制射擊區時，伺服端寫一筆 ORDER_RESTRICTED_FIRE_OVERRIDE 至 Ledger 供 AAR 追究。"

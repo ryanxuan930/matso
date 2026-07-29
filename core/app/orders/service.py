@@ -21,7 +21,13 @@ from app.factions import FactionRelations
 from app.models.enums import OrderStatus
 from app.models.tables import Order, TacticalUnit
 from app.orders.precheck import PhysicsGateway, precheck_error_code, run_precheck
-from app.orders.schemas import EngagePayload, OrderRequest, OrderResponse, PrecheckResult
+from app.orders.schemas import (
+    EngagePayload,
+    FireMissionPayload,
+    OrderRequest,
+    OrderResponse,
+    PrecheckResult,
+)
 from app.orders.state_machine import is_user_cancellable, next_status
 from app.orders.validator import validate_order
 from app.state.ledger import LedgerEvent
@@ -62,7 +68,11 @@ class OrderService:
         # WP-B5.3：火協核准單在**令被收下時**兌現，不是在裁決命中時。
         # 一張核准單對應「一次火力任務」的授權；令被接受＝授權已使用。
         # 若等命中才扣，令被取消或未命中時授權會憑空復活。
-        if precheck.feasible and isinstance(validated.payload, EngagePayload):
+        #
+        # **FIRE_MISSION 必須一起收**（WP-C10.2）：FireMissionPayload 不是 EngagePayload 的子類，
+        # 只判 EngagePayload 的話，同一張核准單可以無限次掛在面射擊令上——
+        # 預檢擋得住「沒核准單」，擋不住「一張單用一百次」。
+        if precheck.feasible and isinstance(validated.payload, (EngagePayload, FireMissionPayload)):
             rid = validated.payload.fire_request_id
             if rid:
                 expend_request(self._db, rid)
