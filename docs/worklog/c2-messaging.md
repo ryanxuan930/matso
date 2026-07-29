@@ -60,10 +60,11 @@ roadmap 那條鏈寫的是 `B5.1 → B5.2 信文/申請核覆 → C10`，所以 
 
 ## 計畫
 
-- [ ] 1. 契約先行：`Message` / `Request` schema + 端點 → 驗證。
-- [ ] 2. DB：prisma schema 兩張新表 + enum → migrate。
-- [ ] 3. SQLAlchemy models + schema_sync。
-- [ ] 4. 審批 registry（誰能核覆）+ 服務層狀態機（PENDING→APPROVED/DENIED→EXPENDED）。
+- [x] 1. 契約先行：`Message` / `Request` schema + 端點 → 驗證。
+- [x] 2. DB：prisma schema 兩張新表 + enum → migrate。
+- [x] 3. SQLAlchemy models + schema_sync。
+- [x] 4a. 審批 registry（誰能核覆）。
+- [ ] 4b. 服務層狀態機（PENDING→APPROVED/DENIED→EXPENDED）+ 配額。
 - [ ] 5. API：送信 / 收信匣 / 送出申請 / 核覆 / 查詢。
 - [ ] 6. WS：席位受眾 + 推播（後端過濾，紅線 3）。
 - [ ] 7. 前端：信文匣 + 申請/核覆 UI。
@@ -71,12 +72,42 @@ roadmap 那條鏈寫的是 `B5.1 → B5.2 信文/申請核覆 → C10`，所以 
 
 ## 執行紀錄
 
-- `22:30` 開卡。讀 SPEC_V2 §6 WP-B5、現有 `faction_filter`、B5.1 的 seats registry。
-  訂出切卡方式（本卡只做 1+2）與三個設計要點。
+- `22:30` 開卡，訂切卡方式（本卡只做信文 + 審批鏈）與三個設計要點。
+- `22:4x` **契約先行**：9 個 schema（MessageKind/RequestKind/RequestStatus/MessageView/
+  RequestView/配額…）+ 3 個端點 + 3 個錯誤碼，openapi-spec-validator 通過。
+- `22:5x` **DB**（`d18c46a`）：`Message` / `Request` 兩張表 + 三個 enum → prisma migrate
+  （18 tables / 170 columns）。SQLAlchemy models 補上，schema_sync 綠。
+  中間踩到一個小的：`readAt` 在 prisma 是 nullable、SQLAlchemy 端漏了 `| None`，
+  schema_sync_check 直接抓出來——那個關卡是有用的。
+- `23:0x` **核覆權 registry**（`b340b2e`）：`app/c2` 的 `SEAT_APPROVAL`，
+  與 B5.1 的 `SEAT_ORDER_TYPES` 並列。11 個測試。
+
+## 目前狀態（給接手的人）
+
+**已完成**：契約、DB、models、核覆權 registry（純函數 + 測試）。
+**未完成**：服務層狀態機 + 配額、API 端點、WS 席位受眾、前端。
+
+### 已經想清楚、照著做即可的部分
+
+- **狀態機**：PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED。
+  轉移一律經單一函數，非 PENDING 再核覆要拋 `RequestAlreadyDecidedError`（409）。
+- **配額用罄的處理**：規格說「配額用罄後申請自動 DENIED」——**不是拒收**。
+  差別很重要：留痕才看得出這個陣營在第幾 tick 被配額卡住，那正是 AAR 要評的東西。
+- **送出申請時附言**要一併生成一封 `REQUEST` 信文（`ref_id` 指向申請單），
+  核覆時生成 `APPROVAL` 信文——信文才是 C2 工件流轉的載體，申請單只是狀態。
+
+### 還沒解的設計問題
+
+- **WS 席位受眾**：`stream/faction_filter.py` 目前只認 `faction` / `factions` / `exclusive`。
+  信文要送到「某陣營的某一席」，需要新的受眾維度。
+  ⚠ 那支檔案是紅線 3 的守門處，加席位受眾**不得放寬既有的陣營過濾**，
+  WP-C5 的 `exclusive` 語義也要保住。動它之前先把現有 4 條分支的真值表寫出來。
+- **配額來源**：想定層目前沒有 `request_quotas` 欄位。要嘛加進 scenario schema
+  （得動 O7.1 的 loader 與驗證），要嘛先放 session 層。**還沒決定**。
 
 ## 中斷續作指引
 
-- 尚未動程式碼。**先確認切卡方式**：本卡只做信文 + 審批鏈，火協 gate/標繪分送另開卡。
-- 順序：契約 → prisma migrate → models → registry/服務 → API → WS → 前端。
-- 動 `stream/faction_filter.py` 時要格外小心——那是紅線 3 的守門處，
-  加席位受眾不得放寬既有的陣營過濾（WP-C5 的 `exclusive` 語義也要保住）。
+- 下一步是 **4b 服務層狀態機 + 配額**，再來 API → WS → 前端。
+- 動 `faction_filter.py` 前務必先讀上面的警告。
+- 本卡刻意不做：曲射火協 gate（B5.3）、標繪分送與殲敵自動回報（B5.4）。
+- 已知界線：配額是**整局總量非每日**（SimClock 無模擬日概念），已寫進契約說明。
