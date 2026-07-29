@@ -225,6 +225,11 @@ def test_no_shooter_faction_is_unknown() -> None:
 
 def _fire_with(gateway: object | None, fo_alive: bool) -> dict[str, object]:
     """一門砲 + 一個前觀（生／死）→ 回 AREA_FIRE_RESOLVED 的 ai_decision。"""
+    return _fire_events(gateway, fo_alive)[0]
+
+
+def _fire_events(gateway: object | None, fo_alive: bool) -> list[dict[str, object]]:
+    """同上，但回**全部**事件的 ai_decision（含 BDA_REPORT，若有）。"""
     from app.engine.engage_wiring import WeaponEntry
     from app.models.enums import OrderStatus, UnitLevel
     from app.models.tables import Order, TacticalUnit, WargameSession
@@ -290,10 +295,11 @@ def _fire_with(gateway: object | None, fo_alive: bool) -> dict[str, object]:
         lambda _uid: [entry],
         faction_for=lambda _uid: "BLUE",
         gateway=gateway,
+        bda_rng=_rng("bda"),
     )
     events = adj.resolve(FireMissionCommand(order.id, gun.id, _AIM[0], _AIM[1], rounds=2), _NOW)
     assert events and events[0].ai_decision is not None
-    return dict(events[0].ai_decision)
+    return [dict(e.ai_decision or {}) | {"_type": e.event_type} for e in events]
 
 
 def test_a_gun_that_can_see_its_own_impact_is_its_own_observer() -> None:
@@ -326,3 +332,26 @@ def test_observation_is_recorded_in_the_ledger() -> None:
     dec = _fire_with(None, fo_alive=True)
     assert dec["observation"] == "UNKNOWN"
     assert dec["dispersion_mult"] == 1.0
+
+
+# ---- WP-C10.4b：沒有觀測就沒有戰果評估 ----
+
+
+def test_an_observed_mission_produces_a_bda_report() -> None:
+    types = [d["_type"] for d in _fire_events(_Gateway(visible=True), fo_alive=True)]
+    assert types == ["AREA_FIRE_RESOLVED", "BDA_REPORT"]
+
+
+def test_an_unobserved_mission_produces_no_bda_at_all() -> None:
+    """**不是回報 0**——0 會被讀成「打了但沒傷到」，是另一種假情報。
+
+    什麼都不發，射方就只知道「砲打出去了」，那正是他沒有前觀時實際擁有的資訊。
+    """
+    types = [d["_type"] for d in _fire_events(_Gateway(visible=True), fo_alive=False)]
+    assert types == ["AREA_FIRE_RESOLVED"]
+
+
+def test_unknown_observation_also_produces_no_bda() -> None:
+    """判不出來時不加倍散布（fail open），但**也不憑空生一份戰果評估**。"""
+    types = [d["_type"] for d in _fire_events(None, fo_alive=True)]
+    assert types == ["AREA_FIRE_RESOLVED"]

@@ -45,6 +45,23 @@ export function useCopFeed(units: () => UnitView[]) {
       }
       return `交戰 ${ini} → ${tgt}`
     }
+    // WP-C10.4：面射擊只說「彈落了」——**不說打死幾個**。
+    // 沒有觀測時後端根本不下發傷亡數字（feed_damage），這裡也不該憑空生一個。
+    if (type === 'AREA_FIRE_RESOLVED') {
+      if (payload?.status === 'REJECTED') {
+        return `火力任務未執行 ${ini}（${String(payload?.reason_detail ?? payload?.reason ?? '')}）`
+      }
+      const rounds = payload?.rounds != null ? ` ${payload.rounds} 發` : ''
+      const blind = payload?.observation === 'UNOBSERVED' ? '（無觀測，散布加倍）' : ''
+      return `面射擊落彈 ${ini}${rounds}${blind}`
+    }
+    // WP-C10.4b：戰果評估。**永遠標「約」與誤差帶**——這是觀測者看到的，不是事實。
+    if (type === 'BDA_REPORT') {
+      const est = Number(payload?.estimated_losses ?? 0)
+      const band = Number(payload?.error_band ?? 0)
+      const pct = band > 0 ? `±${Math.round(band * 100)}%` : ''
+      return `戰果評估 ${ini} 觀測：約 −${est.toFixed(1)}（估計 ${pct}）`
+    }
     if (type === 'UNIT_ARRIVED') return `${ini} 已抵達目標`
     if (type === 'MOVE_ATTRITION') {
       const dmg = payload?.damage != null ? Math.round(Number(payload.damage)) : ''

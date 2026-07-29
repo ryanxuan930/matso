@@ -264,7 +264,7 @@ class SimManager:
             # 讓它自種子開始（不會失敗）——加 stream 不需要重錄 checkpoint。
             rngs = {
                 stream: DeterministicRNG(seed, stream)
-                for stream in ("adjudication", "movement", "sensors", "area_fire")
+                for stream in ("adjudication", "movement", "sensors", "area_fire", "bda")
             }
             # WP-E1：白軍排入的回滾在此執行（此刻世上只有這一個熱狀態寫入者）。
             await asyncio.to_thread(apply_pending_rollback, self._factory, client, session_id, hot)
@@ -338,6 +338,8 @@ class SimManager:
                             # WP-C10.4 觀測判定：沒有前觀 → 散布加倍。用**長生命期的**
                             # gateway（每局建一次），它的斷路器才累積得起來。
                             gateway=_engage_gateway(),
+                            # WP-C10.4b BDA 誤差：獨立 stream（見 AreaFireAdjudicator 註解）。
+                            bda_rng=rngs["bda"],
                         ),
                     }
                 ),

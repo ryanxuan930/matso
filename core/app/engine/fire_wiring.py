@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication.area_fire import AreaTarget, resolve_area_fire
+from app.adjudication.bda import build_bda_event
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.weapon import INDIRECT_CATEGORIES
 from app.comms import order_admissible, parse_link_state
@@ -181,6 +182,7 @@ class AreaFireAdjudicator:
         weapons_for: Callable[[str], Sequence[WeaponEntry]],
         faction_for: Callable[[str], str] | None = None,
         gateway: object | None = None,
+        bda_rng: DeterministicRNG | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -189,6 +191,10 @@ class AreaFireAdjudicator:
         self._faction_for = faction_for
         # WP-C10.4 觀測判定用的地形 LOS gateway。None＝判不出來（UNKNOWN → 不加倍）。
         self._gateway = gateway
+        # WP-C10.4b BDA 誤差用的**獨立** RNG stream。與落點共用一條的話，
+        # 「這次有沒有前觀」會決定抽樣次數，於是前觀死不死會改變後續每一發的落點。
+        # None → 不發 BDA（既有測試/呼叫端零行為變更）。
+        self._bda_rng = bda_rng
 
     def resolve(self, order: FireMissionCommand, now: SimTime) -> list[LedgerEvent]:
         shooter = self._hot.get_unit(order.shooter_id)
@@ -240,7 +246,41 @@ class AreaFireAdjudicator:
             event.ai_decision["observation"] = verdict.value
             event.ai_decision["dispersion_mult"] = dispersion_multiplier(verdict)
         self._complete(order.order_id, now.tick)
-        return [event] if event is not None else []
+        if event is None:
+            return []
+        bda = self._bda_event(order, verdict, shooter_faction, aim, result.losses, now)
+        return [event, bda] if bda is not None else [event]
+
+    def _bda_event(
+        self,
+        order: FireMissionCommand,
+        verdict: ObserverVerdict,
+        shooter_faction: str | None,
+        aim: tuple[float, float],
+        losses: dict[str, float],
+        now: SimTime,
+    ) -> LedgerEvent | None:
+        """觀測者的戰果回報（WP-C10.4b）。**沒有觀測就沒有回報。**
+
+        不是回報 0——那會被讀成「打了但沒傷到」，是另一種假情報。什麼都不發，
+        射方就只知道「砲打出去了」，那正是沒有前觀時他實際擁有的資訊。
+
+        `shooter_faction` 為空時也不發：`event_audience` 對沒有受眾線索的事件
+        **退回全域廣播**，那會把戰果評估送給挨打的一方。
+        """
+        if self._bda_rng is None or verdict is not ObserverVerdict.OBSERVED:
+            return None
+        if not shooter_faction:
+            return None
+        return build_bda_event(
+            tick=now.tick,
+            shooter_id=order.shooter_id,
+            shooter_faction=shooter_faction,
+            aim=aim,
+            truth=sum(losses.values()),
+            rng=self._bda_rng,
+            order_id=order.order_id,
+        )
 
     def observer_verdict(
         self,

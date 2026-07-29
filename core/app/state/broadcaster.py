@@ -98,6 +98,14 @@ def build_event_envelope(
         "to",
         "mode",
         "winners",
+        # WP-C10.4：面射擊的觀測狀態（射方自己的資訊：那個點上有沒有我的眼睛）+ 發數。
+        "observation",
+        "rounds",
+        # WP-C10.4b BDA：估計值與誤差帶。**`is_estimate` 一定要一起帶**——
+        # 前端據它決定永遠不把這個數字呈現成真值。
+        "estimated_losses",
+        "is_estimate",
+        "error_band",
     ):
         if isinstance(event.ai_decision, dict) and k in event.ai_decision:
             payload[k] = event.ai_decision[k]

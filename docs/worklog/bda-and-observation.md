@@ -1,8 +1,8 @@
 ---
 task: WP-C10.4       # SPEC_V2 §6 WP-C10（BDA 回報 + 散布係數掛觀測者）
-status: IN_PROGRESS
+status: DONE
 started: 2026-07-31T06:20+08:00
-updated: 2026-07-31T06:55+08:00
+updated: 2026-07-31T07:35+08:00
 agent: Opus 5
 ---
 
@@ -31,7 +31,7 @@ BDA 若與一個精確的真實傷亡數字同時抵達，那個估計值就只�
 | 卡 | 範圍 | 狀態 |
 |----|------|------|
 | **C10.4a** | 觀測判定 + 散布掛觀測者 + 關閉 damage 洩漏 | ✅ 本次 |
-| C10.4b | `BDA_REPORT` 事件（帶迷霧誤差）+ feed 呈現 | 待 |
+| **C10.4b** | `BDA_REPORT` 事件（帶迷霧誤差）+ feed 呈現 | ✅ 本次 |
 
 ## 已完成（4a）
 
@@ -100,15 +100,67 @@ tick 預算 200ms，每次 LOS 是一趟 gRPC（死線也是 200ms）。候選�
 - `uv run mypy` 223 clean、`ruff`、schema-sync 綠
 - **golden replay 未動**——這正是 `dispersion_mult=1.0` 位元不變的驗證
 
+## 已完成（4b）
+
+`core/app/adjudication/bda.py`——純函數，模組存在的理由只有一句話：
+**觀測者回報的戰果不等於真實戰損**。回傳真值的 BDA 不是 BDA，只是把帳本換個名字再印一次。
+
+### 事件形狀：每個留空的欄位都堵一個洞
+
+| 欄位 | 值 | 不這樣寫會怎樣 |
+|------|-----|----------------|
+| `damage_calc` | `None` | `aar/stats.py` 對**每一種**事件都做 `total_damage += damage_calc`，估計值會被加在真值上，總戰損變成兩倍多一點的胡說 |
+| `target_id` | `None` | 真實單位身分流進 AI briefing；而且 `event_audience` 會改按所涉單位推導受眾，覆蓋 `observer_faction` 的意圖 |
+| `observer_faction` | 射方 | **少了它 `event_audience` 退回全域廣播**——挨打的一方會收到別人對自己的戰果評估 |
+| 逐單位明細 | 不給 | 逐單位 BDA 等於把敵軍編成表交給射方（`SENSOR_CONTACT` 被排除在 AI briefing 外正是同一個理由）。真實的 BDA 本來也是「那一片大概掉了多少」 |
+
+### 沒有觀測就沒有回報——**不是回報 0**
+
+0 會被讀成「打了但沒傷到」，那是另一種假情報。什麼都不發，射方就只知道
+「砲打出去了」——那正是他沒有前觀時實際擁有的資訊。`UNKNOWN` 同理：
+不加倍散布（fail open），但也不憑空生一份評估。
+
+### 誤差帶寫在事件裡
+
+`error_band: 0.30` 跟著估計值一起下發，前端渲染成「約 −N（估計 ±30%）」。
+**不用 `confidence: "MEDIUM"` 這種常數標籤**——今天沒有任何東西會讓它變動，
+一個永遠相同的欄位只是雜訊，還會讓人以為背後有模型。
+（觀測距離/光學/煙塵對誤差的影響屬後續保真卡。）
+
+估計值四捨五入到**小數一位**，與帳本 `damage_calc` 的三位刻意不同：
+一眼看得出這是估計，不是量出來的數。
+
+### 獨立的 `"bda"` RNG stream
+
+與落點共用一條的話，「這次有沒有前觀」會決定抽樣次數——於是**前觀死不死會改變後續
+每一發砲彈的落點**。狀態相依的抽樣次數正是 `rng.py` 的 docstring 警告的耦合。
+舊 checkpoint 沒有這個鍵，`restore_rng` 會略過（不需重錄，同 C10.2 的先例）。
+
+`bda_rng=None` → 不發 BDA：既有呼叫端零行為變更。
+
+### 前端 feed
+
+`AREA_FIRE_RESOLVED` 現在有文案了，但**只說「彈落了」不說打死幾個**——
+4a 的 `feed_damage` 已經讓後端根本不下發那個數字，前端也不該憑空生一個。
+沒有觀測時額外標「（無觀測，散布加倍）」，讓操作員看得見自己為什麼打不準。
+
+`BDA_REPORT` 永遠帶「約」與誤差帶。
+
+## 測試證據（全卡）
+
+- `uv run pytest` → **1486 passed / 8 skipped**（+39：觀測 21、迷霧 6、BDA 12）
+- `uv run mypy` 224 clean、`ruff`、schema-sync 綠；前端 lint/typecheck 綠
+- **golden replay 未動**（4a 的 `mult=1.0` 位元不變 + 4b 走獨立 stream）
+- 容器 core+frontend 已重建
+
 ## 中斷續作指引
 
-- **4a 已完成**。下一步：**C10.4b**——`BDA_REPORT` 事件（帶迷霧誤差）+ feed 呈現。
-  4a 已經把 `observation` 判定與 `dispersion_mult` 落在 `ai_decision` 上，4b 直接取用。
-- 4b 的設計要點（survey 已定）：新 ledger 事件而非 C2 信文（信文沒有系統寄件者，
-  且 C2Panel 只在 mount 時抓一次、沒有 WS 訂閱）；`observer_faction` 標受眾；
-  `damage_calc=None`（否則 `aar/stats.py` 會把估計值加進 `total_damage`）；
-  `target_id=None`（否則真實單位身分會流進 AI briefing）；
-  **新開 `"bda"` RNG stream**（在 `area_fire` stream 上抽會擾動後續落點，
-  而且抽樣次數取決於前觀死沒死——狀態相依的抽樣次數正是 `rng.py` 警告的耦合）。
-- **不要**在 4b 之前給 `AREA_FIRE_RESOLVED` 加漂亮的 feed 文案：目前前端只印生的型別字串，
-  洩漏僅止於線上；加了文案就會把它變成螢幕上的完美 BDA。
+- **C10.4 兩張子卡皆已完成**。下一張：**C10.5**（陣地變換 `survivability_move`）。
+- 本卡發現但未修（已入 PROGRESS Backlog）：`has_observer_on` 的三個缺陷、
+  **AAR REST 可繞過整套火力迷霧**（`GET /aar/export` 回整包 `ai_decision`，
+  局中就能拿到 `losses_by_unit` 與每一發落點）、面射擊戰損在 AAR 沒有歸屬。
+  第二項特別要記——不記的話這張卡會宣稱「沒有觀測就沒有戰果」，而一個 REST 端點正在打臉。
+- **盟軍觀測者未納入**：SPEC 寫「任一友軍」，關係矩陣也讓盟軍互相可見，
+  但 C10.1 就已經只認自己陣營。兩處一起改才有意義，未在本卡動。
+- `ENGAGEMENT_RESOLVED` 的 `target_health_after` 刻意保留：直射打得到就看得到，
+  那不是漏掉的洩漏。
