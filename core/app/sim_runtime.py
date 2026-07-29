@@ -265,6 +265,9 @@ class SimManager:
             hot = RedisHotState(client, session_id)
             # 交戰接線（新 #1）：建武器解析器 + 取 master_seed。
             resolver, seed = await asyncio.to_thread(self._prepare_engage, engage_db, session_id)
+            # WP-B2：局中生成的增援要查得到武器。resolver 的快取是 runner 啟動當下的世界，
+            # 不開惰性補查的話，MSEL 生出來的部隊會出現在地圖上、下得了令、卻一發都打不出去。
+            resolver.enable_lazy_lookup(self._factory)
             # WP-E1：各子系統的 RNG 由 runner 持有（子系統把它藏成私有欄位，Kernel 拿不到）
             # ——快照要存它們的位置、復原要灌回去，都得有這份參照。
             # WP-C10.2 起多一條 "area_fire"：舊快照沒有這個鍵，restore_rng 會略過該 stream

@@ -78,6 +78,11 @@ class WeaponResolver:
     """把交戰命令映到 WeaponProfile：優先 honor 下令選定的武器範本，否則取單位主武器（#11）。
 
     活執行期建構一次，快取「範本 → profile」與「單位 → 主武器 profile + 主武器彈藥」。
+
+    **局中新增的單位（WP-B2 增援生成）會惰性補查**：建構時的快取是 runner 啟動當下的世界，
+    而 MSEL 的 `SPAWN_UNITS` 會在局中憑空生出單位。沒有補查的話那些增援
+    **查不到任何武器**——它們會出現在地圖上、下得了令、但一發都打不出去，
+    而且沒有任何錯誤訊息。這是 SPEC_V2 §WP-B2 明列的陷阱。
     """
 
     def __init__(self, db: Session, session_id: str) -> None:
@@ -91,57 +96,79 @@ class WeaponResolver:
         self._primary_qty: dict[str, int] = {}
         # SPEC_EXTEND P1：unit → 有序武器清單（聯合兵種加總逐件裁決）。
         self._weapons_by_unit: dict[str, list[WeaponEntry]] = {}
+        # 惰性補查用（WP-B2）：留著 session 與 factory，才問得到局中新增的單位。
+        self._session_id = session_id
+        self._factory: Callable[[], Session] | None = None
+        # 已補查過但仍無武器的單位——記下來才不會每 tick 都白查一次 DB。
+        self._known_empty: set[str] = set()
         self._build(db, session_id)
+
+    def enable_lazy_lookup(self, factory: Callable[[], Session]) -> None:
+        """開啟惰性補查（部署層注入 session factory）。不開＝維持純快取行為。"""
+        self._factory = factory
+
+    def _lazy_load(self, unit_id: str) -> None:
+        """局中才出現的單位：現查現快取。查不到武器也記著，免得每 tick 重查。"""
+        if self._factory is None or unit_id in self._known_empty:
+            return
+        with self._factory() as db:
+            unit = db.get(TacticalUnit, unit_id)
+            if unit is None or unit.session_id != self._session_id:
+                self._known_empty.add(unit_id)
+                return
+            self._load_unit(db, unit)
+        if unit_id not in self._weapons_by_unit:
+            self._known_empty.add(unit_id)
 
     def _build(self, db: Session, session_id: str) -> None:
         units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
         for unit in units:
-            instances = db.scalars(
-                select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)
-            ).all()
-            best: WeaponProfile | None = None
-            best_ammo = 0
-            best_qty = 1
-            entries: list[WeaponEntry] = []
-            for inst in instances:
-                tmpl = db.get(EquipmentTemplate, inst.template_id)
-                if tmpl is None or tmpl.category not in _WEAPON_CATEGORIES:
-                    continue
-                try:
-                    profile = WeaponProfile.from_base_stats(tmpl.base_stats)
-                except (ValueError, KeyError, TypeError):
-                    continue  # baseStats 壞 → 略過
-                self._by_weapon[inst.template_id] = profile
-                self._by_weapon[inst.id] = profile  # COP weapon_id = 實例 id
-                qty = (
-                    int(inst.quantity)
-                    if isinstance(inst.quantity, int) and inst.quantity >= 1
-                    else 1
+            self._load_unit(db, unit)
+
+    def _load_unit(self, db: Session, unit: TacticalUnit) -> None:
+        """把單一單位的武器讀進快取。`_build` 與惰性補查共用——兩份載入邏輯會漂移。"""
+        instances = db.scalars(
+            select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)
+        ).all()
+        best: WeaponProfile | None = None
+        best_ammo = 0
+        best_qty = 1
+        entries: list[WeaponEntry] = []
+        for inst in instances:
+            tmpl = db.get(EquipmentTemplate, inst.template_id)
+            if tmpl is None or tmpl.category not in _WEAPON_CATEGORIES:
+                continue
+            try:
+                profile = WeaponProfile.from_base_stats(tmpl.base_stats)
+            except (ValueError, KeyError, TypeError):
+                continue  # baseStats 壞 → 略過
+            self._by_weapon[inst.template_id] = profile
+            self._by_weapon[inst.id] = profile  # COP weapon_id = 實例 id
+            qty = int(inst.quantity) if isinstance(inst.quantity, int) and inst.quantity >= 1 else 1
+            self._qty_by_weapon[inst.template_id] = qty
+            self._qty_by_weapon[inst.id] = qty
+            ammo = _ammo_of(inst)
+            entries.append(
+                WeaponEntry(
+                    weapon_id=inst.id,
+                    profile=profile,
+                    quantity=qty,
+                    ammo=ammo,
+                    category=str(tmpl.category),
+                    template_name=str(tmpl.name),
                 )
-                self._qty_by_weapon[inst.template_id] = qty
-                self._qty_by_weapon[inst.id] = qty
-                ammo = _ammo_of(inst)
-                entries.append(
-                    WeaponEntry(
-                        weapon_id=inst.id,
-                        profile=profile,
-                        quantity=qty,
-                        ammo=ammo,
-                        category=str(tmpl.category),
-                        template_name=str(tmpl.name),
-                    )
-                )
-                # 主武器＝射程最遠者（活執行期最小版；未指定選武器時的預設）。
-                if best is None or profile.max_range_m > best.max_range_m:
-                    best, best_ammo, best_qty = profile, ammo, qty
-            if best is not None:
-                self._primary[unit.id] = best
-                self._primary_ammo[unit.id] = best_ammo
-                self._primary_qty[unit.id] = best_qty
-            if entries:
-                # 穩定序（依 weapon_id）：P2 每武器一次 dispersion 抽樣的順序需決定性才能 replay。
-                entries.sort(key=lambda e: e.weapon_id)
-                self._weapons_by_unit[unit.id] = entries
+            )
+            # 主武器＝射程最遠者（活執行期最小版；未指定選武器時的預設）。
+            if best is None or profile.max_range_m > best.max_range_m:
+                best, best_ammo, best_qty = profile, ammo, qty
+        if best is not None:
+            self._primary[unit.id] = best
+            self._primary_ammo[unit.id] = best_ammo
+            self._primary_qty[unit.id] = best_qty
+        if entries:
+            # 穩定序（依 weapon_id）：P2 每武器一次 dispersion 抽樣的順序需決定性才能 replay。
+            entries.sort(key=lambda e: e.weapon_id)
+            self._weapons_by_unit[unit.id] = entries
 
     def weapon_for(self, cmd: EngageCommand) -> WeaponProfile:
         if cmd.weapon_template_id and cmd.weapon_template_id in self._by_weapon:
@@ -157,7 +184,11 @@ class WeaponResolver:
 
         穩定序（依 weapon_id）；無武器單位回空清單。單武器單位長度 1、profile 與
         `weapon_for`（未指定選武器時）一致。
+
+        快取查不到 → 惰性補查一次（局中生成的增援；見類別說明）。
         """
+        if unit_id not in self._weapons_by_unit:
+            self._lazy_load(unit_id)
         return self._weapons_by_unit.get(unit_id, [])
 
     def quantity_for(self, cmd: EngageCommand) -> int:

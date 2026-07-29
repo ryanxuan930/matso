@@ -283,3 +283,123 @@ def test_pause_injection_pulls_the_flag(session_factory) -> None:  # type: ignor
     events = applier("m5", {"action": "PAUSE", "reason": "講評"}, 90)
     assert pulled == [True]
     assert [e.event_type for e in events] == ["MSEL_PAUSE"]
+
+
+# ---- SPAWN_UNITS（B2b）----
+
+
+def test_spawned_unit_ids_are_deterministic() -> None:
+    """**禁 uuid4()**：重播必須生出同一批 id，否則之後所有指涉那些單位的事件都對不上
+    ——重播裡「增援 3 號被擊毀」會指向一個不存在的單位。"""
+    from app.scenario.msel_actions import spawn_unit_id
+
+    assert spawn_unit_id("reinforce-d2", 0) == spawn_unit_id("reinforce-d2", 0)
+    assert spawn_unit_id("reinforce-d2", 0) != spawn_unit_id("reinforce-d2", 1)
+    assert spawn_unit_id("other", 0) != spawn_unit_id("reinforce-d2", 0)
+
+
+def test_spawn_units_creates_units_in_db_and_hot_state(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """生成的單位**要播進熱狀態**——地圖、裁決、MSEL 脈絡讀的都是熱狀態，
+    只寫 DB 的話那支部隊在模擬裡等於不存在。"""
+    from _order_fakes import seed_world
+
+    from app.models.tables import TacticalUnit
+    from app.scenario.msel_actions import make_applier, spawn_unit_id
+    from app.state.hot_state import InMemoryHotState
+
+    world = seed_world(session_factory)
+    hot = InMemoryHotState()
+    applier = make_applier(world.session_id, session_factory, hot)
+    events = applier(
+        "reinforce",
+        {
+            "action": "SPAWN_UNITS",
+            "faction": "RED",
+            "units": [
+                {"designation": "R-REINF-1", "lat": 23.9, "lng": 121.4, "strength": 120.0},
+                {"designation": "R-REINF-2", "lat": 23.91, "lng": 121.41},
+            ],
+        },
+        200,
+    )
+    assert [e.event_type for e in events] == ["MSEL_UNITS_SPAWNED"]
+    uid0 = spawn_unit_id("reinforce", 0)
+    with session_factory() as db:
+        unit = db.get(TacticalUnit, uid0)
+        assert unit is not None and unit.faction == "RED" and unit.designation == "R-REINF-1"
+    assert (hot.get_unit(uid0) or {})["strength"] == 120.0
+
+
+def test_spawning_twice_does_not_duplicate(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """**冪等**：白軍重複扣板機、或重啟後記憶沒還原，都不該生出兩批增援。"""
+    from _order_fakes import seed_world
+
+    from app.models.tables import TacticalUnit
+    from app.scenario.msel_actions import make_applier
+    from app.state.hot_state import InMemoryHotState
+
+    world = seed_world(session_factory)
+    applier = make_applier(world.session_id, session_factory, InMemoryHotState())
+    inject = {
+        "action": "SPAWN_UNITS",
+        "faction": "RED",
+        "units": [{"designation": "R-DUP", "lat": 23.9, "lng": 121.4}],
+    }
+    applier("dup", inject, 10)
+    assert applier("dup", inject, 20) == []  # 第二次什麼都不生
+    with session_factory() as db:
+        n = db.query(TacticalUnit).filter(TacticalUnit.designation == "R-DUP").count()
+    assert n == 1
+
+
+def test_a_lazily_spawned_unit_can_find_its_weapons(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """**SPEC 明列的陷阱**：resolver 的快取是 runner 啟動當下的世界。
+
+    沒有惰性補查的話，MSEL 生出來的增援會出現在地圖上、下得了令、
+    卻一發都打不出去——而且沒有任何錯誤訊息。
+    """
+    from _order_fakes import seed_world
+
+    from app.engine.engage_wiring import WeaponResolver
+    from app.models.tables import EquipmentTemplate
+    from app.scenario.msel_actions import make_applier, spawn_unit_id
+    from app.state.hot_state import InMemoryHotState
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        db.add(
+            EquipmentTemplate(
+                name="REINF_RIFLE",
+                category="KINETIC",
+                base_stats={
+                    "max_range_m": 600,
+                    "ph_by_range_band": [[600, 0.3]],
+                    "damage_by_armor_class": {"INFANTRY": 30},
+                    "ammo_types": ["A"],
+                },
+            )
+        )
+        db.commit()
+        # resolver 在增援出現**之前**建好——正是活執行期的狀況。
+        resolver = WeaponResolver(db, world.session_id)
+    resolver.enable_lazy_lookup(session_factory)
+
+    applier = make_applier(world.session_id, session_factory, InMemoryHotState())
+    applier(
+        "late",
+        {
+            "action": "SPAWN_UNITS",
+            "faction": "RED",
+            "units": [
+                {
+                    "designation": "R-LATE",
+                    "lat": 23.9,
+                    "lng": 121.4,
+                    "equipment": [{"template": "REINF_RIFLE", "quantity": 1, "ammo": 100}],
+                }
+            ],
+        },
+        300,
+    )
+    weapons = resolver.weapons_for(spawn_unit_id("late", 0))
+    assert [w.template_name for w in weapons] == ["REINF_RIFLE"]

@@ -1,12 +1,12 @@
 ---
 task: WP-B2          # SPEC_V2 §6 WP-B2（MSEL 排程執行引擎與白軍誘導迴圈）
-status: IN_PROGRESS  # B2a 完成；B2b（SPAWN_UNITS）與 B2c（白軍 UI）未做
+status: IN_PROGRESS  # B2a/B2b 完成；B2c（白軍 UI）與 MSEL golden 未做
 started: 2026-07-31T09:10+08:00
-updated: 2026-07-31T10:15+08:00
+updated: 2026-07-31T10:40+08:00
 agent: Opus 5
 ---
 
-# WP-B2 MSEL 執行引擎（B2a：DSL + 執行器 + 接上 tick）
+# WP-B2 MSEL 執行引擎（B2a：DSL + 執行器 + 接上 tick；B2b：SPAWN_UNITS）
 
 ## 動手前 MSEL 整個是死的
 
@@ -76,19 +76,35 @@ agent: Opus 5
 活模擬只寫熱狀態；用 DB 組脈絡的話「紅軍推進到北岸」永遠不會成立，而且沒有任何徵兆。
 同 BL-3 `has_observer_on` 踩過的坑。
 
+## 已完成（B2b：SPAWN_UNITS 增援生成）
+
+驗收條件的主角：「D+2 紅軍增援一個營於北岸生成」。
+
+### 兩個前置各自是一個坑
+
+**① 單位 id 必須決定性**。用 `uuid4()` 的話，重播會生出**不同的 id**——
+於是重播裡「增援 3 號被擊毀」那筆事件指向一個不存在的單位，整段時間軸對不起來。
+改為 `sha256("msel-spawn:{entry_id}:{index}")` 派生，順便讓生成**冪等**：
+白軍重複扣板機、或重啟後記憶沒還原，都不會生出兩批部隊。
+
+**② `WeaponResolver` 的快取是 runner 啟動當下的世界**（SPEC 明列的陷阱）。
+沒有補查的話，MSEL 生出來的增援會**出現在地圖上、下得了令、卻一發都打不出去**，
+而且沒有任何錯誤訊息。加了惰性補查：`weapons_for` 查不到就現查現快取，
+查不到武器的單位也記著（`_known_empty`）免得每 tick 白查一次 DB。
+順手把 `_build` 的迴圈主體抽成 `_load_unit` 供兩邊共用——兩份載入邏輯會漂移。
+
+### 生成的單位要播進熱狀態
+
+地圖、裁決、MSEL 脈絡讀的都是熱狀態。只寫 DB 的話那支部隊在模擬裡等於不存在。
+
 ## 未完成（本卡剩餘）
 
-- [ ] **B2b `SPAWN_UNITS`**：增援生成。兩個前置——生成單位的 id 必須**決定性**
-      （由 msel event id 派生，禁 `uuid4()`），且 `WeaponResolver` 在 runner 啟動時建一次、
-      沒有失效通知，局中新增的單位會查不到武器（SPEC 明列的陷阱）。
 - [ ] **B2c 白軍 UI**：待命注入清單（`MselRuntime.pending()` 已備）+ 一鍵扣發 + skip/delay。
       後端的 `fire_manually`/`skip` 已實作，缺 REST 端點與面板。
 - [ ] 含 MSEL 的 golden 案例（SPEC 要求）。
 
 ## 中斷續作指引
 
-- **下一步第一件事**：B2b `SPAWN_UNITS`（增援生成）。兩個前置都要先解：
-  生成單位的 id 必須決定性（由 msel event id 派生，禁 `uuid4()`），
-  且 `WeaponResolver` 目前在 runner 啟動時建一次、沒有失效通知——
-  局中新增的單位會查不到武器（SPEC 明列的陷阱）。
+- **下一步第一件事**：B2c 白軍待命注入面板。後端已備
+  （`MselRuntime.pending()` / `fire_manually` / `skip`），缺 REST 端點與 UI。
 - 既有局零行為變更：無 MSEL 的 session，`MselRuntime.check()` 第一行就回 `[]`。

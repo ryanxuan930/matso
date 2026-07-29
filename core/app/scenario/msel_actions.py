@@ -5,6 +5,8 @@
 
 支援的注入型別：
 
+- `SPAWN_UNITS`：增援生成。**單位 id 由 msel event id 決定性派生**（禁 `uuid4()`）——
+  同一場重播必須生出同一批 id，否則之後所有指涉那些單位的事件都對不上。
 - `MODIFY_UNIT`：白軍軟裁決的機器化出口（[JTLS-F p.1059]）——直接調戰力/位置。
   **雙寫熱狀態與 DB**：只寫熱狀態的話，runner 一重啟 `seed_combat_state` 就用 DB 座標蓋回去
   （這正是 BL-4 那個回滾 bug 的同一個坑）。
@@ -19,6 +21,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -26,8 +29,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models.enums import MessageKind, SeatRole
-from app.models.tables import Message, TacticalUnit
+from app.models.enums import MessageKind, SeatRole, UnitLevel
+from app.models.tables import EquipmentInstance, EquipmentTemplate, Message, TacticalUnit
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
@@ -44,6 +47,8 @@ def make_applier(
 
     def apply(entry_id: str, inject: dict[str, Any], tick: int) -> list[LedgerEvent]:
         action = str(inject.get("action") or "").upper()
+        if action == "SPAWN_UNITS":
+            return _spawn_units(session_id, session_factory, hot, entry_id, inject, tick)
         if action == "MODIFY_UNIT":
             return _modify_unit(session_id, session_factory, hot, entry_id, inject, tick)
         if action == "MESSAGE":
@@ -74,6 +79,104 @@ def make_applier(
         return []  # 無 action ＝ 純事件注入（MSEL 最原始的用法）
 
     return apply
+
+
+def spawn_unit_id(entry_id: str, index: int) -> str:
+    """增援單位的 id——**決定性派生自 MSEL 事件 id**，禁 `uuid4()`。
+
+    重播時必須生出同一批 id：不然重播中「增援 3 號被擊毀」那筆事件會指向一個
+    不存在的單位，整段時間軸就對不起來了。取 SHA-256 前 32 個 hex 是為了塞進
+    `String(191)` 且長得像既有的 uuid（可讀性）。
+    """
+    digest = hashlib.sha256(f"msel-spawn:{entry_id}:{index}".encode()).hexdigest()
+    return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
+
+
+def _spawn_units(
+    session_id: str,
+    session_factory: sessionmaker[Session],
+    hot: HotStateStore,
+    entry_id: str,
+    inject: dict[str, Any],
+    tick: int,
+) -> list[LedgerEvent]:
+    """增援生成：ORBAT 片段 → 建 TacticalUnit + 配裝 + 播熱狀態。
+
+    **冪等**：同一個 entry 重跑（重啟後記憶沒還原、或白軍重複扣板機）不會生出兩批單位
+    ——id 是決定性的，已存在就跳過。
+
+    生成的單位**要播進熱狀態**，否則它在地圖上、在裁決裡、在 MSEL 脈絡裡都不存在
+    （那三處讀的都是熱狀態）。
+    """
+    specs = inject.get("units")
+    if not isinstance(specs, list) or not specs:
+        raise ValueError("SPAWN_UNITS 缺少 units 清單")
+    faction = str(inject.get("faction") or "")
+    if not faction:
+        raise ValueError("SPAWN_UNITS 缺少 faction")
+
+    created: list[str] = []
+    with session_factory() as db:
+        templates = {str(t.name): t.id for t in db.scalars(select(EquipmentTemplate)).all()}
+        for index, spec in enumerate(specs):
+            if not isinstance(spec, dict):
+                continue
+            uid = spawn_unit_id(entry_id, index)
+            if db.get(TacticalUnit, uid) is not None:
+                continue  # 冪等：這批已經生過了
+            strength = float(spec.get("strength", 100.0))
+            unit = TacticalUnit(
+                id=uid,
+                session_id=session_id,
+                designation=str(spec.get("designation") or f"{faction}-R{index + 1}"),
+                unit_level=UnitLevel(str(spec.get("unit_level", "PLATOON"))),
+                faction=faction,
+                current_lat=float(spec["lat"]),
+                current_lng=float(spec["lng"]),
+                current_strength=strength,
+                authorized_strength=strength,
+                health_status=100.0,
+                attributes=dict(spec.get("attributes") or {}),
+            )
+            db.add(unit)
+            db.flush()
+            for item in spec.get("equipment") or []:
+                tmpl_id = templates.get(str(item.get("template")))
+                if tmpl_id is None:
+                    _LOG.warning("SPAWN_UNITS：查無裝備範本 %r，略過", item.get("template"))
+                    continue
+                db.add(
+                    EquipmentInstance(
+                        template_id=tmpl_id,
+                        owner_id=uid,
+                        quantity=int(item.get("quantity", 1)),
+                        current_state={"ammo": int(item.get("ammo", 0))},
+                    )
+                )
+            created.append(uid)
+            # 播熱狀態——不播的話這個單位在地圖、裁決、MSEL 脈絡裡都不存在。
+            hot.put_unit(
+                uid,
+                {
+                    "lat": unit.current_lat,
+                    "lng": unit.current_lng,
+                    "strength": strength,
+                    "authorized_strength": strength,
+                    "health": 100.0,
+                    "armor_class": str(unit.attributes.get("armor_class", "INFANTRY")),
+                    "platform_count": int(unit.attributes.get("platform_count", 1) or 1),
+                },
+            )
+        db.commit()
+    if not created:
+        return []
+    return [
+        LedgerEvent(
+            event_type="MSEL_UNITS_SPAWNED",
+            tick=tick,
+            ai_decision={"msel_id": entry_id, "faction": faction, "unit_ids": created},
+        )
+    ]
 
 
 def _modify_unit(
