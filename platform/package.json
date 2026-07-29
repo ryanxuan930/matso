@@ -11,7 +11,7 @@
     "gen:api": "npx --yes openapi-typescript@7 ../contracts/core_api.yaml -o app/types/api.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "typecheck": "vue-tsc --noEmit",
+    "typecheck": "vue-tsc --build",
     "test:e2e": "playwright test"
   },
   "dependencies": {

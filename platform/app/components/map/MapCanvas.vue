@@ -1330,7 +1330,7 @@ onMounted(async () => {
     // **控制點優先**：控制點畫在線/面之上，同一次 mousedown 兩個委派監聽器都會收到。
     // 不在此擋掉的話，拖頂點會變成整體平移（實測：三個頂點同時位移）。
     // 用命中查詢而非「註冊順序」來決定優先權——順序是隱性契約，改天調換註冊位置就再度失效。
-    const onHandle = map.queryRenderedFeatures(e.point, {
+    const onHandle = map.queryRenderedFeatures([e.point.x, e.point.y], {
       layers: ['mapfeat-vertex', 'mapfeat-midpoint'].filter((l) => map?.getLayer(l)),
     })
     if (onHandle.length) return
@@ -1466,7 +1466,7 @@ onMounted(async () => {
     if (!props.editUnits || !map) return
     if (!e.originalEvent.shiftKey) return // 所有 Shift 互動集中於此（平移仍是無 Shift 拖曳）
     // Shift+點單位 → 加入/移除多選（改在通用 mousedown 處理，不依賴會被 boxZoom 干擾的 layer 事件）。
-    const hit = map.queryRenderedFeatures(e.point, { layers: ['units'] })[0]
+    const hit = map.queryRenderedFeatures([e.point.x, e.point.y], { layers: ['units'] })[0]
     const hitId = hit?.properties?.id
     if (hitId != null) {
       const sid = String(hitId)
@@ -1509,7 +1509,7 @@ onMounted(async () => {
     const fhit = flayers.length ? map?.queryRenderedFeatures(e.point, { layers: flayers })?.[0] : null
     // #99 右鍵控制點 → 帶索引，供上層「刪除控制點」（刪點的最少頂點檢查與提示在上層）。
     const vhit = map?.getLayer('mapfeat-vertex')
-      ? map.queryRenderedFeatures(e.point, { layers: ['mapfeat-vertex'] })?.[0]
+      ? map.queryRenderedFeatures([e.point.x, e.point.y], { layers: ['mapfeat-vertex'] })?.[0]
       : null
     const vi = Number(vhit?.properties?.i)
     emit('contextMenu', {
@@ -1658,7 +1658,7 @@ watch(
       map.setFilter('unit-target-ring', ['==', ['get', 'id'], v ?? NONE])
   },
 )
-watch([() => props.ownUnits, () => props.contacts, () => props.currentTick], syncUnits, {
+watch([() => props.ownUnits, () => props.contacts, () => props.currentTick], () => syncUnits(), {
   deep: true,
 })
 </script>

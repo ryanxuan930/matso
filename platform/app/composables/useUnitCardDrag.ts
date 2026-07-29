@@ -90,5 +90,5 @@ export function useUnitCardDrag(selectedId: Ref<string | null>) {
   }
   onBeforeUnmount(endCardDrag)
 
-  return { unitCardPos, unitCardStyle, onSelectScreenPos, beginCardDrag }
+  return { unitCardPos, unitCardDrag, unitCardStyle, onSelectScreenPos, beginCardDrag }
 }
