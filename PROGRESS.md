@@ -132,6 +132,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-20：契約 fuzz 用 schemathesis **v4**（v3 不支援 FastAPI 產生的 OpenAPI 3.1）；order 端點只斷言「不 5xx」。ruff B008 放行 FastAPI `Depends()` 慣例。
 
 ## Backlog / 發現的問題
+- **e2e 必須在 `.env`-free worktree 跑**：`platform/.env` 的 `NUXT_PUBLIC_API_BASE` 會蓋掉 Playwright 傳給 Nuxt 的 :8100，使 e2e 前端連到 docker 後端（:8000），`e2e-orders` 那局不存在 → 多條 COP 測試假性失敗。舊紀錄只寫「影響底圖那條」，範圍其實大得多（WP-D6.1 發現）。
 - `MapEditorPanel.vue` 的 `.map-editor .me-hd` / `.me-x` 是死規則（面板搬進 FloatingWidget 後，自帶的標題列與關閉鈕變成多餘）。**早於 G1b**——G1a 從 cop.vue 帶過來時就已無使用者，故未順手修（紅線 5）。由 WP-G1b 的機械式孤兒掃描發現。
 
 ### 🧪 e2e 既有紅燈四條（WP-G1a 對等比較時確認，屬 G3）

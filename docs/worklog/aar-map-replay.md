@@ -1,8 +1,8 @@
 ---
 task: WP-D6.1        # SPEC_V2 §6 WP-D6 第 1 項（AAR 地圖重播，量綱修正先行）
-status: IN_PROGRESS
+status: DONE
 started: 2026-07-30T18:40+08:00
-updated: 2026-07-30T18:40+08:00
+updated: 2026-07-30T21:10+08:00
 agent: Opus 5
 ---
 
@@ -58,14 +58,14 @@ fallback 是「拿 damage_calc 從**目標**血量扣掉」。兩者相遇＝把
 
 ## 計畫
 
-- [ ] 1. 量綱修正：`UnitState` 分出 `strength`（點）與 `health`（%），
+- [x] 1. 量綱修正：`UnitState` 分出 `strength`（點）與 `health`（%），
       聚合分支比照活模擬用 `effectiveness_pct(strength / authorized)` 導出；
       `authorized` 由呼叫端注入（事件流裡沒有滿編戰力，那是 DB 靜態資料）。
-- [ ] 2. `damage_calc` fallback 修正：聚合事件不得把雙方損失和算到單側。
-- [ ] 3. 契約先行：`contracts/core_api.yaml` 新增重播狀態的回傳結構 → 驗證 → 再實作端點。
-- [ ] 4. 後端端點：回傳指定 tick 的單位狀態（faction-scoped，比照現有 AAR 存取控制）。
-- [ ] 5. 前端：`scrubTick` → 地圖重繪；播放/暫停/倍速；書籤跳轉。
-- [ ] 6. 測試 + 四道驗證 + e2e。
+- [x] 2. `damage_calc` fallback 修正：聚合事件不得把雙方損失和算到單側。
+- [x] 3. 契約先行：`contracts/core_api.yaml` 新增重播狀態的回傳結構 → 驗證 → 再實作端點。
+- [x] 4. 後端端點：回傳指定 tick 的單位狀態（faction-scoped，比照現有 AAR 存取控制）。
+- [x] 5. 前端：`scrubTick` → 地圖重繪；播放/暫停/倍速；書籤跳轉。
+- [x] 6. 測試 + 四道驗證 + e2e。
 
 ## 執行紀錄
 
@@ -88,53 +88,84 @@ fallback 是「拿 damage_calc 從**目標**血量扣掉」。兩者相遇＝把
 - `20:xx` 前端：`useAarReplay`（差異累加 + 播放/暫停/倍速）、`aar.vue` 重播區、
   `MapCanvas` 加 `fitBounds` prop（AAR 單位常擠在數百公尺內，台灣全景會什麼都看不到）。
 
-## ⛔ 未解：AAR 重播地圖畫面全空（前端最後一哩）
+## ✅ 已解：地圖「畫面全空」是 harness 假象，不是程式錯誤
 
-**現象**：AAR 頁的重播地圖一片空白。但同一時刻用 devtools 手動呼叫 `map.resize()`，
-單位符號**立刻正確畫出來**（三個陣營、顏色正確、位置正確）。
+**結論先講**：AAR 重播地圖**本來就是好的**。所謂「畫面全空」完全是 in-app 瀏覽器
+harness 造成的假象，程式碼一行都不用為它改。
 
-**已確認正常的**（都在畫面全空的當下量到）：
+### 根因
 
-| 檢查 | 值 |
-|------|-----|
-| `querySourceFeatures('units')` | 117（資料進來了） |
-| 已註冊 icon | 3 個陣營色 SIDC 圖 + 血條 |
-| `transform.width/height` | 866 × 350（與容器一致） |
-| `getBounds()` | 涵蓋所有單位座標 |
-| 各 source `isSourceLoaded` | 全部 true；`areTilesLoaded()` true |
-| `queryRenderedFeatures({layers:['units']})` | **0** |
-| `map.loaded()` | **false** |
+| 量測（在「畫面全空」的當下） | 值 |
+|---|---|
+| `document.visibilityState` | **`hidden`** |
+| `requestAnimationFrame` 觸發次數（閒置 2 秒） | **0** |
+| 同上，**截一張圖之後** | **4** |
+| map `render` 事件次數，截圖後 | 0 → 3 |
 
-**已排除**（試過但無效）：
-- `map.triggerRepaint()` — 無效
-- `map.jumpTo(同座標)` — 無效
-- 容器尺寸問題 — transform 與容器尺寸一致，不是 0
-- 在 `map.on('load')` 內註冊 ResizeObserver — 註冊太晚（load 晚於尺寸變化）
-- 改在 map 建立當下註冊 ResizeObserver（**已保留在程式碼裡**，做法本身正確）— 單獨仍無效
-- 首次拿到單位資料後 rAF 內 `resize()` 一次 — 無效（已移除，不留無效的 workaround）
+in-app 瀏覽器把頁面回報為 `hidden`；瀏覽器會暫停隱藏頁面的 `requestAnimationFrame`，
+而 **MapLibre 的 render loop 完全靠 rAF**。所以地圖永遠不繪，除非有東西強制合成畫面。
+**截圖就是那個東西。**
 
-**目前推測**（未證實）：只有 `resize()` 有效而 `triggerRepaint`/`jumpTo` 無效，指向
-**painter / GL viewport 在零尺寸下初始化後未再重新設定**；`resize()` 會呼叫
-`painter.resize()` 重配 framebuffer，另兩者不會。但 transform 已是正確尺寸，
-與這個推測不完全相符，**所以沒有據此下手改**。
+### 這解釋了先前每一個矛盾的觀察
 
-**注意**：`MapCanvas.vue` 本來就有一行 `setTimeout(() => map?.resize(), 300)`
-（在 `map.on('load')` 內、`loaded.value = true` 之前），可見前人遇過同類問題。
-那行在本案例中沒有解決問題。
+- 「`map.resize()` 有效」——**其實是我緊接著截的那張圖有效**。resize 只是把狀態標髒，
+  真正讓它畫出來的是截圖強制觸發的那幾個 frame。
+- 「`triggerRepaint` / `jumpTo` 無效」——因為我用 JS 讀結果、中間沒有截圖，
+  render loop 從頭到尾沒跑過。**我一直在測量一個被凍結的 render loop。**
+- 「COP 的地圖看起來正常」——因為在 COP 我每一步都在截圖。
 
-**下一步建議**（給接手的人，別重跑上面已排除的）：
-1. 在 `syncUnits` 的 `setData` 前後印出 `map.loaded()` / `map._styleDirty` / `map._sourcesDirty`，
-   確認 render loop 到底有沒有被排程。
-2. 若 render loop 沒跑，查 MapLibre v5 的 `_triggerFrame` 是否因為某個條件被抑制。
-3. 對照 COP 頁（可正常顯示）逐項比對兩者的初始化順序差異——最大差別是
-   **COP 的地圖佔滿視窗且在頁面掛載時就有尺寸，AAR 的地圖在 `v-else` 子樹裡、
-   且資料載入完成後才出現**。
-4. 也可考慮繞過：AAR 頁先渲染地圖容器（不等 loading），資料到了再餵 props。
+### 教訓（與右鍵選單那次同一類）
+
+**in-app 瀏覽器 harness 不能用來驗證 MapLibre 的任何東西。**
+合成事件打不進它的事件層（`ctxmenu`/`coords` 那兩支 e2e 的由來），
+現在再加一條：**畫面有沒有真的繪出來也測不了**，因為 rAF 是停的。
+唯一可信的是真 Playwright。
+
+另一個給自己的提醒：連續五次「改一下→看看好了沒」而沒有先量到根因，就是在猜。
+真正解開它的是**直接量 rAF 有沒有在跑**——一個早該問的問題。
+
+### `.env` 的坑比之前記的更大（順帶更正）
+
+G1a 的 worklog 記「`platform/.env` 會讓『離線：無 tile server』那條測試在本機必紅」。
+**實際範圍大得多**：該檔還設了 `NUXT_PUBLIC_API_BASE`，會蓋掉 Playwright 傳給 Nuxt 的
+`http://localhost:8100`，於是 e2e 前端連到 **docker 後端（:8000）**——那裡沒有 `e2e-orders`
+這局，`單位列表載入真單位` 直接拿到 0 個單位。本卡一度以為是自己弄壞的。
+
+**主樹跑出來的 e2e 數字整份不可信**，不是只有底圖那條。權威比對一律在 `.env`-free worktree。
+
+### 證明
+
+新增 `platform/e2e/aar-replay.spec.ts`（真 Playwright，2 條皆綠）：
+
+1. **單位符號實際畫在畫布上**——斷言 `queryRenderedFeatures({layers:['units']}).length > 0`。
+   刻意不用「source 有幾筆特徵」，因為 symbol 要經過 placement 才會真的出現，
+   而 placement 正是 harness 裡恆為 0 的那一步。
+2. 拖時間軸改變畫面、書籤可跳轉。
+
+### 保留的兩處 MapCanvas 改動（各有各的正當理由，與上述假象無關）
+
+- `fitBounds` prop：AAR 的單位常擠在數百公尺內，用預設的台灣全景會什麼都看不到。
+  實測生效後比例尺由 50 km 變 300 m。
+- `ResizeObserver`：MapLibre 自己只聽 window resize，容器在視窗沒變的情況下改變尺寸
+  它不會知道。**註解已改寫**——原本那段把它說成是「畫面全空」的解方，那是錯的診斷，
+  不能留在程式碼裡誤導下一個人。
 
 ## 中斷續作指引
 
-- **後端全部完成並已推送**（`77bccbf` / `6735677` / `a0ed6f9`），三個既有錯已修並有測試。
-  最後一次的兩項修正（tick 排序、權威 health）在工作區，測試已綠待 commit。
-- **前端寫完但卡在上述渲染問題**：`useAarReplay` / `aar.vue` 重播區 / `MapCanvas.fitBounds`
-  三者 lint/typecheck/build 皆綠，資料管線經 devtools 驗證正確（117 筆特徵、座標與圖示都對）。
-- 動手前先讀上面的「已排除」表，那些路都走過了。
+- **後端完成並已推送**：量綱（`77bccbf`）、位置來源（`6735677`）、契約+端點（`a0ed6f9`）、
+  tick 排序與權威 health（`8303559`）。共修掉 5 個既有錯，全部有測試釘住。
+- **前端完成並經真 Playwright 驗證**：`useAarReplay`、`aar.vue` 重播區、
+  `MapCanvas.fitBounds` / ResizeObserver。e2e 共 9 支（本卡 +2）。
+- **剩餘（本卡未做，屬 WP-D6 其餘兩項）**：D6.2 統計對帳（命中率分母語意）、
+  D6.3 匯出管線（串流分頁 CSV/SQL + bundle）。
+- **驗證紀律新增兩條**：
+  1. MapLibre 的「畫面有沒有出現」一律用 Playwright，不要用 in-app 瀏覽器——
+     它的頁面是 hidden、rAF 停擺，看到的空白不代表壞掉。
+  2. e2e 一律在 `.env`-free worktree 跑。`platform/.env` 的 `NUXT_PUBLIC_API_BASE`
+     會把前端指到 docker 後端，主樹的 e2e 結果沒有參考價值。
+- **e2e 對照（`.env`-free worktree）**：
+
+  | | passed | failed |
+  |---|---|---|
+  | G1b 收卡時 `fe17afe` | 16 | map:71 / orders:24 / orders:47 / smoke:11 |
+  | 本卡 `HEAD` | **18** | **完全相同的四條** |

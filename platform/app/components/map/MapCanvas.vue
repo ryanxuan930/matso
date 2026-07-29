@@ -697,12 +697,9 @@ onMounted(async () => {
     attributionControl: false,
   })
   ;(window as unknown as { __matsoMap?: MapLibreMap }).__matsoMap = map
-  // 容器尺寸變化 → 通知地圖（WP-D6.1）。**必須在這裡註冊，不能等 map.on('load')**：
-  // 地圖是在 onMounted 建立的，此時容器往往還沒完成版面（嵌在頁面裡時高度可能還是 0），
-  // 而 load 事件晚於那次尺寸變化——註冊太晚就永遠等不到，畫布尺寸從此對不上。
-  // 症狀是**整張圖全空**（資料/圖示都在、來源也都 loaded，就是不繪），
-  // 而 lint/typecheck/build 全綠——只有進瀏覽器看才會發現。
-  // COP 的地圖占滿視窗、尺寸自始固定，所以這個坑一直沒被踩到。
+  // 容器尺寸變化 → 通知地圖。MapLibre 自己只聽 window resize；容器在視窗沒變的情況下
+  // 改變尺寸（版面位移、側欄開合、嵌在會變高的區塊裡）它不會知道，畫布就與容器脫節。
+  // COP 的地圖占滿視窗所以碰不到，WP-D6.1 把地圖嵌進 AAR 頁後才需要這層保險。
   if (container.value && typeof ResizeObserver !== 'undefined') {
     resizeObs = new ResizeObserver(() => map?.resize())
     resizeObs.observe(container.value)
