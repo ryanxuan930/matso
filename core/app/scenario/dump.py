@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from app.scenario.loader import LoadedScenario
+from app.scenario.loader import MOBILITY_OVERRIDE_FILE, LoadedScenario
 
 
 def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
@@ -34,6 +35,8 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
         files["msel"] = "msel.yaml"
     if loaded.roe:
         files["roe"] = "roe.yaml"
+    if loaded.mobility_overrides:
+        files["overrides_dir"] = "overrides"
 
     out: dict[str, Any] = {"name": loaded.name, "version": loaded.version}
     if loaded.description is not None:
@@ -109,6 +112,14 @@ def dump_scenario_package(loaded: LoadedScenario, package_dir: str | Path) -> No
     _write("scenario.yaml", scenario_to_dict(loaded))
     if loaded.roe:
         _write("roe.yaml", dict(loaded.roe))
+    if loaded.mobility_overrides:
+        # 覆寫檔維持 JSON（與 contracts/mobility_matrix.json 同格式，可直接對照 diff）。
+        (root / "overrides").mkdir(parents=True, exist_ok=True)
+        (root / "overrides" / MOBILITY_OVERRIDE_FILE).write_text(
+            json.dumps(loaded.mobility_overrides, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
     for faction in _factions_with_units(loaded):
         _write(f"orbat/{faction.lower()}.yaml", _orbat_dict(loaded, faction))
     if loaded.msel:

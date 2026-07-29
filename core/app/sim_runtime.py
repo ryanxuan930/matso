@@ -42,6 +42,7 @@ from app.factions.session_store import load_session_relations
 from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
+from app.movement.session_mobility import load_session_mobility_rules
 from app.movement.terrain_sampler import build_terrain_cell_sampler, build_terrain_path_fn
 from app.orders.roe import RoeRules, load_session_roe
 from app.runtime import PerfCounterClock, TickPacer, run_paced
@@ -238,6 +239,10 @@ class SimManager:
             # WP-B6 該局的想定 ROE（未宣告→無限制）。**runner 啟動時讀一次**——與 sim_params
             # 同紀律；白軍局中改 ROE 需重啟該局 runner（restart 旗標）才生效。
             roe = await asyncio.to_thread(load_session_roe, engage_db, session_id)
+            # WP-B6 想定機動覆寫（未宣告→出貨預設）。與 sim_params 同紀律：runner 啟動讀一次。
+            mobility_rules = await asyncio.to_thread(
+                load_session_mobility_rules, engage_db, session_id
+            )
             if roe.any_rules:
                 _LOG.info("session %s 套用想定 ROE（交戰規則）", session_id)
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
@@ -274,6 +279,7 @@ class SimManager:
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
                     path_fn=build_terrain_path_fn(),  # #82 A* 繞路（不可達→直線）
                     sim_params=sim_params,  # #93 可調速度/耗損
+                    mobility_rules=mobility_rules,  # WP-B6 想定機動覆寫
                 ),
                 # #97 偵測（取代 NoOp）：每 tick 掃描 → 落 per-faction contacts
                 sensors=SensorSweepSystem(

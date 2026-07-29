@@ -1,0 +1,8 @@
+{
+  "$comment": "教學想定的機動覆寫示範（局部——只列要改的鍵，其餘沿用 contracts/mobility_matrix.json）。此地為梅雨季隘口，林地泥濘、徒步更慢。⚠ 覆寫不得改變可通行性（-1 進出）：A* 在 terrain 服務讀出貨預設，看不到本檔。",
+  "profiles": {
+    "FOOT": {
+      "FOREST": 2.0
+    }
+  }
+}

@@ -64,6 +64,8 @@ class LoadedScenario:
     # WP-B6 交戰規則宣告（roe.yaml 原樣帶入；解析成規則由 orders/roe.py 於讀取時做）。
     # 空 dict ＝ 未宣告 ＝ 無限制。
     roe: dict[str, Any] = field(default_factory=dict)
+    # WP-B6 想定機動覆寫（overrides/mobility_matrix.json 原樣帶入；**局部**覆寫，深合併於預設）。
+    mobility_overrides: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -95,6 +97,7 @@ def _build(
     units: list[ScenarioUnit],
     msel: list[MselEntry],
     roe: dict[str, Any],
+    mobility_overrides: dict[str, Any],
 ) -> LoadedScenario:
     """由已驗證的 scenario dict 組 LoadedScenario。
 
@@ -117,6 +120,7 @@ def _build(
         victory_conditions=list(sc["victory_conditions"]),
         no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
         roe=roe,
+        mobility_overrides=mobility_overrides,
         description=sc.get("description"),
         faction_display_names={
             f["id"]: f["display_name"] for f in sc["factions"] if "display_name" in f
@@ -138,8 +142,9 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
     units = _load_orbats(root, sc.get("files", {}).get("orbat", {}), faction_ids)
     msel = _load_msel(root, sc.get("files", {}).get("msel"))
     roe = _load_roe(root, sc.get("files", {}).get("roe"), faction_ids)
+    mobility = _load_overrides(root, sc.get("files", {}).get("overrides_dir"))
 
-    return _build(sc, faction_ids, relations, units, msel, roe)
+    return _build(sc, faction_ids, relations, units, msel, roe, mobility)
 
 
 def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
@@ -158,7 +163,8 @@ def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
     units = _units_from_orbat_dict(bundle.get("orbat") or {}, faction_ids)
     msel = _msel_from_dict(bundle.get("msel"))
     roe = _roe_from_dict(bundle.get("roe"), faction_ids)
-    return _build(sc, faction_ids, relations, units, msel, roe)
+    mobility = _mobility_from_dict((bundle.get("overrides") or {}).get("mobility_matrix"))
+    return _build(sc, faction_ids, relations, units, msel, roe, mobility)
 
 
 def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> list[ScenarioUnit]:
@@ -239,6 +245,68 @@ def _load_roe(root: Path, rel_path: str | None, faction_ids: list[str]) -> dict[
     return data
 
 
+MOBILITY_OVERRIDE_FILE = "mobility_matrix.json"
+
+
+def _mobility_from_dict(
+    data: Any, label: str = "overrides/" + MOBILITY_OVERRIDE_FILE
+) -> dict[str, Any]:
+    """機動覆寫 dict → 驗證後原樣帶回（空/None → {}）。**兩條載入入口共用**。"""
+    if not data:
+        return {}
+    if not isinstance(data, dict):
+        raise ScenarioError(f"{label}: 頂層必須是 mapping")
+    _validate_schema(data, "mobility_matrix.schema.json", label)
+    _validate_mobility_passability(data, label)
+    return dict(data)
+
+
+def _validate_mobility_passability(patch: dict[str, Any], label: str) -> None:
+    """覆寫**不得改變可通行性**（-1 進出）——否則規劃端與執行端會意見不一致。
+
+    路徑規劃 A* 跑在 terrain 容器、讀它自己那份出貨矩陣，`GetPathRequest` 只帶
+    `{from_h3, to_h3, mobility_profile}`，**看不到想定覆寫**。把可通行改掉會出現兩種
+    都很糟的分歧：規劃出的路線穿過（對本局而言）不可通行的地形 → 單位半路 MOVE_BLOCKED 停死；
+    或本局明明開放通行、A* 仍判不可達 → 退回直線穿越（反而不繞路）。
+
+    只改速度倍率則路線仍然可走，差別僅在是否最省時——這是可接受的近似，且不會卡住單位。
+    要真正支援可通行覆寫，得先讓 terrain 服務吃得到 per-session 矩陣（改 proto，屬另一張卡）。
+    """
+    from app.movement.mobility_matrix import default_rules
+
+    base = default_rules().passability()
+    for profile, row in (patch.get("profiles") or {}).items():
+        if not isinstance(row, dict):
+            continue
+        for klass, value in row.items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            was = base.get((str(profile), str(klass)))
+            if was is None:
+                continue  # 預設沒有的組合：新增即可，A* 對它本來就回 1.0
+            if was is not (float(value) >= 0):
+                raise ScenarioError(
+                    f"{label}: profiles.{profile}.{klass}: 覆寫不得改變可通行性"
+                    f"（預設{'可' if was else '不可'}通行）——路徑規劃 A* 在 terrain 服務、"
+                    "看不到想定覆寫，改了會讓規劃與執行對「走不走得通」意見不一致"
+                )
+
+
+def _load_overrides(root: Path, rel_dir: str | None) -> dict[str, Any]:
+    """讀 `files.overrides_dir` 下的 `mobility_matrix.json`（可選；目錄或檔案不存在 → {}）。"""
+    if not rel_dir:
+        return {}
+    path = root / rel_dir / MOBILITY_OVERRIDE_FILE
+    if not path.exists():
+        return {}
+    label = f"{rel_dir}/{MOBILITY_OVERRIDE_FILE}"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ScenarioError(f"{label}: JSON 解析失敗：{exc}") from exc
+    return _mobility_from_dict(data, label)
+
+
 def _load_msel(root: Path, rel_path: str | None) -> list[MselEntry]:
     if not rel_path or not (root / rel_path).exists():
         return []
@@ -286,6 +354,8 @@ def create_session_from_scenario(
         # WP-B6 ROE 落地：想定宣告的交戰規則隨局持久化（裁決層與 precheck 共用）。
         # 空宣告存 None ＝ 無限制（既有局語義）。
         roe=loaded.roe or None,
+        # WP-B6 機動覆寫落地：想定的地形通行調整隨局持久化（runner 與預覽端共用）。
+        mobility_overrides=loaded.mobility_overrides or None,
     )
     db.add(session)
     db.flush()

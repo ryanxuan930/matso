@@ -35,8 +35,7 @@ from app.movement.attrition import (
 )
 from app.movement.fuel import UnitFuel, burn_fuel, load_unit_fuel
 from app.movement.mobility import UnitMobility, resolve_unit_mobility
-from app.movement.mobility_matrix import road_speed_factor
-from app.movement.mobility_matrix import step_cost as _terrain_step_cost
+from app.movement.mobility_matrix import MobilityRules, default_rules
 from app.movement.params import TEMPO_ATTRITION_FACTOR
 from app.movement.router import PathFn, plan_route
 from app.sim_params import SimParams
@@ -108,6 +107,7 @@ class UnitMovementSystem:
         weather_mobility: float = 1.0,
         path_fn: PathFn | None = None,
         sim_params: SimParams | None = None,
+        mobility_rules: MobilityRules | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
@@ -123,6 +123,9 @@ class UnitMovementSystem:
         self._terrain_sampler = terrain_sampler
         self._weather_mobility = weather_mobility if weather_mobility > 0 else 1.0
         self._terrain_cost_cache: dict[tuple[str, str], float | None] = {}
+        # WP-B6 想定機動覆寫：**該局**的規則物件（None → 出貨預設）。刻意以建構參數注入而非
+        # 改全域快取——同一 core 行程同時跑 N 局，全域可變狀態會跨局污染（見 mobility_matrix）。
+        self._mobility = mobility_rules or default_rules()
         # #82 Phase C：地形 A* 路徑查詢（None＝不規劃，維持 Phase A/B 直線）。
         self._path_fn = path_fn
 
@@ -293,7 +296,7 @@ class UnitMovementSystem:
             # #83 道路優先：此格有可用道路 → 改用道路速度基準，且**不套地形/坡度成本**
             # （路面已鋪整；林中公路不該按森林算）。
             road_cls = klass.split("|", 1)[1] if "|" in klass else ""
-            factor = road_speed_factor(prof, road_cls) if road_cls else None
+            factor = self._mobility.road_speed_factor(prof, road_cls) if road_cls else None
             if factor is not None:
                 raw_road = payload.get("_road_step_km")
                 if isinstance(raw_road, (int, float)) and raw_road > 0:
@@ -457,7 +460,11 @@ class UnitMovementSystem:
             return 1.0
         ct = info.get(cell)
         # #83：取樣值可能是 "FOREST|primary"，地形成本只看 terrain_class 部分。
-        cost = _terrain_step_cost(profile, ct[0].split("|", 1)[0], ct[1]) if ct is not None else 1.0
+        cost = (
+            self._mobility.step_cost(profile, ct[0].split("|", 1)[0], ct[1])
+            if ct is not None
+            else 1.0
+        )
         self._terrain_cost_cache[key] = cost
         return cost
 

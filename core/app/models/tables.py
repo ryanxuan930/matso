@@ -88,6 +88,10 @@ class WargameSession(Base):
     roe: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
         "roe", JSON, nullable=True
     )
+    # WP-B6 想定機動覆寫（NULL＝用出貨預設）。合併見 movement/mobility_matrix.MobilityRules。
+    mobility_overrides: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
+        "mobilityOverrides", JSON, nullable=True
+    )
 
 
 class TacticalUnit(Base):

@@ -50,6 +50,9 @@ model WargameSession {
   // 想定 roe.yaml 載入時寫入、白軍可局中修改；**null = 無 ROE 限制**（既有局零遷移）。
   // 生效於裁決層（被禁武器不開火）與 submit 端（明確指名被禁武器即拒）——見 core/app/orders/roe.py。
   roe Json?
+  // WP-B6 想定機動覆寫（overrides/mobility_matrix.json）：**局部**覆寫，深合併於出貨預設。
+  // null = 用出貨預設（既有局零遷移）。⚠ 不得改變可通行性——A* 在 terrain 服務看不到本欄。
+  mobilityOverrides Json?
 
   units       TacticalUnit[]
   eventLogs   TacticalEventLog[]

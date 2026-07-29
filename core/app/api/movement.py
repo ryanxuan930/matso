@@ -29,11 +29,12 @@ from app.models import MapFeature, TacticalUnit, WargameSession
 from app.movement.attrition import estimate_route, haversine_m, obstacle_from_feature
 from app.movement.fuel import load_unit_fuel
 from app.movement.mobility import resolve_unit_mobility
-from app.movement.mobility_matrix import step_cost
+from app.movement.mobility_matrix import MobilityRules
 from app.movement.params import (
     TEMPO_ATTRITION_FACTOR,
 )
 from app.movement.router import plan_route
+from app.movement.session_mobility import load_session_mobility_rules
 from app.movement.terrain_sampler import build_terrain_cell_sampler
 from app.sim_params import load_sim_params
 from app.stream.faction_filter import is_omniscient
@@ -179,7 +180,10 @@ def preview_movement(
     sampler = build_terrain_cell_sampler()
     if sampler is not None:
         cells = _route_cells(waypoints)
-        avg_cost, terrain_impassable = _route_terrain_cost(sampler, cells, mob.profile)
+        # WP-B6：預覽與執行**讀同一份**機動規則（含該局的想定覆寫）——只讓執行端可覆寫，
+        # 就會重演 SPEC_MOVEMENT 當初要消滅的「預覽與實跑不一致」。
+        rules = load_session_mobility_rules(db, session_id)
+        avg_cost, terrain_impassable = _route_terrain_cost(sampler, cells, mob.profile, rules)
         if avg_cost > 0:
             speed_kmh /= avg_cost
     # #84：油耗以**單位實際編裝**計（取代原本 1.0/km 佔位值）；並回報是否夠油走完全程。
@@ -239,7 +243,9 @@ def _route_cells(waypoints: list[tuple[float, float]]) -> list[str]:
     return seen
 
 
-def _route_terrain_cost(sampler, cells: list[str], profile: str) -> tuple[float, bool]:  # type: ignore[no-untyped-def]
+def _route_terrain_cost(  # type: ignore[no-untyped-def]
+    sampler, cells: list[str], profile: str, rules: MobilityRules
+) -> tuple[float, bool]:
     """回 (路徑平均地形成本, 是否含不可通行)。取樣失敗 → (1.0, False)（不調預覽）。"""
     try:
         info = sampler(cells)
@@ -251,7 +257,10 @@ def _route_terrain_cost(sampler, cells: list[str], profile: str) -> tuple[float,
         ct = info.get(c)
         if ct is None:
             continue
-        sc = step_cost(profile, ct[0], ct[1])
+        # 取樣器的 terrain_class 在有路的格是 "FOREST|primary" 形——**必須先切掉路段**，
+        # 否則查不到該 class 而落到「未知→1.0」分支（執行端 engine/movement 早已這麼做，
+        # 預覽端過去漏了，兩邊對有路路段的地形成本因此不同）。
+        sc = rules.step_cost(profile, ct[0].split("|", 1)[0], ct[1])
         if sc is None:
             impassable = True
         elif sc > 0:

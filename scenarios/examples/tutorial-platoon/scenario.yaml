@@ -35,3 +35,4 @@ files:
     RED: orbat/red.yaml
   msel: msel.yaml
   roe: roe.yaml
+  overrides_dir: overrides
