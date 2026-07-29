@@ -76,7 +76,6 @@ const canControl = computed(() =>
 const hex = ref(false)
 const hillshade = ref(false)
 const contour = ref(false)
-const currentTick = ref(100)
 // 圖層透明度乘數 + 套疊順序（#9）+ 主/次等高線間距（#8）——localStorage 持久化。
 const layerOpacity = ref<Record<string, number>>({ basemap: 1, hillshade: 1, contour: 1, hex: 1 })
 const layerOrder = ref<string[]>(['hex', 'contour', 'hillshade'])
@@ -234,6 +233,7 @@ const syntheticUnits = computed<OwnUnit[]>(() => {
 // 真單位（GET /units；下令對象）
 const realUnits = ref<UnitView[]>([])
 const intelContacts = ref<ContactView[]>([]) // 後端 fog 過濾後的敵情（#90）
+const commsPosture = ref<string | null>(null) // 觀測陣營整體通聯姿態（WP-C5；god view 為 null）
 // 視角切換（#90）：僅全知角色可用。'' = 全局 god view；否則＝以該陣營之眼觀戰（套其戰場迷霧）。
 // **不在前端過濾**——值只是帶給後端的 as_faction，實際可見性由後端決定（紅線 #3）。
 const viewpoint = ref<string>('')
@@ -363,6 +363,20 @@ function liveHealth(u: UnitView): number | undefined {
   const p = stream.unitPatches[u.id]
   return (typeof p?.health === 'number' ? p.health : u.health) ?? undefined
 }
+/**
+ * 位置凍結的時間戳（WP-C5）。非 null ＝ 圖上的座標是**最後一次位置回報**而非真實位置。
+ *
+ * patch 只要**有這個鍵**就以它為準（含恢復通聯時送來的 null）——只看 `typeof === 'number'`
+ * 的話，恢復通聯後會退回快照裡的舊值，單位永遠掛著「失聯」標籤。
+ */
+function liveStaleTick(u: UnitView): number | null {
+  const p = stream.unitPatches[u.id]
+  const raw = p && 'stale_since_tick' in p ? p.stale_since_tick : u.stale_since_tick
+  return typeof raw === 'number' ? raw : null
+}
+// 系統當前 tick：以串流為準（CLOCK 心跳/STATE_DIFF 都帶）。WP-C5 之前這是**寫死的 100**，
+// 於是地圖上「失聯 +Nt」與敵情老化淡出都是拿假 tick 算的。
+const currentTick = computed(() => stream.lastTick ?? 0)
 
 /**
  * 單位量體＝加權平均的權重。用滿編戰力（TO&E 分母，與規模同單位）；
@@ -428,8 +442,10 @@ const realAsOwn = computed<OwnUnit[]>(() =>
       id: u.id,
       faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
       ...livePos(u),
-      comms: (u.comms as OwnUnit['comms']) ?? 'ONLINE',
-      lastReportedTick: 100,
+      // WP-C5：通聯狀態與「最後回報 tick」都取活值——寫死的 lastReportedTick 讓地圖上的
+      // 「OFFLINE +Nt」一直是拿假數字算的（見 liveStaleTick / currentTick）。
+      comms: liveComms(u) as OwnUnit['comms'],
+      lastReportedTick: liveStaleTick(u) ?? currentTick.value,
       health: liveHealth(u), // 血量環（#5）；fog of war：僅我方單位帶血量
       isFixed: u.is_fixed, // 固定單位（指揮部等）→ 地圖鎖頭徽章
     })),
@@ -534,6 +550,7 @@ const engageTargets = computed(() =>
 function applySnapshot(snap: StateSnapshot) {
   realUnits.value = snap.units
   intelContacts.value = snap.contacts
+  commsPosture.value = snap.comms_posture ?? null // WP-C5：敵情粗化的成因（粗化本身已在後端生效）
   // #91 關係矩陣：決定友/中/敵符號。缺 → 空物件 → relationOf 退回 HOSTILE（保守標敵）。
   factionRelations.value = snap.relations?.relations ?? {}
   // 視角下拉的選項來源：只在全局視角時更新（切了視角後快照只回該陣營，會把清單縮成一項）。
@@ -1838,6 +1855,20 @@ watch(
       <button data-testid="back-lobby" @click="back">← 系統首頁</button>
       <span class="sid" data-testid="cop-session">Session {{ sessionId }}</span>
       <span class="count" data-testid="unit-count">單位 {{ ownUnits.length }}</span>
+      <!-- WP-C5：本軍通聯不良 → 敵情圖已在**後端**粗化（位置跳到 3km 格心、只剩 DETECTED）。
+           不標的話操作者只會覺得「敵情圖怎麼突然變爛了」而不知道原因。 -->
+      <span
+        v-if="commsPosture && commsPosture !== 'ONLINE'"
+        class="posture"
+        data-testid="comms-posture"
+        :title="
+          commsPosture === 'OFFLINE'
+            ? '本軍通聯全斷：敵情圖停止更新並已粗化到約 3km 格'
+            : '本軍通聯不良：敵情位置已粗化到約 3km 格、情報等級降為 DETECTED'
+        "
+      >
+        <i class="pi pi-wifi" /> 敵情粗化（{{ commsLabel(commsPosture) }}）
+      </span>
       <ClientOnly><SimClockBar :tick="stream.lastTick" :start-time="sessionStart" /></ClientOnly>
       <nav class="cop-nav">
         <!-- 視角切換（#90）：僅全知角色。選陣營＝以該陣營之眼觀戰（後端套其戰場迷霧）。 -->
@@ -2842,7 +2873,15 @@ watch(
             </div>
             <div>
               <dt>座標</dt>
-              <dd>{{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}</dd>
+              <dd data-testid="unit-coords">
+                {{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}
+                <!-- WP-C5：斷聯單位的座標是最後一次回報，不是現在的位置。不標的話指揮官
+                     會拿一個過時的點下令，還以為是即時的。 -->
+                <span v-if="liveStaleTick(selectedUnit) != null" class="stale">
+                  · T{{ liveStaleTick(selectedUnit) }} 最後回報（已失聯
+                  {{ Math.max(0, currentTick - (liveStaleTick(selectedUnit) ?? 0)) }}t）
+                </span>
+              </dd>
             </div>
             <div v-if="liveFuel(selectedId) != null" data-testid="unit-fuel">
               <dt>油料</dt>
@@ -3237,6 +3276,23 @@ watch(
 .count {
   font-size: 0.875rem;
   color: #94a3b8;
+}
+/* WP-C5 位置凍結註記：與 .dim 同層級，但用琥珀色點出「這不是即時值」。 */
+.stale {
+  color: #fbbf24;
+  font-size: 0.8125rem;
+}
+/* WP-C5 敵情粗化告示：琥珀色（警示但非錯誤——是戰場現實，不是系統故障）。 */
+.posture {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid #b45309;
+  border-radius: 0.25rem;
+  font-size: 0.8125rem;
+  color: #fbbf24;
+  cursor: help;
 }
 .cop-nav {
   margin-left: auto;

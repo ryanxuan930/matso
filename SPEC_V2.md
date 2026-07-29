@@ -99,7 +99,7 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 | 9 | 壓制/姿態係數恆 1.0；無隊形；無乘駐車 | [JCATS-A p.7,12,25,26] | `EnvSnapshot` 兩係數無來源；TacticalUnit 無 posture/formation/mounted | ★★★ | C1/C3 |  |
 | 10 | 無障礙工事/工兵裁決（雷區/斷橋/鐵絲網） | [JCATS-A p.5–6,12]；[JTLS-F p.1058] | MapFeature OBSTACLE 只是圖形，不參與裁決 | ★★★ | C2 |  |
 | 11 | 天氣單快照；無晝夜/照明；無煙幕 | [JCATS-A p.7,19] | weather 啟動讀一次；SimClock 有時刻但不影響偵測 | ★★ | C4 |  |
-| 12 | comms 粒度後果未接投影（位置凍結/敵情粗化） | —（內部盤點；SPEC_FULL §6.2 MUST） | `intel_granularity`/`position_report_*` 已定義無消費者 | ★★ | C5 |  |
+| 12 | comms 粒度後果未接投影（位置凍結/敵情粗化） | —（內部盤點；SPEC_FULL §6.2 MUST） | `intel_granularity`/`position_report_*` 已定義無消費者 | ★★ | C5 | ✅ 2026-07-30 |
 | 13 | 多方混戰未接線；聚合門檻寫死；#48 未做 | —（內部盤點） | `resolve_multiway_tick` 已實作未用；threshold 忽略想定欄位 | ★★ | C6 |  |
 | 14 | 後勤只有油料；無 Class 體系/彈藥人員裝備補充/修復 | [JTLS-F p.1058]；[JCATS-A p.26–27] | `ResupplySystem` 撥交油料+彈藥；無再訂購水位、無修復、無整補時間 | ★★★ | C7 |  |
 | 15 | 無 MRM（聚合↔實體解聚合） | [JTLS-F p.1056–1058]；[IST160 p.4] | 兩種裁決並存但單位粒度固定 | ★★ | C8 |  |
@@ -474,7 +474,21 @@ BREACH 中斷（工兵被打掉）障礙保持有效；AAR 顯示觸雷/破障�
 **驗收**：夜戰對照局（同 seed、僅時刻不同）偵測接觸數顯著下降；煙幕投放後跨幕交戰 LOS 被擋、
 風把煙吹離後恢復；REPLAY 模式重播含天氣變化的局位元一致。
 
-#### WP-C5 通聯後果閉環：位置凍結與敵情粗化　★★｜golden：不動（投影層變更）
+#### WP-C5 通聯後果閉環：位置凍結與敵情粗化　★★｜golden：不動（投影層變更）　✅ 2026-07-30
+
+> **已完成**（worklog: `docs/worklog/comms-consequences.md`）。與規格不同的實作裁決：
+> 1. **規格四項之外先修了一個紅線 3 違反**：STATE_DIFF 的信封**從來沒有陣營受眾標籤**，
+>    `is_visible` 對所有人回 True → 敵軍即時座標一直廣播給每個連線的 client。
+>    這不是順手修——一個廣播給所有人的信封沒有「己方視角」可言，不先做每陣營投影就做不了凍結。
+>    做法：每 tick 發 N+1 份信封（每陣營一份已投影的 + 一份 `factions:[]` 的真實副本），
+>    並新增 `exclusive` 受眾語義關掉全知旁通（否則統裁會同時收到 N 份互相矛盾的副本）。
+> 2. **敵情粗化只能做到陣營層**（規格原文亦如此）：`IntelContact` 沒有觀測者單位欄位，
+>    做不到「該筆情報的回報者斷聯 → 該筆凍結」。故 `IntelGranularity.FROZEN` 目前與 COARSE
+>    的投影效果相同（量化 + 降級），差別只在 `comms_posture` 顯示的字。已記 backlog。
+> 3. **凍結的是視野不是單位**：新增 `report_lat/lng/tick` 熱狀態欄位，真實 `lat`/`lng` 照常演進。
+>    直接凍住熱狀態座標會連射程/LOS 裁決一起騙到。
+> 4. 白軍**指定 `as_faction`** 時凍結與粗化照套（那是在問「這一軍看得到什麼」）；
+>    驗收條文的「白軍視角照動」指的是未指定視角的 god view。
 
 **動機**：SPEC_FULL §6.2 的 MUST（通訊狀態的戰術後果）只做了一半：`order_admissible`（斷聯不受新令）有了，
 `intel_granularity`（DEGRADED→敵情粗化）與 `position_report_*`（斷聯單位在己方 COP 位置凍結）
@@ -854,8 +868,8 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 [x] E1 活 checkpoint + RNG 序列化（D4 的前置）            （2026-07-29；ADR 007）
 [x] B6 想定資產修復（fixed 旗標 roundtrip bug 先修）      （2026-07-29）
 [x] E3 /state 快照端點（H1 亦復用）                       （2026-07-29）
-[ ] C5 comms 後果閉環（投影層）                             ← 下一張
-[ ] G1 cop.vue 拆分（後續前端卡的前置）
+[x] C5 comms 後果閉環（投影層）                           （2026-07-30；順帶修 STATE_DIFF 無受眾）
+[ ] G1 cop.vue 拆分（後續前端卡的前置）                     ← 下一張
 [ ] D6.1 AAR 地圖重播（量綱修正先行）
 ```
 

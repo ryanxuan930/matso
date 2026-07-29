@@ -953,9 +953,12 @@ export interface components {
             platform_count?: number;
             /** @description 當前人員數（顯示用，可空） */
             personnel_current?: number | null;
+            /** @description 通聯狀態 ONLINE/DEGRADED/OFFLINE（活模擬中取自熱狀態，非 DB 播種值） */
             comms: string;
             /** @description 固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記 */
             is_fixed?: boolean;
+            /** @description **位置凍結**（WP-C5，SPEC_FULL §6.2）。非 null 表示 `lat`/`lng` 不是真實位置， 而是該單位**最後一次位置回報**的內容，本欄為那次回報的 tick。 OFFLINE 單位不再回報（位置對己方 COP 凍結）；DEGRADED 降頻回報（位置落後）。 只出現在**陣營視角**（一般角色，或白軍指定 `as_faction`）；白軍 god view 一律真實位置。 */
+            stale_since_tick?: number | null;
         };
         /** @description 單位可用武器（資料驅動 baseStats）——供 ENGAGE 選武器/彈種 */
         WeaponView: {
@@ -1039,6 +1042,8 @@ export interface components {
         StateSnapshotView: {
             /** @description 快照當下的 sim tick（無活模擬的局為 0） */
             tick: number;
+            /** @description 觀測陣營的**整體通聯姿態** ONLINE/DEGRADED/OFFLINE（WP-C5）。 這是敵情粗化的依據本身（後端算一次，前端只用來顯示「敵情圖粗化中」， 不得據此自行改動資料——粗化已在 `contacts` 上生效）。god view 為 null。 */
+            comms_posture: string | null;
             /** @description 快照當下的傳輸層 seq（`session:{id}:broadcast_seq`）。**於讀取狀態之前取樣**—— 反過來的話，介於兩次讀取之間送出的 diff 會既不在快照裡、seq 又 ≤ last_seq， 被 client 丟棄即成為遺失的更新。 */
             last_seq: number;
             /** @description 本快照的觀測視角（全知且未指定 as_faction 時為 null＝god view） */
@@ -1107,7 +1112,7 @@ export interface components {
             /** @description 本局所有陣營 id（供 UI 列舉；不含 WHITE_CELL） */
             factions: string[];
         };
-        /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 */
+        /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 **敵情粗化**（WP-C5，SPEC_FULL §6.2）：觀測陣營整體通聯非 ONLINE 時，`lat`/`lng` 量化到 h3 res-6 格心（約 3km）、`error_radius_m` 放大到該格尺度、`fidelity` 上限 DETECTED（連帶 unit_type/designation/faction 回到 null）。資料本身不動，只是投影降級。 */
         ContactView: {
             /** @description 觀測方的 IntelContact id（非目標 unit id） */
             contact_id: string;

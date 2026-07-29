@@ -388,7 +388,9 @@ DB 單例 `SystemConfiguration` → `load_sim_params` → 明確傳遞（不做�
 - `seed_sensors.py` 為 v0 佔位值；偵測不含目標特徵資料驅動（`target_signature_modifier`/`concealment_modifier` 由 env lookup 給，尚無單位側 signature 資料）。
 - `sensor_system.py` 註解稱執行期取不到關係矩陣已過時——sim_runtime 已傳入（#98）；註解待清。
 - 情報「老化/遺忘」未實作：contact 一旦建立永久保留（last_seen_tick 更新但不過期）。
-- comms 的 `intel_granularity`（DEGRADED→COARSE 粗化）尚未接到 intel 投影上。
+- ~~comms 的 `intel_granularity`（DEGRADED→COARSE 粗化）尚未接到 intel 投影上。~~
+  **WP-C5 已接**：`GET /intel` 與 AI 敵情依觀測陣營的整體通聯姿態量化到 h3 res-6、fidelity
+  上限 DETECTED；仍是**陣營層**近似（`IntelContact` 無觀測者欄位，見 PROGRESS backlog）。
 
 ### core/app/factions
 #### 角色與職責
@@ -588,7 +590,12 @@ SQLAlchemy ORM 層——**唯讀跟隨** `db/prisma/schema.prisma`（SPEC_FULL �
 - 近地雙徑超額損耗：修正純 FSPL 讓 VHF 數百公里仍上線的不真實。
 
 #### 現況限制與缺口
-- `intel_granularity`（DEGRADED→COARSE）與 `position_report_*` 已定義但**未見消費者**——COP 位置凍結/敵情粗化尚未接到 intel 投影與前端。
+- ~~`intel_granularity`（DEGRADED→COARSE）與 `position_report_*` 已定義但**未見消費者**。~~
+  **WP-C5 已接**（2026-07-30）：`engine/comms.py` 依 `position_report_interval` 落
+  `report_lat/lng/tick` 進熱狀態（真實 lat/lng 不動）；消費端為 `api/units.py`（陣營視角凍結 +
+  `stale_since_tick`）、`state/broadcaster.py`（**每陣營 STATE_DIFF 投影**——該信封原本無任何
+  受眾標籤，等於把敵軍即時座標廣播給所有 client）、`ai_loop/world_view.projected_snapshot`。
+  敵情粗化在 `intel/service.py` 依 `faction_link_state` 導出的粒度套用。見 docs/worklog/comms-consequences.md。
 - `mesh_states` 的 `obstructed`（地形 NLOS）在 `engine/comms.py` 實際接線時是否逐對查 terrain 需上游確認；天氣 RF 衰減注入為單一標量（非逐 cell）。
 - CommsProfile 由裝備推導的路徑在 engine 側是簡化預設（v0 手持 VHF 佔位）。
 - OFFLINE 單位「執行最後有效指令/doctrine fallback」的完整語義只實作到「新令保留」。
