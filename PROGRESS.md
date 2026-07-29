@@ -195,6 +195,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ### 既有 backlog
 
+- **[E2E 過時（PR #12 CI 揭露）]** platform/e2e 五個 spec 為 M4 時代驗收，對現行 COP（浮動視窗/視角切換/icon 導覽列/precheck 面板改版）已全數失效（5 failed：orders×2、map、smoke、500 單位 FPS——FPS 量測在共享 runner 本就不穩，應改 benchmark 標記或放寬）。修復＝SPEC_V2 WP-G3（E2E 補齊與更新）。在修復前 E2E job 於 CI 恆紅，合併判讀時需人工忽略此 job。
 - **[#99 後續]** `MapFeatureEdit.geometry` 型別是 `Any`、後端不驗證形狀——前端擋住最少頂點數（線 2/面 3），
   但直接打 API 仍能存出退化幾何（例如 2 點的 POLYGON，`toGeometry` 會回 null 導致該標註在地圖上消失）。
   要補的是 geometry_type × 點數/座標範圍的伺服端驗證。
