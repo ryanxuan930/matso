@@ -238,24 +238,60 @@ G1a 已達成這張卡真正的目的：後續前端卡不必再讀 4400 行才�
 驗證方式不是用眼睛看，是**逐條讀 computed style 與原始值對表**。
 
 ## 中斷續作指引
-- **G1b 進行中**，cop.vue 已 4419 → 1200。剩下：`CoordReadout`、地圖區包裝、
-  `useCtxMenu`（script 498–604，約 107 行，是最後一塊大的）、
-  MapCanvas props 收斂（50 個 prop → 分組設定物件）。
-- **下一步第一件事**：`useCtxMenu`。它是右鍵選單的狀態機（ctxMenu ref + 8 個 ctx* 動作
-  + 3 個 computed），與下令狀態機、`useMapEditor`、`selectUnit` 都有牽連——
-  **抽之前先把相依清單列出來**，若參數超過 6 個就代表切點選錯了，改切小一點。
-- `CoordReadout` 的 CSS 有陷阱：`.coord-readout` 基底規則被 cop.vue 的
-  `:deep(.fw .coord-readout)` 整條中和（position/border/background/padding 全歸零）。
-  搬走時基底規則進子元件、`:deep` 中和留在 cop.vue——特異度 (0,3,0) > (0,2,0)，
-  跨檔順序不影響結果，但要**實測**而不是推論。
-- **四道驗證照舊**：`lint → typecheck → build → 瀏覽器`。三者各有盲區：
+
+### 本段續做（接上表）
+
+| 步驟 | commit | cop.vue |
+|------|--------|---------|
+| `useCtxMenu`（右鍵選單派送器） | `e4d2233` | 1111 |
+| `CoordReadout` + `coords.spec.ts` | `e46814b` | 1067 |
+| `useLiveState`（七個活值讀取器） | `7d3aa51` | 1027 |
+
+**`useCtxMenu` 的相依清單**（照上一段的自我約定先列再抽）共 21 項：
+mapEditor 7、ordering 7、頁面 7。遠超「超過 6 個就代表切點選錯」的門檻，
+但結論不是不抽，而是**改變傳法**——右鍵選單不是獨立狀態機，它自己只有一個 ctxMenu ref，
+其餘全是把一次右鍵翻譯成對另兩台機器的呼叫。相依面寬是派送器的本質，故收兩整包
+攤在明處。lint 的未使用警告反過來驗證了清單：抽完後恰好那四個 mapEditor 動作
+在頁面已無其他使用者。
+
+### MapCanvas props 收斂：**建議不做**（本卡唯一主動放棄的項目）
+
+原規劃「50 props → 分組設定物件」。實際看過後認為**不划算，且是設計上的退步**：
+
+1. 那 50 個 prop 每個都有自己的行內文件（用途、單位、預設、關聯 issue）。
+   包成不透明物件會把這些說明打散。
+2. 它們大多來自 `useCopPrefs`。真要收斂，最自然的做法是傳 `:prefs="prefsView"`——
+   但那會讓 MapCanvas（目前是通用地圖元件）綁死 COP 的偏好結構，可重用性下降。
+3. 收益只有呼叫點約 35 行；代價是要動 MapCanvas 內部 50 處 `props.x`，
+   而它是前端最不該亂動的檔案（圖層順序、watcher、地圖生命週期）。
+
+若之後仍要做，正確的切法是**先讓 MapCanvas 的 prop 分群有語意**（layers / styling /
+overlays / interaction 各自成型別），而不是為了呼叫點好看而打包。
+
+### 剩下的（若要繼續壓行數）
+- script 604 / template 251 / style 172。
+- script 尾巴還可切：`useCopUnits`（observerFaction → 友我判準 → OwnUnit/Contact
+  渲染模型，約 90 行，含 WHITE_CELL 保留字那段既有 bug 的說明，務必原文帶走）、
+  `useCopSnapshot`（applySnapshot + refresh + resync watch，約 50 行）。
+- 兩者做完約 880。**要低於 800 得動 template**（`body` 版面容器包成 `CopWorkspace`），
+  但那層包完之後 cop.vue 只剩接線，可讀性不見得更好——收卡時值得跟使用者確認
+  「< 800」是目標還是硬指標。
+
+### 紀律（沿用，血換來的）
+- **四道驗證**：`lint → typecheck → build → 瀏覽器`。三者各有盲區：
   typecheck 抓不到元件名解析失敗、build 才抓得到 scoped CSS 切壞、
   瀏覽器才看得出面板整個是空的。
-- **搬 CSS 一律 `git show` 取原文**，含規則先後順序。
-- **scoped CSS 的必要重複**：`.orders, .events {…}` 這種共用規則拆到兩個元件時，
-  兩邊各留一份（已於 `7b0fff8` 處理）。
-- **收卡前**：跑一次等價性稽核 workflow（腳本可重用：
+- **MapLibre 相關的互動一律用真 Playwright 驗**：瀏覽器 harness 的合成事件
+  （contextmenu / click）打不進 MapLibre 的事件層。本卡因此補了兩支 e2e
+  （`ctxmenu.spec.ts`、`coords.spec.ts`），都是原本零覆蓋的功能。
+  寫 `coords.spec.ts` 時實跑才發現：工具選單的 `.wm-backdrop` 會擋住地圖點擊，
+  要先關選單——這種事推論不出來。
+- **搬 CSS 一律 `git show` 取原文，含規則先後順序**。特異度平手時靠先後決勝負
+  （`.ord-meta button` vs `.orders button`），重排就會變樣。驗證方式是
+  **逐條讀 computed style 與原始值對表**，不是用眼睛看。
+- **scoped CSS 的必要重複**：共用規則拆到兩個元件時兩邊各留一份。
+- **收卡前**：跑等價性稽核 workflow（腳本可重用：
   `.claude/.../workflows/scripts/g1-refactor-equivalence-audit-*.js`），
   再於 `.env`-free worktree 做 e2e 前後比對，然後更新 SPEC_V2 / PROGRESS / TASKS。
-- **未解**：e2e 只有 6 支（本段新增 `ctxmenu.spec.ts`），仍未涵蓋 COP 的下令流程與
-  地圖編輯；`toggleOrbatPerm` 因會實際改動該局自編權限設定而未手測。
+- **未解**：e2e 現有 7 支，仍未涵蓋 COP 的下令流程與地圖編輯；
+  `toggleOrbatPerm` 因會實際改動該局自編權限設定而未手測。
