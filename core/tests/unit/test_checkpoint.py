@@ -395,3 +395,30 @@ def test_rollback_reports_how_many_unit_rows_it_rewound(
         )
     assert ev is not None and ev.detail is not None
     assert ev.detail["units_restored"] == 1
+
+
+def test_msel_memory_survives_a_checkpoint(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """**不還原的話重啟就重播狀況**——`once` 條目的「已觸發」若只活在記憶體，
+    runner 一重建就全部重新武裝，D+2 的增援會在每次重啟時再來一次。"""
+    from app.scenario.msel_runtime import MselMemory, MselRuntime
+    from app.scenario.triggers import MselEntry, TriggerContext
+    from app.state.checkpoint import restore_msel_memory
+
+    entry = MselEntry(id="e1", trigger={"type": "time", "at_tick": 0}, inject={"event_type": "X"})
+    rt = MselRuntime([entry], lambda t: TriggerContext(tick=t))
+    rt.check(type("T", (), {"tick": 0})())
+    assert rt.memory.fired_at == {"e1": 0}
+
+    mgr = CheckpointManager(session_factory, extras_provider=lambda: {"msel": rt.memory.to_dict()})
+    hot = InMemoryHotState()
+    hot.put_unit("u1", {"health": 100})
+    mgr.checkpoint(session_id, tick=3, state=hot.get_all(), ledger_seq=-1)
+
+    # 模擬重啟：全新的 runtime（記憶是空的）
+    fresh = MselRuntime([entry], lambda t: TriggerContext(tick=t), memory=MselMemory())
+    record = mgr.load_latest(session_id)
+    assert record is not None
+    assert restore_msel_memory(record, fresh) is True
+    assert fresh.check(type("T", (), {"tick": 9})()) == [], "重啟後 once 條目又觸發了一次"

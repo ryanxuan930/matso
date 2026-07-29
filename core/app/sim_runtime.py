@@ -65,7 +65,7 @@ from app.scenario.session_msel import load_session_msel, make_context_fn
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
 from app.sim_params import load_sim_params
 from app.state.broadcaster import RedisBroadcaster
-from app.state.checkpoint import CheckpointManager
+from app.state.checkpoint import CheckpointManager, restore_msel_memory
 from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
 from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
@@ -323,6 +323,17 @@ class SimManager:
             )
             if msel_entries:
                 _LOG.info("session %s 載入 %d 條 MSEL 腳本事件", session_id, len(msel_entries))
+                # 續跑時把上次的 MSEL 記憶灌回去——不然 once 條目全部重新武裝，
+                # D+2 的增援會在每次重啟時再來一次。
+                latest = await asyncio.to_thread(
+                    CheckpointManager(self._factory).load_latest, session_id
+                )
+                if latest is not None and restore_msel_memory(latest, msel_runtime):
+                    _LOG.info(
+                        "session %s 還原 MSEL 記憶（已觸發 %d 條）",
+                        session_id,
+                        len(msel_runtime.memory.fired_at),
+                    )
             if roe.any_rules:
                 _LOG.info("session %s 套用想定 ROE（交戰規則）", session_id)
             if surviv.enabled:
@@ -439,7 +450,10 @@ class SimManager:
                 checkpointer=CheckpointManager(
                     self._factory,
                     extras_provider=lambda: {
-                        "rng": {sid: r.get_state() for sid, r in rngs.items()}
+                        "rng": {sid: r.get_state() for sid, r in rngs.items()},
+                        # WP-B2：MSEL 記憶要跟著快照走，否則重啟後 once 條目全部重新武裝
+                        # ——D+2 的增援會在每次重啟時再來一次。
+                        "msel": msel_runtime.memory.to_dict(),
                     },
                 ),
                 checkpoint_interval=sim_params.checkpoint_interval_ticks,  # #93 可調

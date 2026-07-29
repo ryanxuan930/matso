@@ -2,7 +2,7 @@
 task: WP-B2          # SPEC_V2 §6 WP-B2（MSEL 排程執行引擎與白軍誘導迴圈）
 status: IN_PROGRESS  # B2a 完成；B2b（SPAWN_UNITS）與 B2c（白軍 UI）未做
 started: 2026-07-31T09:10+08:00
-updated: 2026-07-31T09:55+08:00
+updated: 2026-07-31T10:15+08:00
 agent: Opus 5
 ---
 
@@ -62,11 +62,14 @@ agent: Opus 5
 3 秒後被 SimManager 重建，在想定資料有問題時變成無限重啟迴圈。
 故每則注入各自 try/except，失敗落 `MSEL_INJECT_FAILED`。
 
-### 記憶要能撐過重啟
+### 記憶撐得過重啟
 
-`MselMemory` 可序列化（`to_dict`/`from_dict`）。`MselEngine._fired` 是純記憶體的 `set`，
-每次 runner 重啟就把所有 `once` 條目重新武裝——那是已知缺陷（PROGRESS / live-checkpoint），
-這裡不重蹈。**⚠ 尚未接進 checkpoint 信封**（見未完成）。
+`MselMemory` 可序列化，並且**已接進 checkpoint 信封**（`extras["msel"]`，
+與 RNG 位置同一個地方），續跑時以 `restore_msel_memory` 灌回。
+
+`MselEngine._fired` 是純記憶體的 `set`，每次 runner 重啟就把所有 `once` 條目重新武裝
+——**D+2 的增援會在每次重啟時再來一次**。那是已知缺陷（PROGRESS / live-checkpoint），
+這裡沒有重蹈，且有測試釘住（`test_msel_memory_survives_a_checkpoint`）。
 
 ### 脈絡從熱狀態組，不從 DB
 
@@ -75,8 +78,6 @@ agent: Opus 5
 
 ## 未完成（本卡剩餘）
 
-- [ ] **`MselMemory` 進 checkpoint 信封**——目前重啟會重新武裝 `once` 條目。
-      要走 `checkpoint.py` 的 extras（同 `orders`/`fire_plan_targets` 的位置）。
 - [ ] **B2b `SPAWN_UNITS`**：增援生成。兩個前置——生成單位的 id 必須**決定性**
       （由 msel event id 派生，禁 `uuid4()`），且 `WeaponResolver` 在 runner 啟動時建一次、
       沒有失效通知，局中新增的單位會查不到武器（SPEC 明列的陷阱）。
@@ -86,7 +87,8 @@ agent: Opus 5
 
 ## 中斷續作指引
 
-- **下一步第一件事**：把 `MselMemory` 接進 checkpoint extras——那是目前最實質的缺口，
-  不補的話「重啟後狀況重播一次」會在演習中真的發生。
-- 其餘見上面的未完成清單。
+- **下一步第一件事**：B2b `SPAWN_UNITS`（增援生成）。兩個前置都要先解：
+  生成單位的 id 必須決定性（由 msel event id 派生，禁 `uuid4()`），
+  且 `WeaponResolver` 目前在 runner 啟動時建一次、沒有失效通知——
+  局中新增的單位會查不到武器（SPEC 明列的陷阱）。
 - 既有局零行為變更：無 MSEL 的 session，`MselRuntime.check()` 第一行就回 `[]`。

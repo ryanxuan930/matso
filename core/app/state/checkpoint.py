@@ -102,6 +102,22 @@ def split_snapshot(loaded: Mapping[str, Any]) -> tuple[dict[str, UnitState], dic
     )
 
 
+def restore_msel_memory(record: CheckpointRecord, runtime: Any) -> bool:
+    """把快照裡的 MSEL 記憶灌回執行器；回是否有東西可還原。
+
+    **不還原的話重啟就重播狀況**：`once` 條目的「已觸發」只活在記憶體裡，
+    runner 一重建就全部重新武裝——D+2 的增援會在每次重啟時再來一次。
+    `MselEngine._fired` 就是這個毛病，這裡把它補上。
+    """
+    raw = record.extras.get("msel")
+    if not isinstance(raw, dict):
+        return False
+    from app.scenario.msel_runtime import MselMemory
+
+    runtime.memory = MselMemory.from_dict(raw)
+    return True
+
+
 def orders_snapshot(db: Session, session_id: str) -> dict[str, Any]:
     """本局所有 Order 的狀態快照——rollback 要能把「已裁決」的令退回未裁決。
 
