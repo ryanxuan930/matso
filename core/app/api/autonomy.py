@@ -55,6 +55,10 @@ class FactionAI(BaseModel):
 class AutonomyConfig(BaseModel):
     factions: dict[str, FactionAI] = {}
     heartbeat_s: float = 45.0
+    # WP-A1 對照實驗開關：true ＝ AI 改用 ground truth 敵情（全知，迷霧不適用）。
+    # 預設 false（AI 與人一樣受迷霧限制）。**未宣告的欄位會被 pydantic 丟掉**，故必須列在這裡，
+    # 否則前端/白軍設了也存不進 Redis 的 ai_config。
+    ai_ground_truth: bool = False
 
 
 @router.put("/{session_id}/autonomy")

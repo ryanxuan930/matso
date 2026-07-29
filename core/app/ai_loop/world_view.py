@@ -1,0 +1,174 @@
+"""AI 陣營的「可見世界」投影 — WP-A1（SPEC_V2 §6 WP-A1）。
+
+`context.py` 是**零 I/O 的純投影**（其 docstring 明訂），故所有要讀 DB 的可見性查詢集中在本模組：
+敵情（IntelContact）、盟軍（units 共享視圖）、近期事件（Ledger 受眾過濾）。
+
+紅線（fog of war，SPEC_FULL §13.3 / 紅線 #3）：**過濾一律在後端、且只用該陣營看得到的資料**。
+本模組不得以 ground truth 回填 AI 看不到的東西——那正是 WP-A1 要消滅的問題
+（改版前 `ground_truth_enemies` 讓 AI 全知敵方位置）。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.factions.relations import FactionRelations
+from app.intel import store
+from app.intel.service import IntelService
+from app.models import TacticalEventLog, TacticalUnit
+from app.state.broadcaster import event_audience
+from app.state.ledger import LedgerEvent
+
+# 近期事件：不進 AI briefing 的事件型別。
+# - UNIT_MOVED/TICK_OVERRUN：與 WS feed 同一組雜訊（每 tick 每單位一則／診斷用）。
+# - SENSOR_CONTACT：受眾雖是觀測方，但其 `target_id` 是**被偵測單位的真實 id**（ground truth
+#   連結，`intel/schemas.py` 明訂永不下發）。敵情已由 known_enemies 呈現，這裡放行只會把
+#   去識別化在事件欄位上破功。
+_EVENT_EXCLUDE = frozenset({"UNIT_MOVED", "TICK_OVERRUN", "SENSOR_CONTACT"})
+_EVENT_OVERSCAN = 10  # 受眾過濾會刷掉他方事件 → 先多抓幾倍再截尾（見 recent_events）
+_EVENT_SCAN_CAP = 400  # 單次掃描硬上限：避免長局把整條帳本拉進記憶體
+
+
+def contacts_from_intel(
+    db: Session, session_id: str, faction: str, relations: FactionRelations
+) -> list[dict[str, Any]]:
+    """該陣營**真實偵測所得**的敵情（EnemyVisibility 協定實作）。
+
+    投影完全複用 `IntelService.visible_contacts`——即 `GET /intel` 的後端過濾與 fidelity 分級
+    （DETECTED 只有位置/時間戳；CLASSIFIED 加型別；IDENTIFIED 再加番號與陣營）。**不重寫過濾邏輯**，
+    避免兩份真相。`relations` 不參與：盟軍在 sweep 階段就不成為 contact（#91 共享視圖語義）。
+
+    **`unit_id` 是刻意帶上的**：ENGAGE 令的橋接（`orders_bridge`）與物理預檢都以真實
+    `TacticalUnit.id` 查目標，AI 必須給得出它，否則接上迷霧後 AI 就再也打不了任何目標。
+    這不額外洩漏身分——contact 對同一目標是 upsert、`contact_id` 本身即穩定識別，兩者的關聯能力
+    相同；真正的敵情內容仍由 fidelity 閘門控制。（後續若要消除「穩定 id 可跨時關聯」這個殘留，
+    需輪替識別碼，屬另一張卡。）
+
+    contact 是**最後已知位置**：目標移走或已被殲滅仍會留在清單裡（IntelContact 無存活狀態、
+    不過期）。AI 因此可能打空點——這是迷霧的本義，**不得**用 ground truth 回填修正。
+    """
+    views = IntelService(db).visible_contacts(session_id, faction)
+    # contact_id → 真實 unit id（只在伺服端用；見上方 docstring）。
+    unit_by_contact = {c.id: c.target_unit_id for c in store.query(db, session_id, faction)}
+    out: list[dict[str, Any]] = []
+    for v in views:
+        enemy: dict[str, Any] = {
+            "contact_id": v.contact_id,
+            "lat": round(v.lat, 6),
+            "lng": round(v.lng, 6),
+            "fidelity": v.fidelity.value,
+            "last_seen_tick": v.last_seen_tick,
+            "error_radius_m": round(v.error_radius_m, 1),
+        }
+        unit_id = unit_by_contact.get(v.contact_id)
+        if unit_id:
+            enemy["unit_id"] = unit_id
+        # 以下三欄由 fidelity 決定有無（IntelService 已閘門化）——None 就不放，讓 prompt 誠實留白。
+        if v.unit_type:
+            enemy["unit_type"] = v.unit_type
+        if v.designation:
+            enemy["designation"] = v.designation
+        if v.faction:
+            enemy["faction"] = v.faction
+        out.append(enemy)
+    out.sort(key=lambda e: str(e.get("contact_id", "")))  # 決定性順序
+    return out
+
+
+def allied_units(
+    db: Session, session_id: str, faction: str, relations: FactionRelations
+) -> list[dict[str, Any]]:
+    """盟軍部隊（ALLIED 陣營）——走 units 共享視圖，不經偵測（#91 語義）。
+
+    改版前盟軍對 AI 是**完全隱形**的：`build_faction_context` 的己方迴圈是嚴格 `faction ==`，
+    而 `ground_truth_enemies` 只收 HOSTILE → 盟軍既不在 own_units 也不在 known_enemies。
+    協同作戰的前提是看得到友軍，故補上此桶。
+    """
+    units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
+    out: list[dict[str, Any]] = []
+    for u in units:
+        if u.faction == faction or not relations.is_allied(faction, u.faction):
+            continue
+        if u.current_strength is not None and float(u.current_strength) <= 0:
+            continue  # 已殲滅的盟軍不列（共享視圖看得到其狀態，與敵情的「最後已知」不同）
+        view: dict[str, Any] = {
+            "unit_id": u.id,
+            "faction": u.faction,
+            "designation": u.designation,
+            "unit_type": u.unit_level.value,
+        }
+        if u.current_lat is not None and u.current_lng is not None:
+            view["lat"] = round(float(u.current_lat), 6)
+            view["lng"] = round(float(u.current_lng), 6)
+        out.append(view)
+    out.sort(key=lambda v: str(v["unit_id"]))
+    return out
+
+
+def _to_ledger_event(row: TacticalEventLog) -> LedgerEvent:
+    """ORM row → LedgerEvent（`event_audience` 的入參型別；欄位同名，僅補 None 防護）。"""
+    return LedgerEvent(
+        event_type=row.event_type,
+        tick=row.tick,
+        initiator_id=row.initiator_id,
+        target_id=row.target_id,
+        ai_decision=dict(row.ai_decision or {}),
+        damage_calc=row.damage_calc,
+    )
+
+
+def _event_summary(row: TacticalEventLog, ev: LedgerEvent) -> dict[str, Any]:
+    """事件的精簡摘要（供 briefing）。只帶結果性欄位，不帶 hash/內部診斷。"""
+    out: dict[str, Any] = {"tick": row.tick, "event_type": row.event_type}
+    decision = ev.ai_decision
+    for key in ("status", "reason", "target_health_after"):
+        value = decision.get(key)
+        if value is not None:
+            out[key] = value
+    if row.damage_calc is not None:
+        out["damage"] = round(float(row.damage_calc), 1)
+    return out
+
+
+def recent_events(
+    db: Session,
+    session_id: str,
+    faction: str,
+    faction_for: Any = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """該陣營**受眾可見**的最近 N 筆事件（時間正序）。
+
+    受眾判定複用 `broadcaster.event_audience`（與 WS feed 同一套規則，含 SENSOR_CONTACT 的
+    observer 優先陷阱）。`audience is None` ＝全域事件（收場/關係變更…），一律可見。
+
+    排序用 `seq` 而非 tick/timestamp：rollback 後 tick 非單調，seq 才是帳本的時間軸身分。
+    先多抓 `_EVENT_OVERSCAN` 倍再過濾截尾——否則最近 N 筆若全屬他方，本陣營會拿到空清單。
+    """
+    if limit <= 0 or faction_for is None:
+        return []
+    scan = min(limit * _EVENT_OVERSCAN, _EVENT_SCAN_CAP)
+    rows = list(
+        db.scalars(
+            select(TacticalEventLog)
+            .where(TacticalEventLog.session_id == session_id)
+            .order_by(TacticalEventLog.seq.desc())
+            .limit(scan)
+        ).all()
+    )
+    visible: list[dict[str, Any]] = []
+    for row in rows:  # seq 由新到舊
+        if row.event_type in _EVENT_EXCLUDE:
+            continue
+        ev = _to_ledger_event(row)
+        audience = event_audience(ev, faction_for)
+        if audience is not None and faction not in audience:
+            continue
+        visible.append(_event_summary(row, ev))
+        if len(visible) >= limit:
+            break
+    visible.reverse()  # 交給 LLM 時回到時間正序
+    return visible

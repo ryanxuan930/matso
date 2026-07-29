@@ -16,6 +16,8 @@ from app.ai_loop.orchestrator import (
     read_system_ai,
     start_ai_workers,
 )
+from app.ai_loop.worker import ground_truth_enemies
+from app.ai_loop.world_view import contacts_from_intel
 from app.config import Settings
 from app.models.tables import SessionParticipant, SystemConfiguration
 from app.state.hot_state import InMemoryHotState
@@ -140,3 +142,60 @@ def test_start_workers_one_task_per_faction(session_factory: sessionmaker[Sessio
         assert {p.faction for p in parts} >= {"BLUE", "RED"}
 
     asyncio.run(_run())
+
+
+# ---- WP-A1：敵情來源接線與退回開關 ----
+
+
+def _captured_deps(
+    world: Any, factory: sessionmaker[Session], redis: _FakeRedis, monkeypatch: Any
+) -> list[Any]:
+    """攔截 run_faction_worker，取得 orchestrator 實際組出的 deps（驗接線用）。"""
+    seen: list[Any] = []
+
+    async def _fake_worker(deps: Any, **_kw: Any) -> None:
+        seen.append(deps)
+
+    monkeypatch.setattr("app.ai_loop.orchestrator.run_faction_worker", _fake_worker)
+
+    async def _run() -> None:
+        for t in _start(world, factory, redis, decider_factory=lambda **_k: object()):
+            await t
+
+    asyncio.run(_run())
+    return seen
+
+
+def _ai_config_redis(session_id: str, **extra: Any) -> _FakeRedis:
+    return _FakeRedis(
+        {
+            autonomy_config_key(session_id): json.dumps(
+                {"factions": {"BLUE": {}}, "heartbeat_s": 0.01, **extra}
+            )
+        }
+    )
+
+
+def test_ai_uses_real_intel_by_default(
+    session_factory: sessionmaker[Session], monkeypatch: Any
+) -> None:
+    """預設：AI 敵情走真實偵測投影（迷霧對 AI 與對人一致）。"""
+    world = seed_world(session_factory)
+    _seed_system_ai(
+        session_factory, {"mode": "AI_BARE", "llm_base_url": "http://x", "llm_model": "m"}
+    )
+    deps = _captured_deps(world, session_factory, _ai_config_redis(world.session_id), monkeypatch)
+    assert [d.enemy_visibility for d in deps] == [contacts_from_intel]
+
+
+def test_ai_ground_truth_flag_restores_omniscient_enemies(
+    session_factory: sessionmaker[Session], monkeypatch: Any
+) -> None:
+    """退回開關（對照實驗用）：ai_ground_truth=true → 回到改版前的全知敵情。"""
+    world = seed_world(session_factory)
+    _seed_system_ai(
+        session_factory, {"mode": "AI_BARE", "llm_base_url": "http://x", "llm_model": "m"}
+    )
+    redis = _ai_config_redis(world.session_id, ai_ground_truth=True)
+    deps = _captured_deps(world, session_factory, redis, monkeypatch)
+    assert [d.enemy_visibility for d in deps] == [ground_truth_enemies]

@@ -93,6 +93,7 @@ def build_faction_context(
     unit_meta: dict[str, UnitMeta],
     known_enemies: list[dict[str, Any]],
     relations: FactionRelations,
+    allied_units: list[dict[str, Any]] | None = None,
     objectives: list[dict[str, Any]] | None = None,
     recent_events: list[dict[str, Any]] | None = None,
     mission: str = "",
@@ -103,6 +104,7 @@ def build_faction_context(
     - `unit_meta`：uid→UnitMeta（DB 靜態身分）；決定 faction 分流（熱狀態無 faction）。
     - `known_enemies`：**已霧化**的敵情清單（呼叫端保證只含本陣營可見者）。原樣帶入。
     - `relations`：對稱關係矩陣；輸出本陣營對各宣告陣營的關係。
+    - `allied_units`：盟軍部隊（走 units 共享視圖，非偵測；WP-A1）。原樣帶入。
     - `objectives` / `recent_events` / `mission`：態勢與意圖，原樣帶入（可序列化）。
 
     紅線：本函式不讀 DB/Redis、不放寬可見性；敵情只來自 `known_enemies`。
@@ -124,6 +126,7 @@ def build_faction_context(
         "tick": tick,
         "mission": mission,
         "own_units": own,
+        "allied_units": list(allied_units or []),
         "known_enemies": list(known_enemies),
         "relations": rel,
         "objectives": list(objectives or []),
@@ -150,13 +153,50 @@ def _fmt_own(u: dict[str, Any]) -> str:
     )
 
 
+def _fmt_ally(u: dict[str, Any]) -> str:
+    pos = f"({u['lat']:.4f},{u['lng']:.4f})" if "lat" in u else "位置未知"
+    return (
+        f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('unit_type', '?')}"
+        f"｜{u.get('faction', '?')}）@ {pos}"
+    )
+
+
 def _fmt_enemy(e: dict[str, Any]) -> str:
-    ident = e.get("contact_id") or e.get("unit_id") or "未知接觸"
+    """一則敵情。
+
+    識別碼優先用 `unit_id`：ENGAGE 令要以真實單位 id 指定目標（見 world_view.contacts_from_intel），
+    給 contact_id 會讓 LLM 產出橋接不了的令。**時間戳與誤差半徑必須渲染**——WP-A1 要求 DETECTED
+    級只給「概略位置與時間戳」，少了它們 LLM 無從分辨「剛剛看到」與「兩百 tick 前看到」，
+    也就學不會情報會過時。
+    """
+    ident = e.get("unit_id") or e.get("contact_id") or "未知接觸"
     lat, lng = _num(e.get("lat")), _num(e.get("lng"))
     pos = f"({lat:.4f},{lng:.4f})" if lat is not None and lng is not None else "位置不明"
-    extras = [str(e[k]) for k in ("faction", "unit_type", "type", "fidelity") if e.get(k)]
+    extras = [str(e[k]) for k in ("faction", "designation", "unit_type", "type") if e.get(k)]
     tail = f"｜{' '.join(extras)}" if extras else ""
-    return f"- {ident} @ {pos}{tail}"
+    seen = ""
+    if e.get("last_seen_tick") is not None:
+        seen = f"｜最後觀測 tick {e['last_seen_tick']}"
+        err = _num(e.get("error_radius_m"))
+        if err is not None:
+            seen += f"（誤差 ±{err:.0f}m）"
+    fidelity = f"｜{e['fidelity']}" if e.get("fidelity") else ""
+    return f"- {ident} @ {pos}{tail}{fidelity}{seen}"
+
+
+def _fmt_event(ev: dict[str, Any]) -> str:
+    """一則近期事件。非 dict（既有測試/呼叫端傳字串）則原樣輸出，維持相容。"""
+    if not isinstance(ev, dict):
+        return f"- {ev}"
+    parts = [f"tick {ev['tick']}" if ev.get("tick") is not None else None, ev.get("event_type")]
+    for key in ("status", "reason"):
+        if ev.get(key):
+            parts.append(str(ev[key]))
+    if ev.get("damage") is not None:
+        parts.append(f"傷害 {ev['damage']}")
+    if ev.get("target_health_after") is not None:
+        parts.append(f"目標剩餘 {ev['target_health_after']}")
+    return "- " + "｜".join(p for p in parts if p)
 
 
 def render_context_prompt(ctx: dict[str, Any]) -> str:
@@ -176,6 +216,11 @@ def render_context_prompt(ctx: dict[str, Any]) -> str:
     lines.append(f"## 我方部隊（{len(own)}）")
     lines.extend(_fmt_own(u) for u in own) if own else lines.append("- （無存活單位）")
 
+    allies = ctx.get("allied_units") or []
+    if allies:
+        lines.append(f"## 盟軍部隊（{len(allies)}；經共享視圖，非本軍偵測）")
+        lines.extend(_fmt_ally(u) for u in allies)
+
     enemies = ctx.get("known_enemies") or []
     lines.append(f"## 已知敵情（{len(enemies)}；僅列偵測所及，未偵測者不在此）")
     if enemies:
@@ -191,6 +236,6 @@ def render_context_prompt(ctx: dict[str, Any]) -> str:
     events = ctx.get("recent_events") or []
     if events:
         lines.append("## 近期關鍵事件")
-        lines.extend(f"- {ev}" for ev in events)
+        lines.extend(_fmt_event(ev) for ev in events)
 
     return "\n".join(lines)

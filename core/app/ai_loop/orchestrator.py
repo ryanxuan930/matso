@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.ai_loop.decider import make_llm_faction_decider
 from app.ai_loop.opfor import OpforDecider
-from app.ai_loop.worker import FactionWorkerDeps, run_faction_worker
+from app.ai_loop.worker import FactionWorkerDeps, ground_truth_enemies, run_faction_worker
+from app.ai_loop.world_view import contacts_from_intel
 from app.config import Settings
 from app.factions.session_store import load_session_relations
 from app.guardrails import GuardrailGateway
@@ -164,6 +165,13 @@ def start_ai_workers(
     with db_factory() as db:
         _sim = load_sim_params(db)
     heartbeat = float(cfg.get("heartbeat_s") or _sim.ai_heartbeat_s)
+    # WP-A1：AI 敵情預設走**真實偵測**（IntelContact 投影，同 GET /intel 語義）。
+    # `ai_ground_truth=true` 是刻意保留的退回開關——供「有/無迷霧」對照實驗（SPEC_V2 WP-D1），
+    # 開啟即回到改版前的全知行為。預設 false：迷霧對 AI 與對人一致。
+    use_ground_truth = bool(cfg.get("ai_ground_truth"))
+    enemy_visibility = ground_truth_enemies if use_ground_truth else contacts_from_intel
+    if use_ground_truth:
+        _LOG.warning("session %s 的 AI 走 ground truth 敵情（對照實驗模式）", session_id)
 
     tasks: list[asyncio.Task[None]] = []
     for faction, fc_raw in factions_cfg.items():
@@ -181,6 +189,7 @@ def start_ai_workers(
             phys_gateway=gateway,
             relations=relations,
             mode=mode,
+            enemy_visibility=enemy_visibility,  # WP-A1：預設真實偵測（見上）
             mission=str(fc.get("mission") or ""),
             objectives=list(fc.get("objectives") or []),
             # session_id 於本迴圈固定（只有 faction 變），直接閉包即可。

@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.ai_loop.context import UnitMeta, build_faction_context
 from app.ai_loop.opfor import AiTurnResult, OpforDecider, run_faction_turn
 from app.ai_loop.orders_bridge import BridgeResult, PrecheckFeasibility, submit_faction_orders
+from app.ai_loop.world_view import allied_units, recent_events
 from app.factions.relations import FactionRelations
 from app.guardrails import GuardrailGateway
 from app.guardrails.schemas import CitationVerifier
@@ -136,6 +137,15 @@ def run_decision_cycle(
     snapshot = hot.get_all()
     unit_meta = load_unit_meta(db, session_id)
     enemies = enemy_visibility(db, session_id, faction, relations)
+    # WP-A1：盟軍走共享視圖（非偵測）、近期事件走 Ledger 受眾過濾。
+    # faction_for 由已載入的 unit_meta 導出——查無單位回 ""，`event_audience` 會忽略空字串。
+    allies = allied_units(db, session_id, faction, relations)
+    events = recent_events(
+        db,
+        session_id,
+        faction,
+        faction_for=lambda uid: unit_meta[uid].faction if uid in unit_meta else "",
+    )
     context = build_faction_context(
         faction=faction,
         tick=tick,
@@ -143,7 +153,9 @@ def run_decision_cycle(
         unit_meta=unit_meta,
         known_enemies=enemies,
         relations=relations,
+        allied_units=allies,
         objectives=objectives,
+        recent_events=events,
         mission=mission,
     )
     feasibility = PrecheckFeasibility(db, session_id, phys_gateway, relations)
