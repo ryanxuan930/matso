@@ -68,3 +68,24 @@ test('火力計畫面板一定看得到誤傷警語', async ({ page }) => {
   await openFirePlanWidget(page)
   await expect(page.getByText('敵我皆受損')).toBeVisible()
 })
+
+// BL-6：臨機火力申請（CALL_FOR_FIRE）從 UI 送得出去。
+// 修之前 `REQUEST_KIND_LABELS` 根本沒有這個種類，而 `submitRequest` 寫死 params:{}——
+// 後端要求 target_lat/target_lng，所以這條路徑從 UI 是**不可能**走通的。
+test('臨機火力申請：選種類 → 帶落點 → 送得出去', async ({ page }) => {
+  await openCop(page)
+  await pickAimPoint(page)
+
+  await page.getByTestId('nav-widgets').click()
+  await page.getByTestId('widget-toggle-c2').click()
+  await page.locator('.wm-backdrop').click()
+
+  await page.getByTestId('c2-tab-requests').click()
+  await page.getByTestId('c2-req-kind').selectOption('CALL_FOR_FIRE')
+  // 帶得到落點才送得出去——沒有觀測就叫不動火力，那是 C10.1 的規則。
+  await expect(page.getByTestId('c2-cff-target')).toContainText('🎯')
+  await page.getByTestId('c2-req-note').fill('敵集結地')
+  await page.getByTestId('c2-submit').click()
+
+  await expect(page.getByTestId('c2-requests')).toContainText('臨機火力')
+})

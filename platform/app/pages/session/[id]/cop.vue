@@ -762,7 +762,7 @@ onBeforeUnmount(() => {
         <!-- C2 信文 / 申請-核覆（WP-B5.2）：席位之間的異步審批鏈。 -->
         <ClientOnly>
         <CopWidget id="c2" :ui="copUiView" :open="widgets.c2.open">
-          <C2Panel :session-id="sessionId" :my-seat="mySeatRole" />
+          <C2Panel :session-id="sessionId" :my-seat="mySeatRole" :aim-point="firePoint" />
         </CopWidget>
         </ClientOnly>
 

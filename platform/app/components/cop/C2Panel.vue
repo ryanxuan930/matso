@@ -10,6 +10,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import {
+  KINDS_NEEDING_TARGET,
   MESSAGE_KIND_LABELS,
   REQUEST_KIND_LABELS,
   REQUEST_STATUS_LABELS,
@@ -28,6 +29,12 @@ const props = defineProps<{
   sessionId: string
   /** 本人席位；null＝未指派（權限沿用角色規則）。 */
   mySeat: string | null
+  /**
+   * COP 下令面板當前的火力落點。臨機火力申請要帶目標座標——
+   * **與火力任務共用同一套點地圖互動**：兩處各做一套，使用者要學兩次，
+   * 而且第二套一定會漏掉某個提醒。
+   */
+  aimPoint?: { lng: number; lat: number } | null
 }>()
 
 const tab = ref<'inbox' | 'requests'>('inbox')
@@ -70,7 +77,19 @@ async function doSend() {
 async function doSubmit() {
   busy.value = true
   try {
-    await submitRequest(props.sessionId, reqKind.value, reqNote.value)
+    const needsTarget = KINDS_NEEDING_TARGET.has(reqKind.value)
+    if (needsTarget && !props.aimPoint) {
+      err.value = '臨機火力申請要先在「單位／下令」面板點出目標落點'
+      return
+    }
+    await submitRequest(
+      props.sessionId,
+      reqKind.value,
+      reqNote.value,
+      needsTarget && props.aimPoint
+        ? { target_lat: props.aimPoint.lat, target_lng: props.aimPoint.lng }
+        : {},
+    )
     reqNote.value = ''
     await reload()
   } catch (e) {
@@ -164,6 +183,15 @@ const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat ==
       <select v-model="reqKind" class="c2-sel" data-testid="c2-req-kind">
         <option v-for="(label, k) in REQUEST_KIND_LABELS" :key="k" :value="k">{{ label }}</option>
       </select>
+      <p v-if="KINDS_NEEDING_TARGET.has(reqKind)" class="c2-hint" data-testid="c2-cff-target">
+        <template v-if="aimPoint">
+          🎯 目標 {{ aimPoint.lat.toFixed(4) }}, {{ aimPoint.lng.toFixed(4) }}
+        </template>
+        <template v-else>
+          ⚠ 先在「單位／下令」面板點出目標落點——沒有觀測就叫不動火力，
+          後端會驗本陣營是否有單位看得到那個點。
+        </template>
+      </p>
       <input v-model="reqNote" placeholder="申請說明（選填）" data-testid="c2-req-note">
       <button :disabled="busy" data-testid="c2-submit" @click="doSubmit">送出申請</button>
     </div>
@@ -172,6 +200,13 @@ const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat ==
 </template>
 
 <style scoped>
+.c2-hint {
+  margin: 0.2rem 0 0;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+
 .c2 { display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.78rem; }
 .c2-seat { color: #94a3b8; font-size: 0.72rem; }
 .c2-seat b { color: #7dd3fc; }
