@@ -1,8 +1,8 @@
 ---
 task: WP-B5.2        # SPEC_V2 §6 WP-B5 第二張卡（信文 / 申請-核覆）
-status: IN_PROGRESS
+status: DONE
 started: 2026-07-30T22:30+08:00
-updated: 2026-07-30T22:30+08:00
+updated: 2026-07-30T23:50+08:00
 agent: Opus 5
 ---
 
@@ -64,11 +64,11 @@ roadmap 那條鏈寫的是 `B5.1 → B5.2 信文/申請核覆 → C10`，所以 
 - [x] 2. DB：prisma schema 兩張新表 + enum → migrate。
 - [x] 3. SQLAlchemy models + schema_sync。
 - [x] 4a. 審批 registry（誰能核覆）。
-- [ ] 4b. 服務層狀態機（PENDING→APPROVED/DENIED→EXPENDED）+ 配額。
-- [ ] 5. API：送信 / 收信匣 / 送出申請 / 核覆 / 查詢。
-- [ ] 6. WS：席位受眾 + 推播（後端過濾，紅線 3）。
-- [ ] 7. 前端：信文匣 + 申請/核覆 UI。
-- [ ] 8. 測試（含越權核覆被拒、配額用罄自動 DENIED、NULL 席位沿用既有規則）+ 四道驗證。
+- [x] 4b. 服務層狀態機（PENDING→APPROVED/DENIED→EXPENDED）+ 配額。
+- [x] 5. API：送信 / 收信匣 / 送出申請 / 核覆 / 查詢。
+- [x] 6. WS：席位受眾 + 推播（後端過濾，紅線 3）。
+- [x] 7. 前端：信文匣 + 申請/核覆 UI。
+- [x] 8. 測試（含越權核覆被拒、配額用罄自動 DENIED、NULL 席位沿用既有規則）+ 四道驗證。
 
 ## 執行紀錄
 
@@ -82,32 +82,69 @@ roadmap 那條鏈寫的是 `B5.1 → B5.2 信文/申請核覆 → C10`，所以 
 - `23:0x` **核覆權 registry**（`b340b2e`）：`app/c2` 的 `SEAT_APPROVAL`，
   與 B5.1 的 `SEAT_ORDER_TYPES` 並列。11 個測試。
 
-## 目前狀態（給接手的人）
+## 收尾（B5.2 完成）
 
-**已完成**：契約、DB、models、核覆權 registry（純函數 + 測試）。
-**未完成**：服務層狀態機 + 配額、API 端點、WS 席位受眾、前端。
+| 步驟 | commit |
+|------|--------|
+| 契約 + DB + models | `d18c46a` |
+| 核覆權 registry | `b340b2e` |
+| WS 席位受眾（先釘 14 格真值表再改） | `0db7704` |
+| 想定層配額 + 開局快照 | `58bcb36` |
+| 服務層狀態機 + 配額 | `0165c0e` |
+| REST 端點 + 收信匣不外洩 | `16fe096` |
+| 前端小工具 + COP 顯示席位 | `6601916` |
+| WS 即時推播接線 | `3ad777f` |
 
-### 已經想清楚、照著做即可的部分
+### 使用者裁示（2026-07-30）
 
-- **狀態機**：PENDING →（核覆）→ APPROVED / DENIED；APPROVED →（用掉）→ EXPENDED。
-  轉移一律經單一函數，非 PENDING 再核覆要拋 `RequestAlreadyDecidedError`（409）。
-- **配額用罄的處理**：規格說「配額用罄後申請自動 DENIED」——**不是拒收**。
-  差別很重要：留痕才看得出這個陣營在第幾 tick 被配額卡住，那正是 AAR 要評的東西。
-- **送出申請時附言**要一併生成一封 `REQUEST` 信文（`ref_id` 指向申請單），
-  核覆時生成 `APPROVAL` 信文——信文才是 C2 工件流轉的載體，申請單只是狀態。
+| 問題 | 選擇 |
+|------|------|
+| WS 席位受眾 | 加 `seat` 欄位、**只能收窄** |
+| 配額來源 | 想定層 `request_quotas`（開局快照） |
 
-### 還沒解的設計問題
+### 幾個刻意的設計，各有測試釘住
 
-- **WS 席位受眾**：`stream/faction_filter.py` 目前只認 `faction` / `factions` / `exclusive`。
-  信文要送到「某陣營的某一席」，需要新的受眾維度。
-  ⚠ 那支檔案是紅線 3 的守門處，加席位受眾**不得放寬既有的陣營過濾**，
-  WP-C5 的 `exclusive` 語義也要保住。動它之前先把現有 4 條分支的真值表寫出來。
-- **配額來源**：想定層目前沒有 `request_quotas` 欄位。要嘛加進 scenario schema
-  （得動 O7.1 的 loader 與驗證），要嘛先放 session 層。**還沒決定**。
+1. **配額用罄落 DENIED，不是拒收**——留痕才看得出在第幾 tick 被卡住，那是 AAR 要評的。
+2. **PENDING 也佔配額**——否則 4 架次可先送 10 張單再一路核准。
+3. **APPROVED ≠ EXPENDED**——一張核准單只能兌現一次，合併會讓同一張火協掛在兩次砲擊令上。
+4. **NULL 席位沿用角色規則**——與 B5.1 同一條原則，否則既有局沒有人能核覆。
+5. **席位只能收窄**——`_faction_visible` 先過才看席位；新維度若能單獨放行等於開旁路。
+
+### 動守門處的做法（值得重複）
+
+`faction_filter.py` 是紅線 3 的唯一閘門。動它之前先寫
+`test_stream_audience_truth_table.py` 把**現有 14 條分支逐格釘死**，跑綠才改程式碼。
+**不測「應該長怎樣」，測「現在就是這樣」**——任何一格從 False 變 True 就是漏敵情。
+改完 14 格原封不動，另加 7 格席位案例（含「席位相同但陣營不同」與
+「exclusive + 席位相符」兩個會漏的情況）。
+
+### 自己抓到的一條假測試
+
+原本的 `test_inbox_does_not_leak_across_seats` **只驗了寄件人自己看得到**——
+而寄件人一定看得到（寄件備份），這條測試會永遠通過，即使席位過濾完全失效。
+重寫成有第三個人的版本（指揮官發給 FSO 席，斷言 S2 席收到空的）才真的驗到邊界。
+**名字說一套、做另一套的測試比沒有測試更危險。**
+
+### 驗證
+
+- pytest 1375、mypy 217、ruff、schema-sync（18 tables / 171 columns）全綠。
+- 前端 lint / typecheck / build 綠。
+- **容器實測完整往返**：送信 → 信文匣；送出空偵申請 → 待核覆、配額 1；
+  核准 → 已核准，信文匣自動多出「申請（→指揮官席）」與「核覆」兩封。測試資料已清除。
+- **e2e（`.env`-free worktree）**：4 failed / 18 passed，與 D6.1 收卡時**逐條相同**，零回歸。
+
+### 未做（明確留給後續卡）
+
+- **B5.3 曲射火協 gate**：`indirect_fire_requires_approval` + precheck 掛已核准的
+  FIRE_SUPPORT request。`expend_request` 已備好（非 APPROVED 回 None），接上即可。
+- **B5.4 標繪分送 + 殲敵自動 REPORT**：`MapFeature.shared_to: seat[]`。
+- **每日配額重置**：目前是整局總量。SimClock 沒有「模擬日」概念，硬做會是假的。
+  要做得先有模擬日曆（與 C4 環境演進相關）。
+- **前端未依席位隱藏下令 UI**：越權由後端擋並回明確錯誤碼；體驗上 S2 席不該看到下令按鈕。
 
 ## 中斷續作指引
 
-- 下一步是 **4b 服務層狀態機 + 配額**，再來 API → WS → 前端。
-- 動 `faction_filter.py` 前務必先讀上面的警告。
-- 本卡刻意不做：曲射火協 gate（B5.3）、標繪分送與殲敵自動回報（B5.4）。
-- 已知界線：配額是**整局總量非每日**（SimClock 無模擬日概念），已寫進契約說明。
+- **本卡（B5.2）已完成**。下一張照 roadmap 是 **C10 call-for-fire**，但它依賴 B5.3 的火協 gate，
+  建議先做 B5.3（範圍小、`expend_request` 已備好）。
+- 要調整席位分工/核覆權只改兩張表：`app/seats/SEAT_ORDER_TYPES`、`app/c2/SEAT_APPROVAL`。
+- **動 `faction_filter.py` 一律先跑 `test_stream_audience_truth_table.py`**，那是紅線 3 的護欄。
