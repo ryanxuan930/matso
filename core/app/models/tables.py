@@ -76,6 +76,9 @@ class WargameSession(Base):
     world_start_time: Mapped[str | None] = mapped_column("worldStartTime", DateTime(timezone=False))
     current_weather: Mapped[dict] = mapped_column("currentWeather", JSON)  # type: ignore[type-arg]
     # #6：允許自行編輯本軍編裝的陣營清單（White Cell 設定）。None = 僅白軍可編。
+    # 申請單配額快照（WP-B5.2）：開局時從想定複製，不即時讀想定——想定可能在演習中被
+    # 編修或刪除，即時讀會讓已開的局配額被追溯改掉。None＝未宣告＝不限（既有局語義）。
+    request_quotas: Mapped[dict | None] = mapped_column("requestQuotas", JSON)  # type: ignore[type-arg]
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "orbatEditFactions", JSON, nullable=True
     )

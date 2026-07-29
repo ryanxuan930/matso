@@ -57,6 +57,10 @@ model WargameSession {
   units       TacticalUnit[]
   eventLogs   TacticalEventLog[]
   mapFeatures MapFeature[]
+  /// 申請單配額快照（WP-B5.2）。**開局時從想定複製一份**，不是每次即時讀想定——
+  /// 想定可能在演習進行中被編修或刪除，即時讀會讓已開的局配額被追溯改掉。
+  /// null＝未宣告＝不限（既有局語義）。
+  requestQuotas Json?
 }
 
 // 地圖標註/工事：武器據點、障礙、建築、控制措施等（點/線/面 + 影響範圍 + 屬性）。

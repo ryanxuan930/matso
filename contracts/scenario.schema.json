@@ -225,6 +225,25 @@
           }
         }
       }
+    },
+    "request_quotas": {
+      "type": "object",
+      "description": "申請單配額（WP-B5.2，[JCATS-A p.13] 空偵架次）。缺／未列的種類＝不限。**目前是整局總量，不是每日**——SimClock 沒有「模擬日」概念，硬做每日重置會是假的（見 docs/worklog/c2-messaging.md）。",
+      "properties": {
+        "AIR_RECON": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "FIRE_SUPPORT": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "RESUPPLY_VOUCHER": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

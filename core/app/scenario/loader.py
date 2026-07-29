@@ -67,6 +67,8 @@ class LoadedScenario:
     # WP-B6 交戰規則宣告（roe.yaml 原樣帶入；解析成規則由 orders/roe.py 於讀取時做）。
     # 空 dict ＝ 未宣告 ＝ 無限制。
     roe: dict[str, Any] = field(default_factory=dict)
+    # 申請單配額（WP-B5.2）：{RequestKind: 上限}。缺／未列＝不限。
+    request_quotas: dict[str, int] = field(default_factory=dict)
     # WP-B6 想定機動覆寫（overrides/mobility_matrix.json 原樣帶入；**局部**覆寫，深合併於預設）。
     mobility_overrides: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
@@ -123,6 +125,7 @@ def _build(
         victory_conditions=list(sc["victory_conditions"]),
         no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
         roe=roe,
+        request_quotas={str(k): int(v) for k, v in (sc.get("request_quotas") or {}).items()},
         mobility_overrides=mobility_overrides,
         description=sc.get("description"),
         faction_display_names={
@@ -381,6 +384,9 @@ def create_session_from_scenario(
         roe=loaded.roe or None,
         # WP-B6 機動覆寫落地：想定的地形通行調整隨局持久化（runner 與預覽端共用）。
         mobility_overrides=loaded.mobility_overrides or None,
+        # WP-B5.2 申請配額落地：想定宣告的配額**開局快照一份**（不即時讀想定，
+        # 否則想定被編修會追溯改掉進行中的局）。空宣告存 None ＝ 不限（既有局語義）。
+        request_quotas=loaded.request_quotas or None,
     )
     db.add(session)
     db.flush()
