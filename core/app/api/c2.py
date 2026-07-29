@@ -120,6 +120,27 @@ def _require_member(
     return part, omniscient
 
 
+def _live_units(settings: Settings, db: Session, session_id: str, faction: str) -> dict[str, Any]:
+    """該陣營單位的熱狀態切片（單次 MGET）。Redis 不可達 → 空 dict（呼叫端退回 DB 列）。"""
+    from app.models.tables import TacticalUnit
+    from app.state.comms_view import load_comms_view
+
+    ids = list(
+        db.scalars(
+            select(TacticalUnit.id).where(
+                TacticalUnit.session_id == session_id,
+                TacticalUnit.faction == faction,
+            )
+        ).all()
+    )
+    if not ids:
+        return {}
+    try:
+        return dict(load_comms_view(make_redis(settings.redis_url), session_id, ids).units)
+    except Exception:
+        return {}
+
+
 def _live_tick(db: Session, session_id: str) -> int:
     """信文/申請單戳記的 sim tick。以 Ledger 已記錄的最後一筆為準（無活模擬時為 0）。"""
     from app.models.tables import TacticalEventLog
@@ -316,7 +337,16 @@ def post_request(
         lat, lng = req.params.get("target_lat"), req.params.get("target_lng")
         if not isinstance(lat, int | float) or not isinstance(lng, int | float):
             raise RequestNoObserverError("臨機火力申請須指定目標座標（target_lat/target_lng）")
-        if not has_observer_on(db, session_id, part.faction, (float(lat), float(lng)), gateway):
+        # 位置與存活一律以**熱狀態**為準：活模擬只寫熱狀態，DB 的 current_lat/lng
+        # 停在開局位置——只讀 DB 的話問的是「開局時看得到嗎」。
+        if not has_observer_on(
+            db,
+            session_id,
+            part.faction,
+            (float(lat), float(lng)),
+            gateway,
+            live_state=_live_units(settings, db, session_id, part.faction),
+        ):
             raise RequestNoObserverError(
                 "本陣營無任何單位對該目標有視線——沒有觀測就叫不動火力",
                 details={"target_lat": float(lat), "target_lng": float(lng)},

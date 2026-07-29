@@ -174,3 +174,98 @@ def test_pending_cannot_be_expended(session_factory: sessionmaker[Session]) -> N
     rid = _submit(session_factory, world)
     with session_factory() as db:
         assert expend_request(db, rid) is None
+
+
+# ---- has_observer_on 的三個既有缺陷（Backlog 清理，2026-07-31）----
+
+
+class _LosGateway:
+    """一律看得見的假 gateway；記錄被問過哪些觀測點。"""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[float, float]] = []
+
+    def has_los(self, observer, target):  # type: ignore[no-untyped-def]
+        from app.orders.precheck import LosOutcome
+
+        self.asked.append((observer[0], observer[1]))
+        return LosOutcome(True, 5.0)
+
+
+class _BrokenGateway:
+    def has_los(self, observer, target):  # type: ignore[no-untyped-def]
+        from app.errors import TerrainUnavailableError
+
+        raise TerrainUnavailableError("terrain down")
+
+
+def test_a_dead_unit_is_not_an_observer(session_factory: sessionmaker[Session]) -> None:
+    """**一個被打光的前觀不該還能替全陣營叫火力。**"""
+    from app.c2.service import has_observer_on
+    from app.models.tables import TacticalUnit
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        u = db.get(TacticalUnit, world.blue_unit_id)
+        assert u is not None
+        u.current_strength = 0.0
+        db.commit()
+    with session_factory() as db:
+        assert has_observer_on(db, world.session_id, "BLUE", (23.8, 121.3), _LosGateway()) is False
+
+
+def test_live_position_beats_the_db_row(session_factory: sessionmaker[Session]) -> None:
+    """**活模擬只寫熱狀態，從不寫 `TacticalUnit.current_lat/lng`。**
+
+    只讀 DB 的話問的是「開局時看得到嗎」——單位跑到哪裡去都不影響判定。
+    """
+    from app.c2.service import has_observer_on
+
+    world = seed_world(session_factory)
+    gw = _LosGateway()
+    with session_factory() as db:
+        has_observer_on(
+            db,
+            world.session_id,
+            "BLUE",
+            (23.8, 121.3),
+            gw,
+            live_state={world.blue_unit_id: {"lat": 24.9, "lng": 122.9, "strength": 80.0}},
+        )
+    assert gw.asked == [(24.9, 122.9)], "問的是 DB 的開局位置，不是單位現在在哪"
+
+
+def test_a_dead_unit_in_hot_state_is_not_an_observer(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """存活也要看熱狀態——DB 的 current_strength 同樣停在開局值。"""
+    from app.c2.service import has_observer_on
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        assert (
+            has_observer_on(
+                db,
+                world.session_id,
+                "BLUE",
+                (23.8, 121.3),
+                _LosGateway(),
+                live_state={world.blue_unit_id: {"lat": 23.75, "lng": 121.25, "strength": 0.0}},
+            )
+            is False
+        )
+
+
+def test_terrain_failure_propagates(session_factory: sessionmaker[Session]) -> None:
+    """**docstring 本來就說「不吞例外」，但程式碼裡有一段 `except Exception: continue`
+    一直在做相反的事。**文件說一套、程式做一套是最難查的那種不一致。
+
+    地形服務掛掉要讓 API 轉 503，不是靜靜回「沒有觀測」——後者會讓使用者
+    以為是自己站的位置不對，跑去換一個一樣看不到的地方。
+    """
+    from app.c2.service import has_observer_on
+    from app.errors import TerrainUnavailableError
+
+    world = seed_world(session_factory)
+    with session_factory() as db, pytest.raises(TerrainUnavailableError):
+        has_observer_on(db, world.session_id, "BLUE", (23.8, 121.3), _BrokenGateway())

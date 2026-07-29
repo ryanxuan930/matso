@@ -168,18 +168,28 @@ def has_observer_on(
     faction: str,
     target: tuple[float, float],
     gateway: object,
+    live_state: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> bool:
-    """該陣營是否有任一單位對目標點有視線（WP-C10.1）。
+    """該陣營是否有任一**存活**單位對目標點有視線（WP-C10.1）。
 
     **LOS 一律走與交戰預檢同一個 `PhysicsGateway`**，不另寫一套——兩份 LOS 實作
     就是兩份會漂移的物理，這個 repo 已經有 fog of war 因此出事的前例（WP-C5）。
 
     gateway 缺 `has_los`（測試用的極簡假件）→ 視為有觀測，不讓缺方法變成硬失敗。
 
-    **不吞例外**：terrain 不可達要讓 `TerrainUnavailableError` 往上拋（API 轉 503），
-    而不是靜靜回「沒有觀測」。兩者對使用者的意義天差地遠——前者是系統故障該修，
-    後者是戰術判定該換位置。寫這段時原本用了 `except Exception`，
-    結果自己測試裡一個建構子筆誤被吞成「沒有觀測」，正是這個模式會造成的誤導。
+    **例外一律往上拋**（Backlog 清理，2026-07-31 修）：`TerrainUnavailableError` 要讓
+    API 轉 503，而不是靜靜回「沒有觀測」——「系統故障」與「戰術上沒人看得到」對使用者的
+    意義天差地遠，前者該修系統、後者該換觀測位置。
+    docstring 本來就是這麼寫的，但**程式碼裡有一段 `except Exception: continue` 一直在
+    做相反的事**。文件說一套、程式做一套，是最難查的那種不一致。
+
+    ⚠ 與 tick 側的 `engine/fire_wiring.observer_verdict` 刻意不同：那裡**必須**吞例外
+    （回 UNKNOWN），因為 `run_tick` 沒有防護，一個例外會讓 runner 崩潰後每 3 秒被重建。
+    這裡是 API 路徑，失敗大聲一點才對。
+
+    `live_state`＝熱狀態切片（unit_id → state）。**活模擬只寫熱狀態，從不寫
+    `TacticalUnit.current_lat/lng`**，所以只讀 DB 的話問的是開局位置，
+    單位跑到哪裡去都不影響判定。有給就以它為準，缺鍵才退回 DB 列。
     """
     from app.models.tables import TacticalUnit
 
@@ -193,16 +203,21 @@ def has_observer_on(
         )
     ).all()
     tlat, tlng = target
+    live = live_state or {}
     for u in units:
-        if u.current_lat is None or u.current_lng is None:
+        state = live.get(u.id) or {}
+        # **死掉的單位不是觀測者。**沒有這道過濾的話，一個被打光的前觀還會替全陣營叫火力。
+        strength = state.get("strength", u.current_strength)
+        if isinstance(strength, (int, float)) and strength <= 0:
             continue
-        try:
-            outcome = has_los(
-                (float(u.current_lat), float(u.current_lng), float(u.elevation or 0.0)),
-                (tlat, tlng, 0.0),
-            )
-        except Exception:
+        lat = state.get("lat", u.current_lat)
+        lng = state.get("lng", u.current_lng)
+        if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
             continue
+        outcome = has_los(
+            (float(lat), float(lng), float(u.elevation or 0.0)),
+            (tlat, tlng, 0.0),
+        )
         if getattr(outcome, "visible", False):
             return True
     return False
