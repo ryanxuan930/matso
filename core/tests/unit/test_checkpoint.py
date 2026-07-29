@@ -313,3 +313,85 @@ def test_kernel_rejects_invalid_checkpoint_interval(
 ) -> None:
     with pytest.raises(ValueError, match="checkpoint_interval"):
         build_noop_kernel(checkpoint_interval=0)
+
+
+# ---------------- rollback 也要回捲 DB 單位列（Backlog 清理，WP-C10.5 發現） ----------------
+
+
+def _seed_unit(factory: sessionmaker[Session], session_id: str) -> str:
+    """建一個有座標/戰力的單位（DB 列），供回滾對帳。"""
+    from app.models.enums import UnitLevel
+    from app.models.tables import TacticalUnit, WargameSession
+
+    with factory() as db:
+        if db.get(WargameSession, session_id) is None:
+            db.add(WargameSession(id=session_id, name="rb", master_seed=1, current_weather={}))
+            db.flush()
+        u = TacticalUnit(
+            session_id=session_id,
+            designation="U1",
+            unit_level=UnitLevel.PLATOON,
+            faction="BLUE",
+            current_lat=23.0,
+            current_lng=121.0,
+            current_strength=100.0,
+            authorized_strength=100.0,
+            health_status=100.0,
+        )
+        db.add(u)
+        db.commit()
+        return u.id
+
+
+def test_rollback_rewinds_the_db_unit_row_not_just_hot_state(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """**回滾看起來成功了，重啟一次就打回原形。**
+
+    `hot_state.restore` 只還原熱狀態，而 `seed_combat_state` 每次 runner 啟動都
+    **無條件**以 DB 的 current_lat/lng 覆蓋熱狀態——回滾不動 DB 列的話，
+    單位會彈回回滾前的位置，而且畫面上在重啟前完全看不出來。
+    """
+    from app.models.tables import TacticalUnit
+
+    uid = _seed_unit(session_factory, session_id)
+    mgr = CheckpointManager(session_factory)
+    hot = InMemoryHotState()
+    hot.put_unit(uid, {"lat": 23.0, "lng": 121.0, "strength": 100.0, "health": 100.0})
+    mgr.checkpoint(session_id, tick=0, state=hot.get_all(), ledger_seq=-1)
+
+    # 之後單位移動且受損——活模擬會同時寫熱狀態與 DB 列。
+    hot.update_unit(uid, {"lat": 23.5, "lng": 121.5, "strength": 40.0, "health": 40.0})
+    with session_factory() as db:
+        row = db.get(TacticalUnit, uid)
+        assert row is not None
+        row.current_lat, row.current_lng = 23.5, 121.5
+        row.current_strength, row.health_status = 40.0, 40.0
+        db.commit()
+
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+
+    with session_factory() as db:
+        row = db.get(TacticalUnit, uid)
+        assert row is not None
+        assert (row.current_lat, row.current_lng) == (23.0, 121.0), "DB 座標還停在回滾前"
+        assert row.current_strength == 100.0, "DB 戰力還停在回滾前——GET /units 會顯示已被回滾的戰損"
+
+
+def test_rollback_reports_how_many_unit_rows_it_rewound(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    uid = _seed_unit(session_factory, session_id)
+    mgr = CheckpointManager(session_factory)
+    hot = InMemoryHotState()
+    hot.put_unit(uid, {"lat": 23.0, "lng": 121.0})
+    mgr.checkpoint(session_id, tick=0, state=hot.get_all(), ledger_seq=-1)
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+    with session_factory() as db:
+        ev = (
+            db.execute(select(TacticalEventLog).where(TacticalEventLog.event_type == "ROLLBACK"))
+            .scalars()
+            .first()
+        )
+    assert ev is not None and ev.detail is not None
+    assert ev.detail["units_restored"] == 1

@@ -41,7 +41,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.errors import CheckpointTooLargeError, RollbackTargetNotFoundError
-from app.models import Order, SimCheckpoint, TacticalEventLog
+from app.models import Order, SimCheckpoint, TacticalEventLog, TacticalUnit
 from app.models.enums import OrderStatus
 from app.state.hot_state import HotStateStore, UnitState
 from app.state.ledger import LedgerEvent, LedgerWriter, canonical_json
@@ -317,6 +317,36 @@ def _restore_orders(db: Session, session_id: str, snapshot: Mapping[str, Any]) -
     return restored, cancelled
 
 
+def _restore_unit_rows(db: Session, session_id: str, units: Mapping[str, Any]) -> int:
+    """把 `TacticalUnit` 的座標與戰力回捲到快照當時；回傳寫入的單位數。
+
+    **為什麼非做不可**（Backlog 清理，WP-C10.5 發現）：`hot_state.restore` 只還原熱狀態，
+    而 `seed_combat_state` 每次 runner 啟動都**無條件**以 DB 的 `current_lat/lng`
+    覆蓋熱狀態。於是「回滾 → 重啟」會把單位彈回**回滾前**的位置——
+    回滾看起來成功了（畫面上位置對），重啟一次就打回原形。
+
+    戰力/健康度同理：那兩欄由裁決層寫 DB，回滾不動它們的話，
+    重啟後 `seed_combat_state` 雖然只補缺鍵、不會蓋掉熱狀態，
+    但 `GET /units` 讀的是 DB——玩家會看到一個已經被回滾掉的戰損。
+    """
+    written = 0
+    for row in db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all():
+        state = units.get(row.id)
+        if not isinstance(state, Mapping):
+            continue
+        lat, lng = state.get("lat"), state.get("lng")
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            row.current_lat, row.current_lng = float(lat), float(lng)
+        strength = state.get("strength")
+        if isinstance(strength, (int, float)):
+            row.current_strength = float(strength)
+        health = state.get("health")
+        if isinstance(health, (int, float)):
+            row.health_status = float(health)
+        written += 1
+    return written
+
+
 def _count_events_after_seq(db: Session, session_id: str, seq: int) -> int:
     """checkpoint 之後的事件數——以單調的 seq 計數（tick 在 rollback 後不可靠）。"""
     stmt = select(func.count()).where(
@@ -408,6 +438,9 @@ def rollback(
             restored_orders, cancelled_orders = _restore_orders(
                 db, session_id, record.order_states()
             )
+        # 單位列也要回捲——否則 runner 一重啟，seed_combat_state 會用回滾前的
+        # DB 座標把熱狀態蓋回去（見 _restore_unit_rows 的說明）。
+        restored_units = _restore_unit_rows(db, session_id, record.state)
         db.commit()
         discarded = int(result.rowcount or 0)
     hot_state.restore(record.state)
@@ -426,6 +459,7 @@ def rollback(
                     "superseded_to_seq": superseded_to,
                     "orders_restored": restored_orders,
                     "orders_cancelled": cancelled_orders,
+                    "units_restored": restored_units,
                 },
             )
         ],
