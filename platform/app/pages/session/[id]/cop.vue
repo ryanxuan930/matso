@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import type { Contact, OwnUnit, Relation } from '~/composables/useUnits'
-import { commsLabel, healthColor } from '~/composables/useUnits'
+import { healthColor } from '~/composables/useUnits'
 import type { UnitView, OrderResponse } from '~/composables/useOrders'
 import type { StateSnapshot } from '~/stores/sessionStream'
 import type { ContactView } from '~/composables/useIntel'
 import { toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
-import {
-  fetchOrders,
-  fetchUnits,
-  orderStatusLabel,
-  orderTypeLabel,
-} from '~/composables/useOrders'
+import { fetchOrders, fetchUnits } from '~/composables/useOrders'
 import { fetchOrbatPermissions, setOrbatPermissions } from '~/composables/useEquipment'
 import { forward as mgrsForward } from 'mgrs'
 import { latLngToCell } from 'h3-js'
@@ -53,6 +48,7 @@ const {
 const copUiView = reactive(copUi)
 const coordQuery = openFlag('coords')
 const mapEditorOpen = openFlag('mapedit')
+const prefs = useCopPrefs(widgets)
 const {
   hex,
   hillshade,
@@ -77,11 +73,12 @@ const {
   gridWidth,
   mgrsColor,
   preciseMove,
-  basemapSources,
   basemap,
   hasTiles,
   onBasemapError,
-} = useCopPrefs(widgets)
+} = prefs
+// LayersPanel 收整包（同上：樣板不會 unwrap 巢狀 ref）；上面的解構是 MapCanvas 等處要用的。
+const prefsView = reactive(prefs)
 
 // 座標查詢（#10）：點地圖 → 該點經緯度 + MGRS。
 const queryPoint = ref<{ lng: number; lat: number } | null>(null)
@@ -132,10 +129,6 @@ const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 
 const orders = ref<OrderResponse[]>([])
-// 指令列表：以下令 tick（≈真實時間）新到舊排序，剛下的令排最上（穩定排序，同 tick 保原序）。
-const sortedOrders = computed(() =>
-  [...orders.value].sort((a, b) => (b.issued_at_tick ?? 0) - (a.issued_at_tick ?? 0)),
-)
 const selectedId = ref<string | null>(null)
 const selectedUnit = computed(() => realUnits.value.find((u) => u.id === selectedId.value) ?? null)
 // 固定單位（指揮部等）：不可下移動令（後端 validator 權威擋 ORDER_UNIT_FIXED；此為 UX 提示）。
@@ -795,55 +788,6 @@ const victory = computed(() => {
   const p = ev.payload as Record<string, unknown>
   return { winners: (p.winners as string[]) ?? [], tick: Number(p.tick ?? 0) }
 })
-// 事件 → 可讀文字（ID→番號、交戰命中/未命中/戰損）。供戰況 feed 即時回饋（含多機同步）。
-function unitName(id?: unknown): string {
-  const s = typeof id === 'string' ? id : ''
-  return (s && realUnits.value.find((u) => u.id === s)?.designation) || s
-}
-// #27 指令對象：ENGAGE→目標單位；MOVE→目的地 hex（供指令列顯示被下令對象）。
-function orderTargetLabel(o: OrderResponse): string {
-  if (o.order_type === 'ENGAGE' && o.target_unit_id) {
-    const name = realUnits.value.find((u) => u.id === o.target_unit_id)?.designation
-    return `→ ${name ?? '敵目標'}`
-  }
-  if (o.order_type === 'MOVE' && o.target_h3) return `→ ${o.target_h3.slice(0, 9)}`
-  return ''
-}
-function formatEvent(payload: Record<string, unknown>): string {
-  const type = String(payload?.event_type ?? '')
-  const ini = unitName(payload?.initiator_id)
-  const tgt = unitName(payload?.target_id)
-  if (type === 'ENGAGEMENT_RESOLVED') {
-    const status = String(payload?.status ?? '')
-    // 聯合兵種加總（P4）：標示「聯合火力」，讓戰況 feed 區分單武器 vs 武器組合交戰。
-    const cx = payload?.mode === 'COMBINED' ? '（聯合火力）' : ''
-    if (status === 'HIT') {
-      const dmg = payload?.damage != null ? ` −${Math.round(Number(payload.damage))}` : ''
-      const hp = Number(payload?.target_health_after)
-      const after = Number.isFinite(hp) ? `（剩 ${Math.round(hp)}%）` : ''
-      const ko = Number.isFinite(hp) && hp <= 0 ? ' ✖摧毀' : ''
-      return `交戰命中${cx} ${ini} → ${tgt}${dmg}${after}${ko}`
-    }
-    if (status === 'MISS') return `交戰未命中${cx} ${ini} → ${tgt}`
-    if (status === 'REJECTED') {
-      // 聯合兵種：優先顯示逐武器原因彙總（如「無視線×2、超射程×1、無彈藥×1」），比單一 code 清楚。
-      const why = payload?.reason_detail || payload?.reason || ''
-      return `交戰不可行 ${ini} → ${tgt}（${why}）`
-    }
-    return `交戰 ${ini} → ${tgt}`
-  }
-  if (type === 'UNIT_ARRIVED') return `${ini} 已抵達目標`
-  if (type === 'MOVE_ATTRITION') {
-    const dmg = payload?.damage != null ? Math.round(Number(payload.damage)) : ''
-    return `${ini} 強穿阻礙受損 −${dmg}`
-  }
-  if (type === 'COMMS_STATE_CHANGED') {
-    return `${ini} 通聯 ${commsLabel(String(payload?.from ?? ''))}→${commsLabel(String(payload?.to ?? ''))}`
-  }
-  const ot = payload?.order_type ? ` · ${orderTypeLabel(String(payload.order_type))}` : ''
-  return `${type}${ot}`
-}
-
 async function back() {
   stream.disconnect()
   await navigateTo('/lobby')
@@ -889,16 +833,11 @@ onBeforeUnmount(() => {
       @enter-map-edit="enterMapEdit"
       @open-equip-mgr="openEquipMgr"
     />
-    <div v-if="mapEditMode" class="mapedit-bar" data-testid="mapedit-bar">
-      <i class="pi pi-pencil" />
-      <span v-if="selectedUnitCount" class="meb-badge" data-testid="selected-count">已選 {{ selectedUnitCount }} 個</span>
-      <span class="meb-txt">
-        <strong>地圖狀態編輯（推演已暫停）</strong>——拖曳單位調整位置；<b>Shift＋點單位</b>可多選、<b>Shift＋空白處拖曳</b>可框選，再拖曳任一選取單位即整組移動；用「地圖編輯」工具繪障礙/建築。
-      </span>
-      <button class="meb-start" data-testid="start-wargame" @click="startWargame">
-        ▶ 開始兵推
-      </button>
-    </div>
+    <MapStateEditBar
+      v-if="mapEditMode"
+      :selected-unit-count="selectedUnitCount"
+      @start="startWargame"
+    />
     <div v-if="victory" class="victory-banner" data-testid="victory-banner">
       🏁 推演結束 —
       <strong>{{ victory.winners.length ? `${victory.winners.join('、')} 獲勝` : '平手' }}</strong>
@@ -965,40 +904,11 @@ onBeforeUnmount(() => {
       </CopWidget>
 
       <CopWidget id="events" :ui="copUiView" :open="widgets.events.open">
-        <div class="wsec-hd">戰況事件 <span class="ws">· {{ stream.status }}</span></div>
-        <ul class="events" data-testid="event-list">
-          <li v-for="(e, i) in streamEvents" :key="i" data-testid="event-row">
-            {{ formatEvent(e.payload as Record<string, unknown>) }}
-          </li>
-          <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
-        </ul>
+        <EventsPanel :status="stream.status" :events="streamEvents" :units="realUnits" />
       </CopWidget>
 
       <CopWidget id="orders" :ui="copUiView" :open="widgets.orders.open">
-        <div class="wsec-hd">指令（{{ orders.length }}）</div>
-        <ul class="orders" data-testid="order-list">
-          <li v-for="o in sortedOrders" :key="o.id" data-testid="order-row">
-            <div class="ord-main">
-              <span class="ord-unit">{{ unitName(o.unit_id) || '單位' }}</span>
-              <span class="ord-type">{{ orderTypeLabel(o.order_type) }}</span>
-              <span v-if="orderTargetLabel(o)" class="ord-tgt">{{ orderTargetLabel(o) }}</span>
-            </div>
-            <div class="ord-meta">
-              <span class="ord-time" title="下令 sim tick">T{{ o.issued_at_tick
-                }}<span v-if="o.resolved_at_tick != null"> → T{{ o.resolved_at_tick }}</span></span>
-              <span class="ord-status" :class="`st-${o.status}`">{{ orderStatusLabel(o.status) }}</span>
-              <button
-                v-if="o.status === 'VALIDATED' || o.status === 'PENDING' || o.status === 'EXECUTING'"
-                data-testid="cancel-order"
-                :title="o.status === 'EXECUTING' ? '停止移動並就地凍結（不彈回原位）' : '取消未執行指令'"
-                @click="cancel(o.id)"
-              >
-                {{ o.status === 'EXECUTING' ? '停止' : '取消' }}
-              </button>
-            </div>
-          </li>
-          <li v-if="!orders.length" class="empty">（無指令）</li>
-        </ul>
+        <OrdersPanel :orders="orders" :units="realUnits" @cancel="cancel" />
       </CopWidget>
       </ClientOnly>
 
@@ -1075,34 +985,7 @@ onBeforeUnmount(() => {
         </ClientOnly>
         <ClientOnly>
         <CopWidget id="layers" :ui="copUiView" :open="widgets.layers.open">
-          <LayerToggles
-            v-model:hex="hex"
-            v-model:hillshade="hillshade"
-            v-model:contour="contour"
-            v-model:basemap="basemap"
-            v-model:layer-opacity="layerOpacity"
-            v-model:layer-order="layerOrder"
-            v-model:contour-major="contourMajor"
-            v-model:contour-minor="contourMinor"
-            v-model:latlng-grid="latlngGrid"
-            v-model:mgrs-grid="mgrsGrid"
-            v-model:grid-step-deg="gridStepDeg"
-            v-model:hex-max-res="hexMaxRes"
-            v-model:hex-limit-km="hexLimitKm"
-            v-model:day-night="dayNight"
-            v-model:time-of-day="timeOfDay"
-            v-model:hex-line-width="hexLineWidth"
-            v-model:contour-major-width="contourMajorWidth"
-            v-model:contour-minor-width="contourMinorWidth"
-            v-model:hex-line-color="hexLineColor"
-            v-model:contour-color="contourColor"
-            v-model:grid-color="gridColor"
-            v-model:grid-width="gridWidth"
-            v-model:mgrs-color="mgrsColor"
-            :hillshade-enabled="hasTiles"
-            :contour-enabled="hasTiles"
-            :basemaps="basemapSources"
-          />
+          <LayersPanel :prefs="prefsView" />
         </CopWidget>
         </ClientOnly>
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
@@ -1250,54 +1133,6 @@ onBeforeUnmount(() => {
 .ai-status-bar .asb-off {
   color: #94a3b8;
 }
-.mapedit-bar {
-  /* 置中浮動藥丸：避免被左右浮動工具視窗（z 15+）遮住兩端與「開始兵推」鈕。 */
-  position: fixed;
-  top: 64px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  max-width: min(760px, 94vw);
-  padding: 0.45rem 0.55rem 0.45rem 0.9rem;
-  background: rgba(69, 51, 8, 0.97);
-  border: 1px solid rgba(251, 191, 36, 0.6);
-  border-radius: 0.55rem;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-  color: #fde68a;
-  font-size: 0.85rem;
-}
-.mapedit-bar .meb-txt {
-  flex: 1 1 auto;
-}
-.mapedit-bar .meb-badge {
-  flex: 0 0 auto;
-  background: #0e7490;
-  color: #cffafe;
-  border: 1px solid #22d3ee;
-  border-radius: 999px;
-  padding: 0.1rem 0.55rem;
-  font-size: 0.78rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.mapedit-bar .meb-start {
-  flex: 0 0 auto;
-  background: #16a34a;
-  border: none;
-  color: #fff;
-  border-radius: 0.35rem;
-  padding: 0.4rem 0.95rem;
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.mapedit-bar .meb-start:hover {
-  background: #15803d;
-}
 .victory-banner .vb-aar {
   margin-left: auto;
   background: #1d4ed8;
@@ -1307,13 +1142,6 @@ onBeforeUnmount(() => {
   padding: 0.3rem 0.7rem;
   cursor: pointer;
   font-size: 0.82rem;
-}
-/* 段落小標（取代舊 sec-hd，浮動視窗內用） */
-.wsec-hd {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: #94a3b8;
-  margin-bottom: 0.4rem;
 }
 /* #12 停靠側欄：拖到最左/右緣的視窗排成側欄（Photoshop 式）。空欄以 :empty 隱藏。 */
 .dock-col {
@@ -1379,87 +1207,6 @@ onBeforeUnmount(() => {
   color: #7dd3fc;
   font-size: 0.7rem;
 }
-/* 線寬設定觸發鈕（#5）——地圖右下角浮動（停靠側欄存在時右移讓位）。 */
-.linewidth-btn {
-  position: absolute;
-  right: calc(1rem + var(--rdock, 0));
-  bottom: 3.4rem;
-  z-index: 11;
-  padding: 0.3rem 0.55rem;
-  border: 1px solid #334155;
-  border-radius: 0.35rem;
-  background: rgba(15, 23, 42, 0.9);
-  color: #cbd5e1;
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-.linewidth-btn:hover {
-  border-color: #2563eb;
-  color: #e2e8f0;
-}
-/* 通用 modal（#5 線寬 / 其他 COP 設定）。 */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-}
-.modal {
-  width: 22rem;
-  max-width: 90vw;
-  padding: 1.25rem;
-  border-radius: 0.5rem;
-  border: 1px solid #334155;
-  background: #0f172a;
-  color: #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-}
-.modal h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-.modal label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.8rem;
-  color: #94a3b8;
-}
-.modal label b {
-  color: #7dd3fc;
-  font-weight: 600;
-}
-.modal input[type='range'] {
-  width: 100%;
-}
-.modal-hint {
-  margin: 0;
-  font-size: 0.72rem;
-  color: #64748b;
-}
-.modal-btns {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-.modal-btns button {
-  padding: 0.4rem 0.9rem;
-  border: 0;
-  border-radius: 0.3rem;
-  background: #2563eb;
-  color: #fff;
-  cursor: pointer;
-}
-.modal-btns .ghost {
-  background: transparent;
-  border: 1px solid #334155;
-  color: #e2e8f0;
-}
 .body {
   display: flex;
   flex: 1;
@@ -1469,104 +1216,6 @@ onBeforeUnmount(() => {
 /* 「指令」與「戰況事件」兩個小工具的清單樣式。單位清單那半已隨 UnitsOrderPanel 搬走；
    scoped CSS 之下兩邊各留一份是必要的重複——但**必須逐字照抄原規則**，
    憑印象重寫會靜默改掉版面（WP-G1 稽核抓到過一次）。 */
-.orders,
-.events {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-.events li {
-  padding: 0.25rem 0.5rem;
-  border-left: 2px solid #f59e0b;
-  background: #1c1917;
-  font-size: 0.75rem;
-}
-.ws {
-  color: #64748b;
-  font-weight: normal;
-}
-.orders li {
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #1e293b;
-  border-radius: 0.25rem;
-  cursor: pointer;
-}
-.empty {
-  color: #64748b;
-  cursor: default !important;
-}
-/* #27 指令列：對象 + 時間 + 狀態。 */
-.orders li {
-  cursor: default;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.ord-main {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-.ord-unit {
-  font-weight: 600;
-  color: #e2e8f0;
-}
-.ord-type {
-  color: #93c5fd;
-  font-size: 0.72rem;
-}
-.ord-tgt {
-  color: #fca5a5;
-  font-size: 0.72rem;
-}
-.ord-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.7rem;
-  color: #94a3b8;
-}
-.ord-time {
-  font-variant-numeric: tabular-nums;
-}
-.ord-status {
-  padding: 0 0.3rem;
-  border-radius: 0.2rem;
-  background: #1e293b;
-}
-.ord-status.st-COMPLETED {
-  color: #86efac;
-}
-.ord-status.st-REJECTED,
-.ord-status.st-CANCELLED {
-  color: #fca5a5;
-}
-.ord-status.st-EXECUTING {
-  color: #fcd34d;
-}
-.ord-meta button {
-  margin-left: auto;
-  padding: 0.1rem 0.4rem;
-  font-size: 0.68rem;
-  border: 1px solid #334155;
-  border-radius: 0.2rem;
-  background: transparent;
-  color: #cbd5e1;
-  cursor: pointer;
-}
-.orders button {
-  margin-left: 0.5rem;
-  padding: 0.0625rem 0.375rem;
-  border: 1px solid #334155;
-  border-radius: 0.25rem;
-  background: transparent;
-  color: #f87171;
-  cursor: pointer;
-}
 .map-wrap {
   position: relative;
   flex: 1;
