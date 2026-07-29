@@ -69,6 +69,9 @@ def sample_impact(
     """由瞄準點抽落點——CEP 決定散布，**同一顆種子必得同一個落點**（決定性重播）。
 
     cep_m<=0（未提供散布資料）→ 直接回瞄準點：退化成點命中，不崩潰也不亂猜。
+
+    **抽樣次數固定為 2**（r 與 theta），與 cep 值無關——除了 cep<=0 的早退路徑。
+    這件事是刻意的：抽樣次數若隨參數變動，改一個係數就會擾動整條 stream 的後續序列。
     """
     if cep_m <= 0:
         return aim_lat, aim_lng
@@ -108,6 +111,7 @@ def resolve_area_fire(
     shooter_id: str,
     shooter_faction: str | None = None,
     rounds: int = 1,
+    dispersion_mult: float = 1.0,
 ) -> AreaFireResult:
     """一次面目標射擊。回落點、各單位戰力損失、與帳本事件。
 
@@ -116,12 +120,19 @@ def resolve_area_fire(
 
     `shooter_faction` 有給時，事件會另外標出**同陣營的傷亡**（誤傷）。這件事必須落在帳本上：
     面射擊本來就會傷到自己人，而「有沒有傷到自己人」正是事後檢討火力協調的第一個問題。
+
+    `dispersion_mult` 是**觀測修正**（WP-C10.4）：射擊陣營對落點沒有觀測時由呼叫端傳 2.0
+    ——沒有前觀就沒有彈著修正，散布加倍。判定「有沒有人在看」是 I/O（要查地形 LOS），
+    故留在接線層；純函數這裡只收一個係數（紅線 2）。
+    **`1.0` 必須位元不變**：`x * 1.0` 在 IEEE-754 恆等於 `x`，且 `0.0 * k == 0.0`，
+    所以 cep<=0 的早退路徑（不抽樣）也維持原樣——既有局的隨機序列完全不動。
     """
     aim_lat, aim_lng = aim
+    cep_m = weapon.dispersion_cep_m * dispersion_mult
     losses: dict[str, float] = {}
     impacts: list[tuple[float, float]] = []
     for _ in range(max(1, rounds)):
-        ilat, ilng = sample_impact(aim_lat, aim_lng, weapon.dispersion_cep_m, rng)
+        ilat, ilng = sample_impact(aim_lat, aim_lng, cep_m, rng)
         impacts.append((ilat, ilng))
         for t in targets:
             d = _distance_m(ilat, ilng, t.lat, t.lng)

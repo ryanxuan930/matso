@@ -54,6 +54,25 @@ def event_audience(event: LedgerEvent, faction_for: FactionLookup | None) -> lis
     return sorted(factions) or None
 
 
+# 傷亡數字**不得投影給玩家**的事件型別（WP-C10.4）。
+# 間瞄火力打的是看不見的地方——沒有前觀就不該知道打死了幾個。帳本上的 damage_calc
+# 仍是真值（AAR 要真的），這裡擋的是「即時回饋」這條路。
+# 直射的 ENGAGEMENT_RESOLVED 不在此列：打得到就看得到，那是刻意的差別。
+_DAMAGE_FOG = frozenset({"AREA_FIRE_RESOLVED"})
+
+
+def feed_damage(event_type: str, damage_calc: float | None) -> float | None:
+    """投影給玩家/AI 的傷亡數字。屬迷霧型別 → None（不是 0——那會被讀成「沒打中」）。
+
+    **兩個投影邊界都要呼叫它**：WS 戰況 feed（本檔）與 AI briefing
+    （`ai_loop/world_view._event_summary`）。只補其中一個的話，人看不到但 LLM 指揮官
+    仍握有完美戰果評估——那種不對稱比全部洩漏更難察覺。
+    """
+    if event_type in _DAMAGE_FOG:
+        return None
+    return damage_calc
+
+
 def build_event_envelope(
     event: LedgerEvent, faction_for: FactionLookup | None = None
 ) -> dict[str, Any]:
@@ -63,8 +82,9 @@ def build_event_envelope(
         payload["initiator_id"] = event.initiator_id
     if event.target_id:
         payload["target_id"] = event.target_id
-    if event.damage_calc is not None:
-        payload["damage"] = event.damage_calc
+    damage = feed_damage(event.event_type, event.damage_calc)
+    if damage is not None:
+        payload["damage"] = damage
     # #33 comms 狀態轉移的 from/to 也帶出（供戰況 feed 顯示「通聯 X→Y」）。
     # mode＝COMBINED/VOLLEY/AGGREGATE（供 feed 標示交戰型態，SPEC_EXTEND P4）。
     # reason_detail＝聯合兵種被拒時逐武器原因彙總（供 feed 顯示為何整組不能打）。

@@ -335,6 +335,9 @@ class SimManager:
                             rngs["area_fire"],
                             resolver.weapons_for,
                             faction_for=sensor_resolver.faction_for,
+                            # WP-C10.4 觀測判定：沒有前觀 → 散布加倍。用**長生命期的**
+                            # gateway（每局建一次），它的斷路器才累積得起來。
+                            gateway=_engage_gateway(),
                         ),
                     }
                 ),

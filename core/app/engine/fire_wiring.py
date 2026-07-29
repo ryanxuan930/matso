@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import enum
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -39,6 +40,43 @@ from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
 _EARTH_R_M = 6_371_000.0
+
+# ---- WP-C10.4 觀測判定 ----
+# 觀測/落點離地高（與 orders.precheck._ENGAGE_OBS_M、sensor_wiring 同一個值——
+# 三處若各給一個數，同一組座標會得到三種視線結論）。
+_OBS_HEIGHT_M = 10.0
+# 一次火力任務最多打幾次 LOS RPC。tick 預算 200ms、單次 gRPC 死線也是 200ms——
+# 不設上限的話，一個 500 單位的編組會把整個 tick（連同同行程的其他 session）吃光。
+# 依距離排序後取最近的幾個：真正看得到落點的本來就是那幾個。
+_MAX_LOS_PROBES = 8
+# 觀測距離上限。只看 LOS 不看距離的話，40 km 外的單位會被當成前觀——
+# 地形視線在那個距離上「通」是幾何事實，但人眼/光學看不到彈著修正。
+_MAX_SPOT_RANGE_M = 15_000.0
+# 沒有觀測時的散布倍率（驗收條件：前觀死亡 → 散布加倍）。
+NO_OBSERVER_DISPERSION_MULT = 2.0
+
+
+class ObserverVerdict(enum.StrEnum):
+    """射擊陣營對落點的觀測狀態（WP-C10.4）。
+
+    **`UNKNOWN` 與 `UNOBSERVED` 刻意分開**：前者是系統答不出來（地形服務掛了），
+    後者是戰術事實（沒人看得到）。合成一個 bool 就會把「服務中斷」呈現成
+    「全場砲兵突然都瞎了」——把故障演成戰術事實是最難查的一種錯。
+    """
+
+    OBSERVED = "OBSERVED"
+    UNOBSERVED = "UNOBSERVED"
+    UNKNOWN = "UNKNOWN"
+
+
+def dispersion_multiplier(verdict: ObserverVerdict) -> float:
+    """觀測狀態 → 散布倍率。**`UNKNOWN` 走 1.0（fail open）**。
+
+    判不出來時不加倍：地形服務中斷不該讓每一門砲的精度默默下降，那是把系統故障
+    偽裝成戰術後果。而且 `STUB_GATEWAY`／開發環境本來就沒有真 gateway，
+    fail open 讓既有行為完全不動。
+    """
+    return NO_OBSERVER_DISPERSION_MULT if verdict is ObserverVerdict.UNOBSERVED else 1.0
 
 
 def _haversine_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
@@ -142,12 +180,15 @@ class AreaFireAdjudicator:
         rng: DeterministicRNG,
         weapons_for: Callable[[str], Sequence[WeaponEntry]],
         faction_for: Callable[[str], str] | None = None,
+        gateway: object | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
         self._rng = rng
         self._weapons_for = weapons_for
         self._faction_for = faction_for
+        # WP-C10.4 觀測判定用的地形 LOS gateway。None＝判不出來（UNKNOWN → 不加倍）。
+        self._gateway = gateway
 
     def resolve(self, order: FireMissionCommand, now: SimTime) -> list[LedgerEvent]:
         shooter = self._hot.get_unit(order.shooter_id)
@@ -172,23 +213,75 @@ class AreaFireAdjudicator:
             return self._reject(order, now, "NO_AMMO", "彈藥不足，無法執行火力任務")
 
         shooter_faction = self._faction_for(order.shooter_id) if self._faction_for else None
+        # 目標清單同時是**觀測者候選池**——落點附近有座標的單位本來就要蒐集一次，
+        # 沒必要為了找前觀再查一次 DB（而且熱狀態的戰力才看得出誰還活著）。
+        targets = self._gather_targets()
+        verdict = self.observer_verdict(targets, shooter_faction, aim)
         result = resolve_area_fire(
             entry.profile,
             aim,
-            self._gather_targets(),
+            targets,
             self._rng,
             now.tick,
             shooter_id=order.shooter_id,
             shooter_faction=shooter_faction,
             rounds=fired,
+            dispersion_mult=dispersion_multiplier(verdict),
         )
         self._spend_ammo(order.shooter_id, entry, fired)
         self._apply_losses(result.losses)
         event = result.event
-        if event is not None and fired < order.rounds:
-            event.ai_decision["rounds_requested"] = order.rounds
+        if event is not None:
+            if fired < order.rounds:
+                event.ai_decision["rounds_requested"] = order.rounds
+            # 觀測狀態與實際套用的倍率都寫進 ai_decision（**入 hash chain**）：
+            # gateway 的答覆是外部狀態，重播重建不出來——不落帳的話「這次為什麼散布加倍」
+            # 事後無從稽核。
+            event.ai_decision["observation"] = verdict.value
+            event.ai_decision["dispersion_mult"] = dispersion_multiplier(verdict)
         self._complete(order.order_id, now.tick)
         return [event] if event is not None else []
+
+    def observer_verdict(
+        self,
+        targets: list[AreaTarget],
+        shooter_faction: str | None,
+        aim: tuple[float, float],
+    ) -> ObserverVerdict:
+        """射擊陣營對落點有沒有觀測（WP-C10.4）。
+
+        候選＝**同陣營、還活著、在觀測距離內**的單位，依距落點遠近排序後最多探 8 次 LOS，
+        看到一個就回。上限是必要的：tick 預算 200ms，而每次 LOS 是一趟 gRPC。
+
+        **判不出來時回 `UNKNOWN` 而不是 `UNOBSERVED`**——見 `ObserverVerdict` 的說明。
+        且**絕不讓例外逃出去**：`kernel.run_tick` 與 `run_paced` 對裁決都沒有防護，
+        一個 `TerrainUnavailableError` 會讓 runner 崩潰、3 秒後被重建，
+        在地形服務中斷期間變成重啟迴圈。
+        """
+        has_los = getattr(self._gateway, "has_los", None)
+        if has_los is None or not shooter_faction:
+            return ObserverVerdict.UNKNOWN
+        candidates = [
+            t
+            for t in targets
+            if t.faction == shooter_faction
+            and (t.current_strength is None or t.current_strength > 0)
+            and _haversine_m(t.lat, t.lng, *aim) <= _MAX_SPOT_RANGE_M
+        ]
+        if not candidates:
+            return ObserverVerdict.UNOBSERVED
+        candidates.sort(key=lambda t: (_haversine_m(t.lat, t.lng, *aim), t.unit_id))
+        probed = 0
+        for t in candidates[:_MAX_LOS_PROBES]:
+            try:
+                outcome = has_los((t.lat, t.lng, _OBS_HEIGHT_M), (aim[0], aim[1], _OBS_HEIGHT_M))
+            except Exception:
+                continue  # 這一個問不到；下一個。全都問不到 → UNKNOWN（見下）
+            probed += 1
+            if bool(getattr(outcome, "visible", False)):
+                return ObserverVerdict.OBSERVED
+        # 一個都問不出結果 → 是系統答不出來，不是「沒人看得到」。
+        return ObserverVerdict.UNOBSERVED if probed else ObserverVerdict.UNKNOWN
 
     # ---- 內部 ----
 

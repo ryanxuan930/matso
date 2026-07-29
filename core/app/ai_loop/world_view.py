@@ -27,7 +27,7 @@ from app.factions.relations import FactionRelations
 from app.intel import store
 from app.intel.service import IntelService
 from app.models import TacticalEventLog, TacticalUnit
-from app.state.broadcaster import event_audience
+from app.state.broadcaster import event_audience, feed_damage
 from app.state.hot_state import UnitState
 from app.state.ledger import LedgerEvent
 
@@ -195,8 +195,11 @@ def _event_summary(row: TacticalEventLog, ev: LedgerEvent) -> dict[str, Any]:
         value = decision.get(key)
         if value is not None:
             out[key] = value
-    if row.damage_calc is not None:
-        out["damage"] = round(float(row.damage_calc), 1)
+    # WP-C10.4：與 WS feed 共用同一條迷霧規則——面射擊沒有觀測就不給傷亡數字。
+    # 只擋前端不擋這裡的話，LLM 指揮官會握有玩家沒有的完美戰果評估。
+    damage = feed_damage(str(row.event_type), row.damage_calc)
+    if damage is not None:
+        out["damage"] = round(float(damage), 1)
     return out
 
 
