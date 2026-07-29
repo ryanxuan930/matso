@@ -110,6 +110,9 @@ class WargameSession(Base):
     survivability_move: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
         "survivabilityMove", JSON, nullable=True
     )
+    # WP-B2 MSEL 腳本事件（NULL＝無 MSEL）。**在此之前想定的 msel 從未被持久化**：
+    # 載得進來、卻沒有任何一條路把它帶進執行期，等於整個 MSEL 子系統是死的。
+    msel: Mapped[list | None] = mapped_column("msel", JSON, nullable=True)  # type: ignore[type-arg]
 
 
 class TacticalUnit(Base):

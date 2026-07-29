@@ -56,6 +56,10 @@ model WargameSession {
   /// 陣地變換（WP-C10.5）：{enabled, missions_before_move, min_km, max_km}。
   /// NULL＝停用（既有局零遷移）。開局從想定快照一份，不即時讀想定。
   survivabilityMove Json?
+  /// MSEL 腳本事件（WP-B2）：[{id, once, trigger, inject}]。開局從想定快照一份。
+  /// NULL＝無 MSEL（既有局零遷移）。**在此之前想定的 msel 從未被持久化**——
+  /// 載得進來、卻沒有任何一條路把它帶進執行期，等於整個 MSEL 是死的。
+  msel              Json?
 
   units                        TacticalUnit[]
   eventLogs                    TacticalEventLog[]

@@ -397,6 +397,12 @@ def create_session_from_scenario(
         indirect_fire_requires_approval=loaded.indirect_fire_requires_approval or None,
         # WP-C10.5 陣地變換落地：未宣告存 None ＝ 停用（既有局零變更）。
         survivability_move=loaded.survivability_move or None,
+        # WP-B2 MSEL 落地：**過去整個漏掉**——想定的 msel 載得進來卻進不了執行期。
+        msel=[
+            {"id": e.id, "once": e.once, "trigger": e.trigger, "inject": e.inject}
+            for e in loaded.msel
+        ]
+        or None,
     )
     db.add(session)
     db.flush()

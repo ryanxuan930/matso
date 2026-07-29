@@ -15,6 +15,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -42,11 +43,7 @@ from app.engine.logistics import ResupplySystem
 from app.engine.movement import UnitMovementSystem
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
-from app.engine.subsystems import (
-    ChainedOrderSource,
-    DispatchingAdjudicator,
-    NoOpTriggerChecker,
-)
+from app.engine.subsystems import ChainedOrderSource, DispatchingAdjudicator
 from app.factions.relations import FactionRelations
 from app.factions.session_store import load_session_relations
 from app.factions.visibility import visible_factions
@@ -62,6 +59,9 @@ from app.orders.precheck import LosOutcome, PhysicsGateway
 from app.orders.roe import RoeRules, load_session_roe
 from app.orders.service import OrderService
 from app.runtime import PerfCounterClock, TickPacer, run_paced
+from app.scenario.msel_actions import make_applier
+from app.scenario.msel_runtime import MselRuntime
+from app.scenario.session_msel import load_session_msel, make_context_fn
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
 from app.sim_params import load_sim_params
 from app.state.broadcaster import RedisBroadcaster
@@ -160,6 +160,11 @@ def _make_visible_for(
     """
     table = {f: frozenset(visible_factions(f, factions, relations)) for f in factions}
     return lambda observer: table.get(observer, frozenset({observer}))
+
+
+def _set_pause(client: Any, session_id: str) -> None:
+    """MSEL 的 PAUSE 注入與白軍控制台共用同一個暫停旗標——兩套暫停就是兩套會打架的狀態。"""
+    client.set(session_pause_key(session_id), "1")
 
 
 def _read_live_tick(client: object, session_id: str) -> int:
@@ -304,6 +309,20 @@ class SimManager:
             )
             # WP-C10.5 陣地變換：**runner 啟動讀一次**（同 ROE/mobility 紀律）。
             surviv = await asyncio.to_thread(load_session_survivability, engage_db, session_id)
+            # WP-B2 MSEL：同紀律讀一次。空清單 → runtime 每 tick 直接回 []。
+            msel_entries = await asyncio.to_thread(load_session_msel, engage_db, session_id)
+            msel_runtime = MselRuntime(
+                msel_entries,
+                make_context_fn(self._factory, session_id, hot),
+                make_applier(
+                    session_id,
+                    self._factory,
+                    hot,
+                    pause=lambda: _set_pause(client, session_id),
+                ),
+            )
+            if msel_entries:
+                _LOG.info("session %s 載入 %d 條 MSEL 腳本事件", session_id, len(msel_entries))
             if roe.any_rules:
                 _LOG.info("session %s 套用想定 ROE（交戰規則）", session_id)
             if surviv.enabled:
@@ -398,7 +417,10 @@ class SimManager:
                     hot_state=hot,
                     sim_params=sim_params,  # #93 可調補給距離
                 ),
-                trigger_checker=NoOpTriggerChecker(),
+                # WP-B2：MSEL 執行器終於接上 tick。**在此之前這個槽是 NoOp**——
+                # 想定裡寫的腳本事件從來沒有跑過（演習系統的心臟缺位）。
+                # 無 MSEL 的局：MselRuntime 直接回 []，既有局零行為變更。
+                trigger_checker=msel_runtime,
                 # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）；
                 # WP-C5 起 STATE_DIFF 也改為**每陣營投影**（可見集 + 位置凍結），不再全廣播。
                 broadcaster=RedisBroadcaster(
