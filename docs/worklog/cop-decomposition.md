@@ -98,8 +98,14 @@ D6.1 AAR 地圖重播）的前置——在 4400 行的檔案裡加功能，每�
 | `useMapEditor` | 3483 | 點標註列 → 編輯欄位載入「樓梯」；繪製工具列六個鈕齊全 |
 | `MapEditorPanel.vue`（首個子元件） | 2907 | 面板渲染 9 列標註、v-model 寫入生效、點列載入「樓梯」、`canControl` 分支出現 |
 | `UnitsOrderPanel.vue` | 2406 | 3 個陣營分組 / 36 單位、點選 → B3、精確移動勾選狀態沿用偏好、切 ENGAGE 出現目標與武器下拉 |
+| `UnitDetailCard.vue` | 2181 | 卡片渲染且**樣式跟著到位**（position fixed / 304px / z-index 45）、效能條、編裝編輯入口 |
 
-目前組成：script 872 / template 634 / style 894。
+目前組成：script 864 / template 549 / style 745。
+
+### 第三個發現：搬 CSS 這步 lint 與 typecheck 都無感，**只有 build 會擋**
+`UnitDetailCard` 第一版把 CSS 區段多切了兩行（`.map-loading {` 的開頭），
+lint 綠、typecheck 綠，`npm run build` 直接 `CssSyntaxError: Missing closing }`。
+故凡是搬 scoped CSS 的步驟，驗證順序是 **lint → typecheck → build（容器重建即含）→ 瀏覽器**。
 
 ### 子元件那步踩到的兩件事
 
@@ -132,14 +138,14 @@ v-model，逐個開 prop + emit 就是把 MapCanvas 那個「50 個 props」的�
 ## 待辦（依序）
 - [x] `MapEditorPanel`（template 236 行 + CSS 314 行）
 - [x] `UnitsOrderPanel`（template 204 行 + CSS 318 行；`liveAmmo` 一併併入 `useCopOrdering`）
-- [ ] `CopUnitCard`、`CopLayersPanel`、其餘小工具（events/orders/coords）
+- [x] `UnitDetailCard`（template 82 行 + CSS 158 行）
+- [ ] `LayersPanel`、其餘小工具（events/orders/coords）
 - [ ] `useMapStateEdit` / `useEquipMgr` / `useCtxMenu`（script 尾巴）
 - [ ] MapCanvas props 收斂
 - [ ] 容器逐項手測（清單見上）→ 更新 SPEC_V2 / PROGRESS / TASKS
 
 ## 中斷續作指引
-- **下一步第一件事**：`UnitCard`（單位詳細資訊卡，template + CSS 都不小），
-  照同一套做法。之後是 `LayersPanel` 與 events/orders/coords 三個小工具。
+- **下一步第一件事**：`LayersPanel`（圖層/底圖小工具），之後 events/orders/coords 三個小工具。
 - **scoped CSS 的必要重複**：`.units, .orders {…}` 這種共用規則搬走一半時，
   另一半要在父層留一份（已於 `UnitsOrderPanel` 那步處理，父層留 `.orders`/`.empty`）。
 - **紀律**：每搬一塊立刻 `npm run typecheck`（現在是 `vue-tsc --build`，真的會檢查）+ `npm run lint`，

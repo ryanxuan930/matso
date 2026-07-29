@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Contact, OwnUnit, Relation } from '~/composables/useUnits'
-import { commsLabel, factionColor, healthColor, unitLevelLabel } from '~/composables/useUnits'
+import { commsLabel, factionColor, healthColor } from '~/composables/useUnits'
 import type { UnitView, OrderResponse } from '~/composables/useOrders'
 import type { StateSnapshot } from '~/stores/sessionStream'
 import type { ContactView } from '~/composables/useIntel'
@@ -371,8 +371,9 @@ const contacts = computed<Contact[]>(() => [
 // #95 武器軌跡（純顯示，見 composable 的紅線說明）。端點只取「本 client 看得到的東西」。
 const { weaponTrackFc } = useWeaponTracks(ownUnits, contacts, computed(() => stream.events))
 // 單位資訊卡的錨定與拖曳（#Fix C / #42）。
-const { unitCardPos, unitCardDrag, unitCardStyle, onSelectScreenPos, beginCardDrag } =
-  useUnitCardDrag(selectedId)
+const cardDrag = useUnitCardDrag(selectedId)
+const cardView = reactive(cardDrag) // 卡片元件收 unwrap 過的視圖（樣板不 unwrap 巢狀 ref）
+const { unitCardPos, onSelectScreenPos } = cardDrag
 
 // 可作 ENGAGE 目標的真單位（他軍）——供下拉與地圖點選鎖定共用。
 const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
@@ -1432,88 +1433,25 @@ onBeforeUnmount(() => {
         </ClientOnly>
 
         <!-- 單位詳細資訊圖卡（#5）：懸浮於選取圖標旁（#Fix C），非固定左下。 -->
-        <div
+        <UnitDetailCard
           v-if="selectedUnit"
-          class="unit-card"
-          :class="{ 'card-anchored': !!unitCardPos && !unitCardDrag, 'card-dragged': !!unitCardDrag }"
-          :style="unitCardStyle"
-          data-testid="unit-detail-card"
-        >
-          <button class="card-close" data-testid="card-close" title="關閉（取消選取）" @click="clearSelection">
-            <i class="pi pi-times" />
-          </button>
-          <div
-            class="card-hd"
-            title="拖曳可移動資訊卡"
-            @mousedown="beginCardDrag"
-            @touchstart="beginCardDrag"
-          >
-            <span class="card-grip"><i class="pi pi-bars" /></span>
-            <span class="fdot" :style="{ background: factionColor(selectedUnit.faction) }" />
-            <strong class="cname">{{ selectedUnit.designation }}</strong>
-            <span class="clevel">{{ unitLevelLabel(selectedUnit.unit_level) }} · {{ selectedUnit.faction }}</span>
-          </div>
-          <div class="hpbar" :title="`作戰效能 ${hpPct}%`">
-            <div class="hpfill" :style="{ width: `${hpPct}%`, background: hpColor }" />
-            <span class="hptxt">效能 {{ hpPct }}%</span>
-          </div>
-          <dl class="card-meta">
-            <div v-if="selForce">
-              <dt>戰力</dt>
-              <dd>
-                {{ selForce.cur }}/{{ selForce.auth }}
-                <span class="dim">· {{ selForce.platforms }} 平台</span>
-                <span v-if="selForce.personnel != null" class="dim">· {{ selForce.personnel }} 人</span>
-              </dd>
-            </div>
-            <div>
-              <dt>通聯</dt>
-              <dd :class="`comms-${liveComms(selectedUnit).toLowerCase()}`" data-testid="unit-comms">
-                {{ commsLabel(liveComms(selectedUnit)) }}
-              </dd>
-            </div>
-            <div>
-              <dt>座標</dt>
-              <dd data-testid="unit-coords">
-                {{ (selectedUnit.lat ?? 0).toFixed(4) }}, {{ (selectedUnit.lng ?? 0).toFixed(4) }}
-                <!-- WP-C5：斷聯單位的座標是最後一次回報，不是現在的位置。不標的話指揮官
-                     會拿一個過時的點下令，還以為是即時的。 -->
-                <span v-if="liveStaleTick(selectedUnit) != null" class="stale">
-                  · T{{ liveStaleTick(selectedUnit) }} 最後回報（已失聯
-                  {{ Math.max(0, currentTick - (liveStaleTick(selectedUnit) ?? 0)) }}t）
-                </span>
-              </dd>
-            </div>
-            <div v-if="liveFuel(selectedId) != null" data-testid="unit-fuel">
-              <dt>油料</dt>
-              <dd :class="{ lowfuel: (liveFuel(selectedId) ?? 0) <= 0 }">
-                {{ (liveFuel(selectedId) ?? 0).toFixed(0) }}
-                <span v-if="(liveFuel(selectedId) ?? 0) <= 0" class="dim">· 拋錨（需補給）</span>
-              </dd>
-            </div>
-          </dl>
-          <div v-if="weapons.length && !showOrbat" class="card-weapons">
-            <div class="card-sub">武器裝載</div>
-            <ul>
-              <li v-for="w in weapons" :key="w.id">
-                {{ w.name }}
-                <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
-                <span v-if="liveAmmo(w) != null" class="dim">· 彈 {{ liveAmmo(w) }}</span>
-              </li>
-            </ul>
-          </div>
-          <div v-if="selectedEditable" class="card-orbat">
-            <button class="orbat-toggle" data-testid="toggle-orbat" @click="showOrbat = !showOrbat">
-              {{ showOrbat ? '▾ 編裝編輯' : '▸ 編裝編輯（武器/彈藥）' }}
-            </button>
-            <UnitOrbatEditor
-              v-if="showOrbat"
-              :session-id="sessionId"
-              :unit-id="selectedId ?? ''"
-              :can-edit="true"
-            />
-          </div>
-        </div>
+          v-model:show-orbat="showOrbat"
+          :card="cardView"
+          :unit="selectedUnit"
+          :unit-id="selectedId"
+          :session-id="sessionId"
+          :hp-pct="hpPct"
+          :hp-color="hpColor"
+          :force="selForce"
+          :weapons="weapons"
+          :editable="selectedEditable"
+          :current-tick="currentTick"
+          :live-comms="liveComms"
+          :live-stale-tick="liveStaleTick"
+          :live-fuel="liveFuel"
+          :live-ammo="liveAmmo"
+          @close="clearSelection"
+        />
       </div>
     </div>
   </div>
@@ -1878,11 +1816,6 @@ onBeforeUnmount(() => {
   font-size: 0.875rem;
   color: #94a3b8;
 }
-/* WP-C5 位置凍結註記：與 .dim 同層級，但用琥珀色點出「這不是即時值」。 */
-.stale {
-  color: #fbbf24;
-  font-size: 0.8125rem;
-}
 /* WP-C5 敵情粗化告示：琥珀色（警示但非錯誤——是戰場現實，不是系統故障）。 */
 .posture {
   display: inline-flex;
@@ -2237,164 +2170,6 @@ onBeforeUnmount(() => {
 
 /* 單位詳細資訊圖卡（#5）——浮在地圖左下。 */
 /* Unit 資訊卡：懸浮於選取圖標旁（#Fix C；定位由 inline unitCardStyle 提供 fixed left/top）。 */
-.unit-card {
-  position: fixed;
-  z-index: 45;
-  width: 19rem;
-  max-height: calc(100vh - 64px);
-  overflow-y: auto;
-  padding: 0.75rem 0.875rem;
-  border-radius: 0.5rem;
-  border: 1px solid #1e3a5f;
-  background: rgba(15, 23, 42, 0.96);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  font-size: 0.78rem;
-  color: #e2e8f0;
-}
-/* 錨定時附一條指向圖標的小尾巴（左側）。 */
-.unit-card.card-anchored::before {
-  content: '';
-  position: absolute;
-  left: -6px;
-  top: 14px;
-  width: 10px;
-  height: 10px;
-  background: rgba(15, 23, 42, 0.96);
-  border-left: 1px solid #1e3a5f;
-  border-bottom: 1px solid #1e3a5f;
-  transform: rotate(45deg);
-}
-.unit-card .card-close {
-  position: absolute;
-  top: 0.375rem;
-  right: 0.375rem;
-  padding: 0 0.3rem;
-  border: none;
-  background: transparent;
-  color: #64748b;
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-.unit-card .card-close:hover {
-  color: #e2e8f0;
-}
-.unit-card .card-hd {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding-right: 1rem;
-  cursor: move;
-  user-select: none;
-  touch-action: none;
-}
-.unit-card .card-grip {
-  color: #475569;
-  font-size: 0.7rem;
-  flex: none;
-  margin-right: -0.1rem;
-}
-/* 拖曳後脫離錨定 → 不顯示指向圖標的小尾巴。 */
-.unit-card.card-dragged::before {
-  display: none;
-}
-.unit-card .fdot {
-  width: 0.7rem;
-  height: 0.7rem;
-  border-radius: 50%;
-  flex: none;
-}
-.unit-card .cname {
-  color: #f8fafc;
-}
-.unit-card .clevel {
-  color: #94a3b8;
-  font-size: 0.68rem;
-}
-.unit-card .hpbar {
-  position: relative;
-  height: 1.05rem;
-  margin: 0.5rem 0 0.4rem;
-  border-radius: 0.25rem;
-  background: #1e293b;
-  overflow: hidden;
-}
-.unit-card .hpfill {
-  height: 100%;
-  transition: width 0.3s ease;
-}
-.unit-card .hptxt {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.66rem;
-  font-weight: 600;
-  color: #0a1626;
-  text-shadow: 0 0 2px rgba(255, 255, 255, 0.4);
-}
-.unit-card .card-meta {
-  margin: 0.25rem 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.unit-card .card-meta > div {
-  display: flex;
-  gap: 0.5rem;
-}
-.unit-card .card-meta dt {
-  color: #64748b;
-  min-width: 2.5rem;
-}
-.unit-card .card-meta dd {
-  margin: 0;
-  color: #cbd5e1;
-  font-family: monospace;
-}
-/* #33 通聯狀態色：上線綠 / 降級黃 / 離線紅 */
-.unit-card .card-meta dd.comms-online {
-  color: #4ade80;
-}
-.unit-card .card-meta dd.comms-degraded {
-  color: #facc15;
-}
-.unit-card .card-meta dd.comms-offline {
-  color: #f87171;
-}
-.unit-card .card-sub {
-  margin: 0.5rem 0 0.2rem;
-  color: #64748b;
-  font-size: 0.68rem;
-}
-.unit-card .card-weapons ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-.unit-card .card-weapons .dim {
-  color: #94a3b8;
-  font-size: 0.7rem;
-}
-.unit-card .card-orbat {
-  margin-top: 0.5rem;
-  border-top: 1px solid #1e293b;
-  padding-top: 0.4rem;
-}
-.unit-card .orbat-toggle {
-  border: none;
-  background: transparent;
-  color: #7dd3fc;
-  cursor: pointer;
-  font-size: 0.72rem;
-  padding: 0 0 0.3rem;
-}
-.unit-card .orbat-toggle:hover {
-  color: #bae6fd;
-}
 .map-loading {
   position: absolute;
   inset: 0;
