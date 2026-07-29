@@ -209,17 +209,53 @@ G1a 已達成這張卡真正的目的：後續前端卡不必再讀 4400 行才�
 
 即**重構帶來零 e2e 變化**。那四條在拆分前就是紅的（記入 PROGRESS backlog，屬 G3）。
 
+## G1b 進度（進行中）
+
+| 步驟 | commit | cop.vue |
+|------|--------|---------|
+| G1a 收尾 | `7806d50` | 2181 |
+| `CopHeader` | `701fd61` | 1969 |
+| `EquipManagerPanel` | `4f298a3` | 1800 |
+| `MapContextMenu` + 右鍵 e2e | `e0bbff1` | 1728 |
+| `CopWidget` 外殼（六個小工具共用） | `2951d6a` | 1631 |
+| `LayersPanel`/`EventsPanel`/`OrdersPanel`/`MapStateEditBar` + `useCopFeed` + 清死 CSS | `7b0fff8` | 1281 |
+| `useMapStateEdit` / `useEquipMgr` | `311ac4d` | 1200 |
+
+### 這一段學到的三件事
+
+**1. 先抽共用外殼，再抽內容。** 六個小工具各自寫了 18 行一模一樣的
+`Teleport` + `FloatingWidget` 綁定。若先做 `LayersPanel` 等內容元件，這 108 行重複
+只會被搬進六個新檔案。抽 `CopWidget` 後，內容元件才變成真正只有內容。
+
+**2. 兩個名字很像、語義相反的東西，沒有任何工具會擋。**
+`canEditSelectedFeature`（已解鎖整形）vs `mayEditSelectedFeature`（有編修權）——
+批次取代差點把兩者併成同一個 prop。「有權 ≠ 現在可拖」是 #99b 刻意的設計
+（單純點選不解鎖，否則點一下再手滑就把標註拖歪）。lint/typecheck/build 全綠。
+
+**3. CSS 特異度平手時，靠先後決勝負。**
+`.ord-meta button`（margin-left: auto）與 `.orders button`（margin-left: 0.5rem）
+特異度相同，原檔中後者在後 → 後者贏。搬移時若重排順序，取消鈕的位置與顏色都會變。
+驗證方式不是用眼睛看，是**逐條讀 computed style 與原始值對表**。
+
 ## 中斷續作指引
-- **本卡（G1a）已完成**。下一張是 **G1b**：頂列 `CopHeader`、地圖區包裝、
-  `EquipManagerPanel`/`MapContextMenu`/`LayersPanel`/`OrdersPanel`/`EventsPanel`/`CoordReadout`、
-  `useCtxMenu`/`useEquipMgr`/`useMapStateEdit`，以及 MapCanvas props 收斂。行段測繪見上表。
-- **G1b 必守的四道驗證**（本卡用血換來的）：`lint → typecheck → build → 瀏覽器`。
-  三者各有盲區：typecheck 抓不到元件名解析失敗、build 才抓得到 scoped CSS 切壞、
+- **G1b 進行中**，cop.vue 已 4419 → 1200。剩下：`CoordReadout`、地圖區包裝、
+  `useCtxMenu`（script 498–604，約 107 行，是最後一塊大的）、
+  MapCanvas props 收斂（50 個 prop → 分組設定物件）。
+- **下一步第一件事**：`useCtxMenu`。它是右鍵選單的狀態機（ctxMenu ref + 8 個 ctx* 動作
+  + 3 個 computed），與下令狀態機、`useMapEditor`、`selectUnit` 都有牽連——
+  **抽之前先把相依清單列出來**，若參數超過 6 個就代表切點選錯了，改切小一點。
+- `CoordReadout` 的 CSS 有陷阱：`.coord-readout` 基底規則被 cop.vue 的
+  `:deep(.fw .coord-readout)` 整條中和（position/border/background/padding 全歸零）。
+  搬走時基底規則進子元件、`:deep` 中和留在 cop.vue——特異度 (0,3,0) > (0,2,0)，
+  跨檔順序不影響結果，但要**實測**而不是推論。
+- **四道驗證照舊**：`lint → typecheck → build → 瀏覽器`。三者各有盲區：
+  typecheck 抓不到元件名解析失敗、build 才抓得到 scoped CSS 切壞、
   瀏覽器才看得出面板整個是空的。
-- **搬 CSS 一律取原文**，並在搬完後跑一次等價性稽核（本卡的 workflow 腳本可重用：
-  `.claude/.../workflows/scripts/g1-refactor-equivalence-audit-*.js`）。
-- **scoped CSS 的必要重複**：`.units, .orders {…}` 這種共用規則搬走一半時，
-  另一半要在父層留一份（已於 `UnitsOrderPanel` 那步處理，父層留 `.orders`/`.empty`）。
-- **紀律**：每搬一塊立刻 `npm run typecheck`（現在是 `vue-tsc --build`，真的會檢查）+ `npm run lint`，
-  綠了才 commit。`npm run typecheck` 在本卡之前是空轉的，別再相信舊 worklog 的「typecheck 綠」。
-- **未解**：e2e 只有 5 支且沒有涵蓋 COP 的下令/地圖編輯流程，本卡全程靠 typecheck + 容器手測。
+- **搬 CSS 一律 `git show` 取原文**，含規則先後順序。
+- **scoped CSS 的必要重複**：`.orders, .events {…}` 這種共用規則拆到兩個元件時，
+  兩邊各留一份（已於 `7b0fff8` 處理）。
+- **收卡前**：跑一次等價性稽核 workflow（腳本可重用：
+  `.claude/.../workflows/scripts/g1-refactor-equivalence-audit-*.js`），
+  再於 `.env`-free worktree 做 e2e 前後比對，然後更新 SPEC_V2 / PROGRESS / TASKS。
+- **未解**：e2e 只有 6 支（本段新增 `ctxmenu.spec.ts`），仍未涵蓋 COP 的下令流程與
+  地圖編輯；`toggleOrbatPerm` 因會實際改動該局自編權限設定而未手測。
