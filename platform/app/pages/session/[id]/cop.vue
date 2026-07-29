@@ -8,7 +8,6 @@ import { toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
 import { fetchOrders } from '~/composables/useOrders'
 import { forward as mgrsForward } from 'mgrs'
-import { latLngToCell } from 'h3-js'
 import { formatCountdown, useAiStatus } from '~/composables/useAiStatus'
 
 // COP（SPEC §13.1/§13.4）：地圖基座（O4.2）+ 單位/fog of war（O4.4）+ 下令 UX（O4.5）。
@@ -201,13 +200,9 @@ const {
   applyFeatures,
   addDraftPoint,
   onFeatureClick,
-  armReshape,
   onFeatureReshape,
-  deleteVertexAt,
   onFeatureVertexDelete,
   onFeatureMove,
-  rotateFeature,
-  removeFeature,
 } = mapEditor
 // WS 串流（含活模擬 STATE_DIFF 位置）——先宣告以供 livePos 使用。
 const stream = useSessionStreamStore()
@@ -494,112 +489,34 @@ function onUnitClick(e: { id: string; faction: string; kind: string }) {
   }
 }
 
-// ---- 右鍵選單（#3，ATAK 式移動/攻擊）----
-// 流程：右鍵我方單位 → 選單「移動/攻擊」→ 十字準星 → 點地圖選落點/目標 → 於下令面板確認。
-const ctxMenu = ref<{
-  x: number
-  y: number
-  lng: number
-  lat: number
-  unitId?: string
-  faction?: string
-  kind?: string
-  featureId?: string
-  vertexIndex?: number // #99 游標下的控制點索引（右鍵可刪點）
-} | null>(null)
-// #26 右鍵地圖物件選單動作：編輯（開編輯工具列並選取）/ 旋轉 / 刪除。
-// #99b：這裡同時「解鎖整形」——控制點與拖曳只在明確從此進入後才生效。
-function ctxEditFeature() {
-  const id = ctxMenu.value?.featureId
-  closeCtx()
-  if (!id) return
-  onFeatureClick({ id })
-  armReshape(id) // 必須在 onFeatureClick 之後：selectedFeatureId 的 watch 會清掉不相符的解鎖
-}
-async function ctxRotateFeature(deg: number) {
-  const id = ctxMenu.value?.featureId
-  closeCtx()
-  if (!id) return
-  if (selectedFeatureId.value !== id) onFeatureClick({ id })
-  await nextTick()
-  await rotateFeature(deg)
-}
-async function ctxDeleteFeature() {
-  const id = ctxMenu.value?.featureId
-  closeCtx()
-  if (id) await removeFeature(id)
-}
-const ctxIsMine = computed(
-  () =>
-    !!ctxMenu.value?.unitId &&
-    realUnitIds.value.has(ctxMenu.value.unitId) &&
-    isFriendly(ctxMenu.value.faction),
-)
-const ctxIsEnemy = computed(
-  () =>
-    !!ctxMenu.value?.unitId &&
-    realUnitIds.value.has(ctxMenu.value.unitId) &&
-    !isFriendly(ctxMenu.value.faction),
-)
-const ctxUnitName = computed(() => {
-  const id = ctxMenu.value?.unitId
-  return (id && realUnits.value.find((u) => u.id === id)?.designation) || id || ''
+// 右鍵選單（#3/#26/#99）——把一次右鍵翻譯成下令狀態機或地圖編輯器的動作。
+// 兩整包都傳進去是刻意的：見該模組說明（相依面寬是派送器的本質，攤在明處比藏起來好）。
+const {
+  ctxMenu,
+  ctxIsMine,
+  ctxIsEnemy,
+  ctxUnitName,
+  onContextMenu,
+  closeCtx,
+  ctxEditFeature,
+  ctxRotateFeature,
+  ctxDeleteFeature,
+  ctxDeleteVertex,
+  ctxArmMove,
+  ctxArmAttack,
+  ctxMoveHere,
+  ctxLockTarget,
+} = useCtxMenu({
+  ordering,
+  editor: mapEditor,
+  selectedId,
+  selectUnit,
+  realUnits,
+  realUnitIds,
+  isFriendly,
+  preciseMove,
+  coordQuery,
 })
-function onContextMenu(e: {
-  x: number
-  y: number
-  lng: number
-  lat: number
-  unitId?: string
-  faction?: string
-  kind?: string
-  featureId?: string
-  vertexIndex?: number
-}) {
-  // 繪圖/座標查詢時不彈選單（避免干擾）。
-  if (drawActive.value || coordQuery.value) return
-  ctxMenu.value = e
-}
-function closeCtx() {
-  ctxMenu.value = null
-}
-// 選單動作：武裝「移動」——選該單位（若右鍵在單位上），進入 MOVE 目標設定（十字準星）。
-function ctxArmMove() {
-  if (ctxMenu.value?.unitId && ctxIsMine.value) selectUnit(ctxMenu.value.unitId)
-  if (!selectedId.value) return closeCtx()
-  orderType.value = 'MOVE'
-  targeting.value = true
-  closeCtx()
-}
-// 選單動作：武裝「攻擊」——選該單位，進入 ENGAGE，點敵方單位鎖定目標。
-function ctxArmAttack() {
-  if (ctxMenu.value?.unitId && ctxIsMine.value) selectUnit(ctxMenu.value.unitId)
-  if (!selectedId.value) return closeCtx()
-  orderType.value = 'ENGAGE'
-  targeting.value = true
-  closeCtx()
-}
-// 選單動作：直接「移動至此」——用右鍵點擊處為落點（免再點一次）。
-function ctxMoveHere() {
-  const c = ctxMenu.value
-  if (!c || !selectedId.value) return closeCtx()
-  orderType.value = 'MOVE'
-  destH3.value = latLngToCell(c.lat, c.lng, 8)
-  destLatLng.value = preciseMove.value ? { lng: c.lng, lat: c.lat } : null
-  targeting.value = false
-  closeCtx()
-}
-// 選單動作：右鍵敵方單位（已選我方）→ 直接鎖為攻擊目標。
-function ctxLockTarget() {
-  const c = ctxMenu.value
-  if (!c?.unitId || !selectedId.value) return closeCtx()
-  orderType.value = 'ENGAGE'
-  targetUnitId.value = c.unitId
-  targeting.value = false
-  precheck.value = null
-  message.value = `已鎖定目標：${ctxUnitName.value}`
-  closeCtx()
-}
 
 const targetUnit = computed(() => realUnits.value.find((u) => u.id === targetUnitId.value) ?? null)
 // 選取單位是否可編裝：需該局開放編裝，且（我為白軍/全知 或 該單位為本軍）。
@@ -656,12 +573,6 @@ const {
   onUnitsMove,
 } = useMapStateEdit({ sessionId, widgets, focusWidget, realUnits, toasts })
 
-/** #99 右鍵控制點 → 刪除該頂點。 */
-async function ctxDeleteVertex() {
-  const idx = ctxMenu.value?.vertexIndex
-  closeCtx()
-  if (idx != null) await deleteVertexAt(idx)
-}
 // 資訊圖卡效能%（#5）——活值優先；缺值時退回 API 初值。health 已是由戰力比導出的效能%。
 const hpPct = computed(() => {
   const u = selectedUnit.value
