@@ -52,6 +52,35 @@ D6.1 AAR 地圖重播）的前置——在 4400 行的檔案裡加功能，每�
 
 ## 執行紀錄
 - `01:40` 開卡；讀完 cop.vue 全域宣告清單，定出上表的搬移邊界。
+- `02:10` `useCopWidgets` + `useCopPrefs` 完成（4419→4207）。
+- `02:30` `useWeaponTracks` + `useUnitCardDrag` 完成（4207→4055）。
+- `02:55` **抽 `useCopOrdering` 時驗證「TypeScript 是安全網」這個假設，發現它是假的**——見下。
+- `03:20` 修好 typecheck 閘門並清掉它藏起來的 6 個型別錯；`useCopOrdering` 完成（4055→3871）。
+- `03:40` 容器實測：COP 正常渲染、選單位 → 資訊卡出現且內容正確、
+  `matso.cop.layers` 的 25 個欄位與 6 個 widget 幾何**與搬移前完全相同**。
+
+## ⚠ 最重要的發現：`npm run typecheck` 一直是空轉
+
+開卡時我把「每搬一塊就跑 lint + vue-tsc」寫成本卡的主要紀律。抽 `useCopOrdering` 到一半時
+順手驗證這個假設——在 cop.vue 塞一行 `const x: number = 'str'`，**typecheck 照樣綠**。
+
+原因：`platform/tsconfig.json` 是 `"files": []` ＋ 四個 project references，而
+`vue-tsc --noEmit` **不會跟隨 references**。所以 `app/` 底下的 `.vue` 與 `.ts`
+**從來沒有被 type check 過**——近期每一份 worklog 裡的「vue-tsc 綠」對前端而言都是空話
+（包含我自己在 WP-C5 寫的那句）。eslint 有在跑，但它只抓得到未使用變數那類問題。
+
+改成 `vue-tsc --build` 後跑出 6 個錯，全部清掉：
+
+| 位置 | 問題 | 處置 |
+|------|------|------|
+| MapCanvas ×3 | `queryRenderedFeatures(e.point, …)`：handler 的 `e` 是**手寫結構型別**，`point` 是 `{x,y}` 而非 maplibre 的 `Point` 類別 | 改傳 `[x, y]`（合法 `PointLike`），語義相同且不需 cast |
+| MapCanvas ×1 | `watch([...], syncUnits)` 會把「新值陣列」當第一個參數傳給 `syncUnits`，剛好落在 `posOverride`。陣列沒有 `.size` 所以**僥倖**沒事 | 包成 `() => syncUnits()` |
+| 契約 | `OrderRequest.payload` 是裸 `type: object` → openapi-typescript 產 `Record<string, never>`＝任何具體 payload 都不可指派 | 補 `additionalProperties: true`（描述本來就寫「依 order_type 而異」） |
+| 契約 | `acknowledge_restricted` 的 `default: false` 讓產生器把它標成**必填** | 拿掉 default，語義寫進描述 |
+
+**這件事改變了本卡的風險評估**：先前三個 commit 的「typecheck 綠」是無效證據，其中確實藏了
+兩個真的錯（`unitCardDrag` 沒 export、`liveFuel`/`liveAmmo` 被誤刪），都是修好閘門後才抓到的。
+往後每一步都以 `vue-tsc --build` 為準。
 
 ## 檔案異動
 （施工中）
