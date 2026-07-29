@@ -17,11 +17,13 @@ from app.state.checkpoint import (
     CheckpointRecord,
     RecoveryResult,
     RollbackResult,
+    build_snapshot,
     compute_state_hash,
     deserialize_state,
     recover,
     rollback,
     serialize_state,
+    split_snapshot,
 )
 from app.state.hot_state import (
     HotStateStore,
@@ -41,6 +43,7 @@ from app.state.ledger import (
     compute_self_hash,
     verify_chain,
 )
+from app.state.resume import ResumeResult, forward_roll, resume_session, resume_tick
 
 __all__ = [
     "GENESIS_HASH",
@@ -58,20 +61,26 @@ __all__ = [
     "RecoveryResult",
     "RedisBroadcaster",
     "RedisHotState",
+    "ResumeResult",
     "RollbackResult",
     "RollbackTargetNotFoundError",
     "SessionDiff",
     "UnitDiff",
     "UnitState",
     "VerifyResult",
+    "build_snapshot",
     "build_state_diff_envelope",
     "canonical_json",
     "compute_diff",
     "compute_self_hash",
     "compute_state_hash",
     "deserialize_state",
+    "forward_roll",
     "recover",
+    "resume_session",
+    "resume_tick",
     "rollback",
     "serialize_state",
+    "split_snapshot",
     "verify_chain",
 ]

@@ -51,7 +51,7 @@ from app.state.hot_state import RedisHotState
 from app.state.ledger import LedgerEvent, LedgerWriter
 from app.state.live_ammo import apply_ammo_cmds, drain_ammo_cmds
 from app.state.live_position import apply_pos_cmds, drain_pos_cmds
-from app.state.resume import read_live_tick, resume_tick
+from app.state.resume import read_live_tick, resume_session
 from app.weather import WeatherState
 
 _LOG = logging.getLogger("app.sim")
@@ -191,23 +191,38 @@ class SimManager:
         try:
             client = make_redis(self._redis_url)
             hot = RedisHotState(client, session_id)
-            # 交戰接線（新 #1）：建武器解析器 + 播戰鬥狀態（血量/裝甲/彈藥/座標）入熱狀態。
-            resolver, seed = await asyncio.to_thread(
-                self._prepare_engage, engage_db, session_id, hot
+            # 交戰接線（新 #1）：建武器解析器 + 取 master_seed。
+            resolver, seed = await asyncio.to_thread(self._prepare_engage, engage_db, session_id)
+            # WP-E1：各子系統的 RNG 由 runner 持有（子系統把它藏成私有欄位，Kernel 拿不到）
+            # ——快照要存它們的位置、復原要灌回去，都得有這份參照。
+            rngs = {
+                stream: DeterministicRNG(seed, stream)
+                for stream in ("adjudication", "movement", "sensors")
+            }
+            # WP-E1：從上次跑到的地方續接（core 重啟 / 崩潰 / restart 旗標 / rollback 都會走到）。
+            # **必須在 seed_combat_state 之前**——後者會寫熱狀態，寫了就看不出「Redis 是否已空」。
+            resumed = await asyncio.to_thread(
+                resume_session,
+                session_factory=self._factory,
+                client=client,
+                session_id=session_id,
+                hot=hot,
+                rngs=rngs,
+                transport_reset=RedisBroadcaster(client, session_id).reset_stream,
             )
+            # 播戰鬥狀態（血量/裝甲/彈藥/座標）入熱狀態：座標以 DB 為準，其餘僅補缺鍵
+            # → 復原後的血量/彈藥不會被 DB 初值蓋掉。
+            await asyncio.to_thread(seed_combat_state, engage_db, hot, session_id, resolver)
             # #97 偵測：單位→感測器規格/陣營的解析（一次建好快取，sweep 每 tick 查）。
             sensor_resolver = await asyncio.to_thread(SensorResolver, engage_db, session_id)
             # #98 該局的陣營關係矩陣（未宣告→全 HOSTILE，與過去語義相同）。
             relations = await asyncio.to_thread(load_session_relations, engage_db, session_id)
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
-            # WP-E1：從上次跑到的地方續接，而不是每次重建 runner 都回到 tick 0
-            # （core 重啟 / 崩潰 / restart 旗標 / rollback 都會走到這裡）。判定見 state/resume。
-            start_tick = await asyncio.to_thread(resume_tick, self._factory, client, session_id)
-            if start_tick:
-                _LOG.info("session %s 自 tick=%d 續跑", session_id, start_tick)
+            if resumed.start_tick:
+                _LOG.info("session %s 自 tick=%d 續跑", session_id, resumed.start_tick)
             sim_clock = SimClock(  # #93 可調節奏
-                tick_rate_ms=sim_params.tick_rate_ms, start_tick=start_tick
+                tick_rate_ms=sim_params.tick_rate_ms, start_tick=resumed.start_tick
             )
             kernel = Kernel(
                 session_id=session_id,
@@ -217,7 +232,7 @@ class SimManager:
                 adjudicator=EngagementAdjudicator(
                     engage_db,
                     hot,
-                    DeterministicRNG(seed, "adjudication"),
+                    rngs["adjudication"],
                     resolver.weapon_for,
                     make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
                     quantity_for=resolver.quantity_for,  # #30 squad 齊射
@@ -230,7 +245,7 @@ class SimManager:
                     hot_state=hot,
                     tick_rate_ms=sim_params.tick_rate_ms,
                     speed_kmh=_UNIT_SPEED_KMH,
-                    rng=DeterministicRNG(seed, "movement"),  # #28 強穿隨機耗損
+                    rng=rngs["movement"],  # #28 強穿隨機耗損
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
                     path_fn=build_terrain_path_fn(),  # #82 A* 繞路（不可達→直線）
                     sim_params=sim_params,  # #93 可調速度/耗損
@@ -240,7 +255,7 @@ class SimManager:
                     db=engage_db,
                     session_id=session_id,
                     hot_state=hot,
-                    rng=DeterministicRNG(seed, "sensors"),
+                    rng=rngs["sensors"],
                     sensor_for=sensor_resolver.sensor_for,
                     faction_for=sensor_resolver.faction_for,
                     env_for=make_detect_env(_engage_gateway(), _weather_snapshot()),
@@ -266,7 +281,13 @@ class SimManager:
                 hot_state=hot,
                 wall_clock=PerfCounterClock(),
                 # WP-E1：活局終於會落快照（O1.5 的機件一直在，只是組裝時沒接上）。
-                checkpointer=CheckpointManager(self._factory),
+                # extras_provider 把三條 RNG 的位置一併存進信封（見 state/checkpoint）。
+                checkpointer=CheckpointManager(
+                    self._factory,
+                    extras_provider=lambda: {
+                        "rng": {sid: r.get_state() for sid, r in rngs.items()}
+                    },
+                ),
                 checkpoint_interval=sim_params.checkpoint_interval_ticks,  # #93 可調
             )
             pacer = TickPacer(sim_params.tick_rate_ms, compression=sim_params.pace_compression)
@@ -335,12 +356,13 @@ class SimManager:
         finally:
             engage_db.close()
 
-    def _prepare_engage(
-        self, db: Session, session_id: str, hot: RedisHotState
-    ) -> tuple[WeaponResolver, int]:
-        """（執行緒中）建武器解析器 + 播戰鬥狀態；回 (resolver, master_seed)。皆區域值並行安全。"""
+    def _prepare_engage(self, db: Session, session_id: str) -> tuple[WeaponResolver, int]:
+        """（執行緒中）建武器解析器 + 取 master_seed。回 (resolver, master_seed)。
+
+        WP-E1 起**不再於此播戰鬥狀態**——`seed_combat_state` 一旦寫入熱狀態，復原路徑就
+        分辨不出「Redis 已空」，故移到 resume 之後由 `_run_session` 呼叫。
+        """
         resolver = WeaponResolver(db, session_id)
-        seed_combat_state(db, hot, session_id, resolver)
         row = db.get(WargameSession, session_id)
         return resolver, (int(row.master_seed) if row is not None else 0)
 
