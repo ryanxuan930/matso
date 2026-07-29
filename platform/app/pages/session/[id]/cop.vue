@@ -39,6 +39,7 @@ const canControl = computed(() =>
 
 // #12 浮動工具視窗（六個小工具皆可拖拉/縮放/關閉）＋操作員偏好持久化。
 // coordQuery/mapEditorOpen 是對應 widget 的開關別名。
+const copUi = useCopWidgets()
 const {
   widgets,
   widgetMenuOpen,
@@ -46,11 +47,10 @@ const {
   hasRightDock,
   focusWidget,
   toggleWidget,
-  setWidgetGeom,
-  onWidgetGrab,
-  onWidgetDrop,
   openFlag,
-} = useCopWidgets()
+} = copUi
+// CopWidget 收整包（樣板不會 unwrap 巢狀 ref，故傳 reactive）；上面的解構是頁面自己要用的。
+const copUiView = reactive(copUi)
 const coordQuery = openFlag('coords')
 const mapEditorOpen = openFlag('mapedit')
 const {
@@ -945,22 +945,7 @@ onBeforeUnmount(() => {
       <div id="dock-left-col" class="dock-col left" />
       <div id="dock-right-col" class="dock-col right" />
       <ClientOnly>
-      <Teleport
-        :to="widgets.units.dock === 'left' ? '#dock-left-col' : '#dock-right-col'"
-        :disabled="widgets.units.dock === 'float'"
-      >
-      <FloatingWidget
-        v-if="widgets.units.open"
-        title="單位 / 下令"
-        :geom="widgets.units"
-        :z="widgets.units.z"
-        :docked="widgets.units.dock !== 'float'"
-        @update:geom="(g) => setWidgetGeom('units', g)"
-        @grab="(g) => onWidgetGrab('units', g)"
-        @drop="(g) => onWidgetDrop('units', g)"
-        @close="widgets.units.open = false"
-        @focus="focusWidget('units')"
-      >
+      <CopWidget id="units" :ui="copUiView" :open="widgets.units.open">
         <UnitsOrderPanel
           v-model:precise-move="preciseMove"
           :ordering="orderingView"
@@ -977,25 +962,9 @@ onBeforeUnmount(() => {
           @select="selectUnit"
           @toggle-group="toggleFactionGroup"
         />
-      </FloatingWidget>
-      </Teleport>
+      </CopWidget>
 
-      <Teleport
-        :to="widgets.events.dock === 'left' ? '#dock-left-col' : '#dock-right-col'"
-        :disabled="widgets.events.dock === 'float'"
-      >
-      <FloatingWidget
-        v-if="widgets.events.open"
-        title="戰況事件"
-        :geom="widgets.events"
-        :z="widgets.events.z"
-        :docked="widgets.events.dock !== 'float'"
-        @update:geom="(g) => setWidgetGeom('events', g)"
-        @grab="(g) => onWidgetGrab('events', g)"
-        @drop="(g) => onWidgetDrop('events', g)"
-        @close="widgets.events.open = false"
-        @focus="focusWidget('events')"
-      >
+      <CopWidget id="events" :ui="copUiView" :open="widgets.events.open">
         <div class="wsec-hd">戰況事件 <span class="ws">· {{ stream.status }}</span></div>
         <ul class="events" data-testid="event-list">
           <li v-for="(e, i) in streamEvents" :key="i" data-testid="event-row">
@@ -1003,25 +972,9 @@ onBeforeUnmount(() => {
           </li>
           <li v-if="!streamEvents.length" class="empty">（尚無事件）</li>
         </ul>
-      </FloatingWidget>
-      </Teleport>
+      </CopWidget>
 
-      <Teleport
-        :to="widgets.orders.dock === 'left' ? '#dock-left-col' : '#dock-right-col'"
-        :disabled="widgets.orders.dock === 'float'"
-      >
-      <FloatingWidget
-        v-if="widgets.orders.open"
-        title="指令"
-        :geom="widgets.orders"
-        :z="widgets.orders.z"
-        :docked="widgets.orders.dock !== 'float'"
-        @update:geom="(g) => setWidgetGeom('orders', g)"
-        @grab="(g) => onWidgetGrab('orders', g)"
-        @drop="(g) => onWidgetDrop('orders', g)"
-        @close="widgets.orders.open = false"
-        @focus="focusWidget('orders')"
-      >
+      <CopWidget id="orders" :ui="copUiView" :open="widgets.orders.open">
         <div class="wsec-hd">指令（{{ orders.length }}）</div>
         <ul class="orders" data-testid="order-list">
           <li v-for="o in sortedOrders" :key="o.id" data-testid="order-row">
@@ -1046,8 +999,7 @@ onBeforeUnmount(() => {
           </li>
           <li v-if="!orders.length" class="empty">（無指令）</li>
         </ul>
-      </FloatingWidget>
-      </Teleport>
+      </CopWidget>
       </ClientOnly>
 
       <div
@@ -1122,22 +1074,7 @@ onBeforeUnmount(() => {
           </template>
         </ClientOnly>
         <ClientOnly>
-        <Teleport
-          :to="widgets.layers.dock === 'right' ? '#dock-right-col' : '#dock-left-col'"
-          :disabled="widgets.layers.dock === 'float'"
-        >
-        <FloatingWidget
-          v-if="widgets.layers.open"
-          title="圖層 / 底圖"
-          :geom="widgets.layers"
-          :z="widgets.layers.z"
-          :docked="widgets.layers.dock !== 'float'"
-          @update:geom="(g) => setWidgetGeom('layers', g)"
-          @grab="(g) => onWidgetGrab('layers', g)"
-          @drop="(g) => onWidgetDrop('layers', g)"
-          @close="widgets.layers.open = false"
-          @focus="focusWidget('layers')"
-        >
+        <CopWidget id="layers" :ui="copUiView" :open="widgets.layers.open">
           <LayerToggles
             v-model:hex="hex"
             v-model:hillshade="hillshade"
@@ -1166,8 +1103,7 @@ onBeforeUnmount(() => {
             :contour-enabled="hasTiles"
             :basemaps="basemapSources"
           />
-        </FloatingWidget>
-        </Teleport>
+        </CopWidget>
         </ClientOnly>
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
           <strong>離線底圖模式</strong>
@@ -1201,22 +1137,7 @@ onBeforeUnmount(() => {
 
         <!-- 地圖編輯器（stage ③b）：繪製標註/工事/武器據點。 -->
         <ClientOnly>
-        <Teleport
-          :to="widgets.mapedit.dock === 'right' ? '#dock-right-col' : '#dock-left-col'"
-          :disabled="widgets.mapedit.dock === 'float'"
-        >
-        <FloatingWidget
-          v-if="mapEditorOpen && canDraw"
-          title="地圖編輯"
-          :geom="widgets.mapedit"
-          :z="widgets.mapedit.z"
-          :docked="widgets.mapedit.dock !== 'float'"
-          @update:geom="(g) => setWidgetGeom('mapedit', g)"
-          @grab="(g) => onWidgetGrab('mapedit', g)"
-          @drop="(g) => onWidgetDrop('mapedit', g)"
-          @close="widgets.mapedit.open = false"
-          @focus="focusWidget('mapedit')"
-        >
+        <CopWidget id="mapedit" :ui="copUiView" :open="mapEditorOpen && canDraw">
           <MapEditorPanel
             :editor="mapEditorView"
             :can-control="canControl"
@@ -1224,28 +1145,12 @@ onBeforeUnmount(() => {
             :hidden-feature-ids="hiddenFeatureIds"
             @toggle-hidden="toggleFeatureHidden"
           />
-        </FloatingWidget>
-        </Teleport>
+        </CopWidget>
         </ClientOnly>
 
         <!-- 座標查詢讀值（#10）：點地圖任一點顯示經緯度 + MGRS。 -->
         <ClientOnly>
-        <Teleport
-          :to="widgets.coords.dock === 'right' ? '#dock-right-col' : '#dock-left-col'"
-          :disabled="widgets.coords.dock === 'float'"
-        >
-        <FloatingWidget
-          v-if="coordQuery"
-          title="座標查詢"
-          :geom="widgets.coords"
-          :z="widgets.coords.z"
-          :docked="widgets.coords.dock !== 'float'"
-          @update:geom="(g) => setWidgetGeom('coords', g)"
-          @grab="(g) => onWidgetGrab('coords', g)"
-          @drop="(g) => onWidgetDrop('coords', g)"
-          @close="widgets.coords.open = false"
-          @focus="focusWidget('coords')"
-        >
+        <CopWidget id="coords" :ui="copUiView" :open="coordQuery">
           <div class="coord-readout" data-testid="coord-readout">
             <div class="cr-hd">座標查詢 · 點地圖任一點</div>
             <template v-if="queryPoint">
@@ -1255,8 +1160,7 @@ onBeforeUnmount(() => {
             </template>
             <div v-else class="cr-hint">尚未點選</div>
           </div>
-        </FloatingWidget>
-        </Teleport>
+        </CopWidget>
         </ClientOnly>
 
         <!-- 單位詳細資訊圖卡（#5）：懸浮於選取圖標旁（#Fix C），非固定左下。 -->
