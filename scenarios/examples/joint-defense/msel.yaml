@@ -1,0 +1,118 @@
+# MSEL 事件注入清單（SPEC_FULL §11.3）——聯合防衛想定。
+#
+# trigger 用的是 app/scenario/triggers.py 的 condition DSL，與 victory_conditions 同一套：
+# time / faction_eliminated / strength_below / unit_in_region / all / any。**只用真的算得出來的**，
+# 自己發明 type 會在執行期丟 TriggerError（且是在推演中途才炸）。
+#
+# 每則的 bbox 都經檢查不會在 tick 0 誤觸——條件式注入若開局就全部觸發，MSEL 等於沒有時間軸。
+events:
+  # 1. 假情報：白軍向藍軍投放「紅軍主力將於高雄港正面登陸」的誤導判斷。
+  #    放在第 1 小時，是要讓藍軍在裝甲營尚未投入前就先做一次錯誤的兵力調配決策——
+  #    情報錯誤要能改變行為，太晚投放就只剩事後諸葛。
+  - id: deception-intel
+    once: true
+    trigger: { type: time, at_tick: 60 }
+    inject:
+      event_type: FALSE_INTEL
+      faction: BLUE
+      payload:
+        note: 截獲通信顯示紅軍第二梯隊將於高雄港正面登陸，建議南調預備隊
+        credibility: LOW
+        source: SIGINT
+
+  # 2. 紅軍長程火力解禁：roe.yaml 條文二的解除時機。
+  #    條件是「已過 90 分鐘 **且** 紅軍已推進到內陸」——上級只會在灘頭鞏固後才把
+  #    戰役級資產下放。單用時間會讓解禁與戰況脫節，單用位置又可能開局就觸發。
+  - id: red-fires-release
+    once: true
+    trigger:
+      type: all
+      of:
+        - { type: time, at_tick: 90 }
+        - { type: unit_in_region, faction: RED, bbox: [120.26, 22.72, 120.34, 22.88] }
+    inject:
+      event_type: ROE_RELEASE
+      faction: RED
+      payload:
+        note: 軍團核准火箭砲兵營射擊，戰役級火力下放旅指揮所
+        released_templates: [MLRS_227]
+
+  # 3. 紅軍第二梯隊上陸：第 2 小時的固定增援。
+  - id: red-second-echelon
+    once: true
+    trigger: { type: time, at_tick: 120 }
+    inject:
+      event_type: REINFORCEMENT
+      faction: RED
+      payload:
+        note: 第二梯隊機械化營於興達港卸載，灘頭正面增厚
+        landing_point: [120.196, 22.857]
+
+  # 4. 盟軍參戰時機：紅軍越過 台 17／台 1 線之間的中線即觸發。
+  #    bbox 西界 120.26 位於全部紅軍起始位置以東（起始最東為 R-2-B 的 120.261 ⋯ 恰在邊界外側），
+  #    刻意如此——盟邦不是開局就下場，而是「紅軍確實在向內陸推進」才取得參戰正當性。
+  #    這是聯盟作戰的政治現實：友軍的介入門檻由它自己的國內授權決定，不由藍軍決定。
+  - id: green-commit
+    once: true
+    trigger: { type: unit_in_region, faction: RED, bbox: [120.27, 22.72, 120.34, 22.87] }
+    inject:
+      event_type: ALLIED_COMMITMENT
+      faction: GREEN
+      payload:
+        note: 紅軍越過中線，盟邦母國核准特遣隊投入直接支援
+        authorized_missions: [DIRECT_FIRE_SUPPORT, ANTI_ARMOR, LOGISTICS_TRANSFER]
+
+  # 5. 藍軍旅預備隊投入：以戰力門檻而非時間觸發，因為「什麼時候該投預備隊」
+  #    本來就該由戰況決定。65% 是旅級指揮官通常開始感到正面吃緊的水準。
+  - id: blue-reserve
+    once: true
+    trigger: { type: strength_below, faction: BLUE, value: 65 }
+    inject:
+      event_type: REINFORCEMENT
+      faction: BLUE
+      payload:
+        note: 旅預備隊（裝甲營）奉命轉為逆襲，軍團加強一個反裝甲連
+        release_authority: BRIGADE
+
+  # 6. 天候突變：8 月西南氣流。第 4 小時能見度與海象劇變——
+  #    對紅軍是航渡與後送受阻，對藍軍是偵蒐距離縮短，雙方都吃虧但吃法不同。
+  - id: weather-squall
+    once: true
+    trigger: { type: time, at_tick: 200 }
+    inject:
+      event_type: WEATHER_CHANGE
+      payload:
+        note: 西南氣流增強，暴雨與陣風掃過台南／高雄沿海
+        visibility_m: 1200
+        wind_kts: 32
+        sea_state: 5
+
+  # 7. 電廠民事警告：藍軍單位進入 興達發電廠 周邊即發布。
+  #    這不是懲罰，是提醒——RESTRICTED_FIRE 區不硬擋，但對其開火要走白軍確認並記入 Ledger。
+  #    bbox 取電廠 polygon 稍外擴的範圍；藍軍起始最西為 120.25，開局不會誤觸。
+  - id: power-plant-alert
+    once: true
+    trigger: { type: unit_in_region, faction: BLUE, bbox: [120.185, 22.838, 120.225, 22.875] }
+    inject:
+      event_type: CIVIL_AFFAIRS_ALERT
+      faction: BLUE
+      payload:
+        note: 部隊已進入興達發電廠周邊，該區為 RESTRICTED_FIRE，對其開火須白軍確認
+        zone: 興達發電廠
+
+  # 8. 盟邦交戰授權覆議：撐到第 5 小時且藍軍戰力跌破一半時，母國才會重新考慮
+  #    鬆綁 MLRS 禁令（roe.yaml 條文一）。兩個條件都要——單看時間會變成「反正撐久就鬆綁」，
+  #    單看戰力則可能在開局的資料尚未穩定時就觸發。
+  - id: green-roe-review
+    once: true
+    trigger:
+      type: all
+      of:
+        - { type: time, at_tick: 300 }
+        - { type: strength_below, faction: BLUE, value: 50 }
+    inject:
+      event_type: ROE_REVIEW
+      faction: GREEN
+      payload:
+        note: 藍軍戰力折半，盟邦母國就長程火力禁令進行覆議；解禁與否由白軍裁決
+        under_review: [MLRS_227]

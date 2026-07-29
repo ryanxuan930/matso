@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.factions import WHITE_CELL, FactionRelations, Relation, validate_faction_id
 from app.models.enums import UnitLevel
 from app.orders.no_strike import zones_to_cells
-from app.scenario.triggers import MselEntry
+from app.scenario.triggers import MselEntry, TriggerError, validate_condition
 
 _CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
 
@@ -39,6 +39,9 @@ class ScenarioUnit:
     lng: float | None
     parent: str | None
     fixed: bool = False  # 固定單位（指揮部等）：不接受 MOVE 令、不被派去移動（§11.1）。
+    # WP-B6 編裝：((template_name, quantity, ammo|None), …)。空＝沿用開局的預設配發。
+    # 用 tuple 而非 list：ScenarioUnit 是 frozen 值物件，list 會讓它不可雜湊也可被就地改。
+    equipment: tuple[tuple[str, int, int | None], ...] = ()
 
 
 @dataclass(slots=True)
@@ -189,19 +192,49 @@ def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> lis
                     lng=u.get("lng"),
                     parent=parent,
                     fixed=bool(u.get("fixed", False)),
+                    equipment=_equipment_of(u),
                 )
             )
     return units
+
+
+def _equipment_of(unit: dict[str, Any]) -> tuple[tuple[str, int, int | None], ...]:
+    """orbat 單位的 equipment 區段 → 不可變 tuple（結構已由 JSON Schema 驗過）。"""
+    return tuple(
+        (
+            str(e["template"]),
+            int(e.get("quantity", 1)),
+            int(e["ammo"]) if e.get("ammo") is not None else None,
+        )
+        for e in (unit.get("equipment") or [])
+    )
 
 
 def _msel_from_dict(data: dict[str, Any] | None) -> list[MselEntry]:
     if not data or not data.get("events"):
         return []
     _validate_schema(data, "msel.schema.json", "msel")
-    return [
-        MselEntry(id=e["id"], trigger=e["trigger"], inject=e["inject"], once=e.get("once", True))
-        for e in data["events"]
-    ]
+    return _msel_entries(data["events"], "msel")
+
+
+def _msel_entries(events: list[dict[str, Any]], label: str) -> list[MselEntry]:
+    """MSEL 事件清單 → MselEntry；**trigger 於此驗 condition DSL**（兩條入口共用）。
+
+    未知的 trigger type 若不在載入時擋，該則注入會在執行期靜默失效（MselEngine 每 tick
+    評估、丟 TriggerError 被吞）——白軍以為安排了增援，結果整局都沒發生。
+    """
+    out: list[MselEntry] = []
+    for i, e in enumerate(events):
+        try:
+            validate_condition(e["trigger"], f"{label}: events[{i}].trigger")
+        except TriggerError as exc:
+            raise ScenarioError(str(exc)) from exc
+        out.append(
+            MselEntry(
+                id=e["id"], trigger=e["trigger"], inject=e["inject"], once=e.get("once", True)
+            )
+        )
+    return out
 
 
 def _roe_from_dict(data: dict[str, Any] | None, faction_ids: list[str]) -> dict[str, Any]:
@@ -312,15 +345,7 @@ def _load_msel(root: Path, rel_path: str | None) -> list[MselEntry]:
         return []
     data = _load_yaml(root / rel_path, rel_path)
     _validate_schema(data, "msel.schema.json", rel_path)
-    return [
-        MselEntry(
-            id=e["id"],
-            trigger=e["trigger"],
-            inject=e["inject"],
-            once=e.get("once", True),
-        )
-        for e in data["events"]
-    ]
+    return _msel_entries(data["events"], rel_path)
 
 
 def create_session_from_scenario(
@@ -380,12 +405,58 @@ def create_session_from_scenario(
             by_designation[(u.faction, u.designation)].parent_id = by_designation[
                 (u.faction, u.parent)
             ].id
+    _create_declared_equipment(db, loaded, by_designation)
     if seed_default_equipment:
         from app.adjudication import seed_session_equipment
 
+        # 已由想定明確編裝的單位不會被配發預設步槍——`seed_session_equipment` 本身就跳過
+        # 「已有任何裝備」的單位，而上一步已 flush，故它看得到。想定作者說了算。
         seed_session_equipment(db, session.id)
     db.commit()
     return session.id
+
+
+def _create_declared_equipment(
+    db: Session,
+    loaded: LoadedScenario,
+    by_designation: dict[tuple[str, str], Any],
+) -> None:
+    """依 orbat 的 `equipment` 宣告建 EquipmentInstance。
+
+    範本以**名稱**參照（SPEC_FULL §11.1 的錯誤訊息範例即為
+    `orbat/blue.yaml: units[3].equipment[0]: unknown template 'T-999'`）。名稱查不到就報錯——
+    靜默略過會讓想定作者以為部署了戰車、實際上單位空手上場，而且直到交戰才會發現。
+
+    ⚠ 這裡才驗名稱而非載入時驗：範本住 DB（全域武器庫），loader 是零 DB 的純解析層。
+    """
+    from app.models import EquipmentInstance
+
+    declared = [u for u in loaded.units if u.equipment]
+    if not declared:
+        return
+
+    from app.adjudication.seed_equipment import ensure_mobility_templates, ensure_weapon_templates
+
+    # 官方想定引用的是出貨種子範本；確保它們存在（既有 upsert，冪等）。
+    templates = {**ensure_weapon_templates(db), **ensure_mobility_templates(db)}
+    for u in declared:
+        unit = by_designation[(u.faction, u.designation)]
+        for i, (name, quantity, ammo) in enumerate(u.equipment):
+            template_id = templates.get(name)
+            if template_id is None:
+                raise ScenarioError(
+                    f"orbat[{u.faction}].units[{u.designation}].equipment[{i}]: "
+                    f"未知裝備範本 '{name}'（可用：{', '.join(sorted(templates))}）"
+                )
+            db.add(
+                EquipmentInstance(
+                    template_id=template_id,
+                    owner_id=unit.id,
+                    quantity=quantity,
+                    current_state={"ammo": ammo} if ammo is not None else {},
+                )
+            )
+    db.flush()
 
 
 def _validate_factions(factions: list[dict[str, Any]]) -> list[str]:
@@ -448,6 +519,12 @@ def _validate_victory(conditions: list[dict[str, Any]], faction_ids: list[str]) 
             raise ScenarioError(
                 f"scenario.yaml: victory_conditions[{i}].faction: 未宣告的陣營：{vc['faction']}"
             )
+        # WP-B6：condition DSL 過去只有 JSON Schema 的 `type: object`（等於沒驗）。
+        # 未知 type 要到執行期評估時才丟 TriggerError——白軍以為勝負條件生效、其實整局都不會判。
+        try:
+            validate_condition(vc["condition"], f"scenario.yaml: victory_conditions[{i}].condition")
+        except TriggerError as exc:
+            raise ScenarioError(str(exc)) from exc
 
 
 def _load_orbats(
@@ -478,6 +555,7 @@ def _load_orbats(
                     lng=u.get("lng"),
                     parent=parent,
                     fixed=bool(u.get("fixed", False)),
+                    equipment=_equipment_of(u),
                 )
             )
     return units

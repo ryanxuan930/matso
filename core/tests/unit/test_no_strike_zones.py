@@ -360,7 +360,9 @@ def test_scenario_bundle_loads_and_persists_zones(session_factory: sessionmaker[
             "mode": "REALTIME",
             "tick_rate_ms": 1000,
             "factions": [{"id": "BLUE"}, {"id": "RED"}],
-            "victory_conditions": [{"faction": "BLUE", "condition": {"type": "SURVIVE"}}],
+            "victory_conditions": [
+                {"faction": "BLUE", "condition": {"type": "faction_eliminated", "faction": "RED"}}
+            ],
             "no_strike_zones": [zone],
         },
         "orbat": {},
@@ -389,7 +391,9 @@ def test_zone_that_covers_no_cell_is_rejected_at_load() -> None:
             "mode": "REALTIME",
             "tick_rate_ms": 1000,
             "factions": [{"id": "BLUE"}],
-            "victory_conditions": [{"faction": "BLUE", "condition": {"type": "SURVIVE"}}],
+            "victory_conditions": [
+                {"faction": "BLUE", "condition": {"type": "faction_eliminated", "faction": "RED"}}
+            ],
             "no_strike_zones": [
                 {"name": "壞的", "zone_class": "NO_STRIKE", "geometry": {"type": "polygon"}}
             ],
@@ -417,7 +421,9 @@ def test_zones_survive_export_import_roundtrip() -> None:
         "mode": "REALTIME",
         "tick_rate_ms": 1000,
         "factions": [{"id": "BLUE"}],
-        "victory_conditions": [{"faction": "BLUE", "condition": {"type": "SURVIVE"}}],
+        "victory_conditions": [
+            {"faction": "BLUE", "condition": {"type": "faction_eliminated", "faction": "RED"}}
+        ],
         "no_strike_zones": [zone],
     }
     loaded = load_scenario_bundle({"scenario": scenario, "orbat": {}})

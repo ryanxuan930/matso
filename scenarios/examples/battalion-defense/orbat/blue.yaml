@@ -1,0 +1,144 @@
+# 藍軍戰鬥序列——機械化步兵營（欠一連），大漢溪東岸防禦。SPEC_FULL §11.1。
+# 部署原則「兩連在線、一連預備」：第一連控大溪橋渡口、第二連控石門大壩隘口，
+# 第三連置於後方河階台地當機動預備隊——它的投入時機是本場最主要的統裁評分點。
+# 座標全部落在 scenario.yaml 的 bbox 內，且刻意離禁射區留出一格以上的餘裕
+# （守方單位若坐在 NO_STRIKE 圈裡就永遠打不到，那不是防禦而是無敵，想定會失去意義）。
+# 「一格以上」不是保守而是必要：禁射判定走 h3 res-8（邊長約 460 m），只要單位的格
+# 被該區覆蓋就算在區內——照圓半徑量距離會誤判，實際要以格為單位留空。
+faction: BLUE
+units:
+  # 營部：fixed——指揮所一旦選定就不隨戰況跑動，且不該被 AI 派去機動交戰。
+  - designation: B-BN-HQ
+    unit_level: BATTALION
+    lat: 24.8620
+    lng: 121.3120
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 45, ammo: 210 }
+
+  # === 第一連：大溪橋渡口（主抵抗地帶）===
+  - designation: B-1CO
+    unit_level: COMPANY
+    lat: 24.8770
+    lng: 121.2900
+    parent: B-BN-HQ
+    equipment:
+      - { template: IFV_TRACKED, quantity: 2 }
+      - { template: RIFLE_556, quantity: 15, ammo: 210 }
+  - designation: B-1-1PLT
+    unit_level: PLATOON
+    lat: 24.8800
+    lng: 121.2950
+    parent: B-1CO
+    equipment:
+      # 一個機步排 4 輛 CM-34 級戰鬥車：車、車載機砲、下車步兵三者分開列，
+      # 裁決層才分得出「機砲打裝甲」與「步槍打人員」是兩種不同的效果。
+      - { template: IFV_TRACKED, quantity: 4 }
+      - { template: AUTOCANNON_30, quantity: 4, ammo: 400 }
+      - { template: RIFLE_556, quantity: 28, ammo: 210 }
+  - designation: B-1-2PLT
+    unit_level: PLATOON
+    lat: 24.8720
+    lng: 121.2870
+    parent: B-1CO
+    equipment:
+      - { template: IFV_TRACKED, quantity: 4 }
+      - { template: AUTOCANNON_30, quantity: 4, ammo: 400 }
+      - { template: RIFLE_556, quantity: 28, ammo: 210 }
+  # 反裝甲排：本場藍軍唯一能正面擊毀 MBT 的手段，彈藥刻意給得少（6 具各 4 發），
+  # 逼出「反裝甲飛彈要留給哪個軸線」的決心——配合 roe.yaml 的 ANTI_ARMOR_HOLD。
+  - designation: B-1-ATPLT
+    unit_level: PLATOON
+    lat: 24.8760
+    lng: 121.2985
+    parent: B-1CO
+    equipment:
+      - { template: ATGM, quantity: 6, ammo: 4 }
+      - { template: RIFLE_556, quantity: 12, ammo: 210 }
+
+  # === 第二連：石門大壩隘口（助攻軸線的抵抗地帶）===
+  - designation: B-2CO
+    unit_level: COMPANY
+    lat: 24.8280
+    lng: 121.2690
+    parent: B-BN-HQ
+    equipment:
+      - { template: IFV_TRACKED, quantity: 2 }
+      - { template: RIFLE_556, quantity: 15, ammo: 210 }
+  - designation: B-2-1PLT
+    unit_level: PLATOON
+    lat: 24.8340
+    lng: 121.2740
+    parent: B-2CO
+    equipment:
+      - { template: IFV_TRACKED, quantity: 4 }
+      - { template: AUTOCANNON_30, quantity: 4, ammo: 400 }
+      - { template: RIFLE_556, quantity: 28, ammo: 210 }
+  - designation: B-2-2PLT
+    unit_level: PLATOON
+    lat: 24.8020
+    lng: 121.2600
+    parent: B-2CO
+    equipment:
+      - { template: IFV_TRACKED, quantity: 4 }
+      - { template: AUTOCANNON_30, quantity: 4, ammo: 400 }
+      - { template: RIFLE_556, quantity: 28, ammo: 210 }
+  - designation: B-2-ATPLT
+    unit_level: PLATOON
+    lat: 24.8180
+    lng: 121.2760
+    parent: B-2CO
+    equipment:
+      - { template: ATGM, quantity: 6, ammo: 4 }
+      - { template: RIFLE_556, quantity: 12, ammo: 210 }
+
+  # === 第三連：機動預備隊（三層河階台地）===
+  # 不 fixed——它存在的意義就是被派出去；MSEL 的 blue-reserve-release 是解除管制的誘導。
+  - designation: B-3CO
+    unit_level: COMPANY
+    lat: 24.8520
+    lng: 121.3250
+    parent: B-BN-HQ
+    equipment:
+      - { template: IFV_TRACKED, quantity: 2 }
+      - { template: RIFLE_556, quantity: 15, ammo: 210 }
+  - designation: B-3-1PLT
+    unit_level: PLATOON
+    lat: 24.8580
+    lng: 121.3310
+    parent: B-3CO
+    equipment:
+      - { template: IFV_TRACKED, quantity: 4 }
+      - { template: AUTOCANNON_30, quantity: 4, ammo: 400 }
+      - { template: RIFLE_556, quantity: 28, ammo: 210 }
+
+  # === 營直屬火力與後勤 ===
+  # 迫砲排與砲兵連都 fixed：進入陣地後即為射擊位置，移動＝放棄射擊準備。
+  - designation: B-MTR-PLT
+    unit_level: PLATOON
+    lat: 24.8560
+    lng: 121.3180
+    parent: B-BN-HQ
+    fixed: true
+    equipment:
+      - { template: MORTAR_120, quantity: 4, ammo: 60 }
+      - { template: RIFLE_556, quantity: 16, ammo: 210 }
+  - designation: B-FA-BTY
+    unit_level: COMPANY
+    lat: 24.8450
+    lng: 121.3380
+    parent: B-BN-HQ
+    fixed: true
+    equipment:
+      - { template: HOWITZER_155_SP, quantity: 6, ammo: 40 }
+      - { template: RIFLE_556, quantity: 20, ammo: 210 }
+  # 後勤連：#84 油料模型上線後，戰鬥車輛的續航靠這裡；被打掉＝東岸車輛逐步趴窩。
+  - designation: B-CSS-CO
+    unit_level: COMPANY
+    lat: 24.8480
+    lng: 121.3480
+    parent: B-BN-HQ
+    fixed: true
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 8 }
+      - { template: RIFLE_556, quantity: 20, ammo: 210 }

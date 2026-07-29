@@ -145,3 +145,70 @@ def test_scenario_dict_has_no_none_holes() -> None:
     """dump 出來的 dict 不得含 None 值——YAML 會寫成 `null`，再載入時 schema 會擋。"""
     out = scenario_to_dict(load_scenario_package(_TUTORIAL))
     assert None not in out.values()
+
+
+# --- WP-B6：orbat 編裝（equipment）---
+
+
+def test_equipment_survives_export(tmp_path: Path) -> None:
+    sc = load_scenario_package(_TUTORIAL)
+    sc.units[0] = dataclasses.replace(
+        sc.units[0], equipment=(("MBT", 4, 40), ("RIFLE_556", 9, None))
+    )
+    dump_scenario_package(sc, tmp_path)
+    reloaded = load_scenario_package(tmp_path)
+    by_name = {u.designation: u for u in reloaded.units}
+    assert by_name[sc.units[0].designation].equipment == (("MBT", 4, 40), ("RIFLE_556", 9, None))
+
+
+def test_declared_equipment_is_materialised(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """想定宣告的編裝要真的變成 EquipmentInstance——不然裁決層看不到那些武器。"""
+    from sqlalchemy import select
+
+    from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
+    from app.scenario import create_session_from_scenario
+
+    sc = load_scenario_package(_TUTORIAL)
+    sc.units[0] = dataclasses.replace(sc.units[0], equipment=(("MBT", 3, 25),))
+    with session_factory() as db:
+        sid = create_session_from_scenario(db, sc, master_seed=1, seed_default_equipment=True)
+        unit = db.scalar(
+            select(TacticalUnit).where(
+                TacticalUnit.session_id == sid,
+                TacticalUnit.designation == sc.units[0].designation,
+            )
+        )
+        rows = list(
+            db.scalars(select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id))
+        )
+        names = {db.get(EquipmentTemplate, r.template_id).name for r in rows}
+    # 明確編裝的單位只拿到想定給的東西，**不會**再被配發預設步槍
+    assert names == {"MBT"}
+    assert rows[0].quantity == 3 and rows[0].current_state["ammo"] == 25
+
+
+def test_unknown_equipment_template_names_the_exact_path(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """SPEC_FULL §11.1 要求精確錯誤路徑；靜默略過會讓單位空手上場，交戰時才發現。"""
+    from app.scenario import create_session_from_scenario
+    from app.scenario.loader import ScenarioError
+
+    sc = load_scenario_package(_TUTORIAL)
+    sc.units[0] = dataclasses.replace(sc.units[0], equipment=(("T-999", 1, None),))
+    with session_factory() as db, pytest.raises(ScenarioError, match="T-999"):
+        create_session_from_scenario(db, sc, master_seed=1)
+
+
+def test_units_without_declared_equipment_still_get_the_default(session_factory) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import select
+
+    from app.models import EquipmentInstance, TacticalUnit
+    from app.scenario import create_session_from_scenario
+
+    sc = load_scenario_package(_TUTORIAL)
+    with session_factory() as db:
+        sid = create_session_from_scenario(db, sc, master_seed=1, seed_default_equipment=True)
+        units = list(db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == sid)))
+        for unit in units:
+            assert db.scalar(
+                select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)
+            ), f"{unit.designation} 應有預設配發"

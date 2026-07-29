@@ -296,3 +296,70 @@ def test_roe_rules_are_hashable_frozen_value() -> None:
     roe = RoeRules(default_fire_policy={"BLUE": "FREE"})
     with pytest.raises(AttributeError):
         roe.default_fire_policy = {}  # type: ignore[misc]
+
+
+# --- WP-B6：condition DSL 於**載入時**驗（未知 type 過去要到執行期才炸）---
+
+
+def test_unknown_victory_condition_type_is_rejected_at_load(tmp_path: Path) -> None:
+    """tutorial-platoon 曾寫著 `type: eliminate`（不存在的 type）——想定照樣載入，
+    直到執行期評估勝負才丟 TriggerError，等於整局都不會判勝負。"""
+    import shutil
+
+    import yaml
+
+    shutil.copytree(_TUTORIAL, tmp_path / "s")
+    path = tmp_path / "s" / "scenario.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["victory_conditions"][0]["condition"] = {"type": "eliminate", "target_faction": "RED"}
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(ScenarioError, match="未知的 condition type"):
+        load_scenario_package(tmp_path / "s")
+
+
+def test_condition_missing_a_required_field_is_rejected(tmp_path: Path) -> None:
+    import shutil
+
+    import yaml
+
+    shutil.copytree(_TUTORIAL, tmp_path / "s")
+    path = tmp_path / "s" / "scenario.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["victory_conditions"][0]["condition"] = {"type": "strength_below", "faction": "RED"}
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(ScenarioError, match="缺少必填欄位 'value'"):
+        load_scenario_package(tmp_path / "s")
+
+
+def test_unknown_msel_trigger_type_is_rejected_at_load(tmp_path: Path) -> None:
+    """MSEL 的 trigger 同理：未知 type → 該則注入整局靜默不發生。"""
+    import shutil
+
+    import yaml
+
+    shutil.copytree(_TUTORIAL, tmp_path / "s")
+    path = tmp_path / "s" / "msel.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["events"][0]["trigger"] = {"type": "when_i_feel_like_it"}
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(ScenarioError, match=r"events\[0\]\.trigger"):
+        load_scenario_package(tmp_path / "s")
+
+
+def test_nested_all_any_conditions_are_validated_recursively() -> None:
+    from app.scenario.triggers import TriggerError, validate_condition
+
+    validate_condition(
+        {
+            "type": "all",
+            "of": [
+                {"type": "time", "at_tick": 10},
+                {"type": "any", "of": [{"type": "faction_eliminated", "faction": "RED"}]},
+            ],
+        },
+        "x",
+    )
+    with pytest.raises(TriggerError, match=r"all\.of\[1\]"):
+        validate_condition(
+            {"type": "all", "of": [{"type": "time", "at_tick": 1}, {"type": "bogus"}]}, "x"
+        )

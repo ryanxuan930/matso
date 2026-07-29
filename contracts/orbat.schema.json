@@ -29,6 +29,20 @@
           "fixed": {
             "type": "boolean",
             "description": "固定單位（指揮部/後勤/陣地等）：不接受 MOVE 令、不會被派去移動或機動交戰。預設 false。"
+          },
+          "equipment": {
+            "type": "array",
+            "description": "本單位的編裝（WP-B6）。範本以**名稱**參照 EquipmentTemplate.name（如 RIFLE_556 / MBT / HOWITZER_155_SP）；未知名稱於開局時報錯並指出精確路徑（SPEC_FULL §11.1）。省略此欄＝沿用開局旗標 seed_default_equipment 的預設配發。",
+            "items": {
+              "type": "object",
+              "required": ["template"],
+              "additionalProperties": false,
+              "properties": {
+                "template": { "type": "string", "minLength": 1, "description": "EquipmentTemplate.name" },
+                "quantity": { "type": "integer", "minimum": 1, "default": 1, "description": "建制數量（squad 齊射的射手數 / 車輛數）" },
+                "ammo": { "type": "integer", "minimum": 0, "description": "初始彈藥；省略＝由範本的 baseStats 決定（0）" }
+              }
+            }
           }
         }
       }

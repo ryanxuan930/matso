@@ -86,6 +86,11 @@ def _orbat_dict(loaded: LoadedScenario, faction: str) -> dict[str, Any]:
         # 省略即等價）——與前端編輯器 `...(u.fixed ? { fixed: true } : {})` 同一慣例。
         if u.fixed:
             unit["fixed"] = True
+        if u.equipment:
+            unit["equipment"] = [
+                {"template": name, "quantity": qty, **({"ammo": ammo} if ammo is not None else {})}
+                for name, qty, ammo in u.equipment
+            ]
         units.append(unit)
     return {"faction": faction, "units": units}
 

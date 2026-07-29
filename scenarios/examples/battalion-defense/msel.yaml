@@ -1,0 +1,68 @@
+# MSEL 白軍統裁誘導（SPEC_FULL §11.3）——營級防禦想定。
+# trigger 用的是 triggers.py 的 condition DSL（與 victory_conditions 同一套）：
+# time / faction_eliminated / strength_below / unit_in_region / all / any。
+# 設計原則：誘導要「回應演訓者的決心」而不是照劇本走完。除了砲兵準備是純時間觸發
+# （代表上級的計畫火力），其餘四則都掛在戰況條件上——演得快就早發生，演得慢就晚發生。
+events:
+  # 一、H+20 分：紅軍砲兵準備。給藍軍一個「是否現在就反砲兵」的抉擇點。
+  - id: red-arty-prep
+    once: true
+    trigger: { type: time, at_tick: 20 }
+    inject:
+      event_type: ARTILLERY_PREP
+      faction: RED
+      payload:
+        note: 紅軍 155 自走砲對大漢溪東岸實施 10 分鐘射擊準備，重點在大溪橋渡口與石門大壩隘口
+        target_axis: 大溪橋／石門大壩
+
+  # 二、紅軍任一單位進入東岸橋頭堡框 → 藍軍預備隊解除管制。
+  # bbox 是 [min_lng, min_lat, max_lng, max_lat]（與 scenario.bbox 同慣例）。
+  # 這則的用意是把「預備隊何時投入」從演訓者的猜測改成有明確軍事徵候的判斷。
+  - id: blue-reserve-release
+    once: true
+    trigger:
+      type: unit_in_region
+      faction: RED
+      bbox: [121.265, 24.855, 121.320, 24.900]
+    inject:
+      event_type: REINFORCEMENT
+      faction: BLUE
+      payload:
+        note: 紅軍已於東岸建立橋頭堡；旅部解除第三連（機動預備隊）之管制，授權營長逕行運用
+        released_unit: B-3CO
+
+  # 三、大溪橋爆破：時間與敵情**同時**成立才觸發（all）。
+  # 只掛時間會變成「時候到了橋就自己炸」；只掛敵情又會在偵搜誤判時提早毀橋。
+  - id: daxi-bridge-demolition
+    once: true
+    trigger:
+      type: all
+      of:
+        - { type: time, at_tick: 45 }
+        - type: unit_in_region
+          faction: RED
+          bbox: [121.275, 24.870, 121.305, 24.895]
+    inject:
+      event_type: BRIDGE_DEMOLITION
+      payload:
+        note: 工兵執行大溪橋預置爆破；該渡口自此不可通行，紅軍須改尋徒涉點或轉用石門軸線
+        feature: 大溪橋
+
+  # 四／五、雙方的崩潰門檻。門檻不同（紅 45 / 藍 40）是因為攻方頓挫的臨界通常較高：
+  # 攻擊發起後戰力折損四成即難以維持突穿動能，守方則還能靠工事再撐一段。
+  - id: red-culmination
+    once: true
+    trigger: { type: strength_below, faction: RED, value: 45 }
+    inject:
+      event_type: FORCE_COLLAPSE
+      faction: RED
+      payload:
+        note: 紅軍突穿動能已耗盡（戰力低於 45%），前進部隊轉入原地固守
+  - id: blue-line-broken
+    once: true
+    trigger: { type: strength_below, faction: BLUE, value: 40 }
+    inject:
+      event_type: WITHDRAWAL_AUTHORIZED
+      faction: BLUE
+      payload:
+        note: 藍軍主抵抗線已被撕裂（戰力低於 40%），旅部授權向三層台地後續陣地轉進

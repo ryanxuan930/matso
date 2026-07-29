@@ -1,0 +1,107 @@
+# 官方想定 #3：聯合防衛大型想定（SPEC_FULL §11.1 想定包格式 / §11.2 官方範例 / §12.1 N 方陣營）。
+#
+# 本想定存在的理由與另兩個官方想定不同：
+#   tutorial-platoon 驗「載得進來」，battalion-defense 驗「一個編制打得起來」，
+#   本檔要驗的是**兩軍以上**——ADR 006 的關係矩陣（BLUE+GREEN 同盟對 RED）、
+#   旅級單位觸發的聚合裁決路徑、以及三方各自不同的交戰授權（見 roe.yaml）。
+#   若哪天關係矩陣退化回「非我族類即敵」，本想定會是第一個爆的。
+name: Joint Defense — Southwest Coastal Lodgement
+version: "1.0"
+description: |
+  【一般狀況】
+  X 年 8 月，紅軍以旅級機械化兩棲部隊於台灣西南沿海（高雄 永安—彌陀—茄萣 一線）建立灘頭堡，
+  意圖沿 台 28／台 1 線向東突穿，奪取 岡山—燕巢 縱深，切斷高雄北面聯外通道。
+  藍軍（守備機步旅）以 路竹—阿蓮 為西正面、橋頭—楠梓 為機動預備，砲兵營於 燕巢 佔領陣地。
+  盟邦「聯合支援特遣隊」（GREEN）已由 高雄港／左營 上陸，位置在藍軍後方，任務為協防與反登陸
+  直接支援——它是友軍，不是藍軍的下屬（獨立陣營、獨立交戰授權）。
+
+  【特別狀況】
+  一、紅軍灘頭恰好覆蓋 興達發電廠。該廠列為 RESTRICTED_FIRE：不硬性阻擋，但對其開火須經白軍
+      確認並記入 Ledger。紅軍第一機步營 R-1-A 就配置在廠區內——這是想定刻意設計的兩難，
+      用來演練「敵方以關鍵民生設施作屏障」時指揮官如何裁量，而不是讓玩家順手轟掉。
+  二、盟邦 GREEN 帶來一個多管火箭連（G-MLRS），但母國交戰授權尚未涵蓋長程面殺傷武器，
+      開局即被 ROE 鎖住（roe.yaml）。它在地圖上看得到、打不出去——鬆綁與否由 MSEL 事件
+      `green-roe-review` 引導白軍裁決。
+  三、紅軍的火箭砲兵營同屬戰役級管制資產，開局亦受 ROE 限制，解禁時機見 MSEL `red-fires-release`。
+  四、8 月西南氣流：MSEL `weather-squall` 會在推演中段帶來能見度與航渡條件的劇變。
+# [min_lng, min_lat, max_lng, max_lat]。西起台灣海峽（紅軍航渡水域），東至 旗山／高屏溪 西岸，
+# 南含 左營—高雄港（盟軍上陸點），北抵 二仁溪口。約 0.5° × 0.4°，全部單位落在其內。
+bbox: [120.0, 22.55, 120.5, 22.95]
+# 大型想定用 WEGO：三方同時下令、同時裁決，避免先手方吃掉全部資訊優勢。
+mode: WEGO
+# 1 tick = 1 分鐘模擬時間（與 app/movement/params.py 的 MOVE_TICK_RATE_MS 同慣例）。
+# 下方所有 at_tick 都可直接讀成分鐘：480 = 推演第 8 小時。
+tick_rate_ms: 60000
+hex_resolution: 8
+# 旅級單位存在（B-BDE / R-BDE）→ 營級以上走 Lanchester 聚合裁決（SPEC_FULL §7.1）。
+# 本想定的用途之一就是讓聚合路徑真的被走到；連級以下仍走逐單位裁決。
+aggregate_adjudication_level: BATTALION
+factions:
+  - { id: BLUE, display_name: 藍軍（守備機步旅）, color: "#3b7dd8" }
+  - { id: GREEN, display_name: 盟邦聯合支援特遣隊, color: "#2f9e5e" }
+  - { id: RED, display_name: 紅軍（兩棲機械化旅）, color: "#d83b3b" }
+# 上三角宣告（對稱）。未宣告的配對預設 HOSTILE——但這裡三對全寫出來，因為
+# 「BLUE 與 GREEN 是盟友」正是本想定要驗的東西，靠預設值撐著等於沒驗。
+relations:
+  - [BLUE, GREEN, ALLIED]
+  - [BLUE, RED, HOSTILE]
+  - [GREEN, RED, HOSTILE]
+# 三方各一條，且都用 app/scenario/triggers.py 的 evaluate_condition 真的算得出來的 type
+# （time / faction_eliminated / strength_below / unit_in_region / all / any）。
+# ⚠ DSL 沒有 not——「守住某地」無法直接寫成「敵軍未進入某區」，故守方的勝利一律改寫成
+#   「攻方戰力跌破門檻」或「撐到某時刻且攻方已受創」。這是刻意的等價改寫，不是偷懶。
+victory_conditions:
+  # 藍軍：把紅軍打到失去攻勢能力即算守成（對應「灘頭被封鎖、突穿失敗」）。
+  - faction: BLUE
+    condition: { type: strength_below, faction: RED, value: 30 }
+  # 紅軍：任一單位進入 岡山—燕巢 縱深即達成作戰目的；藍軍被殲滅亦然。
+  # 此 bbox 位於全部紅軍起始位置以東（起始最東為 120.261），故開局不會誤觸。
+  - faction: RED
+    condition:
+      type: any
+      of:
+        - { type: unit_in_region, faction: RED, bbox: [120.29, 22.75, 120.4, 22.85] }
+        - { type: faction_eliminated, faction: BLUE }
+  # 盟邦：任務是「協防成功」——撐滿 8 小時且紅軍已折損過半（不是自己殲滅誰）。
+  # 盟邦的勝負與藍軍脫鉤是刻意的：友軍可以「任務達成但戰場易手」，這正是聯盟作戰的政治現實。
+  - faction: GREEN
+    condition:
+      type: all
+      of:
+        - { type: time, at_tick: 480 }
+        - { type: strength_below, faction: RED, value: 55 }
+# WP-A3 禁射區。幾何一律 GeoJSON 的 [lng, lat] 順序（寫反會被 loader 擋下）。
+# 圓半徑取 ≥ 500 m、多邊形取 ≥ 1 km 見方，確保在 res-8（約 0.46 km²/格）下算得出格；
+# 算不出格的區在執行期一個目標都攔不到，等於保護區不存在。
+no_strike_zones:
+  # 醫院：硬阻擋。位於藍軍後方，紅軍砲兵的射擊修正若偏東就會踩進來——這是給紅軍方的約束。
+  - name: 岡山地區醫院
+    zone_class: NO_STRIKE
+    geometry: { type: circle, center: [120.2965, 22.7975], radius_m: 700 }
+  # 發電廠：不硬擋、升白軍確認。紅軍 R-1-A 就在廠區內（見 description 特別狀況一）。
+  # 用 RESTRICTED_FIRE 而非 NO_STRIKE，是因為若設成硬阻擋，紅軍只要把部隊全塞進廠區就無敵——
+  # 安全機制被拿來當戰術掩護，比沒有保護還糟。
+  - name: 興達發電廠
+    zone_class: RESTRICTED_FIRE
+    geometry:
+      type: polygon
+      ring: [[120.196, 22.848], [120.214, 22.848], [120.214, 22.864], [120.196, 22.864]]
+  # 文化資產：國定古蹟，硬阻擋。位於盟軍上陸點旁，主要約束的是紅軍的縱深火力。
+  - name: 左營舊城（國定古蹟）
+    zone_class: NO_STRIKE
+    geometry: { type: circle, center: [120.29, 22.679], radius_m: 600 }
+  # 供水設施：不硬擋、升白軍確認。緊鄰藍軍砲兵陣地（燕巢），對紅軍的反砲兵射擊構成約束——
+  # 想定刻意讓雙方都各有一個「敵人躲在保護區旁」的難題，避免規則只綁一方。
+  - name: 阿公店水庫（區域供水）
+    zone_class: RESTRICTED_FIRE
+    geometry:
+      type: polygon
+      ring: [[120.348, 22.803], [120.378, 22.803], [120.378, 22.827], [120.348, 22.827]]
+files:
+  orbat:
+    BLUE: orbat/blue.yaml
+    GREEN: orbat/green.yaml
+    RED: orbat/red.yaml
+  msel: msel.yaml
+  roe: roe.yaml
+  overrides_dir: overrides

@@ -1,0 +1,88 @@
+# 官方想定 #2：營級防禦（大漢溪—石門隘口）。SPEC_FULL §11.1 / §12.1；SPEC_V2 WP-B6。
+# 結構取法 [JCATS-A] 的裝甲旅突穿攻擊想定：一般狀況／特別狀況／對稱兵力／統裁誘導四段式，
+# 讓演訓者不必看程式碼就能讀懂「這場在打什麼、為什麼這樣配」。
+name: Battalion Defense — Dahan River / Shihmen Defile
+version: "1.0"
+description: |
+  【一般狀況】
+  紅軍地面部隊已於桃園台地西側完成集結，企圖沿台三線—台四線東進，強渡大漢溪、
+  奪取石門水庫大壩與大溪河階地，打通進入北橫公路的走廊。藍軍第一線兵力後撤至
+  大漢溪東岸既設陣地，以河川與河階崖線為障礙，遲滯並頓挫紅軍突穿。
+
+  【特別狀況】
+  一、藍軍為機械化步兵營（欠一連，配屬反裝甲排與 155 自走砲連），採「兩連在線、
+      一連預備」部署：第一連守大溪橋渡口，第二連守石門大壩隘口，第三連為機動預備隊。
+  二、紅軍為裝甲營（三個戰車排的主攻連＋助攻戰車連＋伴隨機步連），主攻軸線為大溪橋，
+      助攻軸線為石門大壩，企圖以兩點同時施壓迫使藍軍預備隊過早投入。
+  三、大溪市區醫院與國小、龍潭平民收容中心列為禁射區；石門水庫大壩與取水設施列為
+      限制射擊區——毀損水庫將造成下游災難性後果，任何對該區的火力須經白軍核准。
+  四、本場全面禁用 MLRS（見 roe.yaml）：河谷聚落稠密、水庫集水區在內，面殺傷武器的
+      彈著散布不可接受。這也是雙方編裝都沒有 MLRS_227 的原因。
+
+  【統裁誘導】
+  白軍以 msel.yaml 注入五則誘導：紅軍砲兵準備（時間觸發）、紅軍建立東岸橋頭堡時
+  藍軍預備隊解除管制、大溪橋爆破、以及雙方戰力崩潰門檻。統裁重點在於檢驗
+  「預備隊投入時機」與「反裝甲火力分配」兩項決心。
+bbox: [121.10, 24.65, 121.40, 24.95]
+mode: REALTIME
+tick_rate_ms: 1000
+hex_resolution: 8
+# 營級以上才走 Lanchester 聚合；本場主要交戰發生在連/排，故實際上多為逐單位裁決。
+aggregate_adjudication_level: BATTALION
+factions:
+  - { id: BLUE, display_name: 藍軍（守）, color: "#3b7dd8" }
+  - { id: RED, display_name: 紅軍（攻）, color: "#d83b3b" }
+relations:
+  - [BLUE, RED, HOSTILE]
+# 勝利條件與 MSEL 觸發共用 triggers.py 的 condition DSL。
+# **只用引擎真正支援的 type**：time / faction_eliminated / strength_below / unit_in_region / all / any。
+victory_conditions:
+  # 藍軍：殲滅紅軍，或撐到 H+4 小時（tick 240）而紅軍戰力已跌破 50——攻勢頓挫即算守成。
+  - faction: BLUE
+    condition:
+      type: any
+      of:
+        - { type: faction_eliminated, faction: RED }
+        - type: all
+          of:
+            - { type: time, at_tick: 240 }
+            - { type: strength_below, faction: RED, value: 50 }
+  # 紅軍：奪佔石門大壩區（有任何單位進入該框），或殲滅藍軍。
+  # 注意此框與下方 RESTRICTED_FIRE 區重疊是刻意的——「要奪佔但不准打壞」正是本場的兩難。
+  - faction: RED
+    condition:
+      type: any
+      of:
+        - { type: faction_eliminated, faction: BLUE }
+        - { type: unit_in_region, faction: RED, bbox: [121.230, 24.800, 121.262, 24.826] }
+# WP-A3 禁射區。幾何一律 GeoJSON 的 [lng, lat] 順序（寫反會讓保護區跑到地球另一端，
+# 載入器算不出 h3 格時會直接拒絕載入——安全機制的沉默失效比缺功能危險）。
+# 半徑/面積刻意開大到 res-8（約 0.46 km²）能穩定覆蓋的尺度，否則區域形同虛設。
+no_strike_zones:
+  # 雙方各有一處禁射區：讓演訓者體會保護區的約束是對等的，不是只綁守方。
+  - name: 大溪市區醫院暨國民小學
+    zone_class: NO_STRIKE
+    geometry: { type: circle, center: [121.2980, 24.8980], radius_m: 800 }
+  - name: 龍潭平民收容中心
+    zone_class: NO_STRIKE
+    geometry: { type: circle, center: [121.1900, 24.8700], radius_m: 600 }
+  # 大壩不是「不准碰」而是「碰之前要有人負責」——故用 RESTRICTED_FIRE：不硬擋，
+  # 但需明確 override 且記入 Ledger，AAR 時可追究是誰下令對水庫開火。
+  - name: 石門水庫大壩暨取水設施
+    zone_class: RESTRICTED_FIRE
+    geometry:
+      type: polygon
+      ring:
+        [
+          [121.2350, 24.8070],
+          [121.2530, 24.8070],
+          [121.2530, 24.8200],
+          [121.2350, 24.8200],
+        ]
+files:
+  orbat:
+    BLUE: orbat/blue.yaml
+    RED: orbat/red.yaml
+  msel: msel.yaml
+  roe: roe.yaml
+  overrides_dir: overrides

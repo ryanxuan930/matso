@@ -21,7 +21,7 @@ _BUNDLE = {
         "factions": [{"id": "BLUE", "color": "#3b7dd8"}, {"id": "RED", "color": "#d83b3b"}],
         "relations": [["BLUE", "RED", "HOSTILE"]],
         "victory_conditions": [
-            {"faction": "BLUE", "condition": {"type": "eliminate", "target_faction": "RED"}}
+            {"faction": "BLUE", "condition": {"type": "faction_eliminated", "faction": "RED"}}
         ],
         "files": {"orbat": {"BLUE": "orbat/blue.yaml"}},
     },

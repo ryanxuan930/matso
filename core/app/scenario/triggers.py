@@ -56,6 +56,44 @@ def evaluate_condition(cond: dict[str, Any], ctx: TriggerContext) -> bool:
     raise TriggerError(f"未知的 condition type：{ctype!r}")
 
 
+# 每個 condition type 的必填欄位（載入時的結構驗證用；語義評估見 evaluate_condition）。
+_CONDITION_FIELDS: dict[str, tuple[str, ...]] = {
+    "time": ("at_tick",),
+    "faction_eliminated": ("faction",),
+    "strength_below": ("faction", "value"),
+    "unit_in_region": ("faction", "bbox"),
+    "all": ("of",),
+    "any": ("of",),
+}
+
+
+def validate_condition(cond: Any, label: str) -> None:
+    """**載入時**檢查 condition 的 type 與必填欄位（不評估、不需要 ctx）。
+
+    存在的理由：`evaluate_condition` 對未知 type 丟 `TriggerError`，但那是**執行期**——
+    想定會順利載入、開局、跑到白軍以為勝負條件生效時才炸（或整條 MSEL 靜默失效）。
+    想定資產的錯誤要在載入時就指出精確路徑（SPEC_FULL §11.1）。
+    """
+    if not isinstance(cond, dict):
+        raise TriggerError(f"{label}: condition 必須是 mapping")
+    ctype = cond.get("type")
+    fields = _CONDITION_FIELDS.get(str(ctype))
+    if fields is None:
+        raise TriggerError(
+            f"{label}: 未知的 condition type：{ctype!r}"
+            f"（支援：{', '.join(sorted(_CONDITION_FIELDS))}）"
+        )
+    for key in fields:
+        if key not in cond:
+            raise TriggerError(f"{label}.{ctype}: 缺少必填欄位 '{key}'")
+    if ctype in ("all", "any"):
+        sub = cond["of"]
+        if not isinstance(sub, list) or not sub:
+            raise TriggerError(f"{label}.{ctype}.of: 必須是非空陣列")
+        for i, child in enumerate(sub):
+            validate_condition(child, f"{label}.{ctype}.of[{i}]")
+
+
 def check_victory(victory_conditions: list[dict[str, Any]], ctx: TriggerContext) -> list[str]:
     """回傳達成勝利條件的陣營清單（可能多方/空）。"""
     return [vc["faction"] for vc in victory_conditions if evaluate_condition(vc["condition"], ctx)]

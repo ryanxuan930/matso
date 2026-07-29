@@ -1,0 +1,122 @@
+# 藍軍戰鬥序列（SPEC_FULL §11.1）——守備機步旅：西正面 路竹—阿蓮、機動預備 橋頭—楠梓、
+# 砲兵 燕巢。編成刻意做成「一營守、一營反擊、一營支援」的三段式，推演者必須決定何時把裝甲營
+# 從預備轉為逆襲——這是本想定給藍軍方的核心決策點。
+#
+# equipment 只用出貨種子範本名（RIFLE_556 / AUTOCANNON_30 / ATGM / TANK_MAIN_GUN_120 /
+# MORTAR_120 / HOWITZER_155_SP / IFV_TRACKED / MBT / FUEL_TRUCK）；打錯名字會在開局時
+# 以精確路徑報錯而不是靜默略過，所以這裡寧可明列也不靠預設配發。
+# 指揮部與砲兵陣地一律 fixed: true——它們不接受 MOVE 令，也不會被 AI 派去機動。
+faction: BLUE
+units:
+  # 旅指揮所。位置刻意離 岡山地區醫院（NO_STRIKE，中心 [120.2965, 22.7975]）1.5 km 以上：
+  # 把指揮所貼著醫院設是現實中會被追究的行為，官方想定不該示範它。
+  - designation: B-BDE
+    unit_level: BRIGADE
+    lat: 22.786
+    lng: 120.305
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+
+  # ── 機步第一營：西正面。直面紅軍灘頭的東進軸線（台 28／台 1 線）。
+  - designation: B-1-BN
+    unit_level: BATTALION
+    lat: 22.831
+    lng: 120.264
+    parent: B-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 40, ammo: 400 }
+  - designation: B-1-A
+    unit_level: COMPANY
+    lat: 22.842
+    lng: 120.253
+    parent: B-1-BN
+    equipment:
+      # 機步連＝載具 + 車載機砲 + 下車步兵，三者要同時宣告，否則裁決層只看得到其中一種武器。
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  - designation: B-1-B
+    unit_level: COMPANY
+    lat: 22.818
+    lng: 120.25
+    parent: B-1-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  # 反裝甲連：ATGM 最小射程 200 m，配置在第一線後方而非貼著海岸，才有交戰縱深可用。
+  - designation: B-1-C
+    unit_level: COMPANY
+    lat: 22.828
+    lng: 120.279
+    parent: B-1-BN
+    equipment:
+      - { template: ATGM, quantity: 12, ammo: 60 }
+      - { template: RIFLE_556, quantity: 60, ammo: 600 }
+
+  # ── 裝甲營：機動預備。不 fixed——它就是要能動的那一支。
+  - designation: B-2-BN
+    unit_level: BATTALION
+    lat: 22.758
+    lng: 120.312
+    parent: B-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  - designation: B-2-A
+    unit_level: COMPANY
+    lat: 22.77
+    lng: 120.302
+    parent: B-2-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+  - designation: B-2-B
+    unit_level: COMPANY
+    lat: 22.746
+    lng: 120.323
+    parent: B-2-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+
+  # ── 砲兵營：燕巢丘陵。全部 fixed（已佔領陣地、完成測地）。
+  # 位置刻意壓在 阿公店水庫 RESTRICTED_FIRE 區（緯度 22.803 以北）以南約 1 km——
+  # 紅軍要反砲兵就得在保護區邊緣做射擊修正，這個難題是設計出來的，不是巧合。
+  - designation: B-FA-BN
+    unit_level: BATTALION
+    lat: 22.792
+    lng: 120.368
+    parent: B-BDE
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }
+  - designation: B-FA-A
+    unit_level: COMPANY
+    lat: 22.786
+    lng: 120.376
+    parent: B-FA-BN
+    fixed: true
+    equipment:
+      # 155 自走砲射程 30 km：從燕巢可涵蓋整個紅軍灘頭，但也因此必須遵守禁射區。
+      - { template: HOWITZER_155_SP, quantity: 6, ammo: 240 }
+  - designation: B-FA-B
+    unit_level: COMPANY
+    lat: 22.793
+    lng: 120.352
+    parent: B-FA-BN
+    fixed: true
+    equipment:
+      # 120 迫砲射程 7 km：只夠支援西正面近戰，構成與 155 的射程階梯。
+      - { template: MORTAR_120, quantity: 8, ammo: 320 }
+
+  # ── 後勤連：fixed（旅補給點）。裝甲營一旦向西逆襲就會拉長油料線，這是它存在的原因。
+  - designation: B-LOG
+    unit_level: COMPANY
+    lat: 22.777
+    lng: 120.34
+    parent: B-BDE
+    fixed: true
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 8 }
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }

@@ -12,11 +12,15 @@ factions:
   - { id: RED, display_name: 紅軍, color: "#d83b3b" }
 relations:
   - [BLUE, RED, HOSTILE]
+# ⚠ condition DSL 的 type 必須是 triggers.evaluate_condition 支援者
+# （time / faction_eliminated / strength_below / unit_in_region / all / any）。
+# WP-B6 前這裡寫的是 `eliminate`（不存在的 type）——想定照樣載入，直到執行期評估勝負
+# 才丟 TriggerError，等於整局都不會判勝負。載入器現在會在載入時擋下這種寫法。
 victory_conditions:
   - faction: BLUE
-    condition: { type: eliminate, target_faction: RED }
+    condition: { type: faction_eliminated, faction: RED }
   - faction: RED
-    condition: { type: eliminate, target_faction: BLUE }
+    condition: { type: faction_eliminated, faction: BLUE }
 # WP-A3 禁射區示範：想定作者宣告的保護區。護欄 G4 與人類 precheck 共用同一份判定。
 # NO_STRIKE＝硬阻擋（AI 令被剔除、人類令被拒）；RESTRICTED_FIRE＝需白軍/下令者明確確認。
 # geometry 一律 GeoJSON 的 [lng, lat] 順序。

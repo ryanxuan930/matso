@@ -1,0 +1,77 @@
+# 盟邦戰鬥序列（SPEC_FULL §11.1 / §12.1 N 方陣營）——聯合支援特遣隊，由 高雄港／左營 上陸。
+#
+# GREEN 是**獨立陣營**，不是藍軍的下屬編制：它有自己的指揮所、自己的交戰授權（roe.yaml），
+# 勝利條件也與藍軍脫鉤（scenario.yaml）。這正是本想定要驗的東西——若關係矩陣退化成
+# 「非我族類即敵」，GREEN 會開始打 BLUE，測試會立刻爆。
+#
+# 兵力刻意做成「支援型」而非「決戰型」：一個機步連、一個反裝甲連、一個 155 砲兵連、
+# 一個受管制的火箭連、一個後勤連。盟邦提供的是火力與後勤縱深，不是替藍軍打主戰。
+faction: GREEN
+units:
+  # 特遣隊指揮所（左營東）：fixed。營級而非旅級——盟邦派來的是加強營規模的特遣隊。
+  # 位置刻意避開 左營舊城 NO_STRIKE 圓（中心 [120.29, 22.679]、半徑 600 m）：
+  # 把指揮所設在古蹟裡等於拿文化資產當掩體，官方想定不示範這種事。
+  - designation: G-TF
+    unit_level: BATTALION
+    lat: 22.695
+    lng: 120.3
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+
+  # 機步連：唯一會前推的盟軍地面部隊，用於封堵紅軍南下高雄的軸線。
+  - designation: G-A
+    unit_level: COMPANY
+    lat: 22.713
+    lng: 120.308
+    parent: G-TF
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+
+  # 反裝甲連：盟邦的招牌貢獻。default_fire_policy 給 GREEN 的是 ANTI_ARMOR_HOLD——
+  # 反裝甲武器只對有效目標開火，不會拿 ATGM 打步兵。
+  - designation: G-B
+    unit_level: COMPANY
+    lat: 22.732
+    lng: 120.316
+    parent: G-TF
+    equipment:
+      - { template: ATGM, quantity: 12, ammo: 60 }
+      - { template: RIFLE_556, quantity: 60, ammo: 600 }
+
+  # 155 自走砲連：fixed（已佔領陣地）。射程 30 km，從仁武可支援到藍軍西正面，
+  # 是盟邦「有實際貢獻」的證明——若把 GREEN 的火力也全鎖死，這個陣營就只是佈景。
+  - designation: G-FA
+    unit_level: COMPANY
+    lat: 22.698
+    lng: 120.329
+    parent: G-TF
+    fixed: true
+    equipment:
+      - { template: HOWITZER_155_SP, quantity: 6, ammo: 240 }
+
+  # 多管火箭連：fixed。**開局即被 roe.yaml 禁用**（母國交戰授權未涵蓋長程面殺傷）。
+  # 刻意把裝備放進 ORBAT 而不是省略——限制要能被看見、被質疑、被 AAR 追問，
+  # 「乾脆不給這個連」會讓 ROE 條文變成沒有作用對象的空條款（loader 擋不到的沉默失效）。
+  - designation: G-MLRS
+    unit_level: COMPANY
+    lat: 22.682
+    lng: 120.322
+    parent: G-TF
+    fixed: true
+    equipment:
+      - { template: MLRS_227, quantity: 4, ammo: 96 }
+
+  # 後勤支援連：fixed。盟邦帶來的油料是藍軍裝甲營持續逆襲的關鍵——
+  # 聯盟作戰的真實摩擦（誰供油給誰、供到什麼程度）在這裡才有得演。
+  - designation: G-LOG
+    unit_level: COMPANY
+    lat: 22.676
+    lng: 120.31
+    parent: G-TF
+    fixed: true
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 6 }
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }

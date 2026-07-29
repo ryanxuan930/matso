@@ -1,0 +1,112 @@
+# 紅軍戰鬥序列（SPEC_FULL §11.1）——兩棲機械化旅，已於 永安—彌陀—茄萣 一線建立灘頭。
+# 兵力與藍軍大致對稱（[JCATS-A] 的裝甲旅突穿想定慣例：對稱兵力才能讓勝負來自決策而非數量），
+# 差別在紅軍多一個戰役級火箭砲兵營、少一個直射反裝甲以外的縱深火力階梯。
+#
+# 灘頭部隊全部緊貼海岸線配置（lng 120.19–120.26），與勝利條件的 岡山—燕巢 縱深
+# （lng ≥ 120.29）之間留有約 3–8 km 的突穿距離——紅軍必須真的打過去才算贏。
+faction: RED
+units:
+  # 灘頭指揮所（永安）：fixed。一旦被打掉，旅級聚合裁決的上級節點就沒了。
+  - designation: R-BDE
+    unit_level: BRIGADE
+    lat: 22.815
+    lng: 120.232
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+
+  # ── 機步第一營：北翼（興達—茄萣）。負責掩護火箭砲兵營的陣地。
+  - designation: R-1-BN
+    unit_level: BATTALION
+    lat: 22.845
+    lng: 120.215
+    parent: R-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 40, ammo: 400 }
+  # ⚠ 本連刻意配置在 興達發電廠 RESTRICTED_FIRE 區內（scenario.yaml 的 polygon
+  # lng 120.196–120.214 × lat 22.848–22.864）。這是想定的核心道德兩難：藍軍要打它，
+  # 就得走白軍確認流程並讓 override 進 Ledger 供 AAR 追究。用 RESTRICTED_FIRE 而非
+  # NO_STRIKE 的理由寫在 scenario.yaml——硬阻擋會讓保護區變成無敵掩體。
+  - designation: R-1-A
+    unit_level: COMPANY
+    lat: 22.858
+    lng: 120.207
+    parent: R-1-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  - designation: R-1-B
+    unit_level: COMPANY
+    lat: 22.835
+    lng: 120.218
+    parent: R-1-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  # 反裝甲連：紅軍預期藍軍裝甲營逆襲，這是它的反制手段。
+  - designation: R-1-C
+    unit_level: COMPANY
+    lat: 22.85
+    lng: 120.226
+    parent: R-1-BN
+    equipment:
+      - { template: ATGM, quantity: 12, ammo: 60 }
+      - { template: RIFLE_556, quantity: 60, ammo: 600 }
+
+  # ── 裝甲營：南翼（彌陀），突穿主力。油料是它的硬限制——見 R-LOG。
+  - designation: R-2-BN
+    unit_level: BATTALION
+    lat: 22.79
+    lng: 120.248
+    parent: R-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  - designation: R-2-A
+    unit_level: COMPANY
+    lat: 22.8
+    lng: 120.256
+    parent: R-2-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+  - designation: R-2-B
+    unit_level: COMPANY
+    lat: 22.778
+    lng: 120.261
+    parent: R-2-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+
+  # ── 火箭砲兵營（茄萣）：fixed。MLRS 射程 70 km，從這裡可涵蓋整個高雄北面——
+  # 正因為威力過大，開局即被 roe.yaml 的戰役級火力管制鎖住（需上級核准），
+  # 解禁時機由 MSEL `red-fires-release` 引導。地圖上看得到、按不下去，是刻意的。
+  - designation: R-ART-BN
+    unit_level: BATTALION
+    lat: 22.88
+    lng: 120.2
+    parent: R-BDE
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }
+  - designation: R-ART-A
+    unit_level: COMPANY
+    lat: 22.893
+    lng: 120.192
+    parent: R-ART-BN
+    fixed: true
+    equipment:
+      - { template: MLRS_227, quantity: 6, ammo: 144 }
+
+  # ── 灘頭後勤點：fixed。兩棲部隊的油彈全靠海運上岸，這個點是紅軍的單點故障。
+  - designation: R-LOG
+    unit_level: COMPANY
+    lat: 22.822
+    lng: 120.225
+    parent: R-BDE
+    fixed: true
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 6 }
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }

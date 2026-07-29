@@ -1,0 +1,125 @@
+# 紅軍戰鬥序列——裝甲營，自桃園台地西側對大漢溪線實施突穿。SPEC_FULL §11.1。
+# 兩軸線同時施壓（主攻大溪橋、助攻石門大壩）是刻意的：目的在逼藍軍過早投入預備隊。
+# 兵力與藍軍大致對稱（13 vs 14 個單位），但質的差異在裝甲——紅軍有 MBT，藍軍只有戰鬥車，
+# 所以藍軍的反裝甲飛彈分配是勝負關鍵，而非單純的數量比。
+faction: RED
+units:
+  - designation: R-BN-HQ
+    unit_level: BATTALION
+    lat: 24.8660
+    lng: 121.1750
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 40, ammo: 210 }
+
+  # === 第一戰車連：主攻（大溪橋軸線），三個戰車排 ===
+  - designation: R-1CO
+    unit_level: COMPANY
+    lat: 24.8800
+    lng: 121.2200
+    parent: R-BN-HQ
+    equipment:
+      - { template: MBT, quantity: 2 }
+      - { template: TANK_MAIN_GUN_120, quantity: 2, ammo: 40 }
+  - designation: R-1-1PLT
+    unit_level: PLATOON
+    lat: 24.8880
+    lng: 121.2330
+    parent: R-1CO
+    equipment:
+      # 車體與主砲分開列：MBT 提供機動/防護（base_stats.mobility），主砲才是開火的武器。
+      # 一個戰車排 4 輛是本場的建制標準，兩者數量必須一致，否則會出現「有砲沒車」。
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 40 }
+  - designation: R-1-2PLT
+    unit_level: PLATOON
+    lat: 24.8740
+    lng: 121.2280
+    parent: R-1CO
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 40 }
+  - designation: R-1-3PLT
+    unit_level: PLATOON
+    lat: 24.8820
+    lng: 121.2260
+    parent: R-1CO
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 40 }
+
+  # === 第二戰車連：助攻（石門大壩軸線）===
+  - designation: R-2CO
+    unit_level: COMPANY
+    lat: 24.8250
+    lng: 121.2050
+    parent: R-BN-HQ
+    equipment:
+      - { template: MBT, quantity: 2 }
+      - { template: TANK_MAIN_GUN_120, quantity: 2, ammo: 40 }
+  - designation: R-2-1PLT
+    unit_level: PLATOON
+    lat: 24.8320
+    lng: 121.2160
+    parent: R-2CO
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 40 }
+  - designation: R-2-2PLT
+    unit_level: PLATOON
+    lat: 24.8160
+    lng: 121.2120
+    parent: R-2CO
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 40 }
+
+  # === 機械化步兵連：伴隨掩護，負責清除反裝甲小組與確保渡口 ===
+  - designation: R-3CO
+    unit_level: COMPANY
+    lat: 24.8550
+    lng: 121.1980
+    parent: R-BN-HQ
+    equipment:
+      - { template: IFV_TRACKED, quantity: 2 }
+      - { template: RIFLE_556, quantity: 15, ammo: 210 }
+  - designation: R-3-1PLT
+    unit_level: PLATOON
+    lat: 24.8620
+    lng: 121.2080
+    parent: R-3CO
+    equipment:
+      - { template: IFV_TRACKED, quantity: 4 }
+      - { template: AUTOCANNON_30, quantity: 4, ammo: 400 }
+      - { template: RIFLE_556, quantity: 28, ammo: 210 }
+  - designation: R-3-2PLT
+    unit_level: PLATOON
+    lat: 24.8480
+    lng: 121.2050
+    parent: R-3CO
+    equipment:
+      - { template: IFV_TRACKED, quantity: 4 }
+      - { template: AUTOCANNON_30, quantity: 4, ammo: 400 }
+      - { template: RIFLE_556, quantity: 28, ammo: 210 }
+
+  # === 營直屬火力與後勤 ===
+  # 砲兵連 fixed：陣地在龍潭台地西緣，射程涵蓋整條河線；MSEL 的 red-arty-prep 由它執行。
+  - designation: R-FA-BTY
+    unit_level: COMPANY
+    lat: 24.8580
+    lng: 121.1600
+    parent: R-BN-HQ
+    fixed: true
+    equipment:
+      - { template: HOWITZER_155_SP, quantity: 6, ammo: 45 }
+      - { template: RIFLE_556, quantity: 20, ammo: 210 }
+  # 後勤連 fixed：攻方補給線隨突穿距離拉長，油料一斷突穿即自行頓挫（#84 油料模型）。
+  - designation: R-CSS-CO
+    unit_level: COMPANY
+    lat: 24.8520
+    lng: 121.1520
+    parent: R-BN-HQ
+    fixed: true
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 8 }
+      - { template: RIFLE_556, quantity: 20, ammo: 210 }

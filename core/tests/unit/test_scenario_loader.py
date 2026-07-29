@@ -51,7 +51,9 @@ def _base_scenario() -> dict:
         "mode": "REALTIME",
         "tick_rate_ms": 1000,
         "factions": [{"id": "BLUE"}, {"id": "RED"}],
-        "victory_conditions": [{"faction": "BLUE", "condition": {}}],
+        "victory_conditions": [
+            {"faction": "BLUE", "condition": {"type": "faction_eliminated", "faction": "RED"}}
+        ],
     }
 
 
@@ -94,7 +96,9 @@ def test_relation_unknown_faction_rejected(tmp_path: Path) -> None:
 
 def test_victory_unknown_faction_rejected(tmp_path: Path) -> None:
     sc = _base_scenario()
-    sc["victory_conditions"] = [{"faction": "GREEN", "condition": {}}]
+    sc["victory_conditions"] = [
+        {"faction": "GREEN", "condition": {"type": "faction_eliminated", "faction": "RED"}}
+    ]
     _write_pkg(tmp_path, sc, {})
     with pytest.raises(ScenarioError, match=r"victory_conditions\[0\].faction.*GREEN"):
         load_scenario_package(tmp_path)
