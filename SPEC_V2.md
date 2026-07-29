@@ -361,6 +361,14 @@ runner 啟動時建構的 WeaponResolver 快取要能吸收局中新單位（連
 > 關鍵設計：配額用罄**落 DENIED 而非拒收**（留痕才可評分）；`APPROVED` 與 `EXPENDED`
 > 分開（一張核准單只能兌現一次）；席位受眾**只能收窄**（動 `faction_filter` 前先釘 14 格真值表）。
 > 已知界線：**配額是整局總量非每日**——SimClock 無「模擬日」概念，硬做會是假的。
+>
+> **B5.3（曲射火協 gate）✅ 已完成（2026-07-30）**——worklog `docs/worklog/fire-approval-gate.md`。
+> 想定開關 `indirect_fire_requires_approval` + `EngagePayload.fire_request_id` +
+> 預檢 gate（`ORDER_FIRE_APPROVAL_REQUIRED`）+ 令收下時兌現核准單。
+> ⚠ **與 ROE 武器禁令的做法刻意不同**：ROE 只擋「指名了被禁武器」，其餘交裁決層逐武器篩；
+> 火協是**單一道令的許可**，照抄 ROE 會讓「不指名武器」成為繞過的洞。故未指名武器但
+> 單位持有曲射武器時同樣要求核准單（訊息明講「請附核准單或指名直射武器」）。
+> 前端尚未提供選核准單的 UI，C10 一併做。
 
 **動機**：[JCATS-A p.13,15,26] 的空偵申請/申補憑單/曲射火協核准；[JCATS-F p.10–14] 的信文下令與
 透明圖分發——「指參程序的磨練」靠的是異步審批鏈與 C2 工件流轉，不是即時生效的按鈕。
@@ -909,7 +917,7 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 ### V2.1「演習系統」（CPX 能力成形）
 
 ```
-B5.1 ✅ 席位模型 → B5.2 ✅ 信文/申請核覆（2026-07-30）→ B5.3 火協 gate → C10 call-for-fire
+B5.1 ✅ 席位模型 → B5.2 ✅ 信文/申請核覆 → B5.3 ✅ 火協 gate（2026-07-30）→ C10 call-for-fire
 B2 MSEL 執行引擎 → B1 演習專案 → B4 參數凍結簽證
 A2 任務級下令（decomposer → runtime → LLM → UI 四卡）
 C1 壓制/姿態 → C3 乘駐車/隊形 → C2 障礙工兵 → C9 誤傷語意
