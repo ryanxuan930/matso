@@ -120,7 +120,7 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 | 30 | RAG 嵌入器佔位、語料近空、SPEC_INGEST 未實作 | SPEC_INGEST 全份；README §10 | hash 嵌入器；語料 1 份合成檔；eval 3 例 | ★★★ | F1/F2 |  |
 | 31 | RoleManager/InvocationLog 未接活執行期 | README §10 | LlmFactionDecider 直連 client；活期無 AI 稽核記錄 | ★★ | F3 |  |
 | 32 | 訓後評量（training audience）缺位 | [JCATS-A p.15]；[JTLS-F p.1052–1053] | AAR 不評受訓者；評估點無法預埋想定 | ★★★ | F5 |  |
-| 33 | cop.vue 4311 行單體等前端債 | README §8 | 詳見 §WP-G 清單 | ★★ | G1a–G6 | G1a ✅ 2026-07-30（4419→2181） |
+| 33 | cop.vue 4311 行單體等前端債 | README §8 | 詳見 §WP-G 清單 | ★★ | G1a–G6 | G1a ✅ / G1b ✅ 2026-07-30（4419→951） |
 | 34 | 無多站演習/DIS-HLA 互通 | [MASA-MS]；[JTLS-F p.1054–1056]；[JCATS-F p.6–7,17] | 單站部署；無狀態複製層 | ★★ | H1–H3 |  |
 | 35 | 無民事/CBRN/災防想定能力 | [JTLS-F p.1058–1059]；[INDSR p.37–40] | 引擎綁陸戰交戰 | ★ | H4（遠期） |  |
 
@@ -805,7 +805,7 @@ SPEC_FULL §9.3 的 Proposers/Challenger/Aggregator。**開工門檻**：F1–F3
 | 卡 | 內容 | 驗收 |
 |----|------|------|
 | G1a ✅ | **cop.vue 拆分（狀態與面板層）**：抽 composables（`useCopWidgets`/`useCopPrefs`/`useWeaponTracks`/`useUnitCardDrag`/`useCopOrdering`/`useMapEditor`）＋面板子元件（MapEditorPanel/UnitsOrderPanel/UnitDetailCard），子元件以 **`reactive(composable)` 單一 prop** 收狀態而非數十個 prop+emit | ✅ 2026-07-30。cop.vue 4419→2181；e2e 與拆分前**逐條相同**（4 failed / 14 passed，皆為既有紅燈）；多 agent 稽核確認的 5 個回歸已修。worklog: cop-decomposition.md |
-| G1b | **cop.vue 拆分（版面層）**：頂列 `CopHeader`、地圖區包裝、`EquipManagerPanel`/`MapContextMenu`/`LayersPanel`/`OrdersPanel`/`EventsPanel`/`CoordReadout`、`useCtxMenu`/`useEquipMgr`/`useMapStateEdit`；MapCanvas props 收斂（50 個→分組 config 物件） | cop.vue < 800 行；行為零變更（e2e 不得比拆分前多紅一條 + 手測清單） |
+| G1b ✅ | **cop.vue 拆分（版面層）**：`CopHeader`/`CopWidget`（六個小工具共用外殼）/`EquipManagerPanel`/`MapContextMenu`/`LayersPanel`/`OrdersPanel`/`EventsPanel`/`MapStateEditBar`/`CoordReadout`＋`useCtxMenu`/`useEquipMgr`/`useMapStateEdit`/`useCopFeed`/`useLiveState`/`useCopUnits` | ✅ 2026-07-30。cop.vue 4419→**951**（−78%）。**MapCanvas props 收斂經評估後不做**（50 個 prop 各有行內文件，打包會打散說明並讓通用地圖元件綁死 COP 偏好結構；理由記於 worklog）。使用者裁示「< 800 是目標不是硬指標，不用硬包」。e2e 與拆分前逐條相同（同樣四條既有紅燈），並**新增 2 支通過的 e2e**（右鍵選單、座標查詢，兩者原本零覆蓋）。12 塊逐塊等價性稽核 + 機械式孤兒/testid 掃描：0 回歸。worklog: cop-decomposition.md |
 | G2 | **Tailwind 決策**：main.css 未接線（盤點）。二擇一：接上並漸進採用，或移除相依——**建議移除**（全站已是 scoped CSS 慣例，留著只是假象相依） | 無 tailwind 相依或已實際生效，二者擇一落地 |
 | G3 | **E2E 補齊**：white-cell、AAR、autonomy、scenario-editor、armory、accounts、system-settings、地圖編輯/整形各至少 1 條 happy path；WP 新功能隨卡附 e2e | Playwright 綠；CI 納入 |
 | G4 | **白軍控制台成熟化**：ROLLBACK 的 `window.prompt` 換正式 UI（tick 選擇器＋書籤）；單位 attributes 裸 JSON 換結構化表單；事件流換 AAR 同款格式化元件；加 WP-B2 待命注入面板 | 盤點三醜點清除 |
@@ -871,7 +871,7 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 [x] E3 /state 快照端點（H1 亦復用）                       （2026-07-29）
 [x] C5 comms 後果閉環（投影層）                           （2026-07-30；順帶修 STATE_DIFF 無受眾）
 [x] G1a cop.vue 拆分：狀態與面板層（4419→2181）           （2026-07-30；順帶修好空轉的 typecheck 閘門）
-[ ] G1b cop.vue 拆分：版面層（→ < 800 行）                  ← 下一張
+[x] G1b cop.vue 拆分：版面層（4419→951，−78%）              （2026-07-30；MapCanvas props 收斂評估後不做）
 [ ] D6.1 AAR 地圖重播（量綱修正先行）
 ```
 

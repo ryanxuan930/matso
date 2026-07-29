@@ -237,61 +237,88 @@ G1a 已達成這張卡真正的目的：後續前端卡不必再讀 4400 行才�
 特異度相同，原檔中後者在後 → 後者贏。搬移時若重排順序，取消鈕的位置與顏色都會變。
 驗證方式不是用眼睛看，是**逐條讀 computed style 與原始值對表**。
 
-## 中斷續作指引
-
-### 本段續做（接上表）
+## 收尾（G1b 完成）
 
 | 步驟 | commit | cop.vue |
 |------|--------|---------|
-| `useCtxMenu`（右鍵選單派送器） | `e4d2233` | 1111 |
+| G1a 收尾 | `7806d50` | 2181 |
+| `CopHeader` | `701fd61` | 1969 |
+| `EquipManagerPanel` | `4f298a3` | 1800 |
+| `MapContextMenu` + 右鍵 e2e | `e0bbff1` | 1728 |
+| `CopWidget` 外殼（六個小工具共用） | `2951d6a` | 1631 |
+| `LayersPanel`/`EventsPanel`/`OrdersPanel`/`MapStateEditBar` + `useCopFeed` + 清死 CSS | `7b0fff8` | 1281 |
+| `useMapStateEdit` / `useEquipMgr` | `311ac4d` | 1200 |
+| `useCtxMenu` | `e4d2233` | 1111 |
 | `CoordReadout` + `coords.spec.ts` | `e46814b` | 1067 |
-| `useLiveState`（七個活值讀取器） | `7d3aa51` | 1027 |
+| `useLiveState` | `7d3aa51` | 1027 |
+| `useCopUnits` | `fe17afe` | **951** |
 
-**`useCtxMenu` 的相依清單**（照上一段的自我約定先列再抽）共 21 項：
-mapEditor 7、ordering 7、頁面 7。遠超「超過 6 個就代表切點選錯」的門檻，
-但結論不是不抽，而是**改變傳法**——右鍵選單不是獨立狀態機，它自己只有一個 ctxMenu ref，
-其餘全是把一次右鍵翻譯成對另兩台機器的呼叫。相依面寬是派送器的本質，故收兩整包
-攤在明處。lint 的未使用警告反過來驗證了清單：抽完後恰好那四個 mapEditor 動作
-在頁面已無其他使用者。
+**全程 4419 → 951（−78%）。** 使用者裁示「< 800 是目標不是硬指標，不用硬包」，故停在此。
 
-### MapCanvas props 收斂：**建議不做**（本卡唯一主動放棄的項目）
+### 主動放棄的兩項，與理由
 
-原規劃「50 props → 分組設定物件」。實際看過後認為**不划算，且是設計上的退步**：
+**1. MapCanvas props 收斂（原卡片明列的項目）——不做。**
+- 那 50 個 prop 每個都有自己的行內文件（用途、單位、預設、關聯 issue）。包成不透明物件會把說明打散。
+- 它們大多來自 `useCopPrefs`。最自然的收斂是傳 `:prefs`，但那會讓 MapCanvas（通用地圖元件）
+  綁死 COP 的偏好結構，可重用性下降。
+- 收益只有呼叫點約 35 行；代價是動 MapCanvas 內部 50 處 `props.x`，而它是前端最不該亂動的檔案。
+- 若之後要做，正確切法是**先讓 prop 分群本身有語意**（layers / styling / overlays / interaction
+  各自成型別），而不是為了呼叫點好看而打包。
 
-1. 那 50 個 prop 每個都有自己的行內文件（用途、單位、預設、關聯 issue）。
-   包成不透明物件會把這些說明打散。
-2. 它們大多來自 `useCopPrefs`。真要收斂，最自然的做法是傳 `:prefs="prefsView"`——
-   但那會讓 MapCanvas（目前是通用地圖元件）綁死 COP 的偏好結構，可重用性下降。
-3. 收益只有呼叫點約 35 行；代價是要動 MapCanvas 內部 50 處 `props.x`，
-   而它是前端最不該亂動的檔案（圖層順序、watcher、地圖生命週期）。
+**2. `useCopSnapshot`（applySnapshot + refresh + resync watch）——不做。**
+它要寫入 14 個頁面 ref。收成 composable 就得把 14 個 ref 當參數傳進去讓它去改，
+比留在原地更難讀。**正確的形狀是相反的**：讓 composable **自己持有**那些 ref 再回傳
+（`useCopSession({ sessionId, viewpoint, stream, applyFeatures })` → 回傳 realUnits/orders/…），
+輸入就只剩 4 個。但那是把頁面的 setup 順序整個重排，且 `refresh` 還要餵給 `useCopOrdering`，
+初始化順序有實際風險。**留給下一張卡，別在收尾時做。**
 
-若之後仍要做，正確的切法是**先讓 MapCanvas 的 prop 分群有語意**（layers / styling /
-overlays / interaction 各自成型別），而不是為了呼叫點好看而打包。
+### 驗證
 
-### 剩下的（若要繼續壓行數）
-- script 604 / template 251 / style 172。
-- script 尾巴還可切：`useCopUnits`（observerFaction → 友我判準 → OwnUnit/Contact
-  渲染模型，約 90 行，含 WHITE_CELL 保留字那段既有 bug 的說明，務必原文帶走）、
-  `useCopSnapshot`（applySnapshot + refresh + resync watch，約 50 行）。
-- 兩者做完約 880。**要低於 800 得動 template**（`body` 版面容器包成 `CopWorkspace`），
-  但那層包完之後 cop.vue 只剩接線，可讀性不見得更好——收卡時值得跟使用者確認
-  「< 800」是目標還是硬指標。
+**四道驗證**每一步都跑（`lint → typecheck → build → 瀏覽器`），另加：
 
-### 紀律（沿用，血換來的）
-- **四道驗證**：`lint → typecheck → build → 瀏覽器`。三者各有盲區：
-  typecheck 抓不到元件名解析失敗、build 才抓得到 scoped CSS 切壞、
-  瀏覽器才看得出面板整個是空的。
-- **MapLibre 相關的互動一律用真 Playwright 驗**：瀏覽器 harness 的合成事件
-  （contextmenu / click）打不進 MapLibre 的事件層。本卡因此補了兩支 e2e
-  （`ctxmenu.spec.ts`、`coords.spec.ts`），都是原本零覆蓋的功能。
-  寫 `coords.spec.ts` 時實跑才發現：工具選單的 `.wm-backdrop` 會擋住地圖點擊，
-  要先關選單——這種事推論不出來。
-- **搬 CSS 一律 `git show` 取原文，含規則先後順序**。特異度平手時靠先後決勝負
-  （`.ord-meta button` vs `.orders button`），重排就會變樣。驗證方式是
-  **逐條讀 computed style 與原始值對表**，不是用眼睛看。
-- **scoped CSS 的必要重複**：共用規則拆到兩個元件時兩邊各留一份。
-- **收卡前**：跑等價性稽核 workflow（腳本可重用：
-  `.claude/.../workflows/scripts/g1-refactor-equivalence-audit-*.js`），
-  再於 `.env`-free worktree 做 e2e 前後比對，然後更新 SPEC_V2 / PROGRESS / TASKS。
-- **未解**：e2e 現有 7 支，仍未涵蓋 COP 的下令流程與地圖編輯；
+- **e2e 前後比對**（`.env`-free worktree，兩邊都不帶 `platform/.env`）：
+
+  | | passed | failed |
+  |---|---|---|
+  | 拆分前 `7806d50` | 14 | map:71 / orders:24 / orders:47 / smoke:11 |
+  | G1b `fe17afe` | **16** | **完全相同的四條** |
+
+  即**重構帶來零 e2e 變化**，且淨增 2 支通過的測試。
+  （worktree 需 symlink `platform/node_modules`、`modules/_sdk/matso_sdk/_generated`、`.venv`，
+  否則 webServer 起不來。）
+
+- **等價性稽核 workflow**（13 agent，約 106 萬 token）：**9 成 4 敗**——
+  `CopWidget`/`LayersPanel`/`useCtxMenu` 三塊與**漏網掃描**因 session limit 中斷。
+  完成的 9 塊皆回報 0 回歸，但**不能就此當作稽核通過**（上一輪正是掃描與稽核各自
+  獨立指向同一組缺陷）。故四項改由機械式比對自行補完：
+
+  | 補做項 | 方法 | 結果 |
+  |---|---|---|
+  | CopWidget | 六個 `open` 運算式 vs 原文 `v-if`；標題 vs `WIDGET_DEFS` | 逐項相同 |
+  | LayersPanel | 26 條綁定的名稱、順序、對應值 | 完全相同 |
+  | useCtxMenu | 10 個函式主體 + 3 個 computed + `CtxMenuState` 欄位/選填性 | 完全相同 |
+  | 漏網掃描 | 各檔孤兒規則、遺失規則、失效 testid | 無遺失規則、無失效 testid |
+
+  掃描唯一實際發現：`MapEditorPanel.vue` 的 `.me-hd`/`.me-x` 是死規則，但**早於 G1b**
+  （G1a 帶過來時就已無使用者）→ 記入 PROGRESS Backlog，未順手修（紅線 5）。
+
+### 這張卡真正學到的
+
+1. **先抽共用外殼，再抽內容。** 六個小工具各有 18 行相同的 Teleport/FloatingWidget 綁定。
+   若先做內容元件，這 108 行重複只會被搬進六個新檔案。
+2. **相依數超標不一定代表不該抽，可能代表傳法要換。** `useCtxMenu` 相依 21 項，
+   但它是派送器（自身只有一個 ref），寬相依是本質——收兩整包把耦合攤在明處，
+   比拆成 21 個參數或硬藏起來都好。
+3. **CSS 特異度平手時靠先後決勝負**（`.ord-meta button` vs `.orders button`），
+   搬移重排就會變樣。驗證要**逐條讀 computed style 與原始值對表**，不能用眼睛看。
+4. **MapLibre 不吃合成事件。** 瀏覽器 harness 的 `contextmenu`/`click` 打不進它的事件層，
+   相關互動一律要真 Playwright。本卡因此補了兩支原本零覆蓋的 e2e。
+5. **workflow 失敗要當失敗看。** 4/13 agent 中斷時，剩下的「全綠」不是通過。
+
+## 中斷續作指引
+- **本卡（G1b）已完成**。cop.vue 4419 → 951，前端 COP 已是元件化結構。
+- 下一張前端卡（G2 以後）可直接改對應的 `components/cop/*.vue` 或 `composables/use*.ts`，
+  不必再讀 cop.vue 全文。
+- 若之後要再壓行數：見上方「主動放棄的兩項」，`useCopSnapshot` 的正確形狀已寫明。
+- **未解**：e2e 現有 7 支，仍未涵蓋下令流程與地圖編輯的完整路徑（屬 G3）；
   `toggleOrbatPerm` 因會實際改動該局自編權限設定而未手測。
