@@ -96,9 +96,23 @@ D6.1 AAR 地圖重播）的前置——在 4400 行的檔案裡加功能，每�
 | `useWeaponTracks` + `useUnitCardDrag` | 4055 | — |
 | **修 typecheck 閘門** + `useCopOrdering` | 3871 | 選單位 → 資訊卡/通聯/座標/彈藥皆正確 |
 | `useMapEditor` | 3483 | 點標註列 → 編輯欄位載入「樓梯」；繪製工具列六個鈕齊全 |
+| `MapEditorPanel.vue`（首個子元件） | 2907 | 面板渲染 9 列標註、v-model 寫入生效、點列載入「樓梯」、`canControl` 分支出現 |
 
-目前組成：script 913 / template 1067 / style 1498。**剩下的都在後兩塊**，
-所以下一步是子元件（template 與它的 scoped CSS 一起搬）。
+目前組成：script 880 / template 838 / style 1184。
+
+### 子元件那步踩到的兩件事
+
+1. **`vue-tsc` 抓不到「元件名解析不到」**。我先把它命名為 `<CopMapEditorPanel>`（Nuxt 預設
+   `pathPrefix: true` 的名字），typecheck 與 lint **雙綠**，但畫面上那個小工具是空的——
+   Vue 樣板把不認識的標籤當原生元素處理，不報型別錯。本專案設定是
+   `components: [{ path: '~/components', pathPrefix: false }]`（HOW_TO §3.2：依檔名匯入），
+   正確名字是 `<MapEditorPanel>`。**教訓：子元件這步一定要進容器看，typecheck 綠不代表有渲染。**
+2. **樣板不會 unwrap 巢狀 ref**。`:editor="mapEditor"` 直接傳 composable 回傳值的話，
+   `editor.drawLabel` 拿到的是 Ref 物件本身，v-model 綁上去就壞了（typecheck 這次有抓到，
+   一次噴 20 個錯）。解法是傳 `reactive(mapEditor)`——遞迴 unwrap 且寫入回寫原 ref，
+   父子共用同一份狀態。子元件的 prop 型別因此是 `UnwrapNestedRefs<ReturnType<typeof useMapEditor>>`。
+   另外 eslint 的 `vue/no-mutating-props` 會擋——已在該元件加**具理由的**局部 disable：
+   這個 prop 是共享可變狀態束（等同把 store 當 prop 傳），沒有「第二份真相」可分岔。
 
 ## 下一步的設計決定：子元件收「composable 束」而非 40 個 props
 
@@ -115,17 +129,17 @@ v-model，逐個開 prop + emit 就是把 MapCanvas 那個「50 個 props」的�
 `layers` / `overlays` / `interaction` 三個 config 物件。
 
 ## 待辦（依序）
-- [ ] `CopMapEditorPanel`（template 248 行 + 對應 CSS）
-- [ ] `CopUnitsOrderPanel`（template 216 行 + CSS）
+- [x] `MapEditorPanel`（template 236 行 + CSS 314 行）
+- [ ] `UnitsOrderPanel`（template 216 行 + CSS）
 - [ ] `CopUnitCard`、`CopLayersPanel`、其餘小工具（events/orders/coords）
 - [ ] `useMapStateEdit` / `useEquipMgr` / `useCtxMenu`（script 尾巴）
 - [ ] MapCanvas props 收斂
 - [ ] 容器逐項手測（清單見上）→ 更新 SPEC_V2 / PROGRESS / TASKS
 
 ## 中斷續作指引
-- **下一步第一件事**：`CopMapEditorPanel`——把 template 1614–1862 與其 scoped CSS 一起搬，
-  以 `:editor="mapEditor"` 單一 prop 收（見上方設計決定；為此 cop.vue 要把
-  `useMapEditor()` 的解構改回物件形式）。
+- **下一步第一件事**：`UnitsOrderPanel`——照 `MapEditorPanel` 的同一套做法
+  （`reactive(useCopOrdering(...))` 當單一 prop、元件放 `components/cop/`、
+  **標籤用檔名** `<UnitsOrderPanel>` 不加目錄前綴）。
 - **紀律**：每搬一塊立刻 `npm run typecheck`（現在是 `vue-tsc --build`，真的會檢查）+ `npm run lint`，
   綠了才 commit。`npm run typecheck` 在本卡之前是空轉的，別再相信舊 worklog 的「typecheck 綠」。
 - **未解**：e2e 只有 5 支且沒有涵蓋 COP 的下令/地圖編輯流程，本卡全程靠 typecheck + 容器手測。
