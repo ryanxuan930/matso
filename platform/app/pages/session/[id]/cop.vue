@@ -6,8 +6,7 @@ import type { StateSnapshot } from '~/stores/sessionStream'
 import type { ContactView } from '~/composables/useIntel'
 import { toContact } from '~/composables/useIntel'
 import { apiFetch } from '~/composables/useApi'
-import { fetchOrders, fetchUnits } from '~/composables/useOrders'
-import { fetchOrbatPermissions, setOrbatPermissions } from '~/composables/useEquipment'
+import { fetchOrders } from '~/composables/useOrders'
 import { forward as mgrsForward } from 'mgrs'
 import { latLngToCell } from 'h3-js'
 import { formatCountdown, useAiStatus } from '~/composables/useAiStatus'
@@ -636,107 +635,27 @@ const unitsByFaction = computed(() => {
 })
 
 // ---- 裝備管理（COP 專屬面板）：白軍編任一單位編裝 + 設各軍自編權限；或本軍（該局開放自編）----
-const equipMgr = ref(false)
-const equipUnitId = ref('')
-const orbatPerms = ref<string[]>([])
-const canManageEquip = computed(() => canControl.value || orbatEdit.value)
-// 可編裝單位：白軍見全部（依陣營分組）；一般角色僅本軍（且該局開放自編）。
-const equipEditableFactions = computed(() =>
-  canControl.value
-    ? unitsByFaction.value
-    : unitsByFaction.value.filter((g) => !!myFaction.value && g.faction === myFaction.value),
-)
-async function openEquipMgr() {
-  equipMgr.value = true
-  equipUnitId.value = ''
-  if (canControl.value) {
-    orbatPerms.value = (await fetchOrbatPermissions(sessionId.value).catch(() => ({ factions: [] })))
-      .factions
-  }
-}
-async function toggleOrbatPerm(f: string) {
-  const set = new Set(orbatPerms.value)
-  if (set.has(f)) set.delete(f)
-  else set.add(f)
-  const next = [...set]
-  try {
-    orbatPerms.value = (await setOrbatPermissions(sessionId.value, next)).factions
-    toasts.push({
-      severity: 'success',
-      title: `自編權限：${orbatPerms.value.join('、') || '（僅白軍）'}`,
-      timeoutMs: 2500,
-    })
-  } catch {
-    toasts.push({ severity: 'error', title: '設定自編權限失敗', timeoutMs: 3000 })
-  }
-}
+const {
+  equipMgr,
+  equipUnitId,
+  orbatPerms,
+  canManageEquip,
+  equipEditableFactions,
+  openEquipMgr,
+  toggleOrbatPerm,
+} = useEquipMgr({ sessionId, canControl, orbatEdit, myFaction, unitsByFaction, toasts })
 
 // ---- 地圖狀態編輯（暫停下布局：拖放單位 + 繪障礙，完成再開始兵推）。限白軍/導演。----
-const mapEditMode = ref(false)
-const selectedUnitCount = ref(0) // 地圖狀態編輯多選數量（「已選 N 個」徽章）
-async function enterMapEdit() {
-  try {
-    await apiFetch(`/sessions/${sessionId.value}/control`, {
-      method: 'POST',
-      body: { action: 'PAUSE' },
-    })
-    mapEditMode.value = true
-    widgets.value.mapedit.open = true // 順帶開啟繪圖工具（障礙/建築）
-    focusWidget('mapedit')
-    toasts.push({
-      severity: 'info',
-      title: '地圖狀態編輯：已暫停推演',
-      detail: '拖曳單位調整位置、用地圖編輯繪製障礙/建築，完成後按「開始兵推」。',
-      timeoutMs: 6000,
-    })
-  } catch {
-    toasts.push({ severity: 'error', title: '進入編輯模式失敗（需白軍/導演權限）', timeoutMs: 4000 })
-  }
-}
-async function startWargame() {
-  try {
-    await apiFetch(`/sessions/${sessionId.value}/control`, {
-      method: 'POST',
-      body: { action: 'RESUME' },
-    })
-  } finally {
-    mapEditMode.value = false
-  }
-  toasts.push({ severity: 'success', title: '開始兵推', timeoutMs: 2500 })
-}
-async function onUnitMove(e: { id: string; lng: number; lat: number }) {
-  try {
-    await apiFetch(`/sessions/${sessionId.value}/units/${e.id}/reposition`, {
-      method: 'POST',
-      body: { lat: e.lat, lng: e.lng },
-    })
-  } catch {
-    toasts.push({ severity: 'error', title: '單位移動失敗', timeoutMs: 3000 })
-  }
-  // 無論成敗都重載（成功→定位、失敗→還原到 DB 權威位置）。
-  realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
-}
-// 地圖狀態編輯 · 多選整組移動：逐一 reposition（並行）後只重載一次。
-function onUnitsSelected(e: { count: number }) {
-  selectedUnitCount.value = e.count
-}
-async function onUnitsMove(e: { moves: { id: string; lng: number; lat: number }[] }) {
-  if (!e.moves.length) return
-  try {
-    await Promise.all(
-      e.moves.map((m) =>
-        apiFetch(`/sessions/${sessionId.value}/units/${m.id}/reposition`, {
-          method: 'POST',
-          body: { lat: m.lat, lng: m.lng },
-        }),
-      ),
-    )
-    toasts.push({ severity: 'success', title: `已移動 ${e.moves.length} 個單位`, timeoutMs: 2000 })
-  } catch {
-    toasts.push({ severity: 'error', title: '批次移動失敗（部分單位可能未套用）', timeoutMs: 3000 })
-  }
-  realUnits.value = await fetchUnits(sessionId.value).catch(() => realUnits.value)
-}
+const {
+  mapEditMode,
+  selectedUnitCount,
+  enterMapEdit,
+  startWargame,
+  onUnitMove,
+  onUnitsSelected,
+  onUnitsMove,
+} = useMapStateEdit({ sessionId, widgets, focusWidget, realUnits, toasts })
+
 /** #99 右鍵控制點 → 刪除該頂點。 */
 async function ctxDeleteVertex() {
   const idx = ctxMenu.value?.vertexIndex
