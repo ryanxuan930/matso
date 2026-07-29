@@ -29,6 +29,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 from app.models.enums import (
     CommsState,
+    FirePlanStatus,
+    FirePlanTargetStatus,
+    FireSchedule,
     IntelFidelity,
     MessageKind,
     OrderStatus,
@@ -392,3 +395,54 @@ class PluginRegistry(Base):
     health_state: Mapped[str] = mapped_column("healthState", String(191))
     config: Mapped[dict] = mapped_column("config", JSON)  # type: ignore[type-arg]
     enabled: Mapped[bool] = mapped_column("enabled", Boolean, default=True)
+
+
+class FirePlan(Base):
+    """火力計畫（WP-C10.3）——預劃目標清單。**陣營私有**，查詢一律在後端過濾。"""
+
+    __tablename__ = "FirePlan"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column("sessionId", String(191))
+    faction: Mapped[str] = mapped_column("faction", String(191))
+    name: Mapped[str] = mapped_column("name", String(191))
+    status: Mapped[FirePlanStatus] = mapped_column(
+        "status", SAEnum(FirePlanStatus), default=FirePlanStatus.ACTIVE
+    )
+    # 建立者的 SessionParticipant.id。自動執行的令**以建立者的身分送出**——
+    # 沒有「系統」這個下令者，而預劃火力的當責者本來就是寫這份計畫的人。
+    created_by_participant_id: Mapped[str | None] = mapped_column(
+        "createdByParticipantId", String(191)
+    )
+    created_at_tick: Mapped[int] = mapped_column("createdAtTick", Integer, default=0)
+    created_at: Mapped[Any] = mapped_column(
+        "createdAt", DateTime(timezone=False), server_default=func.now()
+    )
+
+
+class FirePlanTarget(Base):
+    """預劃目標（打座標）。執行＝下一道 FIRE_MISSION 令（WP-C10.2），不另生物理。"""
+
+    __tablename__ = "FirePlanTarget"
+
+    id: Mapped[str] = mapped_column("id", String(191), primary_key=True, default=_uuid)
+    plan_id: Mapped[str] = mapped_column("planId", String(191))
+    # 計畫內序號：排程器依此排序執行，**順序必須確定**才可重播。
+    seq: Mapped[int] = mapped_column("seq", Integer, default=0)
+    label: Mapped[str | None] = mapped_column("label", String(191))
+    target_lat: Mapped[float] = mapped_column("targetLat", Double)
+    target_lng: Mapped[float] = mapped_column("targetLng", Double)
+    rounds: Mapped[int] = mapped_column("rounds", Integer, default=4)
+    shooter_unit_id: Mapped[str] = mapped_column("shooterUnitId", String(191))
+    schedule: Mapped[FireSchedule] = mapped_column(
+        "schedule", SAEnum(FireSchedule), default=FireSchedule.ON_CALL
+    )
+    at_tick: Mapped[int | None] = mapped_column("atTick", Integer)
+    # 一張核准單只兌現一次，故是逐目標欄位而非整份計畫共用。
+    fire_request_id: Mapped[str | None] = mapped_column("fireRequestId", String(191))
+    status: Mapped[FirePlanTargetStatus] = mapped_column(
+        "status", SAEnum(FirePlanTargetStatus), default=FirePlanTargetStatus.PENDING
+    )
+    order_id: Mapped[str | None] = mapped_column("orderId", String(191))
+    fired_at_tick: Mapped[int | None] = mapped_column("firedAtTick", Integer)
+    failure_reason: Mapped[str | None] = mapped_column("failureReason", Text)

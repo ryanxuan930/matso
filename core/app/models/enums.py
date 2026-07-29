@@ -114,3 +114,30 @@ class AiMode(enum.StrEnum):
     AI_OFF = "AI_OFF"  # AI 全停用，紅軍由人操作
     AI_BARE = "AI_BARE"  # AI 啟用但無 RAG，引用必空
     AI_FULL = "AI_FULL"  # 完整管線（RAG + 引用查核）
+
+
+class FirePlanStatus(enum.StrEnum):
+    """火力計畫狀態（WP-C10.3）。取消時其未執行目標一律轉 SKIPPED。"""
+
+    ACTIVE = "ACTIVE"
+    CANCELLED = "CANCELLED"
+
+
+class FireSchedule(enum.StrEnum):
+    """預劃目標的射擊時機（WP-C10.3）。"""
+
+    AT_TICK = "AT_TICK"  # 到指定 tick 自動下令（攻擊準備射擊）
+    ON_CALL = "ON_CALL"  # 待命，由 FSO 席位呼叫
+
+
+class FirePlanTargetStatus(enum.StrEnum):
+    """預劃目標狀態（WP-C10.3）。
+
+    **`FIRED` 只代表「令送出去了」**，不代表打中——裁決失敗（無彈/超射程）的令會以
+    零毀傷 COMPLETED，那是帳本上的事實，不回頭改這裡的狀態。想知道打中沒有要看帳本。
+    """
+
+    PENDING = "PENDING"
+    FIRED = "FIRED"
+    FAILED = "FAILED"  # 下令被擋（驗證/預檢/火協），原因見 failure_reason
+    SKIPPED = "SKIPPED"  # 計畫被取消時尚未執行者

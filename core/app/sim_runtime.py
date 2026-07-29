@@ -50,12 +50,15 @@ from app.engine.subsystems import (
 from app.factions.relations import FactionRelations
 from app.factions.session_store import load_session_relations
 from app.factions.visibility import visible_factions
+from app.fires.scheduler import run_due_fire_missions
 from app.intel.sensor_system import SensorSweepSystem
 from app.models import WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.movement.session_mobility import load_session_mobility_rules
 from app.movement.terrain_sampler import build_terrain_cell_sampler, build_terrain_path_fn
+from app.orders.precheck import LosOutcome, PhysicsGateway
 from app.orders.roe import RoeRules, load_session_roe
+from app.orders.service import OrderService
 from app.runtime import PerfCounterClock, TickPacer, run_paced
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
 from app.sim_params import load_sim_params
@@ -88,6 +91,28 @@ def _engage_gateway() -> object | None:
     except Exception:
         _LOG.warning("交戰 gateway 建立失敗，LOS 退回可見")
         return None
+
+
+class _NoLosGateway:
+    """給火力計畫排程器用的退化 gateway。
+
+    `OrderService` 建構時一定要有一個 gateway，但 **FIRE_MISSION 的預檢完全不查 LOS**
+    （間瞄打的就是看不見的地方，WP-C10.2 的刻意決定），故排程器這條路徑上它其實不被呼叫。
+    真 gateway 拿不到時用這個，而不是讓整個排程器因為 terrain 服務沒起就停擺。
+    """
+
+    def path_reachable(self, from_h3: str, to_h3: str, mobility_profile: str) -> tuple[bool, str]:
+        return True, "排程器不做移動預檢"
+
+    def has_los(
+        self, observer: tuple[float, float, float], target: tuple[float, float, float]
+    ) -> LosOutcome:
+        return LosOutcome(visible=True, clearance_m=0.0)
+
+
+def _fire_plan_gateway() -> PhysicsGateway:
+    gw = _engage_gateway()
+    return gw if gw is not None else _NoLosGateway()  # type: ignore[return-value]
 
 
 def _weather_snapshot() -> WeatherState | None:
@@ -378,6 +403,17 @@ class SimManager:
             # 迴圈輪詢此鍵 → 暫停時凍結活模擬。
             pause_key = session_pause_key(session_id)
 
+            def _fire_plan_tick(tick: int) -> int:
+                # WP-C10.3：**另開一條 DB session**——不可借用 engage_db，那條被 order source
+                # 在 tick 之中 commit，混用會把排程器的未完成寫入一起送出去。
+                with self._factory() as fdb:
+                    return run_due_fire_missions(
+                        fdb,
+                        session_id,
+                        tick,
+                        lambda s: OrderService(s, _fire_plan_gateway(), lambda: tick),
+                    )
+
             async def _apply_live_edits() -> None:
                 # 編裝彈藥即時調整（#52）：drain API 排入的命令，以本迴圈自己的 hot 實例套用
                 # （同實例→mirror 一致；同行程→不違反 single-writer；tick 之間→不與 tick 內競態）。
@@ -388,6 +424,10 @@ class SimManager:
                 pos = await asyncio.to_thread(drain_pos_cmds, client, session_id)
                 if pos:
                     apply_pos_cmds(hot, pos)
+                # WP-C10.3 火力計畫排程：tick 取自**本迴圈自己的 sim_clock**——Redis 的
+                # `session:{id}:tick` 是廣播器在 tick 跑完之後才寫的，讀它會慢一拍。
+                # 在此落庫的令會被同一個 tick 的 drain 撿走（pre_tick 在 run_tick 之前）。
+                await asyncio.to_thread(_fire_plan_tick, sim_clock.now().tick)
 
             # 自主推演（O11.4）：本 session 有 AI 指派（Redis ai_config）且 #54 AI 非 OFF 時，
             # 每個 AI 陣營起一條獨立 async 決策 worker（固定心跳、非 pre_tick → 不阻塞 tick）。

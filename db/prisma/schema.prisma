@@ -26,41 +26,41 @@ model SystemConfiguration {
 }
 
 model WargameSession {
-  id             String    @id @default(uuid())
-  name           String
-  scenarioId     String?
-  masterSeed     BigInt // P4 可重現性：所有 RNG 的根種子
-  mode           SessionMode @default(REALTIME)
-  startTime      DateTime  @default(now())
-  endTime        DateTime?
-  archivedAt     DateTime? // #31 封存時間（歷史頁）：有值＝已封存（活模擬凍結、可還原/刪除）
-  worldStartTime DateTime? // 想定世界初始日期時間（in-world t=0；供 #6 日照/晨昏推算；可編輯 #16）
-  currentWeather Json // Processed output strictly from the Weather Module
+  id                String      @id @default(uuid())
+  name              String
+  scenarioId        String?
+  masterSeed        BigInt // P4 可重現性：所有 RNG 的根種子
+  mode              SessionMode @default(REALTIME)
+  startTime         DateTime    @default(now())
+  endTime           DateTime?
+  archivedAt        DateTime? // #31 封存時間（歷史頁）：有值＝已封存（活模擬凍結、可還原/刪除）
+  worldStartTime    DateTime? // 想定世界初始日期時間（in-world t=0；供 #6 日照/晨昏推算；可編輯 #16）
+  currentWeather    Json // Processed output strictly from the Weather Module
   // #6：允許「自行編輯本軍編裝（ORBAT）」的陣營清單（White Cell 設定）。null/[] = 僅白軍可編。
   orbatEditFactions Json?
   // #98 陣營關係矩陣（SPEC §12.1）：三元組陣列 [[a, b, "ALLIED"|"NEUTRAL"|"HOSTILE"], …]，對稱。
   // 想定載入時寫入；**null = 未宣告 → 全 HOSTILE 預設**（既有局零遷移、語義與過去一致）。
   // 存在此處而非只靠 scenarioId，是因為：無想定的局也要能有關係、且白軍可局中宣戰/停火。
-  factionRelations Json?
+  factionRelations  Json?
   // WP-A3 禁射區（SPEC_V2 §6 WP-A3）：[{name, zone_class: NO_STRIKE|RESTRICTED_FIRE, geometry}]。
   // 想定載入時寫入、白軍可局中增修；**null = 無禁射區**（既有局零遷移）。
   // 存宣告而非 h3 格集——格集由幾何於讀取時導出（見 core/app/orders/no_strike.py）。
-  noStrikeZones Json?
+  noStrikeZones     Json?
   // WP-B6 想定交戰規則（SPEC_FULL §11.1／§10 G4）：{default_fire_policy, weapon_restrictions}。
   // 想定 roe.yaml 載入時寫入、白軍可局中修改；**null = 無 ROE 限制**（既有局零遷移）。
   // 生效於裁決層（被禁武器不開火）與 submit 端（明確指名被禁武器即拒）——見 core/app/orders/roe.py。
-  roe Json?
+  roe               Json?
   // WP-B6 想定機動覆寫（overrides/mobility_matrix.json）：**局部**覆寫，深合併於出貨預設。
   // null = 用出貨預設（既有局零遷移）。⚠ 不得改變可通行性——A* 在 terrain 服務看不到本欄。
   mobilityOverrides Json?
 
-  units       TacticalUnit[]
-  eventLogs   TacticalEventLog[]
-  mapFeatures MapFeature[]
+  units                        TacticalUnit[]
+  eventLogs                    TacticalEventLog[]
+  mapFeatures                  MapFeature[]
   /// 申請單配額快照（WP-B5.2）。**開局時從想定複製一份**，不是每次即時讀想定——
   /// 想定可能在演習進行中被編修或刪除，即時讀會讓已開的局配額被追溯改掉。
   /// null＝未宣告＝不限（既有局語義）。
-  requestQuotas Json?
+  requestQuotas                Json?
   /// 曲射火協（WP-B5.3）：開局時從想定快照。true＝ARTILLERY/MISSILE 的 ENGAGE 須掛
   /// 已核准的 FIRE_SUPPORT 申請單。null/false＝不設限（既有局零變更）。
   indirectFireRequiresApproval Boolean?
@@ -69,18 +69,18 @@ model WargameSession {
 // 地圖標註/工事：武器據點、障礙、建築、控制措施等（點/線/面 + 影響範圍 + 屬性）。
 // ownerFaction=WHITE_CELL → 共同/ground truth（全體可見）；其餘＝該陣營標注（fog of war，後端過濾）。
 model MapFeature {
-  id           String         @id @default(uuid())
-  sessionId    String
-  session      WargameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  kind         String // OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION
-  geometryType String // POINT / LINE / POLYGON
-  geometry     Json // GeoJSON coordinates（依 geometryType：Point=[lng,lat]、Line=[[lng,lat]…]、Polygon=[[[lng,lat]…]]）
-  ownerFaction String // 擁有陣營（WHITE_CELL＝共同）
-  label        String?
+  id               String         @id @default(uuid())
+  sessionId        String
+  session          WargameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind             String // OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION
+  geometryType     String // POINT / LINE / POLYGON
+  geometry         Json // GeoJSON coordinates（依 geometryType：Point=[lng,lat]、Line=[[lng,lat]…]、Polygon=[[[lng,lat]…]]）
+  ownerFaction     String // 擁有陣營（WHITE_CELL＝共同）
+  label            String?
   influenceRadiusM Float? // 影響範圍（公尺；點/線常用）
   weaponTemplateId String? // WEAPON_EMPLACEMENT 連結的武器範本（EquipmentTemplate.id）
-  attributes   Json     @default("{}") // 額外屬性（passable/damage/color…）
-  createdAt    DateTime @default(now())
+  attributes       Json           @default("{}") // 額外屬性（passable/damage/color…）
+  createdAt        DateTime       @default(now())
 }
 
 enum SessionMode {
@@ -119,7 +119,7 @@ model TacticalUnit {
 
   designation String
   unitLevel   UnitLevel
-  faction     String   // 想定定義字串 id（§12.1/ADR 006）
+  faction     String // 想定定義字串 id（§12.1/ADR 006）
 
   // Fractal Hierarchy (Self-Referential)
   parentId String?
@@ -130,19 +130,19 @@ model TacticalUnit {
   isFixed Boolean @default(false)
 
   // Extensible Properties & Live Telemetry
-  attributes   Json       @default("{}")
-  currentLat   Float? // WGS84
-  currentLng   Float? // WGS84
-  elevation    Float? // 由 Terrain Module 查詢
+  attributes          Json       @default("{}")
+  currentLat          Float? // WGS84
+  currentLng          Float? // WGS84
+  elevation           Float? // 由 Terrain Module 查詢
   // 戰力（真實化交戰）：authorizedStrength＝滿編戰力（TO&E 分母，不遞減）；currentStrength＝當前
   // 戰力（唯一權威量，交戰扣此）；healthStatus 改為由 currentStrength/authorizedStrength 經凹形
   // 折點曲線導出的「效能%」（供 COP 顯示，不再是權威 HP）。人員數供顯示/回報（可空）。
-  authorizedStrength  Float @default(100.0)
-  currentStrength     Float @default(100.0)
+  authorizedStrength  Float      @default(100.0)
+  currentStrength     Float      @default(100.0)
   personnelAuthorized Int?
   personnelCurrent    Int?
-  healthStatus Float      @default(100.0)
-  commsStatus  CommsState @default(ONLINE)
+  healthStatus        Float      @default(100.0)
+  commsStatus         CommsState @default(ONLINE)
 
   equipment  EquipmentInstance[]
   eventsInit TacticalEventLog[]  @relation("Initiator")
@@ -240,7 +240,7 @@ model SessionParticipant {
   userId    String
   user      User      @relation(fields: [userId], references: [id])
   sessionId String
-  faction   String    // 想定定義字串 id（SPEC §12.1/ADR 006）；WHITE_CELL 保留字
+  faction   String // 想定定義字串 id（SPEC §12.1/ADR 006）；WHITE_CELL 保留字
   role      UserRole
   // 席位（WP-B5.1，[JCATS-F p.9–10]）：同陣營內的參謀分工，與 role 正交。
   // **可為 NULL＝未指派席位 → 權限完全沿用 role 的既有規則**。
@@ -254,18 +254,18 @@ model SessionParticipant {
 /// C2 信文（WP-B5.2，[JCATS-F p.10–14]）——席位之間的文書往返。
 /// 受眾＝ toSeat（指定席位）或 toFaction（整個陣營）；過濾一律在後端（紅線 3）。
 model Message {
-  id           String      @id @default(uuid())
-  sessionId    String
-  kind         MessageKind
-  fromUserId   String
-  fromSeat     SeatRole?   // null＝寄件者未指派席位
-  toSeat       SeatRole?   // null＝發給整個陣營
-  toFaction    String
-  refId        String? // 關聯的申請單（REQUEST/APPROVAL）
-  body         String      @db.Text
-  tick         Int
-  readAt       DateTime?
-  createdAt    DateTime    @default(now())
+  id         String      @id @default(uuid())
+  sessionId  String
+  kind       MessageKind
+  fromUserId String
+  fromSeat   SeatRole? // null＝寄件者未指派席位
+  toSeat     SeatRole? // null＝發給整個陣營
+  toFaction  String
+  refId      String? // 關聯的申請單（REQUEST/APPROVAL）
+  body       String      @db.Text
+  tick       Int
+  readAt     DateTime?
+  createdAt  DateTime    @default(now())
 
   @@index([sessionId, toFaction])
 }
@@ -437,4 +437,69 @@ model PluginRegistry {
   healthState String // HEALTHY / DEGRADED / DOWN
   config      Json
   enabled     Boolean @default(true)
+}
+
+/// 火力計畫（WP-C10.3）：預劃目標清單。**陣營私有**——查詢一律在後端依 faction 過濾。
+model FirePlan {
+  id                     String           @id @default(uuid())
+  sessionId              String
+  faction                String
+  name                   String
+  status                 FirePlanStatus   @default(ACTIVE)
+  /// 建立者的 SessionParticipant.id。自動執行的令**以建立者的身分送出**——
+  /// 沒有「系統」這個下令者（validate_order 要求 issuer 是本局參與者），
+  /// 而預劃火力的當責者本來就是寫這份計畫的人。
+  createdByParticipantId String?
+  createdAtTick          Int
+  createdAt              DateTime         @default(now())
+  targets                FirePlanTarget[]
+
+  @@index([sessionId, faction])
+}
+
+/// 預劃目標（打座標）。執行方式就是下一道 FIRE_MISSION 令（WP-C10.2），不另生物理。
+model FirePlanTarget {
+  id            String               @id @default(uuid())
+  planId        String
+  plan          FirePlan             @relation(fields: [planId], references: [id], onDelete: Cascade)
+  /// 計畫內序號：排程器依此排序執行，**順序必須確定**才可重播。
+  seq           Int
+  label         String?
+  targetLat     Float
+  targetLng     Float
+  rounds        Int                  @default(4)
+  /// 執行此目標的砲兵單位。系統不自動挑砲——自動指派屬 WP-C10.4。
+  shooterUnitId String
+  schedule      FireSchedule         @default(ON_CALL)
+  atTick        Int?
+  /// 本局要求火協時掛的已核准 FIRE_SUPPORT 申請單。一張只兌現一次，故逐目標而非整份共用。
+  fireRequestId String?
+  status        FirePlanTargetStatus @default(PENDING)
+  orderId       String?
+  firedAtTick   Int?
+  failureReason String?              @db.Text
+
+  @@index([planId, seq])
+}
+
+enum FirePlanStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum FireSchedule {
+  /// 到指定 tick 自動下令（攻擊準備射擊）。
+  AT_TICK
+  /// 待命，由 FSO 席位呼叫。
+  ON_CALL
+}
+
+enum FirePlanTargetStatus {
+  PENDING
+  /// 令已送出（order_id 指向該令）。**不代表打中**——裁決失敗的令以零毀傷 COMPLETED。
+  FIRED
+  /// 下令被擋（驗證/預檢/火協），原因見 failureReason。
+  FAILED
+  /// 計畫被取消時尚未執行者。
+  SKIPPED
 }

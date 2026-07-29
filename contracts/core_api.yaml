@@ -326,6 +326,81 @@ components:
         decided_by: { type: [string, "null"], description: 核覆者 username }
         decided_at_tick: { type: [integer, "null"] }
         decision_note: { type: [string, "null"] }
+    FireSchedule:
+      type: string
+      description: >-
+        預劃目標的射擊時機（WP-C10.3）。`AT_TICK`＝到指定 tick 自動下令（攻擊準備射擊）；
+        `ON_CALL`＝待命，由 FSO 席位按鈕呼叫。
+      enum: [AT_TICK, ON_CALL]
+    FirePlanTargetStatus:
+      type: string
+      description: >-
+        `PENDING` 待命／`FIRED` 已下令（order_id 指向該令）／`FAILED` 下令被擋
+        （原因見 failure_reason）／`SKIPPED` 計畫取消時未執行。
+        **注意 `FIRED` 只代表「令送出去了」**，不代表打中——裁決失敗（無彈/超射程）
+        的令會以零毀傷 COMPLETED，那是帳本上的事實，不回頭改這裡的狀態。
+      enum: [PENDING, FIRED, FAILED, SKIPPED]
+    FirePlanTargetView:
+      type: object
+      required: [id, seq, target_lat, target_lng, rounds, schedule, status, shooter_unit_id]
+      properties:
+        id: { type: string }
+        seq: { type: integer, description: 計畫內序號（決定執行順序，必須確定） }
+        label: { type: string, description: 目標編號/代號（如 AB1001） }
+        target_lat: { type: number }
+        target_lng: { type: number }
+        rounds: { type: integer, minimum: 1, maximum: 200 }
+        shooter_unit_id:
+          type: string
+          description: >-
+            執行此目標的砲兵單位。**由計畫指定，系統不自動挑砲**——自動指派
+            （「就近可達砲兵」）屬 WP-C10.4 的臨機火力鏈。
+        schedule: { $ref: "#/components/schemas/FireSchedule" }
+        at_tick: { type: [integer, "null"], description: schedule=AT_TICK 時的執行 tick }
+        fire_request_id:
+          type: [string, "null"]
+          description: >-
+            本局要求火協時要掛的已核准 FIRE_SUPPORT 申請單。**一張核准單只兌現一次**，
+            故是逐目標欄位而非整份計畫共用。
+        status: { $ref: "#/components/schemas/FirePlanTargetStatus" }
+        order_id: { type: [string, "null"], description: 已下令時指向產生的 Order }
+        fired_at_tick: { type: [integer, "null"] }
+        failure_reason: { type: [string, "null"] }
+    FirePlanView:
+      type: object
+      description: 火力計畫（WP-C10.3）。陣營私有——後端依陣營過濾，前端不做過濾。
+      required: [id, name, faction, status, created_at_tick, targets]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        faction: { type: string }
+        status:
+          type: string
+          enum: [ACTIVE, CANCELLED]
+          description: 取消的計畫其未執行目標一律轉 SKIPPED，排程器不再看它。
+        created_by: { type: [string, "null"], description: 建立者 username }
+        created_at_tick: { type: integer }
+        targets: { type: array, items: { $ref: "#/components/schemas/FirePlanTargetView" } }
+    CreateFirePlanRequest:
+      type: object
+      required: [name, targets]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        targets:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [target_lat, target_lng, shooter_unit_id]
+            properties:
+              label: { type: string }
+              target_lat: { type: number, minimum: -90, maximum: 90 }
+              target_lng: { type: number, minimum: -180, maximum: 180 }
+              rounds: { type: integer, minimum: 1, maximum: 200, default: 4 }
+              shooter_unit_id: { type: string, minLength: 1 }
+              schedule: { $ref: "#/components/schemas/FireSchedule" }
+              at_tick: { type: [integer, "null"], minimum: 0 }
+              fire_request_id: { type: [string, "null"] }
     SubmitRequestRequest:
       type: object
       required: [kind]
@@ -1613,6 +1688,63 @@ paths:
               schema: { $ref: "#/components/schemas/RequestView" }
         "403": { description: 此席位無核覆權 }
         "409": { description: 該申請單已非 PENDING }
+  /sessions/{id}/fire-plans:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: listFirePlans
+      description: >-
+        本陣營的火力計畫（WP-C10.3）。**火力計畫是陣營私有情報**——過濾一律在後端做
+        （全知角色可見全部）。
+      responses:
+        "200":
+          description: Fire plans
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/FirePlanView" } }
+    post:
+      operationId: createFirePlan
+      description: 建立火力計畫（含預劃目標）。計畫歸建立者的陣營。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateFirePlanRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FirePlanView" }
+  /sessions/{id}/fire-plans/{plan_id}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { name: plan_id, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: deleteFirePlan
+      description: 刪除火力計畫（連同其預劃目標）。已執行的目標留在帳本上，刪計畫不會抹掉那些事實。
+      responses:
+        "204": { description: Deleted }
+        "403": { description: 非本陣營的計畫 }
+  /sessions/{id}/fire-plans/{plan_id}/targets/{target_id}/fire:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { name: plan_id, in: path, required: true, schema: { type: string } }
+      - { name: target_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: fireFirePlanTarget
+      description: >-
+        對預劃目標下火力任務（on-call；WP-C10.3）。**本端點不繞過任何閘門**——它組出
+        FIRE_MISSION 令後照樣走 `OrderService.submit`（驗證 → 物理預檢 → 火協 gate）。
+        故本局若要求火協，此目標仍須自帶已核准的 FIRE_SUPPORT 申請單。
+      responses:
+        "200":
+          description: 已下令（回更新後的目標；order_id 指向產生的令）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FirePlanTargetView" }
+        "403": { description: 非本陣營的計畫 }
+        "409": { description: 該目標已執行過（一個預劃目標只打一次） }
+        "422": { description: 物理預檢不可行（射程/無曲射武器/火協未核准…） }
   /sessions/{id}/aar:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get: { operationId: getAAR, responses: { "200": { description: AAR report } } }
