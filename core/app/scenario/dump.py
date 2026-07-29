@@ -41,6 +41,11 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
         "relations": [[a, b, rel.value] for a, b, rel in loaded.relations.declarations()],
         "victory_conditions": loaded.victory_conditions,
     }
+    # WP-A3：禁射區必須進 roundtrip——漏了會讓「匯出再匯入」悄悄拆掉保護區
+    # （同 `fixed` 旗標曾遺失的前例）。空清單不輸出，維持既有想定的 diff 乾淨。
+    if loaded.no_strike_zones:
+        out["no_strike_zones"] = [dict(z) for z in loaded.no_strike_zones]
+
     if files:
         out["files"] = files
     return out

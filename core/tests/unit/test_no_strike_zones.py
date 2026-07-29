@@ -338,3 +338,90 @@ def test_restricted_fire_requires_explicit_acknowledgement(
         service = OrderService(db, FakeGateway())
         resp = service.submit(world.session_id, _engage(world, ack=True), world.blue_issuer_id)
     assert resp.status == "VALIDATED"
+
+
+# ---- 想定載入 / roundtrip ----
+
+
+def test_scenario_bundle_loads_and_persists_zones(session_factory: sessionmaker[Session]) -> None:
+    """想定宣告的禁射區要落到 session（否則 schema 白宣告、執行期讀不到）。"""
+    from app.scenario.loader import create_session_from_scenario, load_scenario_bundle
+
+    zone = {
+        "name": "市立醫院",
+        "zone_class": "NO_STRIKE",
+        "geometry": {"type": "circle", "center": [_LNG, _LAT], "radius_m": 700},
+    }
+    bundle = {
+        "scenario": {
+            "name": "t",
+            "version": "1",
+            "bbox": [121.0, 23.0, 122.0, 24.0],
+            "mode": "REALTIME",
+            "tick_rate_ms": 1000,
+            "factions": [{"id": "BLUE"}, {"id": "RED"}],
+            "victory_conditions": [{"faction": "BLUE", "condition": {"type": "SURVIVE"}}],
+            "no_strike_zones": [zone],
+        },
+        "orbat": {},
+    }
+    loaded = load_scenario_bundle(bundle)
+    assert loaded.no_strike_zones == [zone]
+
+    with session_factory() as db:
+        summary = create_session_from_scenario(db, loaded, master_seed=1)
+        session = db.get(WargameSession, summary if isinstance(summary, str) else summary.id)
+        assert session is not None
+        assert session.no_strike_zones == [zone]
+        cells = load_no_strike_cells(db, session.id)
+    assert cells.classify_latlng(_LAT, _LNG) is ZoneClass.NO_STRIKE
+
+
+def test_zone_that_covers_no_cell_is_rejected_at_load() -> None:
+    """幾何算不出任何格 → 拒絕載入。悄悄放行等於讓作者以為保護了醫院，實際上沒有。"""
+    from app.scenario.loader import ScenarioError, load_scenario_bundle
+
+    bundle = {
+        "scenario": {
+            "name": "t",
+            "version": "1",
+            "bbox": [121.0, 23.0, 122.0, 24.0],
+            "mode": "REALTIME",
+            "tick_rate_ms": 1000,
+            "factions": [{"id": "BLUE"}],
+            "victory_conditions": [{"faction": "BLUE", "condition": {"type": "SURVIVE"}}],
+            "no_strike_zones": [
+                {"name": "壞的", "zone_class": "NO_STRIKE", "geometry": {"type": "polygon"}}
+            ],
+        },
+        "orbat": {},
+    }
+    with pytest.raises(ScenarioError, match="no_strike_zones"):
+        load_scenario_bundle(bundle)
+
+
+def test_zones_survive_export_import_roundtrip() -> None:
+    """匯出再匯入不得掉保護區（`fixed` 旗標曾遺失的同類前例）。"""
+    from app.scenario.dump import scenario_to_dict
+    from app.scenario.loader import load_scenario_bundle
+
+    zone = {
+        "name": "文化資產",
+        "zone_class": "RESTRICTED_FIRE",
+        "geometry": {"type": "circle", "center": [_LNG, _LAT], "radius_m": 500},
+    }
+    scenario = {
+        "name": "t",
+        "version": "1",
+        "bbox": [121.0, 23.0, 122.0, 24.0],
+        "mode": "REALTIME",
+        "tick_rate_ms": 1000,
+        "factions": [{"id": "BLUE"}],
+        "victory_conditions": [{"faction": "BLUE", "condition": {"type": "SURVIVE"}}],
+        "no_strike_zones": [zone],
+    }
+    loaded = load_scenario_bundle({"scenario": scenario, "orbat": {}})
+    exported = scenario_to_dict(loaded)
+    assert exported["no_strike_zones"] == [zone]
+    again = load_scenario_bundle({"scenario": exported, "orbat": {}})
+    assert again.no_strike_zones == [zone]

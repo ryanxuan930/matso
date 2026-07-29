@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.factions import WHITE_CELL, FactionRelations, Relation, validate_faction_id
 from app.models.enums import UnitLevel
+from app.orders.no_strike import zones_to_cells
 from app.scenario.triggers import MselEntry
 
 _CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
@@ -55,6 +56,8 @@ class LoadedScenario:
     units: list[ScenarioUnit] = field(default_factory=list)
     msel: list[MselEntry] = field(default_factory=list)
     victory_conditions: list[dict[str, Any]] = field(default_factory=list)
+    # WP-A3 禁射區宣告（原樣帶入；幾何→h3 格集由 orders/no_strike.py 於讀取時導出）。
+    no_strike_zones: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -107,6 +110,7 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
         units=units,
         msel=msel,
         victory_conditions=list(sc["victory_conditions"]),
+        no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
         raw=sc,
     )
 
@@ -141,6 +145,7 @@ def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
         units=units,
         msel=msel,
         victory_conditions=list(sc["victory_conditions"]),
+        no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
         raw=sc,
     )
 
@@ -223,6 +228,9 @@ def create_session_from_scenario(
         # #98 關係矩陣落地：想定宣告的敵我關係從此隨局持久化（過去 loader 建完就丟，
         # 導致執行期只能退回全 HOSTILE）。空宣告存 None ＝ 未宣告 ＝ 全 HOSTILE 預設。
         faction_relations=loaded.relations.to_triples() or None,
+        # WP-A3 禁射區落地：想定宣告的保護區隨局持久化（護欄 G4 與人類 precheck 共用）。
+        # 空宣告存 None ＝ 無禁射區（既有局語義）。
+        no_strike_zones=loaded.no_strike_zones or None,
     )
     db.add(session)
     db.flush()
@@ -269,6 +277,29 @@ def _validate_factions(factions: list[dict[str, Any]]) -> list[str]:
             raise ScenarioError(f"scenario.yaml: factions[{i}].id: 重複的陣營 id：{fid}")
         ids.append(fid)
     return ids
+
+
+def _validate_no_strike(zones: Any) -> list[dict[str, Any]]:
+    """禁射區的語意驗證（WP-A3）。JSON Schema 已驗結構，這裡只擋「結構合法但無效」的宣告。
+
+    幾何算不出任何格 → 直接拒絕載入：那種區在執行期完全不會攔到東西，
+    悄悄放行等於讓想定作者以為自己保護了醫院，實際上沒有——**安全機制的沉默失效最危險**。
+    """
+    if not isinstance(zones, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for i, z in enumerate(zones):
+        if not isinstance(z, dict):
+            raise ScenarioError(f"scenario.yaml: no_strike_zones[{i}]: 需為物件")
+        cells = zones_to_cells([z])
+        if not cells.any_cells:
+            name = z.get("name", "?")
+            raise ScenarioError(
+                f"scenario.yaml: no_strike_zones[{i}]（{name}）: 幾何算不出任何 h3 格，"
+                "此區在執行期不會攔到任何目標——請檢查 ring/center 的座標順序為 [lng, lat]"
+            )
+        out.append(dict(z))
+    return out
 
 
 def _build_relations(rels: list[list[Any]], faction_ids: list[str]) -> FactionRelations:

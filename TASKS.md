@@ -268,6 +268,9 @@
 | #99 地圖物件整形（控制點編輯）✅ | 現況只能**整點拖曳點特徵**（#11 B2）與**繞質心旋轉**（#26）：線/面畫錯一個頂點就得刪掉重畫。後端 `PATCH …/map-features/{fid}` 早已收 `geometry`（欄位型別 `Any`）→ **零後端／零契約改動** | 選取線/面時顯示控制點：拖頂點改形狀、拖中點插入新頂點、拖圖形本體整體平移、右鍵控制點刪除（線≥2/面≥3 才准）。幾何純函數集中於 `useMapFeatures`；拖曳中本地預覽、放開才 PATCH，失敗一律重載回權威幾何。**順手修好 #11 B2 自始無效的點拖曳**：`featLayers` 在 onMounted 就 `filter(getLayer)`，但圖層要到 `map.on('load')` 才加 → 過濾成空陣列，那兩層的 mousedown 從沒註冊過 | ✅ 拖頂點只動該點、拖中點插在正確索引、拖本體同位移（皆以 GET 回讀伺服器幾何驗證）；✅ 首尾重合的環（`genCircle`）控制點 4 顆／4 相異位置，不「裂開」；✅ 刪點下限保護（線 2/面 3）+ toast；✅ 點特徵拖曳修復後座標落在放手處。worklog: feature-reshape.md |
 | #100 README 全系統文件 + SPEC_V2 差距分析 ✅ | 使用者提供 6 份兵推文獻（JCATS×3/NATO IST-160/MITRE JTLS 聯邦/MASA multi-site/INDSR 特刊全本），要求全系統解剖 + v2 開發藍圖（交 Opus 5 續開發） | workflow 13 agents（6 碼庫 mapper + 7 PDF reader）→ README.md（1556 行，逐檔用途與關係）+ SPEC_V2.md（900 行：35 項差距總表、WP-A~H 工作包、V2.0–2.2 路線圖、Non-Goals、agent 執行守則） | ✅ 兩檔完成；盤點重大發現（AI 敵情 ground truth／G4 空轉／TriggerChecker NoOp／fixed 旗標 roundtrip bug）皆入 SPEC_V2 差距表。worklog: docs-readme-specv2.md |
 
+| WP-A1 AI 敵情接真實情報 ✅ | SPEC_V2 §6 WP-A1 | AI 改走 IntelContact 投影（複用 IntelService）+ 盟軍共享視圖 + recent_events + ai_ground_truth 退回開關 | ✅ 實測 RED 見 22/真實 23、YELLOW 25/26；pytest 1116。worklog: ai-fog-honesty.md |
+| WP-A3 G4 禁射區護欄修復 ✅ | SPEC_V2 §6 WP-A3 | 三斷點（欄位不匹配/無資料源/**攔截從未落帳**）；契約+DB+幾何→h3+TargetLocator+人類 override+白軍 UI+想定 loader | ✅ 20 測試、pytest 1136、golden 6 未破；容器實測攔截成功。worklog: g4-no-strike.md |
+
 ---
 
 ## 附錄：任務中斷與續作（額度用完時的保命機制）

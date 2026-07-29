@@ -2,7 +2,7 @@
 task: "WP-A3 修復 G4 no-strike 護欄（欄位匹配＋資料源）"
 status: DONE
 started: 2026-07-29T10:55+08:00
-updated: 2026-07-29T12:30+08:00
+updated: 2026-07-29T13:10+08:00
 agent: Opus 5
 spec: SPEC_V2.md §6 WP-A3；相關 SPEC_FULL §10（護欄）、§11（想定）、§13.2（COP 標註）
 ---
@@ -32,7 +32,9 @@ G4（禁射區）**從未攔過任何東西**。規格點出兩個斷點，掃�
 | `core/app/orders/{precheck,service,schemas}.py`、`api/deps.py` | 修改 | 人類路徑：`no_strike` 檢查 + `acknowledge_restricted` override + override 留痕 |
 | `core/app/state/ledger.py` | 修改 | `LedgerWriter` 型別放寬為 `Callable[[], Session]`（AI worker 走 db_factory） |
 | `platform/app/composables/useMapFeatures.ts`、`pages/session/[id]/cop.vue` | 修改 | 白軍在地圖編輯器把面標記為禁射/限制射擊區 + 紅色說明列 |
-| `core/tests/unit/test_no_strike_zones.py` | **新增** | 17 條 |
+| `core/app/scenario/{loader,dump}.py` | 修改 | 想定宣告載入 + 落地 session + roundtrip 輸出 |
+| `scenarios/examples/tutorial-platoon/scenario.yaml` | 修改 | 兩個示範禁射區 |
+| `core/tests/unit/test_no_strike_zones.py` | **新增** | 20 條 |
 
 ## 設計決定
 1. **存宣告而非格集**：`noStrikeZones` 存 `{name, zone_class, geometry}`，格集於讀取時導出。
@@ -55,7 +57,7 @@ G4（禁射區）**從未攔過任何東西**。規格點出兩個斷點，掃�
 
 ## 測試證據
 - 新增 17 條（幾何/座標順序/兩級別/資料源/G4 兩種目標表達/MOVE 不擋/定位失敗/人類三情境）。
-- **`uv run pytest -m "not benchmark"` → 1133 passed / 8 skipped**；**golden 6 未破**。
+- **`uv run pytest -m "not benchmark"` → 1136 passed / 8 skipped**；**golden 6 未破**。
 - ruff / ruff format / mypy(207) / schema-sync(142 欄) / OpenAPI 驗證 / JSON Schema metaschema 全綠。
   （`redocly lint` 的 72 errors 為**改動前既有**、且非本專案 gate——CI 用 `openapi_spec_validator`。）
 - 前端 `npm run lint` + `vue-tsc` 綠；`npm run gen:api` 由契約重生型別。
@@ -78,10 +80,17 @@ repo 幾何一律 GeoJSON `[lng, lat]`，`h3.LatLngPoly` 吃 `(lat, lng)`。寫�
 另補頂點格：`polygon_to_cells` 只收「格心落在多邊形內」者，小於一格的區域會一格都框不進 →
 小型禁射區形同虛設。
 
+## 想定 loader（收尾補完）
+- `LoadedScenario.no_strike_zones` + 兩處建構點（package / bundle）+ `create_session_from_scenario`
+  落地（樣板＝`factionRelations` 的寫入路徑）。
+- **`_validate_no_strike` 會拒絕「算不出任何格」的宣告**：那種區在執行期完全攔不到東西，
+  悄悄放行等於讓想定作者以為保護了醫院、實際上沒有——安全機制的**沉默失效**最危險。
+  錯誤訊息直接點名最可能的成因（座標順序應為 [lng, lat]）。
+- `scenario_to_dict` 一併輸出 → **匯出再匯入不會掉保護區**（`fixed` 旗標曾遺失的同類前例，有測試釘住）。
+- 官方想定 `tutorial-platoon` 加了兩個示範區（衛生所 NO_STRIKE / 文化資產 RESTRICTED_FIRE），
+  實測載入：5 格 + 31 格、分類正確、區外回 None。
+
 ## 未做 / 已知限制
-- **想定 loader 尚未寫入 `no_strike_zones`**：schema 已宣告、DB 欄位已就緒、白軍可經地圖標註設定，
-  但 `scenario/loader.py` 還沒把想定包裡的宣告寫進 session。屬同卡未竟項，下次接手先做這段
-  （樣板＝`factionRelations` 的寫入路徑）。
 - 前端只做「標記既有面為禁射區」，沒有做「畫一個禁射區」的專用工具（沿用既有繪面流程即可）。
 - G4 目前只約束 `ENGAGE`；`MISSION` 令型尚不存在（WP-A2 做完要把它加進 `_STRIKE_ORDER_TYPES`）。
 
@@ -91,5 +100,5 @@ repo 幾何一律 GeoJSON `[lng, lat]`，`h3.LatLngPoly` 吃 `(lat, lng)`。寫�
   屬契約漂移，應補宣告。
 
 ## 中斷續作指引
-- 本卡主體完成並實測。**下一步第一件事**：把 `no_strike_zones` 接進 `scenario/loader.py`
-  （見「未做」第一項）。
+- **本卡已全部完成並實測**（含收尾的 loader/roundtrip/官方想定）。無未竟項。
+- 後續相關：WP-A2 做完 MISSION 令型後，要把它加進 `gateway._STRIKE_ORDER_TYPES`。

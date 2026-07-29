@@ -17,6 +17,18 @@ victory_conditions:
     condition: { type: eliminate, target_faction: RED }
   - faction: RED
     condition: { type: eliminate, target_faction: BLUE }
+# WP-A3 禁射區示範：想定作者宣告的保護區。護欄 G4 與人類 precheck 共用同一份判定。
+# NO_STRIKE＝硬阻擋（AI 令被剔除、人類令被拒）；RESTRICTED_FIRE＝需白軍/下令者明確確認。
+# geometry 一律 GeoJSON 的 [lng, lat] 順序。
+no_strike_zones:
+  - name: 隘口村落衛生所
+    zone_class: NO_STRIKE
+    geometry: { type: circle, center: [121.15, 23.75], radius_m: 600 }
+  - name: 山區文化資產
+    zone_class: RESTRICTED_FIRE
+    geometry:
+      type: polygon
+      ring: [[121.20, 23.78], [121.24, 23.78], [121.24, 23.82], [121.20, 23.82]]
 files:
   orbat:
     BLUE: orbat/blue.yaml
