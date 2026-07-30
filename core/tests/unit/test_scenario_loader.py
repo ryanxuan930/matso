@@ -219,3 +219,14 @@ def test_victory_conditions_reach_the_session_row() -> None:
 
     assert row is not None
     assert row.victory_conditions == loaded.victory_conditions
+
+
+def test_a_weather_script_declaration_is_rejected_not_ignored() -> None:
+    """`files.weather_script` 全 repo 除 schema 外零命中——宣告的暴雨腳本永遠不生效，
+    而想定作者不會知道。在做出腳本引擎之前，明講拒收並指出做得到的那條路。"""
+    from app.scenario.loader import ScenarioError, _reject_weather_script
+
+    _reject_weather_script({})  # 沒宣告 → 不炸
+    _reject_weather_script({"weather_script": ""})  # 空字串 ＝沒宣告
+    with pytest.raises(ScenarioError, match="WEATHER_OVERRIDE"):
+        _reject_weather_script({"weather_script": "weather.yaml"})

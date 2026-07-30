@@ -26,16 +26,22 @@ from typing import Any
 from app.adjudication.obscurants import (
     DEFAULT_SMOKE_RADIUS_M,
     SmokeCloud,
+    drift,
     duration_ticks,
 )
 
 SMOKE_KIND = "SMOKE"
 
 
-def load_active_smoke(db: Any, session_id: str, tick: int) -> list[SmokeCloud]:
-    """本局此刻仍有效的煙。**沒有煙時回空 list**——呼叫端因此一次幾何判定都不做。
+def load_active_smoke(
+    db: Any, session_id: str, tick: int, wind: tuple[float, float] | None = None
+) -> list[SmokeCloud]:
+    """本局此刻仍有效的煙（已套用風的漂移）。**沒有煙時回空 list**——呼叫端因此一次
+    幾何判定都不做。既有局一片煙都沒有，所以這條路徑對它們是零成本、零行為變更。
 
-    既有局一片煙都沒有，所以這條路徑對它們是零成本、零行為變更。
+    `wind`＝(風速 m/s, 風的**來向**度)。None 或無風 → 不漂。
+    **漂移是純導出的**：位置由 (落點, 風, 經過 tick) 完全決定，不寫回 DB
+    ——寫回去就要每 tick commit 一次，而且重播時會與帳本不一致。
     """
     from sqlalchemy import select
 
@@ -47,9 +53,20 @@ def load_active_smoke(db: Any, session_id: str, tick: int) -> list[SmokeCloud]:
     out: list[SmokeCloud] = []
     for row in rows:
         cloud = _to_cloud(row)
-        if cloud is not None and cloud.active_at(tick):
-            out.append(cloud)
+        if cloud is None or not cloud.active_at(tick):
+            continue
+        born = _emplaced_tick(row)
+        if wind is not None and born is not None and wind[0] > 0:
+            cloud = drift(cloud, wind[0], wind[1], max(0, tick - born))
+        out.append(cloud)
     return out
+
+
+def _emplaced_tick(row: Any) -> int | None:
+    """該團煙的發煙 tick（漂移起算點）。舊資料沒有這個鍵 → None ＝不漂。"""
+    attrs = row.attributes if isinstance(row.attributes, dict) else {}
+    raw = attrs.get("emplaced_at_tick")
+    return int(raw) if isinstance(raw, (int, float)) else None
 
 
 def _to_cloud(row: Any) -> SmokeCloud | None:
@@ -101,7 +118,13 @@ def emplace_smoke(
         owner_faction=owner_faction,
         label="煙幕",
         influence_radius_m=float(radius_m),
-        attributes={"expires_at_tick": int(expires), "rounds": int(rounds)},
+        # `emplaced_at_tick` 是**漂移的起算點**。舊資料沒有這個鍵 → `_to_cloud` 回 None，
+        # 該團煙就不漂（既有局位元不變），而不是從 0 開始算出一個荒謬的位移。
+        attributes={
+            "expires_at_tick": int(expires),
+            "rounds": int(rounds),
+            "emplaced_at_tick": int(tick),
+        },
     )
     db.add(row)
     db.flush()
@@ -143,16 +166,29 @@ class SmokeCache:
     ——傳一份清單進去會讓整局停在建立時的那一刻（同 WP-C4a `light_for` 的理由）。
     """
 
-    def __init__(self, session_factory: Any, session_id: str) -> None:
+    def __init__(self, session_factory: Any, session_id: str, wind_for: Any | None = None) -> None:
         self._factory = session_factory
         self._session_id = session_id
         self._tick: int | None = None
         self._clouds: list[SmokeCloud] = []
+        # WP-C4b/C4c：`() -> (wind_ms, wind_dir_deg) | None`。**在此之前 `drift()` 有完整
+        # 實作與 8 條測試、生產零呼叫端**——風場也一路讀進 `CellEffects` 卻沒有消費者。
+        # 不注入 → 不漂（既有行為位元不變）。
+        self._wind_for = wind_for
+
+    def _wind(self) -> tuple[float, float] | None:
+        if self._wind_for is None:
+            return None
+        try:
+            wind = self._wind_for()
+        except Exception:  # 天氣服務抖一下不該讓煙幕判定整個掛掉
+            return None
+        return (float(wind[0]), float(wind[1])) if wind else None
 
     def at(self, tick: int) -> list[SmokeCloud]:
         if self._tick != tick:
             with self._factory() as db:
-                self._clouds = load_active_smoke(db, self._session_id, tick)
+                self._clouds = load_active_smoke(db, self._session_id, tick, self._wind())
             self._tick = tick
         return self._clouds
 

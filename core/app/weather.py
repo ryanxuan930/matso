@@ -10,7 +10,8 @@ weather 非硬依賴：無資料 / 插件 DOWN → CLEAR（所有 modifier=1.0�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from typing import Any
 
 import h3
 
@@ -42,18 +43,31 @@ class WeatherState:
     def __init__(self, cells: dict[str, CellEffects] | None = None, stale: bool = False) -> None:
         self._cells = cells or {}
         self._stale = stale
+        # 查無 cell 時的效果。**預設 CLEAR ＝既有語義**；`uniform()` 用它做全場覆蓋。
+        self._fallback = CLEAR
 
     @classmethod
     def clear(cls) -> WeatherState:
         """全晴（weather 不可用時的降級預設）。"""
         return cls({}, stale=False)
 
+    @classmethod
+    def uniform(cls, effects: CellEffects) -> WeatherState:
+        """全場同一份效果（MSEL `WEATHER_OVERRIDE` 用）。
+
+        以**通配格**實作：`effects_at` 查不到 cell 時回 `_fallback`，於是不必列舉整個 AO
+        的格子——統裁說「全場下暴雨」時，AO 有幾格不該是實作細節。
+        """
+        state = cls({}, stale=False)
+        state._fallback = effects
+        return state
+
     @property
     def stale(self) -> bool:
         return self._stale
 
     def effects_at(self, h3_index: str) -> CellEffects:
-        return self._cells.get(h3_index, CLEAR)
+        return self._cells.get(h3_index, self._fallback)
 
     def resolution(self) -> int:
         """本快照的 h3 解析度——**呼叫端要先把座標換算到同一級才查得到格**。
@@ -67,6 +81,30 @@ class WeatherState:
             return int(h3.get_resolution(next(iter(self._cells))))
         except (ValueError, TypeError):
             return 8
+
+
+_EFFECT_FIELDS = {f.name for f in fields(CellEffects)}
+
+
+def effects_from(raw: object) -> CellEffects:
+    """宣告的 effects dict → `CellEffects`。**認不得的鍵一律忽略**，缺的用晴天預設。
+
+    型別不合的值也忽略（不讓一個字串把整份天氣變成無效）——這與 `parse_sim_params`
+    的逐欄退預設同一條紀律。
+    """
+    if not isinstance(raw, dict):
+        return CLEAR
+    kwargs: dict[str, Any] = {}
+    for key, value in raw.items():
+        name = str(key)
+        if name not in _EFFECT_FIELDS:
+            continue
+        if name in ("uav_operability", "rotary_wing_operability"):
+            if isinstance(value, bool):
+                kwargs[name] = value
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            kwargs[name] = float(value)
+    return CellEffects(**kwargs)
 
 
 # ---------------- 效果 → 各 env 的 weather_modifier（Core 的解讀，v0） ----------------

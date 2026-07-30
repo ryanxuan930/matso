@@ -118,3 +118,48 @@ def test_a_never_stale_session_never_reports() -> None:
 
     assert cache.take_stale_change() is None
     assert cache.stale is False
+
+
+# ---- MSEL WEATHER_OVERRIDE（過去只落一筆 UNSUPPORTED，理由指向一張已完成的卡） ----
+
+
+def test_an_override_beats_the_plugin() -> None:
+    """統裁說「現在起下暴雨」就不該被下一次刷新蓋回去。"""
+    from app.engine.weather_wiring import WeatherCache
+    from app.weather import CellEffects, WeatherState
+
+    plugin = WeatherState.uniform(CellEffects(mobility_modifier=1.0))
+    storm = WeatherState.uniform(CellEffects(mobility_modifier=0.3))
+    cache = WeatherCache(lambda _t: plugin, refresh_ticks=1, initial=plugin)
+
+    cache.set_override(storm)
+    assert cache.at(5).effects_at("x").mobility_modifier == 0.3  # type: ignore[union-attr]
+    assert cache.at(6).effects_at("x").mobility_modifier == 0.3  # type: ignore[union-attr] # 刷新不蓋掉
+
+
+def test_an_override_expires_on_its_own() -> None:
+    from app.engine.weather_wiring import WeatherCache
+    from app.weather import CellEffects, WeatherState
+
+    plugin = WeatherState.uniform(CellEffects(mobility_modifier=1.0))
+    storm = WeatherState.uniform(CellEffects(mobility_modifier=0.3))
+    cache = WeatherCache(lambda _t: plugin, refresh_ticks=1, initial=plugin)
+
+    cache.set_override(storm, until_tick=10)
+
+    assert cache.at(10).effects_at("x").mobility_modifier == 0.3  # type: ignore[union-attr]
+    assert cache.at(11).effects_at("x").mobility_modifier == 1.0  # type: ignore[union-attr]
+
+
+def test_clearing_an_override_returns_to_the_plugin() -> None:
+    """`effects` 缺席＝解除，不是「套一份晴天」——後者會讓取消與注入晴天分不開。"""
+    from app.engine.weather_wiring import WeatherCache
+    from app.weather import CellEffects, WeatherState
+
+    plugin = WeatherState.uniform(CellEffects(mobility_modifier=0.8))
+    cache = WeatherCache(lambda _t: plugin, refresh_ticks=1, initial=plugin)
+
+    cache.set_override(WeatherState.uniform(CellEffects(mobility_modifier=0.3)))
+    cache.set_override(None)
+
+    assert cache.at(5).effects_at("x").mobility_modifier == 0.8  # type: ignore[union-attr]

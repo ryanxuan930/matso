@@ -104,6 +104,23 @@ def _load_yaml(path: Path, label: str) -> dict[str, Any]:
 FIXED_HEX_RESOLUTION = 8
 
 
+def _reject_weather_script(files: Any) -> None:
+    """想定宣告 `files.weather_script` → **當場拒載**。
+
+    契約有這個欄位，但 `rg -n "weather_script"` 全 repo 除了 schema 之外零命中：
+    載入器不讀、執行期沒有任何天氣腳本來源。宣告的暴雨腳本永遠不生效，
+    而想定作者不會知道——這正是這個 codebase 一再出事的那個型態。
+
+    在做出腳本引擎之前，明講拒收並指出**做得到的那條路**（MSEL `WEATHER_OVERRIDE`）。
+    """
+    if isinstance(files, dict) and files.get("weather_script"):
+        raise ScenarioError(
+            "files.weather_script 尚未實作：core 沒有任何天氣腳本來源，宣告了也不會生效。"
+            "演習中改天氣請用 MSEL 的 WEATHER_OVERRIDE 注入"
+            "（{action: WEATHER_OVERRIDE, effects: {...}, duration_ticks?}）。"
+        )
+
+
 def _validate_hex_resolution(raw: Any) -> int:
     value = int(raw)
     if value != FIXED_HEX_RESOLUTION:
@@ -177,6 +194,7 @@ def load_scenario_package(package_dir: str | Path) -> LoadedScenario:
     relations = _build_relations(sc.get("relations", []), faction_ids)
     _validate_victory(sc["victory_conditions"], faction_ids)
 
+    _reject_weather_script(sc.get("files", {}))
     units = _load_orbats(root, sc.get("files", {}).get("orbat", {}), faction_ids)
     msel = _load_msel(root, sc.get("files", {}).get("msel"))
     roe = _load_roe(root, sc.get("files", {}).get("roe"), faction_ids)
@@ -195,6 +213,7 @@ def load_scenario_bundle(bundle: dict[str, Any]) -> LoadedScenario:
     if not isinstance(sc, dict):
         raise ScenarioError("bundle: scenario 缺少或格式錯誤")
     _validate_schema(sc, "scenario.schema.json", "scenario")
+    _reject_weather_script(sc.get("files", {}))
     faction_ids = _validate_factions(sc["factions"])
     relations = _build_relations(sc.get("relations", []), faction_ids)
     _validate_victory(sc["victory_conditions"], faction_ids)

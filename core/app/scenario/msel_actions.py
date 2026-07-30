@@ -12,8 +12,9 @@
   （這正是 BL-4 那個回滾 bug 的同一個坑）。
 - `MESSAGE`：發一封 C2 信文給指定席位（白軍誘導迴圈的「狀況發佈」）。
 - `PAUSE`：設暫停旗標讓白軍講評。與控制台的 PAUSE 共用同一個 Redis 鍵。
-- `WEATHER_OVERRIDE`：目前只落帳，天氣的 tick 化屬 WP-C4。**明確不假裝有效**——
-  靜靜什麼都不做會讓想定作者以為天氣改了。
+- `WEATHER_OVERRIDE`：全場天氣覆蓋（WP-B2 × WP-C4b）。**覆蓋優先於插件**——統裁說
+  「現在起下暴雨」就不該被下一次刷新蓋回去。`effects` 缺席＝解除覆蓋，
+  `duration_ticks` 到期自動解除。
 
 不認得的型別**不當成錯誤**：注入本來就可以只是「發一則給人看的事件」，
 那是 MSEL 最原始的用法（inject 只落 Ledger）。
@@ -34,6 +35,7 @@ from app.models.enums import MessageKind, SeatRole, UnitLevel
 from app.models.tables import EquipmentInstance, EquipmentTemplate, Message, TacticalUnit
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
+from app.weather import WeatherState, effects_from
 
 _LOG = logging.getLogger("app.msel.actions")
 
@@ -43,6 +45,7 @@ def make_applier(
     session_factory: sessionmaker[Session],
     hot: HotStateStore,
     pause: Callable[[], None] | None = None,
+    set_weather: Callable[[Any, int | None], None] | None = None,
 ) -> Callable[[str, dict[str, Any], int], list[LedgerEvent]]:
     """組一個注入套用器。回傳的函式滿足 `msel_runtime.InjectApplier`。"""
 
@@ -65,15 +68,40 @@ def make_applier(
                 )
             ]
         if action == "WEATHER_OVERRIDE":
-            # **明確標記未實作**：靜靜什麼都不做，想定作者會以為天氣改了。
+            # WP-C4b 完成後這條終於做得到。**在此之前只落一筆 UNSUPPORTED**，
+            # 理由寫「待 WP-C4 天氣 tick 化」——而那張卡早就完成了：
+            # 白軍想在演習中注入暴雨仍然做不到。
+            if set_weather is None:
+                return [
+                    LedgerEvent(
+                        event_type="MSEL_INJECT_UNSUPPORTED",
+                        tick=tick,
+                        ai_decision={
+                            "msel_id": entry_id,
+                            "action": action,
+                            "reason": "本執行期未接天氣覆蓋（無 weather cache）",
+                        },
+                    )
+                ]
+            raw_effects = inject.get("effects")
+            duration = inject.get("duration_ticks")
+            until = (
+                tick + int(duration)
+                if isinstance(duration, (int, float)) and duration > 0
+                else None
+            )
+            # `effects` 缺席 ＝ **解除覆蓋**（回到插件的天氣），不是「套一份晴天」
+            # ——後者會讓「取消注入」與「注入晴天」在資料上分不開。
+            state = WeatherState.uniform(effects_from(raw_effects)) if raw_effects else None
+            set_weather(state, until)
             return [
                 LedgerEvent(
-                    event_type="MSEL_INJECT_UNSUPPORTED",
+                    event_type="MSEL_WEATHER_OVERRIDE",
                     tick=tick,
                     ai_decision={
                         "msel_id": entry_id,
-                        "action": action,
-                        "reason": "天氣覆蓋待 WP-C4 天氣 tick 化",
+                        "effects": raw_effects if isinstance(raw_effects, dict) else None,
+                        "until_tick": until,
                     },
                 )
             ]

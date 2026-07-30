@@ -442,3 +442,41 @@ def test_spawned_unit_gets_the_same_hot_state_keys_as_a_scenario_unit(session_fa
     assert not missing, f"增援缺少開局會播的鍵：{sorted(missing)}"
     assert spawned["platform_count"] > 1  # 預設 PLATOON 編制，不是「單體」
     assert spawned["footprint_m"] > 0
+
+
+def test_weather_override_actually_changes_the_weather(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """過去只落一筆 `MSEL_INJECT_UNSUPPORTED`，理由寫「待 WP-C4 天氣 tick 化」
+    ——**而那張卡早就完成了**。白軍想在演習中注入暴雨仍然做不到。"""
+    from app.scenario.msel_actions import make_applier
+    from app.state.hot_state import InMemoryHotState
+
+    captured: list[tuple[object, int | None]] = []
+    applier = make_applier(
+        "s1",
+        session_factory,
+        InMemoryHotState(),
+        set_weather=lambda st, until: captured.append((st, until)),
+    )
+
+    events = applier(
+        "storm",
+        {"action": "WEATHER_OVERRIDE", "effects": {"mobility_modifier": 0.3}, "duration_ticks": 60},
+        100,
+    )
+
+    assert [e.event_type for e in events] == ["MSEL_WEATHER_OVERRIDE"]
+    state, until = captured[0]
+    assert until == 160
+    assert state.effects_at("anything").mobility_modifier == 0.3  # type: ignore[union-attr]
+
+
+def test_weather_override_without_a_weather_cache_says_so(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """沒接天氣快取的執行期（測試/合成）→ 明講不支援，不假裝成功。"""
+    from app.scenario.msel_actions import make_applier
+    from app.state.hot_state import InMemoryHotState
+
+    events = make_applier("s1", session_factory, InMemoryHotState())(
+        "storm", {"action": "WEATHER_OVERRIDE", "effects": {"mobility_modifier": 0.3}}, 1
+    )
+
+    assert [e.event_type for e in events] == ["MSEL_INJECT_UNSUPPORTED"]

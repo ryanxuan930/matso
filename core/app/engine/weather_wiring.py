@@ -59,6 +59,19 @@ class WeatherCache:
         self._fetched_at: int | None = 0 if initial is not None else None
         # 上次回報過的過期狀態。**以 False 起始**——開局就拿到過期資料時要報一次。
         self._was_stale = False
+        # MSEL/白軍的天氣覆蓋（見 `set_override`）。None ＝無覆蓋（既有行為位元不變）。
+        self._override: WeatherState | None = None
+        self._override_until: int | None = None
+
+    def set_override(self, state: WeatherState | None, *, until_tick: int | None = None) -> None:
+        """白軍/MSEL 的天氣覆蓋（WP-B2 × WP-C4b）。`state=None` ＝解除。
+
+        **覆蓋優先於插件**：`at()` 在有效期內直接回這一份，連 fetch 都不做
+        ——統裁說「現在起下暴雨」，那就是下暴雨，不該被下一次刷新蓋回去。
+        `until_tick=None` ＝直到解除為止。
+        """
+        self._override = state
+        self._override_until = until_tick
 
     @property
     def stale(self) -> bool:
@@ -87,6 +100,10 @@ class WeatherCache:
         return self._refresh_ticks > 0
 
     def at(self, tick: int) -> WeatherState | None:
+        if self._override is not None:
+            if self._override_until is None or tick <= self._override_until:
+                return self._override
+            self._override = self._override_until = None  # 到期自動解除
         if not self.refreshes:
             return self._state
         due = self._fetched_at is None or tick - self._fetched_at >= self._refresh_ticks

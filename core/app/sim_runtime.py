@@ -330,6 +330,31 @@ def _autonomy_victory(raw: str | bytes | None) -> list[dict[str, Any]] | None:
     return [c for c in conds if isinstance(c, dict)] if isinstance(conds, list) and conds else None
 
 
+def _purge_smoke(factory: Any, session_id: str, tick: int) -> int:
+    """清過期煙幕的 row。另開 DB session——理由同 `_posture_tick`。"""
+    from app.engine.smoke_wiring import purge_expired_smoke
+
+    with factory() as db:
+        removed = purge_expired_smoke(db, session_id, tick)
+        if removed:
+            db.commit()
+        return removed
+
+
+def _session_wind(weather: WeatherState | None) -> tuple[float, float] | None:
+    """本局此刻的風（風速 m/s、來向度）。無天氣/無風 → None ＝煙不漂。
+
+    **取快照的第一格**：煙幕漂移是分鐘量級的效果，逐格查風的成本換不到可辨識的差別，
+    而「今天颳什麼風」在一個戰術 AO 內本來就近乎一致。
+    """
+    cells = getattr(weather, "_cells", None) if weather is not None else None
+    if not isinstance(cells, dict) or not cells:
+        return None
+    effects = next(iter(cells.values()))
+    wind_ms = float(getattr(effects, "wind_ms", 0.0) or 0.0)
+    return (wind_ms, float(getattr(effects, "wind_dir_deg", 0.0) or 0.0)) if wind_ms > 0 else None
+
+
 def _weapon_name(resolver: WeaponResolver, cmd: Any) -> str:
     """射手這次用的武器範本名（WP-B6 ROE 可依範本名禁用）。挑法與 `_weapon_category` 同。"""
     entries = resolver.weapons_for(cmd.shooter_id)
@@ -521,6 +546,13 @@ class SimManager:
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             # 位置在此是因為底下的感測器解析器要用 `intrinsic_optical_range_m`。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
+            # WP-C4b 天氣逐 tick 刷新。`weather_refresh_ticks=0`（預設）→ `refreshes` 為
+            # False → 整局沿用啟動快照＝既有行為，一個位元都不差。
+            weather_cache = WeatherCache(
+                _weather_snapshot_at,
+                refresh_ticks=sim_params.weather_refresh_ticks,
+                initial=_weather_snapshot(),
+            )
             # 播戰鬥狀態（血量/裝甲/彈藥/座標）入熱狀態：座標以 DB 為準，其餘僅補缺鍵
             # → 復原後的血量/彈藥不會被 DB 初值蓋掉。
             await asyncio.to_thread(seed_combat_state, engage_db, hot, session_id, resolver)
@@ -557,6 +589,8 @@ class SimManager:
                     self._factory,
                     hot,
                     pause=lambda: _set_pause(client, session_id),
+                    # WP-B2 × WP-C4b：白軍終於能在演習中注入暴雨。
+                    set_weather=lambda st, until: weather_cache.set_override(st, until_tick=until),
                 ),
             )
             if msel_entries:
@@ -592,20 +626,20 @@ class SimManager:
             # 底下每個消費端都整段跳過，既有局位元不變。
             _session_row = await asyncio.to_thread(engage_db.get, WargameSession, session_id)
             light_clock = LightClock(read_day_night(_session_row), start_minute(_session_row))
-            # WP-C4c 煙幕：逐 tick 一次 query 的快取（沒有煙 → 空 list → 一次幾何都不做）。
-            # **另開 DB session**：不可借用 engage_db，那條在 tick 之中被 order source commit。
-            smoke_cache = SmokeCache(self._factory, session_id)
-            # WP-C4b 天氣逐 tick 刷新。`weather_refresh_ticks=0`（預設）→ `refreshes` 為
-            # False → 整局沿用啟動快照＝既有行為，一個位元都不差。
-            weather_cache = WeatherCache(
-                _weather_snapshot_at,
-                refresh_ticks=sim_params.weather_refresh_ticks,
-                initial=_weather_snapshot(),
-            )
             if resumed.start_tick:
                 _LOG.info("session %s 自 tick=%d 續跑", session_id, resumed.start_tick)
             sim_clock = SimClock(  # #93 可調節奏
                 tick_rate_ms=tick_rate_ms, start_tick=resumed.start_tick
+            )
+            # WP-C4c 煙幕：逐 tick 一次 query 的快取（沒有煙 → 空 list → 一次幾何都不做）。
+            # **另開 DB session**：不可借用 engage_db，那條在 tick 之中被 order source commit。
+            smoke_cache = SmokeCache(
+                self._factory,
+                session_id,
+                # WP-C4c 煙隨風漂。`drift()` 有完整實作與測試、**生產零呼叫端**；
+                # 風場也一路讀進 `CellEffects` 卻沒有消費者。取煙幕落點所在格的風
+                # 太貴（每團煙一次查表），取快照的第一格已足以表達「今天颳什麼風」。
+                wind_for=lambda: _session_wind(weather_cache.at(sim_clock.now().tick)),
             )
             # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）；
             # WP-C5 起 STATE_DIFF 也改為**每陣營投影**（可見集 + 位置凍結），不再全廣播。
@@ -894,6 +928,12 @@ class SimManager:
                             )
                         ],
                     )
+                # WP-C4c：清掉過期的煙 row。`purge_expired_smoke` 過去**零呼叫端**——
+                # 過期的煙靠 `active_at()` 已經失效（不影響正確性），但 row 會一路累積，
+                # 而每一次 `load_active_smoke` 都要把它們撈出來再丟掉。
+                await asyncio.to_thread(
+                    _purge_smoke, self._factory, session_id, sim_clock.now().tick
+                )
                 # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
                 # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
                 await asyncio.to_thread(
