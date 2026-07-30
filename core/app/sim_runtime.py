@@ -465,6 +465,8 @@ class SimManager:
                             gateway=_engage_gateway(),
                             # WP-C10.4b BDA 誤差：獨立 stream（見 AreaFireAdjudicator 註解）。
                             bda_rng=rngs["bda"],
+                            # WP-C9：友軍傷亡的判準（含盟軍），不是字串相等。
+                            relations=relations,
                         ),
                     }
                 ),

@@ -20,6 +20,7 @@ import h3
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.adjudication.fratricide import blocks_engagement
 from app.adjudication.weapon import INDIRECT_CATEGORIES, WeaponProfile
 from app.factions import FactionRelations
 from app.models.enums import RequestKind, RequestStatus
@@ -358,7 +359,9 @@ def run_precheck(
         )
         checks.extend(_precheck_fire_approval(db, validated.unit, payload))
     elif isinstance(payload, EngagePayload):
-        checks = _precheck_engage(db, validated.unit, payload, gateway, rel)
+        checks = _precheck_engage(
+            db, validated.unit, payload, gateway, rel, _allow_fratricide(db, validated.unit)
+        )
         checks.extend(_precheck_no_strike(db, validated.unit, payload, acknowledge_restricted))
         checks.extend(_precheck_roe_weapon(db, validated.unit, payload))
         checks.extend(_precheck_fire_approval(db, validated.unit, payload))
@@ -371,6 +374,18 @@ def run_precheck(
     feasible = all(c.passed for c in checks)
     reason = None if feasible else next(c.detail for c in checks if not c.passed)
     return PrecheckResult(feasible=feasible, checks=checks, reason=reason)
+
+
+def _allow_fratricide(db: Session, unit: TacticalUnit) -> bool:
+    """本局是否開啟誤傷裁決（WP-C9）。NULL/查不到 → False（既有局語義）。
+
+    **每次下令現讀**而非快取：白軍可能局中改開關，快取會讓變更不生效
+    （同 WP-A3 禁射格集的紀律）。一次 `db.get` 的成本遠低於「規則沒生效」的代價。
+    """
+    from app.models.tables import WargameSession
+
+    session = db.get(WargameSession, unit.session_id)
+    return bool(session is not None and session.allow_fratricide)
 
 
 def precheck_error_code(result: PrecheckResult) -> str:
@@ -527,25 +542,31 @@ def _precheck_engage(
     payload: EngagePayload,
     gateway: PhysicsGateway,
     relations: FactionRelations,
+    allow_fratricide: bool = False,
 ) -> list[PrecheckCheck]:
     target = db.get(TacticalUnit, payload.target_unit_id)
     if target is None or target.session_id != unit.session_id:
         return [
             PrecheckCheck(name="target_exists", passed=False, detail="目標單位不存在於此 session")
         ]
-    # ROE：只能打敵對陣營（§12.1）——打盟軍/中立一律拒（friendly fire / 攻中立）。
+    # ROE（§12.1）。WP-C9：`allow_fratricide` 開啟時，對**自己陣營/盟軍**改為
+    # 強警告 + 照常放行（中立仍一律拒——見 `adjudication/fratricide.py` 的模組說明）。
     # 這條**只有在呼叫端注入了該局關係矩陣時才真的擋得住盟軍**（見 `run_precheck` 的警語）。
-    if not relations.is_hostile(unit.faction, target.faction):
-        rel = relations.relation(unit.faction, target.faction).value
-        detail = f"目標陣營關係為 {rel}，非敵對，禁止交戰"
-        return [PrecheckCheck(name="roe", passed=False, detail=detail)]
+    blocked, reason = blocks_engagement(
+        relations, unit.faction, target.faction, allow_fratricide=allow_fratricide
+    )
+    if blocked:
+        return [PrecheckCheck(name="roe", passed=False, detail=reason)]
+    # 放行但要留話。**不能靜靜通過**——這條路徑存在的意義就是「你確定嗎」。
+    # `passed=True` 故不影響 feasible，但會出現在 `PrecheckResult.checks` 讓前端顯示。
+    warn = [PrecheckCheck(name="fratricide_warning", passed=True, detail=reason)] if reason else []
     if (
         unit.current_lat is None
         or unit.current_lng is None
         or target.current_lat is None
         or target.current_lng is None
     ):
-        return [PrecheckCheck(name="position", passed=False, detail="射手或目標無座標")]
+        return [*warn, PrecheckCheck(name="position", passed=False, detail="射手或目標無座標")]
 
     # 聯合兵種（SPEC_EXTEND P4.5）：未指定單一武器且持 ≥2 武器 → 對武器組合逐件判可達，
     # **任一武器可打即 feasible**（例：直瞄被稜線擋，但頂攻飛彈免視線仍可交戰）。避免主武器
@@ -553,19 +574,19 @@ def _precheck_engage(
     if payload.weapon_id is None:
         combined = _weapon_profiles(db, unit)
         if len(combined) >= 2:
-            return _precheck_engage_any(db, unit, target, gateway, payload, combined)
+            return [*warn, *_precheck_engage_any(db, unit, target, gateway, payload, combined)]
 
     # 解析武器（決定可達性檢查型別：直瞄 LOS / 間瞄免視線 / 飛彈射程或拋物線淨空）。
     profile, tmpl, weapon_fail = _resolve_weapon(db, unit, payload)
     if weapon_fail is not None:
-        return [weapon_fail]
+        return [*warn, weapon_fail]
 
     reach = _reachability_check(db, unit, target, profile, gateway)
     if not reach.passed:
-        return [reach]
+        return [*warn, reach]
     if profile is None or tmpl is None:
-        return [reach]  # 無裝備 → 僅 LOS（維持既有測試綠）
-    return [reach, *_range_ammo_checks(unit, target, profile, tmpl, payload)]
+        return [*warn, reach]  # 無裝備 → 僅 LOS（維持既有測試綠）
+    return [*warn, reach, *_range_ammo_checks(unit, target, profile, tmpl, payload)]
 
 
 def _inst_ammo(inst: EquipmentInstance) -> int:

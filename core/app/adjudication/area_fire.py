@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -137,6 +138,7 @@ def resolve_area_fire(
     *,
     shooter_id: str,
     shooter_faction: str | None = None,
+    is_friendly_faction: Callable[[str], bool] | None = None,
     rounds: int = 1,
     dispersion_mult: float = 1.0,
 ) -> AreaFireResult:
@@ -145,8 +147,13 @@ def resolve_area_fire(
     `rounds` 為齊射發數：每發各自抽落點，損失累加——這才是「多發覆蓋一片」的語意，
     用一發乘以 N 會讓散布消失（等於打得比實際準）。
 
-    `shooter_faction` 有給時，事件會另外標出**同陣營的傷亡**（誤傷）。這件事必須落在帳本上：
+    `shooter_faction` 有給時，事件會另外標出**友軍傷亡**（誤傷）。這件事必須落在帳本上：
     面射擊本來就會傷到自己人，而「有沒有傷到自己人」正是事後檢討火力協調的第一個問題。
+
+    ⚠ **友軍 ≠ 同陣營字串相等**。第一版是 `by_id[uid].faction == shooter_faction`，
+    於是聯軍誤傷（BLUE 打到 GREEN 盟軍）不會被標成友軍傷亡——AAR 上看起來像正常戰果。
+    改由呼叫端注入 `is_friendly_faction`（關係矩陣是唯一判準，WP-C9）；
+    未注入時**退回字串比較**以維持既有呼叫端的行為不變。
 
     `dispersion_mult` 是**觀測修正**（WP-C10.4）：射擊陣營對落點沒有觀測時由呼叫端傳 2.0
     ——沒有前觀就沒有彈著修正，散布加倍。判定「有沒有人在看」是 I/O（要查地形 LOS），
@@ -193,10 +200,11 @@ def resolve_area_fire(
         "impacts": [[la, ln] for la, ln in impacts],
     }
     if shooter_faction is not None:
+        same = is_friendly_faction or (lambda f: f == shooter_faction)
         friendly = sorted(
             uid
             for uid, v in losses.items()
-            if v > 0 and by_id[uid].faction == shooter_faction and uid != shooter_id
+            if v > 0 and same(by_id[uid].faction) and uid != shooter_id
         )
         decision["friendly_losses"] = friendly
     event = LedgerEvent(

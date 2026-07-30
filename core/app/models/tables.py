@@ -88,6 +88,9 @@ class WargameSession(Base):
     indirect_fire_requires_approval: Mapped[bool | None] = mapped_column(
         "indirectFireRequiresApproval", Boolean
     )
+    # WP-C9：NULL＝未宣告＝維持既有「非敵對一律拒」。**不可設 NOT NULL + default**，
+    # 那會回頭改掉每一個進行中的既有局的語義。
+    allow_fratricide: Mapped[bool | None] = mapped_column("allowFratricide", Boolean)
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "orbatEditFactions", JSON, nullable=True
     )

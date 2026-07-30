@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.adjudication.area_fire import AreaTarget, resolve_area_fire
 from app.adjudication.bda import build_bda_event
 from app.adjudication.effectiveness import effectiveness_pct
+from app.adjudication.fratricide import is_friendly
 from app.adjudication.weapon import INDIRECT_CATEGORIES
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
@@ -35,6 +36,7 @@ from app.engine.engage_wiring import WeaponEntry
 from app.engine.formation_wiring import FORMATION_KEY
 from app.engine.rng import DeterministicRNG
 from app.engine.suppression_wiring import POSTURE_KEY, apply_area_suppression
+from app.factions.relations import FactionRelations
 from app.fires.survivability import MISSION_COUNT_KEY
 from app.models.enums import OrderStatus
 from app.models.tables import EquipmentInstance, Order, TacticalUnit
@@ -186,6 +188,7 @@ class AreaFireAdjudicator:
         faction_for: Callable[[str], str] | None = None,
         gateway: object | None = None,
         bda_rng: DeterministicRNG | None = None,
+        relations: FactionRelations | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -198,6 +201,9 @@ class AreaFireAdjudicator:
         # 「這次有沒有前觀」會決定抽樣次數，於是前觀死不死會改變後續每一發的落點。
         # None → 不發 BDA（既有測試/呼叫端零行為變更）。
         self._bda_rng = bda_rng
+        # WP-C9：判「誰是友軍」的唯一判準。None → 退回字串相等（既有行為不變），
+        # 但那對聯軍是錯的——盟軍傷亡會被算成正常戰果。正式路徑一定要注入。
+        self._relations = relations
 
     def resolve(self, order: FireMissionCommand, now: SimTime) -> list[LedgerEvent]:
         shooter = self._hot.get_unit(order.shooter_id)
@@ -234,6 +240,8 @@ class AreaFireAdjudicator:
             now.tick,
             shooter_id=order.shooter_id,
             shooter_faction=shooter_faction,
+            # WP-C9：友軍＝關係矩陣說的友軍（含盟軍），不是字串相等。
+            is_friendly_faction=self._friendly_test(shooter_faction),
             rounds=fired,
             dispersion_mult=dispersion_multiplier(verdict),
         )
@@ -258,7 +266,59 @@ class AreaFireAdjudicator:
         if event is None:
             return []
         bda = self._bda_event(order, verdict, shooter_faction, aim, result.losses, now)
-        return [event, bda] if bda is not None else [event]
+        out = [event, bda] if bda is not None else [event]
+        return [*out, *self._fratricide_events(order, shooter_faction, result, now)]
+
+    def _fratricide_events(
+        self, order: Any, shooter_faction: str | None, result: Any, now: SimTime
+    ) -> list[LedgerEvent]:
+        """誤傷了誰 → 每個受害單位**各一筆** `FRATRICIDE`（WP-C9）。
+
+        ## 為什麼一個受害者一筆，不是一筆總結
+
+        `event_audience` 由 `initiator_id`/`target_id` 的陣營推導受眾，**兩者都取不到陣營時
+        回 None ＝全域廣播**。做成一筆總結事件（受害者塞進 `ai_decision`、`target_id` 留空）
+        的話，聯軍誤傷會直接播給敵軍——他們立刻知道對面在自相殘殺。
+        一個受害者一筆並填上 `target_id`，受眾自然收斂成「射手陣營 + 受害者陣營」。
+
+        ## 為什麼不是靠 AREA_FIRE_RESOLVED 的 `friendly_losses` 就好
+
+        那個欄位在 AAR 會被 `_FOGGED_DECISION_KEYS` 整個剝掉（對非全知觀點），
+        而誤傷正是**當責者最需要看到**的一件事。獨立事件才有自己的受眾與書籤。
+        """
+        if not shooter_faction:
+            return []
+        friendly = result.event.ai_decision.get("friendly_losses") if result.event else None
+        if not friendly:
+            return []
+        losses = result.losses or {}
+        return [
+            LedgerEvent(
+                event_type="FRATRICIDE",
+                tick=now.tick,
+                initiator_id=order.shooter_id,
+                target_id=victim,
+                damage_calc=round(float(losses.get(victim, 0.0)), 3),
+                # `ai_decision` 入 hash chain；`detail` 不入（可被竄改而不觸發 verify）。
+                # 誤傷是要追究責任的事，證據一定放前者。
+                ai_decision={
+                    "cause": "AREA_FIRE",
+                    "shooter_faction": shooter_faction,
+                    "order_id": getattr(order, "order_id", None),
+                },
+            )
+            for victim in friendly
+        ]
+
+    def _friendly_test(self, shooter_faction: str | None) -> Callable[[str], bool] | None:
+        """「這個陣營算不算射手的友軍」——注入給 `resolve_area_fire`（WP-C9）。
+
+        沒有射手陣營或沒有關係矩陣 → None，純函數退回字串相等（既有行為不變）。
+        """
+        relations = self._relations
+        if not shooter_faction or relations is None:
+            return None
+        return lambda f: is_friendly(relations, shooter_faction, f)
 
     def _bda_event(
         self,

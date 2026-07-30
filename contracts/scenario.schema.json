@@ -245,6 +245,10 @@
       },
       "additionalProperties": false
     },
+    "allow_fratricide": {
+      "type": "boolean",
+      "description": "友軍誤傷裁決（WP-C9）：開啟時對**自己陣營/盟軍**的 ENGAGE 不再被 ROE 拒絕，改為強警告＋照常裁決＋記 FRATRICIDE 事件供 AAR 追究。**不涵蓋中立方**（攻中立仍一律拒）。面射擊（FIRE_MISSION）不受本開關影響——砲彈不挑陣營，殺傷半徑內友軍本來就會受傷。省略＝false＝維持既有的「非敵對一律拒」（既有想定零變更）。"
+    },
     "indirect_fire_requires_approval": {
       "type": "boolean",
       "description": "曲射火協（WP-B5.3）：開啟時 ARTILLERY/MISSILE 的 ENGAGE 令須掛已核准的 FIRE_SUPPORT 申請單，否則預檢拒絕。省略＝false＝不設限（既有想定零變更）。"

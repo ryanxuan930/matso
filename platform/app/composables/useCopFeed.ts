@@ -55,6 +55,12 @@ export function useCopFeed(units: () => UnitView[]) {
       const blind = payload?.observation === 'UNOBSERVED' ? '（無觀測，散布加倍）' : ''
       return `面射擊落彈 ${ini}${rounds}${blind}`
     }
+    // WP-C9 誤傷。**用最直白的字**——這一列在檢討會上要一眼認得出來，
+    // 而且它的受眾已由後端收斂成射手陣營與受害陣營（見 fire_wiring._fratricide_events）。
+    if (type === 'FRATRICIDE') {
+      const cause = payload?.cause === 'AREA_FIRE' ? '面射擊' : '交戰'
+      return `⚠ 友軍誤傷（${cause}）${ini} → ${tgt}`
+    }
     // WP-C10.4b：戰果評估。**永遠標「約」與誤差帶**——這是觀測者看到的，不是事實。
     if (type === 'BDA_REPORT') {
       const est = Number(payload?.estimated_losses ?? 0)

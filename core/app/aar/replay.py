@@ -22,6 +22,8 @@ BOOKMARK_TYPES = frozenset(
         "ROLLBACK",
         "REINFORCEMENT",
         "FORCE_COLLAPSE",
+        # WP-C9：誤傷是檢討會最該停下來看的一格。
+        "FRATRICIDE",
     }
 )
 

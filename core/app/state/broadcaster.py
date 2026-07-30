@@ -107,6 +107,10 @@ def build_event_envelope(
         "estimated_losses",
         "is_estimate",
         "error_band",
+        # WP-C9 誤傷：沒列進這個 allowlist 的話，FRATRICIDE 到了 COP 只剩一個
+        # 沒有內容的空殼（型別對、什麼都看不到）。
+        "cause",
+        "shooter_faction",
     ):
         if isinstance(event.ai_decision, dict) and k in event.ai_decision:
             payload[k] = event.ai_decision[k]
