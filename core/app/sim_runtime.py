@@ -42,6 +42,7 @@ from app.engine.formation_wiring import drain_formation_orders
 from app.engine.kernel import Kernel
 from app.engine.logistics import ResupplySystem
 from app.engine.movement import UnitMovementSystem
+from app.engine.obstacle_wiring import drain_engineer_orders
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
 from app.engine.subsystems import ChainedOrderSource, DispatchingAdjudicator
@@ -184,6 +185,16 @@ def _formation_tick(factory: Any, session_id: str, hot: Any, tick: int) -> int:
     """FORMATION 令的執行（WP-C3）。另開 DB session——理由同 `_posture_tick`。"""
     with factory() as db:
         return drain_formation_orders(db, session_id, hot, tick)
+
+
+def _engineer_tick(factory: Any, session_id: str, tick: int) -> list[Any]:
+    """ENGINEER 令的執行（WP-C2）。另開 DB session——理由同 `_posture_tick`。
+
+    與 POSTURE/FORMATION 不同：這個會回帳本事件（破障/設障是**發生過的事**，
+    不是一個狀態宣告），故由呼叫端交給 LedgerWriter（pre_tick 不在 Kernel 的事件蒐集路徑上）。
+    """
+    with factory() as db:
+        return drain_engineer_orders(db, session_id, tick)
 
 
 def _suppress_hit(hot: Any, unit_id: str, category: str) -> None:
@@ -588,6 +599,12 @@ class SimManager:
                 await asyncio.to_thread(
                     _formation_tick, self._factory, session_id, hot, sim_clock.now().tick
                 )
+                # WP-C2 障礙作業令。與上面兩個不同：破障/設障要工時，且會產生帳本事件。
+                eng = await asyncio.to_thread(
+                    _engineer_tick, self._factory, session_id, sim_clock.now().tick
+                )
+                if eng:
+                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, eng)
                 # WP-C10.5 陣地變換：打夠次數的砲自動換位置。事件走 LedgerWriter，
                 # 因為 pre_tick 不在 Kernel 的事件蒐集路徑上。
                 moves = await asyncio.to_thread(_displacement_tick, sim_clock.now().tick)

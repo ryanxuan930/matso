@@ -29,6 +29,9 @@ class OrderType(enum.StrEnum):
     # 三個令型會讓席位表、payload 表、預檢分派、前端下拉各多兩個分支，
     # 而它們表達的是同一件事——宣告本單位要以什麼狀態行動（與 POSTURE 同類）。
     FORMATION = "FORMATION"
+    # 障礙作業（WP-C2）。規格寫「BREACH/EMPLACE 令」，同 FORMATION 的理由收成**一個令型**：
+    # 兩者是同一件事——工兵對障礙做工，都要工兵、都要時間、都改同一張 MapFeature。
+    ENGINEER = "ENGINEER"
 
 
 class OrderRequest(BaseModel):
@@ -102,6 +105,33 @@ class FormationPayload(BaseModel):
     def _at_least_one(self) -> FormationPayload:
         if self.formation is None and self.mounted is None:
             raise ValueError("formation 與 mounted 至少要指定一項")
+        return self
+
+
+class EngineerPayload(BaseModel):
+    """ENGINEER 指令載荷（WP-C2）：破障或設障。
+
+    BREACH 指定既有標註（`feature_id`）；EMPLACE 指定要在哪裡設什麼
+    （`obstacle_type` + 座標）。兩組欄位互斥，**在這裡就擋掉**——
+    形狀錯的令若等到 pre_tick 才發現，就只能靜靜作廢，下令者永遠不知道為什麼沒動。
+    """
+
+    action: str = Field(pattern="^(BREACH|EMPLACE)$")
+    feature_id: str | None = None
+    obstacle_type: str | None = Field(
+        default=None, pattern="^(MINEFIELD|WIRE|TANK_DITCH|ABATIS|BRIDGE_DEMO)$"
+    )
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+    radius_m: float = Field(default=200.0, gt=0, le=5000)
+
+    @model_validator(mode="after")
+    def _shape_matches_action(self) -> EngineerPayload:
+        if self.action == "BREACH":
+            if not self.feature_id:
+                raise ValueError("BREACH 需要 feature_id")
+        elif self.obstacle_type is None or self.lat is None or self.lng is None:
+            raise ValueError("EMPLACE 需要 obstacle_type 與 lat/lng")
         return self
 
 

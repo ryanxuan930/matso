@@ -26,10 +26,12 @@ from app.models.enums import RequestKind, RequestStatus
 from app.models.tables import (
     EquipmentInstance,
     EquipmentTemplate,
+    MapFeature,
     Request,
     TacticalUnit,
     WargameSession,
 )
+from app.movement.attrition import haversine_m
 from app.movement.mobility import resolve_unit_mobility
 from app.orders.mission import (
     DefendParams,
@@ -40,6 +42,7 @@ from app.orders.no_strike import ZoneClass, load_no_strike_cells
 from app.orders.roe import load_session_roe
 from app.orders.schemas import (
     EngagePayload,
+    EngineerPayload,
     FireMissionPayload,
     MovePayload,
     PrecheckCheck,
@@ -88,6 +91,10 @@ _CHECK_ERROR_CODES = {
     # WP-B6 想定 ROE 禁用武器（明確指名被禁武器的令）。與友軍誤傷共用 ROE 違規碼。
     "roe_weapon": "ORDER_ROE_VIOLATION",
     "fire_approval": "ORDER_FIRE_APPROVAL_REQUIRED",
+    # WP-C2 障礙作業：非工兵單位 / 不在障礙旁 / 標的不存在。
+    "engineer_qualified": "ORDER_ROE_VIOLATION",
+    "engineer_target": "ORDER_TARGET_NOT_FOUND",
+    "engineer_proximity": "ORDER_OUT_OF_RANGE",
 }
 
 
@@ -354,6 +361,8 @@ def run_precheck(
         checks.extend(_precheck_fire_approval(db, validated.unit, payload))
     elif isinstance(payload, MissionPayload):
         checks = _precheck_mission(db, validated.unit, payload, gateway)
+    elif isinstance(payload, EngineerPayload):
+        checks = _precheck_engineer(db, validated.unit, payload)
     else:
         checks = []  # 其餘類型（RECON/RESUPPLY/POSTURE）之物理檢查於 O3.x
     feasible = all(c.passed for c in checks)
@@ -410,6 +419,86 @@ def _mission_objective(payload: MissionPayload) -> tuple[float, float] | None:
     if isinstance(params, DefendParams):
         return params.area.lat, params.area.lng
     return None
+
+
+# WP-C2：工兵得站在障礙旁才能作業。半徑外的「遙控破障」是一個按鈕，不是一次工兵作業。
+_ENGINEER_REACH_M = 500.0
+
+
+def _precheck_engineer(
+    db: Session, unit: TacticalUnit, payload: EngineerPayload
+) -> list[PrecheckCheck]:
+    """WP-C2 障礙作業預檢：要是工兵、標的要存在、人要在旁邊。
+
+    **在下令時就擋**，而不是等到 pre_tick 靜靜作廢——工兵令要花數十分鐘，
+    下令者若到收工才發現「這個單位不是工兵」，那段時間已經回不來了。
+    """
+    from app.engine.obstacle_wiring import is_engineer
+
+    checks = [
+        PrecheckCheck(
+            name="engineer_qualified",
+            passed=is_engineer(unit.attributes),
+            detail=(
+                "障礙作業需工兵單位（ORBAT attributes.unit_kind=ENGINEER）"
+                if not is_engineer(unit.attributes)
+                else "工兵單位"
+            ),
+        )
+    ]
+    if unit.current_lat is None or unit.current_lng is None:
+        checks.append(PrecheckCheck(name="position", passed=False, detail="單位無座標"))
+        return checks
+    if payload.action == "BREACH":
+        feature = db.get(MapFeature, payload.feature_id or "")
+        if feature is None or feature.session_id != unit.session_id:
+            checks.append(
+                PrecheckCheck(name="engineer_target", passed=False, detail="找不到該障礙標註")
+            )
+            return checks
+        target = _feature_centroid(feature)
+        if target is None:
+            checks.append(
+                PrecheckCheck(name="engineer_target", passed=False, detail="該標註無有效幾何")
+            )
+            return checks
+    else:
+        target = (float(payload.lat or 0.0), float(payload.lng or 0.0))
+    dist = haversine_m((unit.current_lng, unit.current_lat), (target[1], target[0]))
+    checks.append(
+        PrecheckCheck(
+            name="engineer_proximity",
+            passed=dist <= _ENGINEER_REACH_M,
+            detail=f"距作業點 {dist:.0f} m（上限 {_ENGINEER_REACH_M:.0f} m）",
+        )
+    )
+    return checks
+
+
+def _feature_centroid(feature: MapFeature) -> tuple[float, float] | None:
+    """標註幾何 → (lat, lng) 代表點。認不得的形狀回 None 而不是 (0,0)——
+    幾何壞掉時回赤道外海，會讓 proximity 檢查以「距離 10000 km」的形式報錯，
+    真正的原因（幾何壞了）就被蓋掉了。"""
+    coords = feature.geometry
+    if isinstance(coords, dict):
+        coords = coords.get("coordinates")
+    if not isinstance(coords, list) or not coords:
+        return None
+    pts: list[list[float]] = []
+    stack: list[object] = [coords]
+    while stack:
+        node = stack.pop()
+        if (
+            isinstance(node, list)
+            and len(node) >= 2
+            and all(isinstance(v, (int, float)) for v in node[:2])
+        ):
+            pts.append([float(node[0]), float(node[1])])
+        elif isinstance(node, list):
+            stack.extend(node)
+    if not pts:
+        return None
+    return (sum(p[1] for p in pts) / len(pts), sum(p[0] for p in pts) / len(pts))
 
 
 def _precheck_move(
@@ -674,7 +763,6 @@ def _ballistic_trajectory_check(
 def _load_arc_obstacles(db: Session, session_id: str) -> list[ArcObstacle]:
     """載入本 session 可阻擋拋物線的障礙（障礙/建築/地形，含 attributes.height_m）。"""
     from app.adjudication.trajectory import ArcObstacle
-    from app.models.tables import MapFeature
 
     rows = db.execute(select(MapFeature).where(MapFeature.session_id == session_id)).scalars().all()
     out: list[ArcObstacle] = []

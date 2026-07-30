@@ -36,6 +36,11 @@ class Obstacle:
     coords: tuple[tuple[float, float], ...]  # [(lng,lat), …]；POINT 為單點
     label: str | None = None
     radius_m: float = 0.0  # POINT 影響半徑（influence_radius_m）
+    # WP-C2 障礙語意。**全部中性預設**——既有標註沒有這些屬性，行為一個位元都不差
+    # （仍只走既有的強穿耗損路徑）。
+    obstacle_type: str | None = None  # MINEFIELD/WIRE/TANK_DITCH/ABATIS/BRIDGE_DEMO
+    density: float = 1.0  # 雷區密度倍率
+    breached: bool = False  # 已破障 → 裁決失效
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +86,9 @@ def obstacle_from_feature(feat: dict[str, Any]) -> Obstacle | None:
     if not coords:
         return None
     radius = feat.get("influence_radius_m")
+    raw_attrs = feat.get("attributes")
+    attrs: dict[str, Any] = raw_attrs if isinstance(raw_attrs, dict) else {}
+    density = attrs.get("density")
     return Obstacle(
         feature_id=str(feat.get("id") or ""),
         kind=kind,
@@ -88,6 +96,10 @@ def obstacle_from_feature(feat: dict[str, Any]) -> Obstacle | None:
         coords=coords,
         label=(str(feat["label"]) if feat.get("label") else None),
         radius_m=float(radius) if isinstance(radius, (int, float)) else 0.0,
+        # WP-C2：未宣告的一律 None/預設 → 中性（見 `adjudication/obstacles.py`）。
+        obstacle_type=(str(attrs["obstacle_type"]) if attrs.get("obstacle_type") else None),
+        density=float(density) if isinstance(density, (int, float)) and density > 0 else 1.0,
+        breached=bool(attrs.get("breached")),
     )
 
 
@@ -204,6 +216,16 @@ def _segment_hits_obstacle(s0: tuple[float, float], s1: tuple[float, float], obs
     if obs.geometry_type == "POINT" and obs.radius_m > 0.0:
         return _dist_point_to_segment_m(obs.coords[0], s0, s1) <= obs.radius_m
     return False
+
+
+def obstacles_at(point: tuple[float, float], obstacles: Iterable[Obstacle]) -> list[Obstacle]:
+    """此刻**站在**哪些阻礙裡（WP-C2 的逐 tick 判定）。
+
+    與 `classify_crossings`（整條路徑穿過哪些）不同：那是下令時的規劃資訊，
+    這是執行期「這一步踩在什麼上面」。用退化線段（起訖同點）重用同一套幾何判定，
+    **不另寫一份點位測試**——兩份幾何必然漂移。
+    """
+    return [obs for obs in obstacles if _segment_hits_obstacle(point, point, obs)]
 
 
 def classify_crossings(

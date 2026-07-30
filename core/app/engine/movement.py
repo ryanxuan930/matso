@@ -23,10 +23,18 @@ from sqlalchemy.orm import sessionmaker
 
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.formation import formation_of, march_speed_modifier
+from app.adjudication.obstacles import MINE_STRIKE_STRENGTH_LOSS
 from app.adjudication.suppression import move_modifier
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.formation_wiring import FORMATION_KEY
+from app.engine.obstacle_wiring import (
+    apply_mine_suppression,
+    is_engineer,
+    roll_mine_strike,
+    transit_speed_multiplier,
+    typed,
+)
 from app.engine.rng import DeterministicRNG
 from app.engine.suppression_wiring import SUPPRESSION_KEY, interrupt_posture
 from app.models import MapFeature, Order, OrderStatus, TacticalUnit
@@ -35,6 +43,7 @@ from app.movement.attrition import (
     classify_crossings,
     forced_extra_attrition,
     obstacle_from_feature,
+    obstacles_at,
     route_distance_m,
 )
 from app.movement.fuel import UnitFuel, burn_fuel, load_unit_fuel
@@ -220,7 +229,13 @@ class UnitMovementSystem:
                         continue
                 before = (float(unit.current_lat or 0.0), float(unit.current_lng or 0.0))
                 cap = fuel.range_km() if fuel is not None and fuel.needs_fuel else None
-                ev = self._advance_unit(o, unit, p, targets, now, fuel_cap_km=cap)
+                # WP-C2：逐 tick 障礙裁決需要當局的障礙清單。與強穿耗損共用同一份
+                # lazy 載入（一 tick 至多一次 query）。
+                if obstacles is None:
+                    obstacles = self._load_obstacles(db)
+                ev = self._advance_unit(
+                    o, unit, p, targets, now, fuel_cap_km=cap, obstacles=obstacles
+                )
                 if ev is not None:
                     events.append(ev)
                 if fuel is not None and fuel.needs_fuel:
@@ -278,6 +293,7 @@ class UnitMovementSystem:
         targets: list[tuple[float, float]],
         now: SimTime,
         fuel_cap_km: float | None = None,
+        obstacles: list[Obstacle] | None = None,
     ) -> LedgerEvent | None:
         leg = payload.get("_leg", 0)
         leg = int(leg) if isinstance(leg, (int, float)) else 0
@@ -320,6 +336,20 @@ class UnitMovementSystem:
                 if cost is None:
                     return self._block_impassable(o, unit, cell, prof, now)
                 step_km /= cost  # 成本↑＝越難走＝步距縮短
+        # WP-C2：站在障礙裡 → 速度倍率（鐵絲網/戰車壕 ×0.1）。**在道路加速之後**乘：
+        # 障礙就是拿來卡住道路的，讓道路基準把它蓋掉等於障礙對主要接近路線無效。
+        here = typed(obstacles or [])
+        if here:
+            here = obstacles_at((cur_lng, cur_lat), here)
+        if here:
+            engineer = is_engineer(unit.attributes)
+            step_km *= transit_speed_multiplier(here, engineer=engineer)
+            ev_mine = self._roll_mine(unit, here, step_km, engineer, now)
+            if ev_mine is not None:
+                # 觸雷 → 本令**停在原地結束**（COMPLETED），要繼續得重下令。
+                # 「炸完照走」會讓雷區只剩扣血，失去它真正的價值：把縱隊釘住。
+                o.status = OrderStatus.COMPLETED
+                return ev_mine
         # #84：本 tick 行程不得超過剩餘油量所能支撐的距離（開到沒油就停在那裡，不會超跑）。
         if fuel_cap_km is not None:
             step_km = min(step_km, max(0.0, fuel_cap_km))
@@ -355,6 +385,48 @@ class UnitMovementSystem:
             tick=now.tick,
             initiator_id=o.unit_id,
             detail={"order_id": o.id, "lat": nlat, "lng": nlng},
+        )
+
+    def _roll_mine(
+        self,
+        unit: TacticalUnit,
+        here: list[Obstacle],
+        step_km: float,
+        engineer: bool,
+        now: SimTime,
+    ) -> LedgerEvent | None:
+        """WP-C2 觸雷：扣戰力 + 壓制 + 停止。沒觸雷回 None。
+
+        用 stream="movement"（與強穿耗損同串流）。`self._rng is None` 的路徑（無 RNG 的
+        測試/重播）一律不觸雷——寧可不炸也不要用非決定性的來源補。
+        """
+        if self._rng is None:
+            return None
+        hit = roll_mine_strike(here, step_km, self._rng, engineer=engineer)
+        if hit is None:
+            return None
+        before = float(unit.current_strength)
+        after = max(0.0, before - MINE_STRIKE_STRENGTH_LOSS)
+        unit.current_strength = after
+        authorized = float(unit.authorized_strength) or 100.0
+        self._hot_state.update_unit(
+            unit.id, {"strength": after, "health": effectiveness_pct(after / authorized)}
+        )
+        apply_mine_suppression(self._hot_state, unit.id)
+        return LedgerEvent(
+            event_type="MINE_STRIKE",
+            tick=now.tick,
+            initiator_id=unit.id,
+            damage_calc=before - after,
+            detail={
+                "feature_id": hit.feature_id,
+                "label": hit.label,
+                "engineer": engineer,
+                "strength_before": before,
+                "strength_after": after,
+                "lat": float(unit.current_lat or 0.0),
+                "lng": float(unit.current_lng or 0.0),
+            },
         )
 
     @staticmethod

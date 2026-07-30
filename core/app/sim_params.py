@@ -27,6 +27,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.adjudication import formation as _formation
+from app.adjudication import obstacles as _obs
 from app.adjudication import suppression as _sup
 from app.movement import params as _mp
 
@@ -85,6 +86,15 @@ class SimParams:
     crew_casualty_fraction: float = _formation.CREW_CASUALTY_FRACTION
     # 下車的受彈面（乘車＝1.0 為基準）。
     dismounted_exposure: float = _formation.DISMOUNTED_EXPOSURE
+    # --- 障礙與工兵（WP-C2）---
+    # 每公里觸雷機率（雷區）。**這是本卡唯一會擲骰的係數**——調它等於調雷區的殺傷力。
+    mine_strike_p_per_km: float = _obs.OBSTACLE_EFFECTS[
+        _obs.ObstacleType.MINEFIELD
+    ].mine_strike_p_per_km
+    # 觸雷戰損（戰力點）。
+    mine_strike_strength_loss: float = _obs.MINE_STRIKE_STRENGTH_LOSS
+    # 工兵通過雷區的機率倍率（規格：減半）。
+    engineer_mine_strike_mult: float = _obs.ENGINEER_MINE_STRIKE_MULT
     # --- 崩潰復原（WP-E1）---
     # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），
     # 而牆鐘會隨 TickPacer 的過載降頻漂移。600 tick ≈ 5 分鐘牆鐘（@ 預設 0.5s/tick）。

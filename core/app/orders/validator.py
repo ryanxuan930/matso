@@ -23,6 +23,7 @@ from app.models.tables import SessionParticipant, TacticalUnit, WargameSession
 from app.orders.mission import MissionPayload
 from app.orders.schemas import (
     EngagePayload,
+    EngineerPayload,
     FireMissionPayload,
     FormationPayload,
     MovePayload,
@@ -44,6 +45,7 @@ _PAYLOAD_MODELS: dict[
         | PosturePayload
         | MissionPayload
         | FormationPayload
+        | EngineerPayload
     ],
 ] = {
     OrderType.MOVE: MovePayload,
@@ -55,6 +57,7 @@ _PAYLOAD_MODELS: dict[
     # 之中的分解時才炸——而 `run_tick` 對子系統例外沒有任何防護。
     OrderType.MISSION: MissionPayload,
     OrderType.FORMATION: FormationPayload,
+    OrderType.ENGINEER: EngineerPayload,
 }
 
 
@@ -69,6 +72,7 @@ class ValidatedOrder:
         | PosturePayload
         | MissionPayload
         | FormationPayload
+        | EngineerPayload
         | dict[str, object]
     )
 
@@ -156,6 +160,7 @@ def _parse_payload(
     | PosturePayload
     | MissionPayload
     | FormationPayload
+    | EngineerPayload
     | dict[str, object]
 ):
     model = _PAYLOAD_MODELS.get(req.order_type)
