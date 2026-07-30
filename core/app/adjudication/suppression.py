@@ -26,6 +26,11 @@ MAX_SUPPRESSION = 1.0
 #
 # 選 0.7 不是 0.85：後者要 29 分鐘才清得掉，那讓一次砲擊的壓制效果長得像戰損。
 # 真實的壓制在火力一停就開始鬆動——抬頭、重新據槍是分鐘級的事。
+#
+# **權威在這裡**：`sim_params.py` 的 `DEFAULTS.suppression_decay` 直接引用本常數，
+# golden `suppression_defense_60` 也是以 0.7 錄的。契約的說明曾寫「預設 0.85」，
+# 照那個數字算的 client 會全部算錯；已對齊為 0.7，並由
+# `test_contract_default_matches_the_constant` 釘住兩邊不再漂開。
 SUPPRESSION_DECAY = 0.7
 
 # 命中一次累積多少壓制。砲兵高、直射低——這正是「砲兵用來壓制、步槍用來殺傷」的模型化。

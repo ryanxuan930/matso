@@ -53,6 +53,52 @@ export interface AarReport {
   citations: { valid: boolean; invalid_seqs: number[] }
 }
 
+/** 引用查核攤平結果（見 `auditCitations`）。 */
+export interface CitationAudit {
+  /** 被判定為捏造（帳本查無此 seq）的引用。 */
+  invalid: Set<number>
+  /** 同上，去重且升冪——畫面直接列出來用，避免在樣板裡每次重繪都排一次序。 */
+  invalidSorted: number[]
+  /** 段落索引 → 該段被捏造的 seq；只收真的有問題的段落。 */
+  byParagraph: Map<number, number[]>
+  /** 後端說捏造、卻沒有任何段落引用它的 seq。 */
+  orphans: number[]
+  /** 相異的捏造引用數（同一 seq 被引用兩次只算一筆）。 */
+  total: number
+}
+
+/**
+ * 把 `citations.invalid_seqs` 攤成「哪一段、哪幾條」。
+ *
+ * 過去畫面只用這個陣列的真假值印「（引用查核：有捏造）」六個字——統裁得到一份被標記為
+ * 不可信、卻無從查起的報告，等於整份都不能用。捏造的是**個別引用**，句子本身未必錯，
+ * 分辨得出來才知道哪一段要重寫、哪一段仍可採信。
+ *
+ * `orphans` 存在的理由：後端的查核以段落引用為輸入（`aar/narrative.verify_citations`），
+ * 正常情況不會有孤兒；真的出現就是前後端對不上，必須顯示出來而不是默默吞掉。
+ */
+export function auditCitations(report: AarReport | null): CitationAudit {
+  const invalid = new Set(report?.citations?.invalid_seqs ?? [])
+  const byParagraph = new Map<number, number[]>()
+  const cited = new Set<number>()
+  report?.paragraphs.forEach((p, i) => {
+    const bad: number[] = []
+    for (const s of p.cited_seqs) {
+      cited.add(s)
+      if (invalid.has(s) && !bad.includes(s)) bad.push(s)
+    }
+    if (bad.length) byParagraph.set(i, bad)
+  })
+  const invalidSorted = [...invalid].sort((a, b) => a - b)
+  return {
+    invalid,
+    invalidSorted,
+    byParagraph,
+    orphans: invalidSorted.filter((s) => !cited.has(s)),
+    total: invalid.size,
+  }
+}
+
 export const aarReplay = (id: string) => apiFetch<AarReplay>(`/sessions/${id}/aar/replay`)
 export const aarReplayStates = (id: string) =>
   apiFetch<AarReplayStates>(`/sessions/${id}/aar/replay/states`)

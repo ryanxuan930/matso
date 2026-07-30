@@ -8,8 +8,11 @@ GET  /api/v1/system/config           檢視（可編輯 AI/LLM 設定 + 唯讀�
 PUT  /api/v1/system/config           更新 AI/LLM 設定
 POST /api/v1/system/config/test-llm  測試 LLM 後端連線（如 Ollama：POST {base}/v1/chat/completions）
 
-註：AI 決策迴路（run_opfor_turn + 護欄）尚未接入活執行期 Kernel，故此設定目前供「連線測試 +
-未來 AI 推演」使用；活模擬尚不會據此自動下令（見 SPEC_EXTEND / autonomous-ai 規劃）。
+註：AI 決策迴路（`ai_loop` worker + 護欄 Gateway）**已接入活執行期 Kernel**（O11 起），
+WP-F3 再把 RoleManager/AIInvocationLog 接上。這裡改的 `ai_mode` / LLM 端點會直接決定
+活模擬中各陣營要不要自動下令、打去哪個後端——不是只供連線測試。
+（這段說明一度停在 O11 之前的狀態，而同檔 `_view()` 回的 `ai_loop_wired` 早就是 True：
+前端 banner 讀的是那個旗標所以畫面沒錯，被誤導的是讀這份說明的人。）
 """
 
 from __future__ import annotations
@@ -62,6 +65,9 @@ def _singleton(db: Session) -> SystemConfiguration:
     if cfg is None:
         cfg = SystemConfiguration(
             version_name="default",
+            # ⚠ `sim_tick_rate_ms` **不是**活模擬的 tick 長度，這裡只是把 NOT NULL 欄位填滿。
+            # 真正生效的是 `SimParams.tick_rate_ms`（想定宣告優先，見 `session_tick_rate_ms`）；
+            # 本欄整個 repo 沒有讀取端。改它不會讓推演變快，別被欄位名騙了。
             sim_tick_rate_ms=1000,
             global_rules={},
             integration_config={},
@@ -114,9 +120,9 @@ def _view(db: Session, settings: Settings) -> SystemConfigView:
             "weather_grpc_target": settings.weather_grpc_target,
             "redis_url": _mask_url(settings.redis_url),
             "stub_gateway": settings.stub_gateway,
-            # AI 決策迴路是否已接入活執行期（目前未接；設定僅供連線測試/未來推演）。
-            # WP-F3：O11 起自主迴路就已接入活執行期，這個旗標一直沒跟著改；
-            # F3 把 RoleManager/AIInvocationLog 也接上之後，它更沒有理由是 False。
+            # AI 決策迴路是否已接入活執行期。前端據此決定要不要掛「AI 設定尚未生效」的
+            # 提示——O11 起自主迴路就已接入（WP-F3 再補上 RoleManager/AIInvocationLog），
+            # 這個旗標一度停在 False，於是設定明明會生效、畫面卻叫使用者別當真。
             "ai_loop_wired": True,
         },
     )

@@ -7,6 +7,9 @@
  */
 import { computed } from 'vue'
 import { POSTURE_LABELS, factionColor, healthColor } from '~/composables/useUnits'
+// 明示 import 而不靠 Nuxt 自動匯入：自動匯入的型別宣告是 `nuxt prepare` 產生的，
+// 新增的匯出在重新產生之前 `vue-tsc` 看不到——那會表現成一條與程式無關的紅燈。
+import { TEMPO_OPTS, rangeLabel } from '~/composables/useCopOrdering'
 import type { UnitView } from '~/composables/useOrders'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useCopOrdering } from '~/composables/useCopOrdering'
@@ -164,6 +167,17 @@ const fratricideTarget = computed(
       <input v-model="preciseMove" type="checkbox" data-testid="precise-move">
       精確移動（走到點擊處，不吸附六角格心）
     </label>
+    <!-- #80 行軍節奏：後端（速度 ×1.5、行軍耗損 ×2.5）與預覽端一直都吃 tempo，
+         但過去只有 AI 送得出來——同一局裡 AI 陣營的機動上限比人類高，畫面上卻無從得知。 -->
+    <label class="rounds">
+      行軍節奏
+      <select v-model="ordering.tempo" data-testid="move-tempo">
+        <option v-for="t in TEMPO_OPTS" :key="t.value" :value="t.value">{{ t.label }}</option>
+      </select>
+    </label>
+    <p v-if="ordering.tempo === 'FORCED_MARCH'" class="fm-warn" data-testid="tempo-warn">
+      ⚠ <b>強行軍</b>：以行軍耗損換速度——抵達時的戰力低於常速行軍（代價見下方試算的「行軍耗損」）。
+    </p>
     <div class="movebtns">
       <button
         data-testid="pick-dest"
@@ -209,6 +223,15 @@ const fratricideTarget = computed(
         <span>距離 <b>{{ (ordering.movePreview.distance_m / 1000).toFixed(2) }} km</b></span>
         <span>約 <b>{{ ordering.movePreview.duration_ticks }}</b> tick</span>
         <span v-if="ordering.movePreview.fuel_cost > 0">油耗 <b>{{ ordering.movePreview.fuel_cost.toFixed(0) }}</b></span>
+        <!-- #80 行軍耗損：這個數字過去零讀取端——長途行軍要付多少戰力代價，
+             指揮官只能事後在事件流看到 MOVE_ATTRITION。強行軍時它會明顯變大，
+             正好讓上面那個節奏選項的代價當場看得見。 -->
+        <span
+          v-if="ordering.movePreview.est_attrition > 0"
+          class="mv-attr"
+          data-testid="move-attrition"
+          title="行軍磨耗（戰力點）＝距離 × 機動 profile 磨耗率 × 節奏倍率。強穿阻礙的隨機加成不含在內。"
+        >行軍耗損 <b>{{ ordering.movePreview.est_attrition.toFixed(1) }}</b> 戰力</span>
       </div>
       <!-- #80/#81：機動能力 + 實際速度（已含地形/坡度調變） -->
       <div class="mv-row mv-sub">
@@ -471,9 +494,18 @@ const fratricideTarget = computed(
       <select v-model="ordering.weaponId" data-testid="engage-weapon">
         <option :value="null">{{ ordering.weapons.length >= 2 ? '聯合火力（全武器一起打）' : '預設武器' }}</option>
         <option v-for="w in ordering.weapons" :key="w.id" :value="w.id">
-          {{ w.name }}<span v-if="ordering.liveAmmo(w) != null"> · 彈 {{ ordering.liveAmmo(w) }}</span>
+          {{ w.name }}<template v-if="w.min_range_m > 0"> · 最小 {{ rangeLabel(w.min_range_m) }}</template><span v-if="ordering.liveAmmo(w) != null"> · 彈 {{ ordering.liveAmmo(w) }}</span>
         </option>
       </select>
+      <!-- 最小射程：迫砲/火箭有死角。過去 COP 只顯示最大射程，於是對近距目標下令被預檢
+           擋下來時，卡片上沒有任何資訊解釋為什麼——「4.2 km」看起來明明綽綽有餘。 -->
+      <p
+        v-if="(ordering.selectedWeapon?.min_range_m ?? 0) > 0"
+        class="fm-warn dim"
+        data-testid="weapon-min-range"
+      >
+        最小射程 <b>{{ rangeLabel(ordering.selectedWeapon?.min_range_m ?? 0) }}</b>——近於此距離為射擊死角（曲射彈道打不到腳邊），預檢會擋下。
+      </p>
       <!-- 聯合火力（未選單一武器且 ≥2 武器）：顯示將開火的武器組合 + 火力政策（P4）。 -->
       <template v-if="ordering.combinedMode">
         <select v-model="ordering.firePolicy" data-testid="engage-fire-policy">
@@ -485,6 +517,10 @@ const fratricideTarget = computed(
           <li v-for="w in ordering.weapons" :key="w.id">
             <i class="pi pi-bullseye" /> {{ w.name }}
             <span v-if="w.max_range_m" class="dim">· {{ (w.max_range_m / 1000).toFixed(1) }} km</span>
+            <!-- 最小射程有值才列——0 是「沒有死角」，寫出來只會變成雜訊。 -->
+            <span v-if="w.min_range_m > 0" class="dim" title="最小射程：近於此距離打不到（射擊死角）">
+              · 最小 {{ rangeLabel(w.min_range_m) }}
+            </span>
             <span v-if="ordering.liveAmmo(w) != null" class="dim">· 彈 {{ ordering.liveAmmo(w) }}</span>
           </li>
         </ul>
@@ -713,6 +749,10 @@ const fratricideTarget = computed(
 }
 .mvprev .mv-lowfuel {
   color: #fbbf24;
+}
+/* #80 行軍耗損：與油耗同列，但用暖色與其他「成本」區隔（它扣的是戰力不是資源）。 */
+.mvprev .mv-attr b {
+  color: #fca5a5;
 }
 .mvprev .mv-ok {
   margin-top: 0.25rem;

@@ -34,6 +34,50 @@ export interface EditorRelation { a: string; b: string; relation: RelationValue 
 export interface EditorMsel { id: string; once: boolean; trigger: Condition; inject: InjectAction }
 export interface EditorVictory { faction: string; condition: Condition }
 
+/**
+ * 申請單配額（WP-B5.2）。**未列＝不限**——所以「不限」在模型裡是 `undefined` 而不是 0。
+ * 0 的意思是「一張都不准申請」；把兩者混在一起，C2 面板會把「沒設定」畫成「額度用罄」。
+ */
+export interface EditorRequestQuotas {
+  AIR_RECON?: number
+  FIRE_SUPPORT?: number
+  RESUPPLY_VOUCHER?: number
+}
+/**
+ * 可配額的申請種類。**刻意只有三種**：`CALL_FOR_FIRE` 雖然也是 RequestKind，
+ * 但 scenario.schema.json 的 `request_quotas` 是 `additionalProperties: false` 且沒開放它，
+ * 編輯器多給一格就會產出 loader 直接拒載的想定。
+ */
+export const REQUEST_QUOTA_KINDS = ['AIR_RECON', 'FIRE_SUPPORT', 'RESUPPLY_VOUCHER'] as const
+export type RequestQuotaKind = (typeof REQUEST_QUOTA_KINDS)[number]
+
+/** 晝夜宣告（WP-C4a）。時刻皆為「當日分鐘數」（0＝00:00，1439＝23:59）。 */
+export interface EditorDayNight {
+  sunriseMin: number
+  sunsetMin: number
+  /** 開演時刻（tick 0 對應的當日分鐘）。未宣告＝午夜開演。 */
+  startMin?: number
+}
+/** 啟用晝夜時的預設：06:00 日出、18:00 日落（與一般夜暗判定的直覺一致，作者可再調）。 */
+export const DAY_NIGHT_DEFAULTS: Pick<EditorDayNight, 'sunriseMin' | 'sunsetMin'> = {
+  sunriseMin: 6 * 60,
+  sunsetMin: 18 * 60,
+}
+
+/** 陣地變換（WP-C10.5）。三個參數留 undefined ＝ 沿用後端預設（見 SURVIVABILITY_DEFAULTS）。 */
+export interface EditorSurvivabilityMove {
+  enabled: boolean
+  missionsBeforeMove?: number
+  minKm?: number
+  maxKm?: number
+}
+/**
+ * **必須與 `core/app/fires/survivability.py` 的 `_DEFAULT_*` 一致。**
+ * 這裡是 UI 勾選「啟用」時要寫進想定的初值；兩邊漂掉的話，想定作者以為自己維持預設，
+ * 實際上寫下的是另一組數字（而且不會有任何錯誤訊息）。
+ */
+export const SURVIVABILITY_DEFAULTS = { missionsBeforeMove: 3, minKm: 1, maxKm: 2 } as const
+
 export interface ScenarioModel {
   name: string
   version: string
@@ -48,6 +92,18 @@ export interface ScenarioModel {
   units: EditorUnit[]
   msel: EditorMsel[]
   victoryConditions: EditorVictory[]
+  // ↓ 以下五項是 scenario.schema.json 的頂層設定。**過去只有 passthrough 保住它們不遺失，
+  // 卻沒有任何介面設得到**——想開誤傷裁決或給空偵配額，只能去「匯入 JSON」文字框手貼。
+  /** 申請單配額（整局總量，不是每日）。undefined ＝ 三種申請皆不限。 */
+  requestQuotas?: EditorRequestQuotas
+  /** 晝夜。undefined ＝ 未宣告 ＝ 整場白天（光照係數恆 1.0）。 */
+  dayNight?: EditorDayNight
+  /** 友軍誤傷裁決。undefined/false ＝ 對友軍/盟軍的 ENGAGE 一律被 ROE 拒絕。 */
+  allowFratricide?: boolean
+  /** 曲射火協。undefined/false ＝ ARTILLERY/MISSILE 開火不須掛核准的火力支援申請單。 */
+  indirectFireRequiresApproval?: boolean
+  /** 陣地變換。undefined ＝ 停用。 */
+  survivabilityMove?: EditorSurvivabilityMove
   // WP-B6：編輯器不編輯禁射區（那是 COP 地圖編輯器的事，WP-A3），但**必須原樣帶著**。
   // 過去這裡沒有這個欄位 → 用編輯器開一個有保護區的想定再存回去，禁射區整段消失，
   // 而且不會有任何錯誤訊息。安全機制的沉默失效。
@@ -57,12 +113,17 @@ export interface ScenarioModel {
    *
    * ⚠ 同一個 bug 已經咬過三次：後端的 `scenario_to_dict` 手寫白名單、
    * 後端的 `clone_session` 漏七個欄、以及這裡。每次的修法都是「再列一個欄位」，
-   * 於是下一個新設定又會被下一個人忘記——`request_quotas`、
-   * `indirect_fire_requires_approval`、`survivability_move` 現在就正在被漏掉。
+   * 於是下一個新設定又會被下一個人忘記。
    *
    * 所以這次改成**結構性**的：import 時把所有沒被模型吃掉的鍵收進這裡，
    * export 時先攤開它再覆蓋明確欄位。**任何未來的想定設定都會自動存活**，
    * 不需要有人記得回來改。
+   *
+   * ⚠ 但 passthrough 只保證**不遺失**，不等於**設得到**：`request_quotas`、
+   * `day_night`、`allow_fratricide`、`indirect_fire_requires_approval`、
+   * `survivability_move` 一度全靠這裡活著，卻沒有任何介面能設定它們（E6）。
+   * 現在五項都已明確建模並列入 `MODELLED_SCENARIO_KEYS`——**新增建模欄位時務必同步加進去**，
+   * 否則舊值會留在 passthrough，使用者在 UI 清空該設定時被舊值靜默復活。
    */
   passthrough?: Record<string, unknown>
 }
@@ -72,12 +133,18 @@ const MODELLED_SCENARIO_KEYS = new Set([
   'name', 'version', 'description', 'bbox', 'mode', 'tick_rate_ms',
   'hex_resolution', 'aggregate_adjudication_level', 'factions', 'relations',
   'victory_conditions', 'no_strike_zones', 'files',
+  // E6：這五項現在有 UI 了，所以必須離開 passthrough——否則 UI 關掉某項設定時，
+  // passthrough 裡的舊值會在匯出時被攤開，把使用者剛關掉的設定原封不動寫回去。
+  'request_quotas', 'day_night', 'allow_fratricide',
+  'indirect_fire_requires_approval', 'survivability_move',
 ])
 
 export function emptyScenario(): ScenarioModel {
   return {
     name: 'New Scenario',
     version: '1.0',
+    // 花蓮一帶的預設戰場範圍。**只是起手值**——編輯器的「戰場範圍」欄位可改（E7）；
+    // 在補上欄位之前，用編輯器新建的想定戰場永遠是這四個數字，要換戰場只能去改 JSON。
     bbox: [120.9, 23.6, 121.4, 23.9],
     mode: 'REALTIME',
     tickRateMs: 60000,  // 1 tick ＝ 1 分模擬時間（此值會決定執行期節奏）
@@ -91,6 +158,61 @@ export function emptyScenario(): ScenarioModel {
   }
 }
 
+/** 整數欄位的匯出守則：非數值/NaN 一律當「沒填」（絕不寫 null/NaN 進想定，那會被 loader 拒載）。 */
+function intOrUndefined(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : undefined
+}
+
+/**
+ * 只寫「填了合法整數」的種類；三種都沒填就整段不寫。
+ * 空 `{}` 雖過得了 schema，但寫進想定會讓讀的人以為配了額度，其實三種都是不限。
+ */
+function exportQuotas(q: EditorRequestQuotas | undefined): Record<string, number> | undefined {
+  if (!q) return undefined
+  const out: Record<string, number> = {}
+  for (const kind of REQUEST_QUOTA_KINDS) {
+    const n = intOrUndefined(q[kind])
+    if (n !== undefined && n >= 0) out[kind] = n
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+/**
+ * 晝夜：schema 要求 sunrise/sunset **同時**存在。UI 勾選啟用時就補齊兩者，
+ * 這裡的守則是保險——半殘的宣告會讓存檔整份失敗，寧可當作未宣告。
+ */
+function exportDayNight(d: EditorDayNight | undefined): Record<string, number> | undefined {
+  if (!d) return undefined
+  const sunrise = intOrUndefined(d.sunriseMin)
+  const sunset = intOrUndefined(d.sunsetMin)
+  if (sunrise === undefined || sunset === undefined) return undefined
+  const start = intOrUndefined(d.startMin)
+  return {
+    sunrise_min: sunrise,
+    sunset_min: sunset,
+    ...(start !== undefined ? { start_min: start } : {}),
+  }
+}
+
+/**
+ * 陣地變換：`enabled=false` 與整段缺席在後端是同一件事（停用），所以停用時不寫。
+ * 三個參數留空＝沿用後端預設，故只寫使用者實際填過的（維持既有想定的 diff 乾淨）。
+ */
+function exportSurvivability(
+  s: EditorSurvivabilityMove | undefined,
+): Record<string, unknown> | undefined {
+  if (!s?.enabled) return undefined
+  const missions = intOrUndefined(s.missionsBeforeMove)
+  const min = typeof s.minKm === 'number' && Number.isFinite(s.minKm) ? s.minKm : undefined
+  const max = typeof s.maxKm === 'number' && Number.isFinite(s.maxKm) ? s.maxKm : undefined
+  return {
+    enabled: true,
+    ...(missions !== undefined ? { missions_before_move: missions } : {}),
+    ...(min !== undefined ? { min_km: min } : {}),
+    ...(max !== undefined ? { max_km: max } : {}),
+  }
+}
+
 /** 編輯器模型 → scenario package bundle（scenario/orbat/msel 三段，後端 loader 可讀的 JSON）。 */
 export function exportScenario(m: ScenarioModel): {
   scenario: Record<string, unknown>
@@ -98,6 +220,9 @@ export function exportScenario(m: ScenarioModel): {
   msel: Record<string, unknown>
 } {
   const factionsWithUnits = [...new Set(m.units.map((u) => u.faction))]
+  const quotas = exportQuotas(m.requestQuotas)
+  const dayNight = exportDayNight(m.dayNight)
+  const survivability = exportSurvivability(m.survivabilityMove)
   const scenario: Record<string, unknown> = {
     // **先攤開 passthrough**——明確欄位在後面覆蓋它，所以編輯器管的欄位仍以模型為準，
     // 而它不管的（ROE/配額/火協開關/陣地變換/誤傷/晝夜…）原樣存活。
@@ -120,6 +245,14 @@ export function exportScenario(m: ScenarioModel): {
     relations: m.relations.map((r) => [r.a, r.b, r.relation]),
     victory_conditions: m.victoryConditions.map((v) => ({ faction: v.faction, condition: v.condition })),
     ...(m.noStrikeZones?.length ? { no_strike_zones: m.noStrikeZones } : {}),
+    // 五項想定設定：**未設定就整個不寫**，而不是寫 false/{}。
+    // 後端對「缺席」與「false/空」語意相同，但想定是給人讀的文件——
+    // 寫一堆 false 會讓作者以為那些機制被刻意關掉，其實只是沒碰過。
+    ...(quotas ? { request_quotas: quotas } : {}),
+    ...(dayNight ? { day_night: dayNight } : {}),
+    ...(m.allowFratricide ? { allow_fratricide: true } : {}),
+    ...(m.indirectFireRequiresApproval ? { indirect_fire_requires_approval: true } : {}),
+    ...(survivability ? { survivability_move: survivability } : {}),
     files: {
       ...(factionsWithUnits.length
         ? { orbat: Object.fromEntries(factionsWithUnits.map((f) => [f, `orbat/${f.toLowerCase()}.yaml`])) }
@@ -151,6 +284,51 @@ export function exportScenario(m: ScenarioModel): {
     events: m.msel.map((e) => ({ id: e.id, once: e.once, trigger: e.trigger, inject: e.inject })),
   }
   return { scenario, orbat, msel }
+}
+
+/** 匯入端的數值守則：想定裡的字串數字（YAML 手寫常見）也吃，其餘一律當沒填。 */
+function numOrUndefined(v: unknown): number | undefined {
+  const n = typeof v === 'string' ? Number(v) : v
+  return typeof n === 'number' && Number.isFinite(n) ? n : undefined
+}
+
+function importQuotas(raw: unknown): EditorRequestQuotas | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const src = raw as Record<string, unknown>
+  const out: EditorRequestQuotas = {}
+  for (const kind of REQUEST_QUOTA_KINDS) {
+    const n = numOrUndefined(src[kind])
+    if (n !== undefined) out[kind] = Math.trunc(n)
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+function importDayNight(raw: unknown): EditorDayNight | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const src = raw as Record<string, unknown>
+  const sunrise = numOrUndefined(src.sunrise_min)
+  const sunset = numOrUndefined(src.sunset_min)
+  if (sunrise === undefined || sunset === undefined) return undefined
+  const start = numOrUndefined(src.start_min)
+  return {
+    sunriseMin: Math.trunc(sunrise),
+    sunsetMin: Math.trunc(sunset),
+    ...(start !== undefined ? { startMin: Math.trunc(start) } : {}),
+  }
+}
+
+/** 未填的參數保持 undefined（＝沿用後端預設），不要在匯入時補成常數：
+ *  補了會讓「作者沒指定」變成「作者指定了這個值」，日後改預設就改不動這些想定。 */
+function importSurvivability(raw: unknown): EditorSurvivabilityMove | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const src = raw as Record<string, unknown>
+  const missions = numOrUndefined(src.missions_before_move)
+  return {
+    enabled: Boolean(src.enabled),
+    ...(missions !== undefined ? { missionsBeforeMove: Math.trunc(missions) } : {}),
+    ...(numOrUndefined(src.min_km) !== undefined ? { minKm: numOrUndefined(src.min_km) } : {}),
+    ...(numOrUndefined(src.max_km) !== undefined ? { maxKm: numOrUndefined(src.max_km) } : {}),
+  }
 }
 
 /** bundle → 編輯器模型（匯入；exportScenario 的逆）。 */
@@ -186,6 +364,9 @@ export function importScenario(bundle: {
   for (const [key, value] of Object.entries(s)) {
     if (!MODELLED_SCENARIO_KEYS.has(key)) passthrough[key] = value
   }
+  const requestQuotas = importQuotas(s.request_quotas)
+  const dayNight = importDayNight(s.day_night)
+  const survivabilityMove = importSurvivability(s.survivability_move)
   return {
     name: s.name as string,
     version: s.version as string,
@@ -209,6 +390,15 @@ export function importScenario(bundle: {
     ...(Array.isArray(s.no_strike_zones) && s.no_strike_zones.length
       ? { noStrikeZones: s.no_strike_zones as Array<Record<string, unknown>> }
       : {}),
+    // 五項想定設定：缺席就保持 undefined（＝未宣告），不要補成 false/{}——
+    // 匯入即改寫想定語意，是這個 repo 反覆出事的那種「靜默變更」。
+    ...(requestQuotas ? { requestQuotas } : {}),
+    ...(dayNight ? { dayNight } : {}),
+    ...(s.allow_fratricide !== undefined ? { allowFratricide: Boolean(s.allow_fratricide) } : {}),
+    ...(s.indirect_fire_requires_approval !== undefined
+      ? { indirectFireRequiresApproval: Boolean(s.indirect_fire_requires_approval) }
+      : {}),
+    ...(survivabilityMove ? { survivabilityMove } : {}),
     ...(Object.keys(passthrough).length ? { passthrough } : {}),
   }
 }

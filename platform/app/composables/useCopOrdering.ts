@@ -34,6 +34,20 @@ export const FIRE_POLICY_OPTS: { value: FirePolicy; label: string }[] = [
   { value: 'ANTI_ARMOR_HOLD', label: '反裝甲留給裝甲目標' },
 ]
 
+/**
+ * 行軍節奏（#80）。
+ *
+ * 後端一直是完整的（`MovePayload.tempo`、`movement.py` 的速度 ×1.5 與
+ * `TEMPO_ATTRITION_FACTOR` ×2.5、預覽端的 `MovementPreviewRequest.tempo`），
+ * 但**唯一的使用者是 AI**（`ai_loop/orders_bridge.py`）——同一局裡 AI 陣營的機動速度上限
+ * 比人類高，而畫面上完全沒有提示說明為什麼。
+ */
+export type MarchTempo = 'NORMAL' | 'FORCED_MARCH'
+export const TEMPO_OPTS: { value: MarchTempo; label: string }[] = [
+  { value: 'NORMAL', label: '一般行軍 · 常速，磨耗最低' },
+  { value: 'FORCED_MARCH', label: '強行軍 · 速度 1.5 倍，以行軍耗損換速度' },
+]
+
 const CROSS_KIND_LABELS: Record<string, string> = {
   OBSTACLE: '障礙',
   BUILDING: '建築',
@@ -53,6 +67,15 @@ export function crossKindLabel(kind: string): string {
 }
 export function mobilityLabel(profile: string): string {
   return MOBILITY_LABELS[profile] ?? profile
+}
+/**
+ * 射程的顯示字串（公尺／公里自動切換）。
+ *
+ * 最小射程常是幾百公尺，一律寫成 `0.2 km` 讀起來像「幾乎沒有限制」——
+ * 而它正是迫砲打不到腳邊那個死角的邊界，數量級要看得出來。
+ */
+export function rangeLabel(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`
 }
 
 export function useCopOrdering(opts: {
@@ -112,6 +135,8 @@ export function useCopOrdering(opts: {
   const movePreview = ref<MovementPreview | null>(null)
   const moveWaypoints = ref<number[][]>([]) // 自訂路徑（[lng,lat]，不含起點）
   const waypointMode = ref(false) // 逐點點擊建自訂路徑
+  /** #80 行軍節奏：一般／強行軍（速度↔行軍耗損的取捨）。預覽與送出**必須帶同一個值**。 */
+  const tempo = ref<MarchTempo>('NORMAL')
   let previewTimer: ReturnType<typeof setTimeout> | null = null
 
   // ENGAGE 武器/彈種（資料驅動 baseStats；選取單位時抓 GET /units/{id}/weapons）
@@ -176,6 +201,9 @@ export function useCopOrdering(opts: {
     weapons.value = []
     firePoint.value = null
     fireRequestId.value = null
+    // 節奏跟著單位清掉：強行軍是一個要付戰力代價的例外決定，不該因為換了一個單位
+    // 就被沿用下去（下一個單位的指揮官沒有做過那個決定）。
+    tempo.value = 'NORMAL'
   }
 
   /** 抓此單位可用武器；失敗（他方/無裝備）→ 空清單，下拉隱藏。 */
@@ -208,6 +236,9 @@ export function useCopOrdering(opts: {
     try {
       movePreview.value = await fetchMovementPreview(sessionId.value, {
         unit_id: selectedId.value,
+        // **預覽要帶與送出同一個節奏**：後端的速度、tick 數與行軍耗損都乘了 tempo 係數，
+        // 不帶就等於用常速去估一趟強行軍——那正是這一輪一直在修的「預覽與實跑不一致」。
+        tempo: tempo.value,
         ...(hasWps
           ? { waypoints: moveWaypoints.value }
           : {
@@ -274,6 +305,9 @@ export function useCopOrdering(opts: {
   watch([selectedId, orderType], () => {
     clearMovePath()
   })
+  // 換節奏 → 重算預覽。不重算的話，面板上會留著常速那份距離/tick/耗損，
+  // 使用者切到「強行軍」卻看不到任何數字變動，只能猜它有沒有生效。
+  watch(tempo, schedulePreview)
   // 切到火力任務才抓核准單清單——沒人下面射擊時不必每選一個單位就多打一次 API。
   watch(orderType, (t) => {
     if (t === 'FIRE_MISSION') void loadFireRequests()
@@ -340,6 +374,9 @@ export function useCopOrdering(opts: {
         // 沼澤/陡坡對兩者可通行性相反，預覽畫的路線與實際走的可以完全不同。
         // 預覽還沒回來（剛點下去就送出）→ 退回 FOOT，與改版前相同。
         mobility_profile: movePreview.value?.mobility_profile ?? 'FOOT',
+        // #80 行軍節奏。**無條件帶**（不是只在 FORCED_MARCH 時才帶）：這一欄會落進 Ledger，
+        // AAR 要能分辨「指揮官選了常速」與「這道令是舊格式沒有節奏」——後者才該套預設。
+        tempo: tempo.value,
         ...(destLatLng.value
           ? { to_lat: destLatLng.value.lat, to_lng: destLatLng.value.lng }
           : {}),
@@ -474,6 +511,7 @@ export function useCopOrdering(opts: {
     movePreview,
     moveWaypoints,
     waypointMode,
+    tempo,
     movePathCoords,
     moveCrossPoints,
     weapons,

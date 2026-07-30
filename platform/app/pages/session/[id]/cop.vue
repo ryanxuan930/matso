@@ -573,6 +573,34 @@ const selForce = computed(() => {
 const streamEvents = computed(() =>
   stream.events.filter((e) => e.type === 'EVENT').slice(-20).reverse(),
 )
+/**
+ * 白軍暫停橫幅（F2）。
+ *
+ * 白軍按下暫停後，其他席位的模擬時鐘就停住不動了——在此之前 COP **完全沒有提示**：
+ * 事件流冒一行裸 `SESSION_CONTROL`，單位不動、tick 不跳，沒人分得出是被暫停
+ * 還是後端掛了。這條橫幅就是要讓「有人踩了煞車」這件事看得見。
+ *
+ * ROLLBACK 也算暫停狀態：`control.py` 的 `_request_rollback` 會先設暫停旗標，
+ * 由重建後的 runner 執行還原——那段期間推演確實是停的。
+ *
+ * ⚠ 只看得到**本連線期間**發生的控制事件：新加入/重整的 client HELLO 帶 last_seq=null，
+ * 後端 `plan_resume` 對新客戶端不補送 ring（見 stream/backfill.py），
+ * 於是暫停前就離線的人重連後不會看到橫幅。要根治得由後端在 session 摘要／狀態快照
+ * 帶出 `paused` 旗標——那是契約變更，不在本卡範圍。
+ */
+const sessionPaused = computed(() => {
+  const controls = stream.events.filter(
+    (e) =>
+      e.type === 'EVENT'
+      && (e.payload as Record<string, unknown>)?.event_type === 'SESSION_CONTROL',
+  )
+  const last = controls[controls.length - 1] // 取最後一則：RESUME 之後就不該再顯示
+  if (!last) return null
+  const action = String((last.payload as Record<string, unknown>)?.action ?? '')
+  if (action !== 'PAUSE' && action !== 'ROLLBACK') return null
+  return { action }
+})
+
 // 勝負底定橫幅（O11.5/O11.7）：串流出現 SESSION_CONCLUDED 即顯示勝方。
 const victory = computed(() => {
   const ev = stream.events.find(
@@ -635,9 +663,16 @@ onBeforeUnmount(() => {
       :selected-unit-count="selectedUnitCount"
       @start="startWargame"
     />
+    <!-- F2 白軍暫停橫幅：時鐘停住時要說「是誰停的」，否則各席位只會以為系統掛了。 -->
+    <div v-if="sessionPaused" class="pause-banner" data-testid="pause-banner">
+      <i class="pi pi-pause-circle" />
+      <strong v-if="sessionPaused.action === 'ROLLBACK'">推演已暫停（白軍回滾中）</strong>
+      <strong v-else>推演已暫停（白軍）</strong>
+      <span class="pb-note">模擬時鐘停止推進，指令將於恢復後繼續執行。</span>
+    </div>
     <div v-if="victory" class="victory-banner" data-testid="victory-banner">
-      🏁 推演結束 —
-      <strong>{{ victory.winners.length ? `${victory.winners.join('、')} 獲勝` : '平手' }}</strong>
+      推演結束 —
+      <strong>{{ victory.winners.length ? `${victory.winners.join('、')} 獲勝` : '未分勝負' }}</strong>
       （tick {{ victory.tick }}）
       <button class="vb-aar" @click="navigateTo(`/session/${sessionId}/aar`)">看 AAR →</button>
     </div>
@@ -900,6 +935,21 @@ onBeforeUnmount(() => {
   height: 100vh;
   background: #0a1626;
   color: #e2e8f0;
+}
+/* F2 暫停橫幅：用琥珀色（警示但非災難），與勝負橫幅的藍綠明顯區隔。 */
+.pause-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  background: rgba(180, 83, 9, 0.35);
+  border-bottom: 1px solid #b45309;
+  color: #fef3c7;
+  font-size: 0.9rem;
+}
+.pause-banner .pb-note {
+  color: #fcd34d;
+  font-size: 0.8rem;
 }
 .victory-banner {
   display: flex;

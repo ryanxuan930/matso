@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /**
- * 指令小工具內容（#27）——下令對象 + 時間 + 狀態，並可取消/停止未完成的令。
+ * 指令小工具內容（#27）——下令對象 + 任務階段 + 時間 + 狀態，並可取消/停止未完成的令。
  *
- * 排序在這裡做：以下令 tick（≈真實時間）新到舊，剛下的令排最上。
+ * 排序與層級在這裡做：母令以下令 tick（≈真實時間）新到舊，剛下的令排最上；
+ * 任務令分解出的子令收在母令底下（見 `orderRows`）。
  */
 import { computed } from 'vue'
-import { orderStatusLabel, orderTypeLabel } from '~/composables/useOrders'
+import { missionPhaseLabel, orderStatusLabel, orderTypeLabel } from '~/composables/useOrders'
 import { useCopFeed } from '~/composables/useCopFeed'
 import type { OrderResponse, UnitView } from '~/composables/useOrders'
 
@@ -19,20 +20,65 @@ const props = defineProps<{
 defineEmits<{ (e: 'cancel', orderId: string): void }>()
 
 const { unitName, orderTargetLabel } = useCopFeed(() => props.units)
-// 指令列表：以下令 tick（≈真實時間）新到舊排序，剛下的令排最上（穩定排序，同 tick 保原序）。
-const sortedOrders = computed(() =>
-  [...props.orders].sort((a, b) => (b.issued_at_tick ?? 0) - (a.issued_at_tick ?? 0)),
-)
+
+/**
+ * 指令列表：母令新到舊，任務子令收在母令底下（WP-A2）。
+ *
+ * 原本是一個平面清單，任務令分解出來的 MOVE/ENGAGE 子令與人親手下的令混在一起，
+ * 看起來就像「這支部隊收到一堆沒人下過的命令」——參謀分不出哪些是自己下的、
+ * 哪些是任務展開的，也就無從判斷該取消哪一道。
+ *
+ * 母令不在本次清單內的孤兒子令（母令已被清掉/分頁沒撈到）仍當作頂層顯示，
+ * 但保留「任務子令」標記——寧可位置不對，也不要整筆消失。
+ */
+const orderRows = computed(() => {
+  const ids = new Set(props.orders.map((o) => o.id))
+  const children = new Map<string, OrderResponse[]>()
+  const roots: OrderResponse[] = []
+  for (const o of props.orders) {
+    const parent = o.parent_order_id
+    if (parent && ids.has(parent)) children.set(parent, [...(children.get(parent) ?? []), o])
+    else roots.push(o)
+  }
+  roots.sort((a, b) => (b.issued_at_tick ?? 0) - (a.issued_at_tick ?? 0))
+  const rows: { order: OrderResponse; sub: boolean }[] = []
+  for (const root of roots) {
+    rows.push({ order: root, sub: false })
+    // 子令是任務的**執行序**，由前往後讀才對（與母令列的新到舊刻意相反）。
+    const subs = [...(children.get(root.id) ?? [])].sort(
+      (a, b) => (a.issued_at_tick ?? 0) - (b.issued_at_tick ?? 0),
+    )
+    for (const s of subs) rows.push({ order: s, sub: true })
+  }
+  // 孤兒子令（母令不在本次清單內）仍會落在 roots，故仍保留「任務子令」標記。
+  return rows.map((r) => ({ ...r, sub: r.sub || !!r.order.parent_order_id }))
+})
+
+/**
+ * 任務階段（PLANNED/MOVING/ENGAGING/…）。
+ *
+ * ⚠ 契約（`OrderResponse.mission_phase`）宣告了這個欄位，但**後端 `_to_response`
+ * 目前不填**（`core/app/orders/schemas.py` 的 `OrderResponse` 根本沒有這個欄位，
+ * 階段值只存在令載荷的 `_mission_state.phase` 裡）。所以在後端補上之前，
+ * 這裡恆為空、什麼都不顯示。前端這一半先接好，後端一填就會自己亮起來。
+ */
+function phaseLabel(o: OrderResponse): string {
+  return o.order_type === 'MISSION' ? missionPhaseLabel(o.mission_phase) : ''
+}
 </script>
 
 <template>
 <div class="wsec-hd">指令（{{ orders.length }}）</div>
 <ul class="orders" data-testid="order-list">
-  <li v-for="o in sortedOrders" :key="o.id" data-testid="order-row">
+  <li v-for="{ order: o, sub } in orderRows" :key="o.id" :class="{ 'ord-sub': sub }" data-testid="order-row">
     <div class="ord-main">
+      <span v-if="sub" class="ord-subtag" data-testid="order-sub-tag">任務子令</span>
       <span class="ord-unit">{{ unitName(o.unit_id) || '單位' }}</span>
       <span class="ord-type">{{ orderTypeLabel(o.order_type) }}</span>
       <span v-if="orderTargetLabel(o)" class="ord-tgt">{{ orderTargetLabel(o) }}</span>
+      <span v-if="phaseLabel(o)" class="ord-phase" data-testid="order-phase" title="任務階段">
+        {{ phaseLabel(o) }}
+      </span>
     </div>
     <div class="ord-meta">
       <span class="ord-time" title="下令 sim tick">T{{ o.issued_at_tick
@@ -104,6 +150,27 @@ const sortedOrders = computed(() =>
 .ord-tgt {
   color: #fca5a5;
   font-size: 0.72rem;
+}
+/* 任務子令：縮排 + 左緣導引線，一眼看出「這是那道任務展開出來的」而不是有人另外下的令。
+   選擇器要帶 `.orders`：上面的 `.orders li` 已經宣告了 border，特異度低的規則會被它蓋掉。 */
+.orders li.ord-sub {
+  margin-left: 0.9rem;
+  border-left: 2px solid #3b82f6;
+}
+.ord-subtag {
+  padding: 0 0.25rem;
+  border-radius: 0.2rem;
+  background: #1e3a5f;
+  color: #93c5fd;
+  font-size: 0.66rem;
+}
+/* 任務階段（機動中/接戰中/鞏固中…）：狀態只會顯示「執行中」，階段才看得出跑到哪。 */
+.ord-phase {
+  padding: 0 0.3rem;
+  border-radius: 0.2rem;
+  background: #422006;
+  color: #fcd34d;
+  font-size: 0.68rem;
 }
 .ord-meta {
   display: flex;

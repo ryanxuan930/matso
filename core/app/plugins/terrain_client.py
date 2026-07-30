@@ -31,6 +31,10 @@ from app.errors import TerrainUnavailableError
 _LOG = logging.getLogger("app.plugins.terrain")
 
 _DEFAULT_CALL_DEADLINE_S = 0.2  # 領域 RPC；物理預檢 p99<50ms 的裕度內
+# 視域是所有 terrain RPC 裡最重的一支（terrain.proto SLA：GetViewshed p99<200ms，恰好等於
+# 上面的預設 deadline）。沿用 0.2s 會讓正常回應在 p99 附近整片 DEADLINE_EXCEEDED，而且每次
+# 逾時都算進斷路器——視域一開，連帶把 GetElevation/CheckLos 一起打成快速失敗。故獨立放寬。
+_DEFAULT_VIEWSHED_DEADLINE_S = 1.0
 _DEFAULT_HEALTH_DEADLINE_S = 2.0
 _DEFAULT_HEALTH_INTERVAL_S = 10.0  # SPEC §16.3：每 10s
 _DEFAULT_HEALTH_THRESHOLD = 3  # SPEC §16.3：連續 3 次失敗 → DOWN
@@ -96,9 +100,13 @@ class TerrainClient:
         channel: grpc.Channel,
         deadline_s: float = _DEFAULT_CALL_DEADLINE_S,
         breaker: CircuitBreaker | None = None,
+        viewshed_deadline_s: float = _DEFAULT_VIEWSHED_DEADLINE_S,
     ) -> None:
         self._stub = terrain_pb2_grpc.TerrainServiceStub(channel)
         self._deadline = deadline_s
+        # 視域 deadline 獨立成建構參數而非「取兩者較大值」——後者會讓呼叫端刻意設的短 deadline
+        # 對視域靜默失效（值存在卻被忽略），要調就明確調這一個。
+        self._viewshed_deadline = viewshed_deadline_s
         self._breaker = breaker or CircuitBreaker()
 
     @property
@@ -141,9 +149,38 @@ class TerrainClient:
         req = terrain_pb2.GetCellBatchRequest(h3_index=list(h3_index))
         return self._invoke(self._stub.GetCellBatch, req)
 
-    def _invoke(self, method: Callable[..., object], request: object):  # type: ignore[no-untyped-def]
+    def get_viewshed(
+        self,
+        obs: tuple[float, float, float],
+        radius_m: float,
+    ) -> terrain_pb2.GetViewshedResponse:
+        """觀測點半徑內、地面可視的 h3 cell 清單（M11a）。
+
+        契約與 terrain 模組早就有 GetViewshed，Core 這一側卻沒有對應方法——感測涵蓋因此
+        只能逐目標問 CheckLos（N 個目標 = N 次 RPC），COP 也畫不出「這個觀測所看得到哪裡」。
+        失敗行為與同類方法一致：轉 TerrainUnavailableError 並計入斷路器，**不回空清單**——
+        空視域和「什麼都看不到」在上層無法區分，會被當成有效的物理事實用下去。
+        """
+        if radius_m <= 0:
+            # 模組端對非正半徑回 INVALID_ARGUMENT。那是呼叫端的 bug 不是插件故障，先擋在
+            # 本地：否則這種 bug 會一路累積斷路器失敗數，最後把整個 terrain 打成快速失敗。
+            raise ValueError(f"radius_m 必須 > 0，收到 {radius_m}")
+        self._guard()
+        req = terrain_pb2.GetViewshedRequest(observer=_observer(obs), radius_m=radius_m)
+        return self._invoke(self._stub.GetViewshed, req, deadline_s=self._viewshed_deadline)
+
+    def _invoke(  # type: ignore[no-untyped-def]
+        self,
+        method: Callable[..., object],
+        request: object,
+        *,
+        deadline_s: float | None = None,
+    ):
+        # None（而非 0 / falsy 判斷）才代表「用預設」——deadline_s=0 是合法的「立即逾時」，
+        # 用 `deadline_s or self._deadline` 會把它悄悄換成預設值。
+        timeout = self._deadline if deadline_s is None else deadline_s
         try:
-            resp = method(request, timeout=self._deadline)
+            resp = method(request, timeout=timeout)
         except grpc.RpcError as exc:
             self._breaker.record_failure()
             code = exc.code() if isinstance(exc, grpc.Call) else None

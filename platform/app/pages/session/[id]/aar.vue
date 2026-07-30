@@ -6,12 +6,14 @@ import {
   aarReplayStates,
   aarReport,
   aarStats,
+  auditCitations,
   type AarReplay,
   type AarReplayStates,
   type AarReport,
   type AarStats,
 } from '~/composables/useAar'
 import { useAarReplay } from '~/composables/useAarReplay'
+import { unitLevelLabel } from '~/composables/useUnits'
 
 const route = useRoute()
 const sessionId = route.params.id as string
@@ -41,7 +43,24 @@ async function load() {
   }
 }
 // 地圖重播：拖時間軸＝本地重算（見 composable 說明），播放/倍速在那裡。
-const { playing, speed, unitsAt, toggle, stop } = useAarReplay(replayStates, scrubTick)
+const { playing, speed, unitsAt, rosterAt, toggle, stop } = useAarReplay(replayStates, scrubTick)
+/**
+ * 引用查核明細（D-aar）。**沒有它，「有捏造」三個字等於把整份報告作廢**
+ * ——統裁看不出是哪一段被 AI 編出來，只能整份不採信。
+ */
+const citeAudit = computed(() => auditCitations(report.value))
+/** 書籤的 seq → tick：讓報告裡的引用可以直接跳到時間軸上那一格（引用是 seq，滑桿吃 tick）。 */
+const bookmarkTickBySeq = computed(() => {
+  const m = new Map<number, number>()
+  for (const b of replay.value?.bookmarks ?? []) m.set(b.seq, b.tick)
+  return m
+})
+function gotoSeq(seq: number): void {
+  const t = bookmarkTickBySeq.value.get(seq)
+  if (t === undefined) return
+  stop()
+  scrubTick.value = t
+}
 // 換 tick 時把該 tick 的事件列出來，讓「看到什麼」與「為什麼」對得起來。
 // 重播視野：框住所有單位的基準位置。AAR 的單位常擠在數百公尺內，
 // 用 MapCanvas 預設的台灣全景會什麼都看不到（實測就是一片空白）。
@@ -91,6 +110,14 @@ onMounted(load)
         <li>護欄攔截：{{ stats.guardrail_blocks }}</li>
         <li v-for="(v, f) in stats.damage_by_faction" :key="f">{{ f }} 承受戰損：{{ v }}</li>
       </ul>
+      <!-- 事件類型分布：後端一直有回 `event_counts`，畫面卻只顯示總數。
+           「這場推演到底發生了哪些種類的事」是檢討的第一個問題，總數答不了。 -->
+      <template v-if="stats.event_counts && Object.keys(stats.event_counts).length">
+        <h3>事件類型分布</h3>
+        <ul class="evt-counts" data-testid="aar-event-counts">
+          <li v-for="(n, t) in stats.event_counts" :key="t">{{ t }}：{{ n }}</li>
+        </ul>
+      </template>
     </section>
 
     <section v-if="replay" data-testid="aar-timeline">
@@ -128,11 +155,53 @@ onMounted(load)
         <span v-if="tickEvents.length"> · 本 tick 事件：{{ tickEvents.join('、') }}</span>
       </p>
 
+      <!-- 部隊狀況表：地圖只表達得了位置與效能%，戰力點（人員/平台數）沒有欄位可放
+           （見 useAarReplay 的 AarReplayRosterRow 說明），只能落在這裡。
+           另外，沒有座標紀錄的單位畫不到圖上，唯有這張表交代得出它們的去向。 -->
+      <h3>本 tick 部隊狀況</h3>
+      <div class="roster-wrap">
+        <table class="roster" data-testid="replay-roster">
+          <thead>
+            <tr>
+              <th>番號</th><th>陣營</th><th>編制</th><th>作戰效能</th><th>戰力</th><th>圖上</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in rosterAt" :key="r.id" data-testid="roster-row">
+              <td class="desig">{{ r.designation }}</td>
+              <td>{{ r.faction }}</td>
+              <td>{{ unitLevelLabel(r.unitLevel) }}</td>
+              <td>
+                {{ Math.round(r.health) }}%
+                <!-- 效能 0 不等於被殲滅：效能曲線在戰力比 0.30 就歸零，
+                     那支部隊還在戰場上、還會被打。這行就是為了擋掉這個必然的誤讀。 -->
+                <small v-if="r.health <= 0 && (r.strength ?? 0) > 0" class="warn">
+                  戰鬥不能（仍在戰場）
+                </small>
+              </td>
+              <td>
+                <template v-if="r.strength != null">
+                  {{ Math.round(r.strength) }}<template v-if="r.authorizedStrength">
+                    / {{ Math.round(r.authorizedStrength) }}</template>
+                </template>
+                <template v-else>—</template>
+              </td>
+              <td>{{ r.onMap ? '是' : '無位置紀錄' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="mapnote">
+        戰力欄為「當前／滿編」戰力點；顯示「—」表示帳本沒有記錄該單位的戰力後態
+        （個體交戰只記作戰效能%，戰力點僅聚合交戰會記）。
+      </p>
+
       <h3>書籤</h3>
       <ul>
         <li v-for="b in replay.bookmarks" :key="b.seq">
           <button data-testid="bookmark" @click="stop(); scrubTick = b.tick">
-            tick {{ b.tick }} · {{ b.label }}
+            <!-- 顯示 seq：敘事報告的引用也是 seq，兩邊對得起來才查得下去。 -->
+            #{{ b.seq }} · tick {{ b.tick }} · {{ b.label }}
           </button>
         </li>
       </ul>
@@ -140,14 +209,39 @@ onMounted(load)
 
     <section v-if="report" data-testid="aar-report">
       <h2>AI 敘事報告
-        <span :class="report.citations.valid ? 'ok' : 'err'">
-          （引用查核：{{ report.citations.valid ? '全部有效' : '有捏造' }}）
+        <span :class="citeAudit.total ? 'err' : 'ok'" data-testid="citation-verdict">
+          （引用查核：{{ citeAudit.total ? `查無事件 ${citeAudit.total} 筆` : '全部有效' }}）
         </span>
       </h2>
+      <!-- 捏造引用清單：只說「有捏造」而不說是哪幾條，等於整份報告作廢卻無從查證。 -->
+      <p v-if="citeAudit.total" class="cite-warn" data-testid="citation-warning">
+        下列引用在推演帳本中查無對應事件（AI 捏造），標記段落之敘述未經帳本佐證，不得採信：
+        <span v-for="s in citeAudit.invalidSorted" :key="s" class="bad-seq">#{{ s }}</span>
+        <span v-if="citeAudit.orphans.length" class="orphan">
+          （其中 #{{ citeAudit.orphans.join('、#') }} 未出現在任何段落，請回報系統管理員）
+        </span>
+      </p>
       <p>{{ report.summary }}</p>
-      <p v-for="(p, i) in report.paragraphs" :key="i">
+      <p
+        v-for="(p, i) in report.paragraphs"
+        :key="i"
+        :class="{ fabricated: citeAudit.byParagraph.has(i) }"
+        :data-testid="citeAudit.byParagraph.has(i) ? 'para-fabricated' : 'para'"
+      >
         {{ p.text }}
-        <small v-if="p.cited_seqs.length">[引用 #{{ p.cited_seqs.join(', #') }}]</small>
+        <small v-if="p.cited_seqs.length">
+          [引用<template v-for="(s, j) in p.cited_seqs" :key="j"><template v-if="j">,</template>
+            <button
+              class="cite"
+              :class="{ bad: citeAudit.invalid.has(s) }"
+              :disabled="!bookmarkTickBySeq.has(s)"
+              :title="citeAudit.invalid.has(s) ? '帳本查無此事件（捏造）' : bookmarkTickBySeq.has(s) ? '跳至該事件所在 tick' : '該事件不在書籤中'"
+              @click="gotoSeq(s)"
+            >#{{ s }}</button></template>]
+        </small>
+        <small v-if="citeAudit.byParagraph.has(i)" class="bad">
+          ← 本段引用 #{{ citeAudit.byParagraph.get(i)!.join('、#') }} 帳本查無此事件
+        </small>
       </p>
       <h3>教訓</h3>
       <ul><li v-for="(l, i) in report.lessons" :key="i">{{ l }}</li></ul>
@@ -227,4 +321,29 @@ a { margin-right: 1rem; color: #60a5fa; }
 .replay-map { position: relative; height: 22rem; margin-top: 0.6rem; border: 1px solid #1e293b; border-radius: 0.375rem; overflow: hidden; }
 .replay-map.loading { display: flex; align-items: center; justify-content: center; color: #64748b; font-size: 0.85rem; }
 .mapnote { margin: 0.35rem 0 0; font-size: 0.78rem; color: #64748b; }
+/* 部隊狀況表：長局單位多，容器自己捲，不要讓整頁橫向捲動。 */
+.roster-wrap { max-height: 18rem; overflow: auto; border: 1px solid #1e293b; border-radius: 0.375rem; }
+.roster { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.roster th, .roster td { padding: 0.25rem 0.5rem; text-align: left; white-space: nowrap; }
+.roster thead th { position: sticky; top: 0; background: #0f172a; color: #94a3b8; font-weight: 500; }
+.roster tbody tr:nth-child(even) { background: #0f172a80; }
+.roster .desig { color: #e2e8f0; font-weight: 500; }
+.roster .warn { margin-left: 0.3rem; color: #f59e0b; }
+.evt-counts { columns: 2; font-size: 0.85rem; }
+/* 捏造引用：紅字 + 左側紅槓，掃一眼就知道哪一段不能念。 */
+.cite-warn { padding: 0.4rem 0.6rem; border-left: 3px solid #f87171; background: #7f1d1d20; font-size: 0.85rem; }
+.cite-warn .bad-seq { margin-left: 0.35rem; color: #f87171; font-variant-numeric: tabular-nums; }
+.cite-warn .orphan { display: block; margin-top: 0.25rem; color: #94a3b8; font-size: 0.78rem; }
+p.fabricated { border-left: 3px solid #f87171; padding-left: 0.6rem; }
+.cite {
+  padding: 0 0.1rem;
+  border: 0;
+  background: transparent;
+  color: #60a5fa;
+  font: inherit;
+  cursor: pointer;
+}
+.cite:disabled { color: #64748b; cursor: default; }
+.cite.bad, small.bad { color: #f87171; text-decoration: line-through; }
+small.bad { margin-left: 0.35rem; text-decoration: none; }
 </style>

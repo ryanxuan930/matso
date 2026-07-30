@@ -105,6 +105,24 @@ const OBSTACLE_TYPES = [
         >
       </label>
     </div>
+    <!-- WP-A3 禁射級別：**繪製當下就要選得到**。在此之前只有「畫完 → 選取 → 編輯」那一路
+         寫得進 zone_class，於是畫完就以為圈好了禁射區，實際上火力裁決完全不認得它。
+         僅全知可設（同編輯面板；一般指揮官只看得到下面那則提示）。 -->
+    <label
+      v-if="canControl"
+      class="me-own"
+      title="只有面（面／矩形／圓形）成得了區——點與線不參與火力裁決"
+    >
+      禁射
+      <select v-model="editor.drawZoneClass" data-testid="draw-zone-class">
+        <option v-for="z in ZONE_CLASSES" :key="z.value" :value="z.value">{{ z.label }}</option>
+      </select>
+    </label>
+    <div v-if="editor.drawZoneNameUnset" class="me-hint me-hint-zone" data-testid="draw-zone-warn">
+      <i class="pi pi-exclamation-triangle" />
+      名稱像是禁射區，但<b>未指定禁射級別</b>——這樣畫出來的區對火力裁決沒有效力。
+      <template v-if="!canControl">禁射級別須由統裁／白軍設定。</template>
+    </div>
     <NatoSymbolSelect v-model="editor.drawSidc" data-testid="draw-sidc" title="北約符號（僅點）" />
     <input v-model="editor.drawNotes" class="me-in" data-testid="draw-notes" placeholder="備註（選填）">
   </div>

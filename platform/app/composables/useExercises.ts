@@ -15,6 +15,7 @@ export type ExercisePhase = components['schemas']['ExercisePhase']
 export type SessionRole = components['schemas']['SessionRole']
 export type ExerciseAuditEntry = components['schemas']['ExerciseAuditEntry']
 export type SealView = components['schemas']['SealView']
+export type DestroyResult = components['schemas']['DestroyResult']
 
 /** 階段標籤 + 一句話說明（徽章的 tooltip）。 */
 export const EXERCISE_PHASE_LABELS: Record<string, { text: string; hint: string }> = {
@@ -89,6 +90,68 @@ export function detachSession(id: string, sessionId: string) {
 
 export function fetchAudit(id: string): Promise<ExerciseAuditEntry[]> {
   return apiFetch<ExerciseAuditEntry[]>(`/exercises/${id}/audit`)
+}
+
+/**
+ * 歸檔封包下載。
+ *
+ * **不可用 `<a href>` 直連端點**——這裡踩過兩個坑，`useAar.ts` 的 `aarExportDownload`
+ * 已經為 AAR 匯出踩過同一組並留下註解：
+ *   1. 相對路徑 `/api/v1/...` 會打到 Nuxt 自己（:3000），API 在另一個 origin；
+ *   2. 瀏覽器導覽不帶 `Authorization` 標頭 → 401「缺少 Token」。
+ * 故一律走 `apiFetch`（帶 Bearer、會自動續 token）取回內容，再以 Blob 觸發下載。
+ *
+ * 副作用提醒：後端在此端點寫 `BUNDLE_EXPORTED` 稽核——呼叫端下載後要重抓稽核軌跡，
+ * 否則「誰把整場演習帶走了」那一筆要重新展開才看得到。
+ */
+export async function downloadBundle(id: string): Promise<void> {
+  const data = await apiFetch<unknown>(`/exercises/${id}/bundle`)
+  const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+  const blob = new Blob([text], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `exercise-${id}.json`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * 銷毀模式：硬刪本演習所有推演局的資料（不可逆）。
+ *
+ * `confirmName` **必須與演習名稱逐字相符**（後端 `DestroyExerciseDataRequest.confirm_name`）——
+ * 這是後端刻意設計的第三道閘門，前端不得代填、不得放寬（trim 也不行：後端是 `!=` 直接比對，
+ * 前端先 trim 只會讓按鈕可按、送出後才被拒）。
+ */
+export function destroyExerciseData(id: string, confirmName: string): Promise<DestroyResult> {
+  return apiFetch<DestroyResult>(`/exercises/${id}/destroy`, {
+    method: 'POST',
+    body: { confirm_name: confirmName },
+  })
+}
+
+/**
+ * 牆鐘時間顯示（`2026-07-30 14:03:11`）。
+ *
+ * 演習層的時間戳全是**真實牆鐘**（稽核 `at`、簽證 `sealed_at`、勾稽 `done_at`、
+ * 階段 `phase_changed_at`），與模擬時間是兩條軸，不可混用格式。
+ */
+export function fmtWallClock(iso?: string | null): string {
+  return iso ? iso.slice(0, 19).replace('T', ' ') : '—'
+}
+
+/**
+ * 稽核/簽證/勾稽的「誰」。
+ *
+ * 後端這些欄位一律只回 user id。查得到帳號就顯示帳號名——稽核軌跡最主要的問題是
+ * 「誰做的」，顯示一串 uuid 等於答不出來。查不到（帳號已刪）才退回 id 前 8 碼，
+ * 並以 `id:` 前綴標明那是識別碼不是名字。
+ */
+export function actorLabel(id: string | null | undefined, names: Record<string, string>): string {
+  if (!id) return '—'
+  return names[id] ?? `id:${id.slice(0, 8)}`
 }
 
 export function fetchSeal(id: string): Promise<SealView | null> {

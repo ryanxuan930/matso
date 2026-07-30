@@ -4,15 +4,21 @@
 import { apiFetch } from '~/composables/useApi'
 import type { ApiError } from '~/composables/useApi'
 import {
+  DAY_NIGHT_DEFAULTS,
+  REQUEST_QUOTA_KINDS,
+  SURVIVABILITY_DEFAULTS,
   emptyScenario,
   exportScenario,
   importScenario,
+  type EditorRequestQuotas,
   type EditorUnit,
   type RelationValue,
+  type RequestQuotaKind,
   type ScenarioModel,
   type UnitLevel,
 } from '~/composables/useScenarioEditor'
 import { emptyCondition } from '~/composables/useConditionDsl'
+import { REQUEST_KIND_LABELS } from '~/composables/useC2'
 import { BRANCH_LABELS, BRANCH_OPTIONS } from '~/composables/useUnits'
 
 // 由大到小（與後端 UnitLevel 的宣告順序一致——那個順序就是編制大小）。
@@ -23,10 +29,14 @@ const LEVELS: UnitLevel[] = [
 const RELATIONS: RelationValue[] = ['ALLIED', 'NEUTRAL', 'HOSTILE']
 
 // zh-TW 對照表 -------------------------------------------------------------
+// E8 誠實化：WEGO/IGO_UGO 在 core 只有 enum 定義，`sim_runtime`/engine 完全沒有回合制分支——
+// 選了「同步回合」跑起來仍是即時制。回合制是一整張功能卡；在做出來之前，**標示清楚**，
+// 不要讓想定作者以為自己選了一種推演制度（這正是「設得到但沒效果」的老毛病）。
+const UNIMPLEMENTED_MODE_SUFFIX = '（尚未實作，目前一律以即時制執行）'
 const MODE_OPTIONS = [
   { label: '即時', value: 'REALTIME' },
-  { label: '同步回合', value: 'WEGO' },
-  { label: '輪流回合', value: 'IGO_UGO' },
+  { label: `同步回合${UNIMPLEMENTED_MODE_SUFFIX}`, value: 'WEGO' },
+  { label: `輪流回合${UNIMPLEMENTED_MODE_SUFFIX}`, value: 'IGO_UGO' },
 ]
 const LEVEL_LABELS: Record<UnitLevel, string> = {
   INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', SECTION: '組', PLATOON: '排',
@@ -42,6 +52,136 @@ const model = ref<ScenarioModel>(emptyScenario())
 const importText = ref('')
 const importError = ref('')
 const exportText = computed(() => JSON.stringify(exportScenario(model.value), null, 2))
+
+// 想定 meta（E7）----------------------------------------------------------
+// 說明欄：空字串一律收回 undefined。寫 `description: ""` 進想定不會壞，但會在檔案裡
+// 留下一個看起來「有設定卻是空的」欄位，且 diff 永遠髒。
+const description = computed({
+  get: () => model.value.description ?? '',
+  // InputText 清空時可能送 undefined，先收成字串再判斷（直接 .trim() 會炸掉整個頁面）。
+  set: (v: string) => { const t = String(v ?? ''); model.value.description = t.trim() ? t : undefined },
+})
+
+// bbox 順序是 [最小經, 最小緯, 最大經, 最大緯]（GeoJSON 慣例，contracts 與 MapFeature 一致）。
+const BBOX_LABELS = ['西界（最小經度）', '南界（最小緯度）', '東界（最大經度）', '北界（最大緯度）']
+function setBbox(i: number, v: number) {
+  // 非數值不寫入：bbox 是必填四元組，塞 null/NaN 進去會讓整份想定存不進伺服器，
+  // 而錯誤訊息只會說 "bbox: 不是數字"，作者很難連回是哪一格被清空的。
+  if (!Number.isFinite(v)) return
+  const bbox = [...model.value.bbox] as [number, number, number, number]
+  bbox[i] = v
+  model.value.bbox = bbox
+}
+const bboxInvalid = computed(() => {
+  const [minLng, minLat, maxLng, maxLat] = model.value.bbox
+  return minLng >= maxLng || minLat >= maxLat
+})
+
+function setTickRate(v: number) {
+  if (!Number.isFinite(v) || v <= 0) return
+  model.value.tickRateMs = Math.trunc(v)
+}
+/** tick 長度的人話版本（作者填的是毫秒，腦子裡想的是「幾分鐘一步」）。 */
+const tickLength = computed(() => {
+  const ms = model.value.tickRateMs
+  if (ms >= 60000) return `${Number((ms / 60000).toFixed(3))} 分模擬時間`
+  return `${Number((ms / 1000).toFixed(3))} 秒模擬時間`
+})
+// tick 速率**現在真的會生效**（想定宣告值已接進執行期時鐘）。它是行軍距離、每日補給消耗、
+// 修理進度的共同分母，設太小＝同樣的推演時間內部隊幾乎不動、油彈幾乎不耗。
+const tickWarning = computed(() => {
+  const ms = model.value.tickRateMs
+  if (ms < 100) return 'tick 速率低於契約下限 100 ms，存檔會被伺服器拒絕。'
+  if (ms < 10000) return `1 tick 僅 ${Number((ms / 1000).toFixed(3))} 秒：速度、每日消耗、修理進度都以 tick 長度換算，設這麼小會讓這些數字全部失真。`
+  return ''
+})
+
+const AGG_LEVEL_OPTIONS = [
+  { label: '（未宣告＝營級）', value: '' },
+  { label: '營級以上', value: 'BATTALION' },
+  { label: '旅級以上', value: 'BRIGADE' },
+  { label: '師級以上', value: 'DIVISION' },
+]
+const aggLevel = computed<string>({
+  get: () => model.value.aggregateAdjudicationLevel ?? '',
+  set: (v: string) => {
+    // 空選項要寫回 undefined 而不是 ''：''不是合法 enum 值，存檔會被 schema 擋下。
+    model.value.aggregateAdjudicationLevel = v
+      ? (v as NonNullable<ScenarioModel['aggregateAdjudicationLevel']>)
+      : undefined
+  },
+})
+
+// 想定設定（E6）----------------------------------------------------------
+// 申請配額：**清空＝不限**，0＝一張都不准申請。兩者是不同的想定意圖，所以清空要寫回 undefined
+// 而不是 0——C2 面板對「不限」顯示（不限），對 0 顯示額度用罄。
+function quotaOf(kind: RequestQuotaKind): number | undefined {
+  return model.value.requestQuotas?.[kind]
+}
+function setQuota(kind: RequestQuotaKind, v: number | null) {
+  // 逐種重建而不是 delete：清空的那一種必須**整個鍵消失**（＝不限），留 undefined 值在物件裡
+  // 會讓 JSON.stringify 吃掉它但 Object.keys 仍看得到，於是 requestQuotas 變成永遠非空。
+  const next: EditorRequestQuotas = {}
+  for (const k of REQUEST_QUOTA_KINDS) {
+    const cur = k === kind ? v : model.value.requestQuotas?.[k] ?? null
+    if (cur !== null && Number.isFinite(cur) && cur >= 0) next[k] = Math.trunc(cur)
+  }
+  model.value.requestQuotas = Object.keys(next).length ? next : undefined
+}
+
+// 晝夜：勾選即寫入預設 06:00/18:00（schema 要求 sunrise/sunset 同時存在，不能半殘）。
+const dayNightOn = computed({
+  get: () => model.value.dayNight !== undefined,
+  set: (on: boolean) => { model.value.dayNight = on ? { ...DAY_NIGHT_DEFAULTS } : undefined },
+})
+type DayNightField = 'sunriseMin' | 'sunsetMin' | 'startMin'
+const hourOf = (min: number) => Math.floor(min / 60)
+const minuteOf = (min: number) => min % 60
+/** 顯示用：startMin 未宣告時視為午夜（與後端 `start_minute()` 的預設一致）。 */
+function timeOf(field: DayNightField): number {
+  return model.value.dayNight?.[field] ?? 0
+}
+function setTime(field: DayNightField, part: 'h' | 'm', v: number) {
+  const d = model.value.dayNight
+  if (!d) return
+  // 時/分清空一律當 0：這裡與 bbox 不同——把時刻欄位留舊值不寫，畫面會是空的、匯出卻仍是舊時間，
+  // 使用者看不出自己清掉的東西還在。時刻歸零沒有危險，「畫面與檔案不一致」才有。
+  const n = Number.isFinite(v) ? Math.trunc(v) : 0
+  const cur = timeOf(field)
+  const h = part === 'h' ? Math.min(23, Math.max(0, n)) : hourOf(cur)
+  const m = part === 'm' ? Math.min(59, Math.max(0, n)) : minuteOf(cur)
+  d[field] = h * 60 + m
+}
+const hhmm = (min: number) => `${String(hourOf(min)).padStart(2, '0')}:${String(minuteOf(min)).padStart(2, '0')}`
+/** 日落早於日出＝跨午夜的夜間（schema 明講允許），提示作者這不是填錯。 */
+const dayNightNote = computed(() => {
+  const d = model.value.dayNight
+  if (!d) return ''
+  return d.sunsetMin < d.sunriseMin
+    ? `夜間跨午夜：${hhmm(d.sunsetMin)} 天黑，翌日 ${hhmm(d.sunriseMin)} 天亮。`
+    : `白天 ${hhmm(d.sunriseMin)}–${hhmm(d.sunsetMin)}，其餘時間為夜間。`
+})
+
+// 陣地變換：勾選即寫入與後端相同的預設值（SURVIVABILITY_DEFAULTS），取消勾選則整段不寫（＝停用）。
+const survivabilityOn = computed({
+  get: () => model.value.survivabilityMove?.enabled === true,
+  set: (on: boolean) => {
+    model.value.survivabilityMove = on ? { enabled: true, ...SURVIVABILITY_DEFAULTS } : undefined
+  },
+})
+function setSurvivability(field: 'missionsBeforeMove' | 'minKm' | 'maxKm', v: number) {
+  const s = model.value.survivabilityMove
+  if (!s || !Number.isFinite(v)) return
+  s[field] = field === 'missionsBeforeMove' ? Math.trunc(v) : v
+}
+// 後端遇到 min>max 會自動對調而不是報錯，但那是救急不是設計意圖——在這裡先講清楚。
+const survivabilityNote = computed(() => {
+  const s = model.value.survivabilityMove
+  if (!s?.enabled) return ''
+  const lo = s.minKm ?? SURVIVABILITY_DEFAULTS.minKm
+  const hi = s.maxKm ?? SURVIVABILITY_DEFAULTS.maxKm
+  return lo > hi ? '位移下限大於上限，載入時後端會自動對調。' : ''
+})
 
 // 從既有想定載入（#5）——URL ?load=<id> → GET /scenarios/{id} → importScenario。
 const loadError = ref('')
@@ -283,21 +423,251 @@ async function saveToServer() {
       {{ loadError }}
     </Message>
 
-    <section class="meta">
-      <label>名稱 <InputText v-model="model.name" size="small" data-testid="sc-name" /></label>
-      <label>版本 <InputText v-model="model.version" size="small" /></label>
-      <label>模式
+    <section class="meta" data-testid="sc-meta">
+      <label data-scenario-key="name">名稱 <InputText v-model="model.name" size="small" data-testid="sc-name" /></label>
+      <label data-scenario-key="version">版本 <InputText v-model="model.version" size="small" data-testid="sc-version" /></label>
+      <label data-scenario-key="description" class="meta-wide">說明
+        <InputText v-model="description" size="small" placeholder="想定概要（選填）" data-testid="sc-description" />
+      </label>
+      <label data-scenario-key="mode">推演模式
         <Select
           v-model="model.mode"
           :options="MODE_OPTIONS"
           option-label="label"
           option-value="value"
           size="small"
+          data-testid="sc-mode"
         />
       </label>
     </section>
+    <!-- E8：回合制在 core 只有 enum，執行期沒有任何分支。選了也不會變成回合制，講明白。 -->
+    <Message
+      v-if="model.mode !== 'REALTIME'"
+      severity="warn"
+      size="small"
+      class="sc-status"
+      data-testid="sc-mode-warning"
+    >
+      回合制（WEGO／輪流回合）尚未實作：執行期沒有回合分支，本局仍會以即時制逐 tick 推進。
+      此選項目前只是想定文件上的宣告。
+    </Message>
 
-    <section>
+    <!-- E7：戰場範圍／tick 速率／六角解析度／彙整裁決層級——過去這四項在模型裡有、UI 卻沒有，
+         用編輯器新建的想定戰場永遠是預設 bbox、節奏永遠是 60000ms，只能改 JSON。 -->
+    <section data-testid="sc-battlefield-section">
+      <h2>戰場範圍與節奏</h2>
+      <div class="row" data-scenario-key="bbox" data-testid="sc-bbox">
+        <label v-for="(lbl, bi) in BBOX_LABELS" :key="bi" class="setting-field">{{ lbl }}
+          <InputNumber
+            :model-value="model.bbox[bi]"
+            :max-fraction-digits="6"
+            size="small"
+            :input-style="{ width: '7rem' }"
+            @update:model-value="(v: number) => setBbox(bi, v)"
+          />
+        </label>
+      </div>
+      <p class="hint">
+        戰場範圍（WGS84）決定地圖初始視野與想定的作戰地境；單位可以擺在框外，但 COP 開圖時不會在畫面上。
+      </p>
+      <Message v-if="bboxInvalid" severity="warn" size="small" data-testid="sc-bbox-warning">
+        西界須小於東界、南界須小於北界，否則此範圍算不出任何區域。
+      </Message>
+
+      <div class="row">
+        <label class="setting-field" data-scenario-key="tick_rate_ms">tick 速率（毫秒）
+          <InputNumber
+            :model-value="model.tickRateMs"
+            :min="100"
+            size="small"
+            :input-style="{ width: '8rem' }"
+            data-testid="sc-tick-rate"
+            @update:model-value="setTickRate"
+          />
+        </label>
+        <span class="hint">1 tick ＝ {{ tickLength }}</span>
+      </div>
+      <p class="hint">
+        本局執行期的時間刻度，<b>此值會實際決定執行期節奏</b>（60000 ＝ 1 tick 為 1 分鐘）。行軍距離、
+        每日油彈消耗、修理進度都以 tick 長度換算，改它等於改動整局的所有速率。
+      </p>
+      <Message v-if="tickWarning" severity="warn" size="small" data-testid="sc-tick-warning">
+        {{ tickWarning }}
+      </Message>
+
+      <div class="row">
+        <label class="setting-field" data-scenario-key="hex_resolution">六角格解析度
+          <!-- 目前只支援 h3 res 8：core 的地形取樣/路徑規劃/預檢全部固定在該解析度，
+               宣告別的值 loader 會直接拒載。給下拉等於給一個必定失敗的選項，故鎖定唯讀。 -->
+          <InputText model-value="8" size="small" disabled class="hex-res" data-testid="sc-hex-resolution" />
+        </label>
+        <span class="hint">固定值：地形取樣、路徑規劃與預檢皆以 h3 解析度 8 運作，填別的值伺服器會拒載。</span>
+      </div>
+
+      <div class="row">
+        <label class="setting-field" data-scenario-key="aggregate_adjudication_level">彙整裁決層級
+          <Select
+            v-model="aggLevel"
+            :options="AGG_LEVEL_OPTIONS"
+            option-label="label"
+            option-value="value"
+            size="small"
+            data-testid="sc-agg-level"
+          />
+        </label>
+      </div>
+      <p class="hint">
+        達到此層級（含）以上的單位交戰改用 Lanchester 聚合裁決，不再逐武器逐發計算——大部隊會戰跑得動，
+        代價是單一武器的細節不再進入結果。
+      </p>
+    </section>
+
+    <!-- E6：contracts 有這五個頂層設定，過去編輯器一個欄位都沒有，只能靠「匯入 JSON」手貼。 -->
+    <section data-testid="sc-rules-section">
+      <h2>想定設定</h2>
+
+      <div class="setting" data-scenario-key="request_quotas" data-testid="sc-quotas">
+        <div class="setting-head">申請配額</div>
+        <div class="row">
+          <label v-for="kind in REQUEST_QUOTA_KINDS" :key="kind" class="setting-field">
+            {{ REQUEST_KIND_LABELS[kind] ?? kind }}
+            <InputNumber
+              :model-value="quotaOf(kind)"
+              :min="0"
+              :max-fraction-digits="0"
+              size="small"
+              placeholder="不限"
+              :input-style="{ width: '5.5rem' }"
+              :data-testid="`sc-quota-${kind}`"
+              @update:model-value="(v: number) => setQuota(kind, v)"
+            />
+          </label>
+        </div>
+        <p class="hint">
+          參謀能提出的申請單上限（<b>整局總量，不是每日</b>；各陣營分別計算）。留空＝不限，
+          C2 面板顯示「（不限）」；填 0 ＝ 該種申請一張都不准提。額度用罄後再提的申請會直接落
+          「已駁回」留痕，而不是被拒收——AAR 才看得出該陣營是在第幾 tick 被配額卡住。
+        </p>
+      </div>
+
+      <div class="setting" data-scenario-key="day_night" data-testid="sc-day-night">
+        <label class="setting-head">
+          <Checkbox v-model="dayNightOn" binary data-testid="sc-day-night-toggle" />宣告晝夜
+        </label>
+        <div v-if="model.dayNight" class="row" data-testid="sc-day-night-fields">
+          <label class="setting-field">日出
+            <InputNumber
+              :model-value="hourOf(timeOf('sunriseMin'))" :min="0" :max="23" size="small"
+              :input-style="{ width: '3.5rem' }" data-testid="sc-sunrise-h"
+              @update:model-value="(v: number) => setTime('sunriseMin', 'h', v)"
+            />時
+            <InputNumber
+              :model-value="minuteOf(timeOf('sunriseMin'))" :min="0" :max="59" size="small"
+              :input-style="{ width: '3.5rem' }" data-testid="sc-sunrise-m"
+              @update:model-value="(v: number) => setTime('sunriseMin', 'm', v)"
+            />分
+          </label>
+          <label class="setting-field">日落
+            <InputNumber
+              :model-value="hourOf(timeOf('sunsetMin'))" :min="0" :max="23" size="small"
+              :input-style="{ width: '3.5rem' }" data-testid="sc-sunset-h"
+              @update:model-value="(v: number) => setTime('sunsetMin', 'h', v)"
+            />時
+            <InputNumber
+              :model-value="minuteOf(timeOf('sunsetMin'))" :min="0" :max="59" size="small"
+              :input-style="{ width: '3.5rem' }" data-testid="sc-sunset-m"
+              @update:model-value="(v: number) => setTime('sunsetMin', 'm', v)"
+            />分
+          </label>
+          <label class="setting-field">開演時刻
+            <InputNumber
+              :model-value="hourOf(timeOf('startMin'))" :min="0" :max="23" size="small"
+              :input-style="{ width: '3.5rem' }" data-testid="sc-start-h"
+              @update:model-value="(v: number) => setTime('startMin', 'h', v)"
+            />時
+            <InputNumber
+              :model-value="minuteOf(timeOf('startMin'))" :min="0" :max="59" size="small"
+              :input-style="{ width: '3.5rem' }" data-testid="sc-start-m"
+              @update:model-value="(v: number) => setTime('startMin', 'm', v)"
+            />分
+          </label>
+        </div>
+        <p v-if="dayNightNote" class="hint" data-testid="sc-day-night-note">{{ dayNightNote }}</p>
+        <p class="hint">
+          開了之後夜間會壓低觀測與命中（光照係數 &lt; 1）；不宣告＝整場都是白天（係數恆 1.0）。
+          「開演時刻」是 tick 0 對應的當日時間，決定演習從幾點開始打。
+        </p>
+      </div>
+
+      <div class="setting" data-scenario-key="allow_fratricide" data-testid="sc-fratricide">
+        <label class="setting-head">
+          <Checkbox v-model="model.allowFratricide" binary data-testid="sc-fratricide-toggle" />允許友軍誤傷裁決
+        </label>
+        <p class="hint">
+          開了之後，對自己陣營／盟軍的 ENGAGE 不再被 ROE 直接拒絕，改為強警告＋照常裁決＋記 FRATRICIDE 事件供 AAR 追究，
+          COP 下令面板會出現誤傷確認核取方塊。<b>不涵蓋中立方</b>（攻中立仍一律拒），面射擊也不受本開關影響——
+          砲彈不挑陣營，殺傷半徑內的友軍本來就會受傷。
+        </p>
+      </div>
+
+      <div
+        class="setting"
+        data-scenario-key="indirect_fire_requires_approval"
+        data-testid="sc-fire-approval"
+      >
+        <label class="setting-head">
+          <Checkbox
+            v-model="model.indirectFireRequiresApproval"
+            binary
+            data-testid="sc-fire-approval-toggle"
+          />曲射火力須經火協核准
+        </label>
+        <p class="hint">
+          開了之後，砲兵／飛彈單位的 ENGAGE 令必須掛一張已核准的「火力支援」申請單，否則預檢直接拒絕；
+          COP 下令面板會出現核准單下拉，C2 面板的申請—核覆流程才會真正被用到。不開＝曲射火力不設限。
+        </p>
+      </div>
+
+      <div class="setting" data-scenario-key="survivability_move" data-testid="sc-survivability">
+        <label class="setting-head">
+          <Checkbox v-model="survivabilityOn" binary data-testid="sc-survivability-toggle" />啟用陣地變換
+        </label>
+        <div v-if="model.survivabilityMove?.enabled" class="row" data-testid="sc-survivability-fields">
+          <label class="setting-field">每
+            <InputNumber
+              :model-value="model.survivabilityMove.missionsBeforeMove ?? SURVIVABILITY_DEFAULTS.missionsBeforeMove"
+              :min="1" :max-fraction-digits="0" size="small"
+              :input-style="{ width: '4.5rem' }" data-testid="sc-surv-missions"
+              @update:model-value="(v: number) => setSurvivability('missionsBeforeMove', v)"
+            />次火力任務後轉移
+          </label>
+          <label class="setting-field">位移
+            <InputNumber
+              :model-value="model.survivabilityMove.minKm ?? SURVIVABILITY_DEFAULTS.minKm"
+              :min="0.1" :max-fraction-digits="2" size="small"
+              :input-style="{ width: '4.5rem' }" data-testid="sc-surv-min-km"
+              @update:model-value="(v: number) => setSurvivability('minKm', v)"
+            />–
+            <InputNumber
+              :model-value="model.survivabilityMove.maxKm ?? SURVIVABILITY_DEFAULTS.maxKm"
+              :min="0.1" :max-fraction-digits="2" size="small"
+              :input-style="{ width: '4.5rem' }" data-testid="sc-surv-max-km"
+              @update:model-value="(v: number) => setSurvivability('maxKm', v)"
+            />公里
+          </label>
+        </div>
+        <Message v-if="survivabilityNote" severity="warn" size="small" data-testid="sc-surv-warning">
+          {{ survivabilityNote }}
+        </Message>
+        <p class="hint">
+          開了之後，自走砲（履帶／輪型）打滿指定次數的火力任務就會自動下一道 MOVE 令換陣地，避免被反砲兵火力找上；
+          計的是<b>火力任務次數</b>不是發數。牽引砲不會被排程（需要牽引車，尚無資料模型）。
+          不開＝砲兵不會自動轉移陣地（仍可由人工下移動令）。
+        </p>
+      </div>
+    </section>
+
+    <section data-scenario-key="factions">
       <h2>陣營 <Button data-testid="add-faction" size="small" text @click="addFaction">＋</Button></h2>
       <div v-for="(f, i) in model.factions" :key="i" class="row" data-testid="faction-row">
         <InputText v-model="f.id" size="small" placeholder="ID" />
@@ -306,7 +676,7 @@ async function saveToServer() {
       </div>
     </section>
 
-    <section>
+    <section data-scenario-key="relations">
       <h2>關係</h2>
       <table class="rel-matrix" data-testid="relations-matrix">
         <thead>
@@ -512,7 +882,7 @@ async function saveToServer() {
       </div>
     </section>
 
-    <section data-testid="victory-section">
+    <section data-testid="victory-section" data-scenario-key="victory_conditions">
       <h2>勝負條件 <Button data-testid="add-victory" size="small" text @click="addVictory">＋</Button></h2>
       <p class="hint">每條：指定陣營於「條件」成立時獲勝（條件 DSL 與 MSEL 觸發共用）。想定規格要求至少一條。</p>
       <p v-if="!model.victoryConditions.length" class="empty-hint" data-testid="victory-empty">
@@ -585,6 +955,21 @@ h2 { font-size: 0.9375rem; color: #94a3b8; display: flex; align-items: center; g
 :deep(.p-treetable td) { padding: 0.2rem 0.4rem; }
 .meta { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
 .meta label { display: inline-flex; align-items: center; gap: 0.4rem; }
+.meta .meta-wide { flex: 1 1 18rem; }
+.meta .meta-wide :deep(input) { width: 100%; }
+/* 想定設定：一項一塊，控制項後面必有一行「開了會怎樣」 */
+.setting { margin: 0.75rem 0; }
+.setting + .setting { border-top: 1px dashed #1e293b; padding-top: 0.75rem; }
+.setting-head {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.85rem; color: #cbd5e1; margin-bottom: 0.25rem;
+}
+label.setting-head { cursor: pointer; }
+.setting-field {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.8125rem; color: #94a3b8;
+}
+.hex-res { width: 4rem; }
 .io { display: flex; gap: 1rem; }
 .io > div { flex: 1; }
 .mono { width: 100%; font-family: monospace; font-size: 0.75rem; }

@@ -918,6 +918,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/messages/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 把指定（或全部）寄給本人的信文標為已讀。 **在此之前 `Message.readAt` 沒有任何寫入端**——欄位在 DB、在契約，就是沒有人寫得進去， 所以「已讀」這件事在系統裡從來沒有發生過，寄件者看不出下級收到沒有。 三條規則：①**首次已讀為準**（已有時戳不覆寫——AAR 要問的是第一次被看到是什麼時候）； ②**寄件備份不算已讀**（否則每封信送出即已讀）； ③**必須是真收件方**（不吃全知旁通——統裁看得到全場，但他看過不等於下級看過）。 ⚠ 已知限制：`readAt` 是每封信一格、不是每人一格，發給整個陣營的信只要有一位參謀 標了已讀，全陣營就都算已讀。逐人已讀需要新的關聯表。 */
+        post: operations["markMessagesRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/requests": {
         parameters: {
             query?: never;
@@ -1509,6 +1528,19 @@ export interface components {
             /** Format: date-time */
             read_at?: string | null;
         };
+        /** @description 標示已讀。`message_ids` 省略/null ＝把所有「寄給我且未讀」的信文一次標掉。 */
+        MarkReadRequest: {
+            message_ids?: string[] | null;
+        };
+        /** @description **回報實際標到哪幾封**——不是回 204 了事。被跳過的（已讀過、非本人收件、自己寄的） 不會出現在 `marked` 裡，呼叫端據此知道「我按了但沒生效」，而不是以為成功了卻什麼都沒變。 */
+        MarkReadResult: {
+            marked: string[];
+            /**
+             * Format: date-time
+             * @description 本次標記使用的時戳（**牆鐘**，不是 sim tick——這是操作員何時看到，不是戰場上第幾分鐘）
+             */
+            read_at?: string | null;
+        };
         SendMessageRequest: {
             kind: components["schemas"]["MessageKind"];
             /** @description 省略/null＝發給整個陣營 */
@@ -1775,7 +1807,7 @@ export interface components {
             ai_max_orders: number;
             /** @description 狀態快照間隔 tick（WP-E1，預設 600）。以 tick 計而非牆鐘秒——快照點必須是模擬時間上的 確定位置，牆鐘會隨降頻漂移。預設 600 tick ≈ 5 分鐘牆鐘（@ tick_rate_ms=60000 / pace_compression=120，即 0.5s/tick）。崩潰時最多損失一個間隔內的熱狀態。 */
             checkpoint_interval_ticks: number;
-            /** @description 「WP-C1」每 tick 壓制衰減比（預設 0.85） */
+            /** @description 每 tick 的壓制衰減比（預設 **0.7**）。0.7 表示每分鐘剩七成，約 13 分鐘清乾淨。 選 0.7 不選 0.85 的理由：後者要 29 分鐘才清得掉，那讓一次砲擊的壓制效果長得像戰損； 真實的壓制在火力一停就開始鬆動。⚠ 本欄的說明曾寫「預設 0.85」而程式是 0.7， 照契約算的 client 會全部算錯——權威在 `adjudication/suppression.py` 的常數 （golden `suppression_defense_60` 也是以 0.7 錄的）。 */
             suppression_decay: number;
             /** @description 「WP-C1」滿壓制時的射擊效能倍率 */
             suppression_fire_penalty: number;
@@ -1827,6 +1859,14 @@ export interface components {
             };
             /** @description 本局所有陣營 id（供 UI 列舉；不含 WHITE_CELL） */
             factions: string[];
+            /** @description 陣營代表色 {factionId: "#RRGGBB"}（想定 `factions[].color` 的**開局快照**）。 未宣告 → 空物件，前端沿用預設調色盤。 ⚠ **不是 fog 敏感資訊**：陣營的名稱與代表色是公開的部隊識別，不是誰在哪裡。 */
+            colors?: {
+                [key: string]: string;
+            };
+            /** @description 陣營顯示名（例：BLUE → 「第 21 砲兵營」）。未宣告 → 空物件，直接顯示 id。 */
+            display_names?: {
+                [key: string]: string;
+            };
         };
         /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/echelon/branch/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 **敵情粗化**（WP-C5，SPEC_FULL §6.2）：觀測陣營整體通聯非 ONLINE 時，`lat`/`lng` 量化到 h3 res-6 格心（約 3km）、`error_radius_m` 放大到該格尺度、`fidelity` 上限 DETECTED（連帶 echelon/branch/designation/faction 回到 null）。資料本身不動，只是投影降級。 */
         ContactView: {
@@ -4430,6 +4470,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageView"];
+                };
+            };
+            /** @description 非本局參與者 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    markMessagesRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkReadRequest"];
+            };
+        };
+        responses: {
+            /** @description 實際標到的信文 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkReadResult"];
                 };
             };
             /** @description 非本局參與者 */

@@ -76,6 +76,17 @@ def fratricide_victims(
     """從逐單位/逐陣營戰損裡挑出**友軍**的部分。
 
     輸入是 {陣營: 戰損}，回同型但只留友軍。空 dict ＝這次射擊沒有誤傷。
+
+    ## 現況：生產環境零呼叫端（2026-07-30 查證）
+
+    誤傷歸帳現在由 `area_fire.py` 在裁決當下做完——它以逐**單位**的量綱篩出友軍受害者，
+    寫進 `AREA_FIRE_RESOLVED` 的 `ai_decision["friendly_losses"]`，
+    `engine/fire_wiring.py` 只讀那個鍵並展開成獨立的 FRATRICIDE 事件。
+    本函式是那條路線定案前的另一種切法（事後拿「陣營→戰損」再篩一次）。
+
+    **留著不刪**：`test_fratricide.py` 用它釘住兩條語義——「0 戰損不算受害」與
+    「盟軍算友軍」（`is_friendly` 而非字串相等）。這兩條正是 `area_fire` 曾經踩過的坑。
+    要清掉請連同那支測試一起處理，不要單獨刪函式。
     """
     return {
         faction: loss

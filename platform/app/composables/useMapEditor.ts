@@ -23,6 +23,7 @@ import {
   fetchMapFeatures,
   fetchTerrainFootprint,
   influenceToFc,
+  looksLikeNoStrikeName,
   MIN_VERTICES,
   openRing,
   removeVertex,
@@ -63,6 +64,14 @@ export function useMapEditor(opts: {
   // `effect_of(None)` 是全中性，所以不填就等於過去的「純幾何障礙」，既有想定行為不變。
   const drawObstacleType = ref('')
   const drawDensity = ref<number | null>(null)
+  /**
+   * WP-A3 禁射級別——**繪製當下就要能選**。
+   *
+   * 在此之前只有「先畫完 → 再選取 → 從編輯面板的下拉選一次」那一條路寫得進 `zone_class`：
+   * 畫一個叫「XX 禁射區」的多邊形、取名上色加備註都做了，它對火力裁決卻完全沒有效力，
+   * 而中間沒有任何警告。禁射區是安全機制，「以為圈好了、其實沒有」比沒圈更危險。
+   */
+  const drawZoneClass = ref('')
   const drawWidth = ref(DEFAULT_FEATURE_WIDTH)
   const selectedFeatureId = ref<string | null>(null)
   // 選取特徵的編輯欄位（#11）
@@ -128,20 +137,39 @@ export function useMapEditor(opts: {
   }
 
   // ---- 繪製 ----
-  function startDraw(kind: DraftKind, featureKind: string) {
-    selectedFeatureId.value = null
-    armReshape(null) // #99b 開始繪製 → 收掉上一個物件的控制點
-    drawFeatureKind.value = featureKind
-    drawKind.value = kind
-    draftCoords.value = []
+  /**
+   * 屬性表單填的東西**清在畫完之後**，不清在開始畫的時候。
+   *
+   * 這裡修掉的是一個把整排繪製屬性變成裝飾品的順序錯誤：屬性表單只在「還沒開始畫」時顯示
+   * （按下形狀鈕之後畫面上只剩「完成／取消」），而 `startDraw` 原本會把 label/color/notes/
+   * sidc/obstacle_type/density 全部歸零——於是使用者填的每一格都在按下形狀鈕的那一瞬間被清掉，
+   * `finishDraw` 讀到的永遠是空值。症狀是「取名了卻叫 OBSTACLE、選了雷區卻是純幾何障礙」，
+   * 而畫面上沒有任何跡象。取消繪製**不清**：畫歪了重畫不該逼人把名字再打一次。
+   */
+  function resetDrawAttrs() {
     drawLabel.value = ''
     drawColor.value = ''
     drawNotes.value = ''
     drawSidc.value = ''
     drawObstacleType.value = ''
     drawDensity.value = null
-    // 障礙/建築預設高度 2m（#11）。
-    drawHeight.value = featureKind === 'OBSTACLE' || featureKind === 'BUILDING' ? 2 : null
+    drawZoneClass.value = ''
+  }
+  // 障礙/建築預設高度 2m（#11）——跟著「類別」下拉走而不是跟著開始繪製走，
+  // 否則使用者在表單裡調過的高度會在按下形狀鈕時被打回預設。
+  watch(
+    drawFeatureKind,
+    (k) => {
+      drawHeight.value = k === 'OBSTACLE' || k === 'BUILDING' ? (drawHeight.value ?? 2) : null
+    },
+    { immediate: true },
+  )
+  function startDraw(kind: DraftKind, featureKind: string) {
+    selectedFeatureId.value = null
+    armReshape(null) // #99b 開始繪製 → 收掉上一個物件的控制點
+    drawFeatureKind.value = featureKind
+    drawKind.value = kind
+    draftCoords.value = []
   }
   async function startWeaponDraw() {
     await ensureWeaponTemplates()
@@ -190,6 +218,11 @@ export function useMapEditor(opts: {
       if (drawObstacleType.value) attrs.obstacle_type = drawObstacleType.value
       if (drawDensity.value != null) attrs.density = drawDensity.value
     }
+    // WP-A3 禁射級別：**只有面成得了區**——後端 `no_strike._feature_zones` 只查
+    // `geometry_type == "POLYGON"`，掛在點/線上的 `zone_class` 會被靜默忽略。
+    // 故只有幾何確實存成面時才寫進去，其餘情形下面會明講「沒有套用」。
+    const storedAsArea = isShape || drawKind.value === 'POLYGON'
+    if (drawZoneClass.value && storedAsArea) attrs.zone_class = drawZoneClass.value
     const body: FeatureCreate = {
       kind: drawFeatureKind.value,
       geometry_type: isShape ? 'POLYGON' : drawKind.value,
@@ -210,6 +243,8 @@ export function useMapEditor(opts: {
       await createMapFeature(sessionId.value, body)
       await loadFeatures()
       toasts.push({ severity: 'success', title: '已新增地圖標註', timeoutMs: 2500 })
+      warnZoneEffect(storedAsArea, body.label ?? '')
+      resetDrawAttrs()
     } catch (e) {
       toasts.push({
         severity: 'error',
@@ -220,6 +255,38 @@ export function useMapEditor(opts: {
     }
     cancelDraw()
   }
+
+  /**
+   * 畫完之後把「這個標註到底有沒有禁射效力」講清楚。
+   *
+   * 兩種情形在畫面上都與真的禁射區長得一模一樣，不講就沒有人會發現：
+   * ①選了禁射級別卻畫成點/線 → 後端只認面，值被丟掉；
+   * ②名字叫「XX 禁射區」卻沒選級別 → 火力裁決根本不認得它。
+   */
+  function warnZoneEffect(storedAsArea: boolean, label: string) {
+    if (drawZoneClass.value && !storedAsArea) {
+      toasts.push({
+        severity: 'warn',
+        title: '禁射級別未套用',
+        detail: '禁射區只認面（面／矩形／圓形）——點與線不成區，此標註不參與火力裁決。',
+        timeoutMs: 8000,
+      })
+      return
+    }
+    if (!drawZoneClass.value && looksLikeNoStrikeName(label)) {
+      toasts.push({
+        severity: 'warn',
+        title: '此標註無禁射效力',
+        detail:
+          '名稱看起來是禁射區，但未指定禁射級別——火力裁決不會理會它。請選取該標註並設定「禁射」級別。',
+        timeoutMs: 8000,
+      })
+    }
+  }
+  /** 名稱像禁射區、級別卻空著——繪製表單即時提示（等畫完才講已經晚了一步）。 */
+  const drawZoneNameUnset = computed(
+    () => !drawZoneClass.value && looksLikeNoStrikeName(drawLabel.value),
+  )
 
   // ---- 選取 + 編輯欄位載入 ----
   function onFeatureClick(e: { id: string }) {
@@ -522,6 +589,8 @@ export function useMapEditor(opts: {
     drawSidc,
     drawObstacleType,
     drawDensity,
+    drawZoneClass,
+    drawZoneNameUnset,
     drawWidth,
     selectedFeatureId,
     selectedFeature,

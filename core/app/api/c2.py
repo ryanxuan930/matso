@@ -2,6 +2,7 @@
 
 GET  /api/v1/sessions/{session_id}/messages              收信匣（本人可見）
 POST /api/v1/sessions/{session_id}/messages              送信
+POST /api/v1/sessions/{session_id}/messages/read         標示已讀（收件方）
 GET  /api/v1/sessions/{session_id}/requests              申請單 + 配額用量
 POST /api/v1/sessions/{session_id}/requests              送出申請
 POST /api/v1/sessions/{session_id}/requests/{rid}/decide 核覆
@@ -13,6 +14,7 @@ POST /api/v1/sessions/{session_id}/requests/{rid}/decide 核覆
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, status
@@ -31,13 +33,19 @@ from app.c2.service import (
 )
 from app.cache import make_redis
 from app.config import Settings
-from app.errors import AuthForbiddenError, RequestNoObserverError, SessionNotFoundError
+from app.errors import (
+    AuthForbiddenError,
+    FactionInvalidError,
+    RequestNoObserverError,
+    SessionNotFoundError,
+)
+from app.factions import WHITE_CELL, validate_faction_id
 from app.factions.session_store import load_session_relations
 from app.models import SessionParticipant, User, WargameSession
-from app.models.enums import MessageKind, RequestKind, SeatRole
-from app.models.tables import Message, Request
+from app.models.enums import MessageKind, RequestKind, SeatRole, UserRole
+from app.models.tables import Message, Request, TacticalUnit
 from app.orders.precheck import PhysicsGateway
-from app.stream.faction_filter import is_omniscient, is_visible
+from app.stream.faction_filter import is_omniscient, is_visible, is_white_cell
 from app.stream.publish import publish_event
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["c2"])
@@ -53,6 +61,11 @@ class MessageView(BaseModel):
     ref_id: str | None = None
     body: str = ""
     tick: int = 0
+    # 已讀時戳。**DB（Message.readAt）與契約（MessageView.read_at）本來就有這一欄，
+    # 只有這個 view 漏掉**，而且沒有任何端點寫得進去——於是信文永遠是未讀，
+    # 寄件者看不出下級到底收到沒有。牆鐘時戳（非 sim tick）：這是操作員何時看到，
+    # 不是戰場上第幾分鐘，兩者不可混用。
+    read_at: datetime | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -61,6 +74,23 @@ class SendMessageRequest(BaseModel):
     to_faction: str | None = None
     ref_id: str | None = None
     body: str = Field(max_length=4000)
+
+
+class MarkReadRequest(BaseModel):
+    """標示已讀。`message_ids` 省略/null＝把所有「寄給我且未讀」的信文一次標掉。"""
+
+    message_ids: list[str] | None = None
+
+
+class MarkReadResult(BaseModel):
+    """**回報實際標到哪幾封**——不是回 204 了事。
+
+    被跳過的（已讀過、非本人收件、自己寄的）不會出現在 marked 裡，呼叫端據此知道
+    「我按了但沒生效」，而不是以為成功了卻什麼都沒變。
+    """
+
+    marked: list[str] = []
+    read_at: datetime | None = None
 
 
 class RequestView(BaseModel):
@@ -163,6 +193,64 @@ def _msg_envelope(m: Message) -> dict[str, Any]:
     return env
 
 
+def _is_addressee(m: Message, part: SessionParticipant) -> bool:
+    """這封信是不是**真的寄給這個人**——刻意不吃全知旁通。
+
+    已讀是「收件方看過了」的事實陳述，AAR 會拿它重建事件鏈。統裁靠全知旁通看得到全場信文，
+    若也算收件方，他一開面板就會把所有人的信標成已讀，留痕當場失真。
+    """
+    seat = part.seat_role.value if part.seat_role is not None else None
+    return is_visible(_msg_envelope(m), part.faction, False, seat)
+
+
+def _session_factions(db: Session, session_id: str) -> set[str]:
+    """本局實際存在的陣營（單位 + 參與者）＋ 統裁保留字。供跨陣營發信驗目標。"""
+    unit_f = db.scalars(
+        select(TacticalUnit.faction).where(TacticalUnit.session_id == session_id).distinct()
+    ).all()
+    part_f = db.scalars(
+        select(SessionParticipant.faction)
+        .where(SessionParticipant.session_id == session_id)
+        .distinct()
+    ).all()
+    return {f for f in (*unit_f, *part_f) if f} | {WHITE_CELL}
+
+
+def _resolve_to_faction(
+    db: Session,
+    session_id: str,
+    part: SessionParticipant,
+    role: UserRole,
+    requested: str | None,
+) -> str:
+    """決定收件陣營。省略/同陣營＝寄件者自己的陣營（既有行為不變）。
+
+    **跨陣營發信只有白軍/統裁能做。**收信匣的可見性只看 `to_faction`，所以這個欄位
+    等於「把信直接投進哪個陣營的信文匣」——原本無條件採用請求值，任一陣營的指揮官
+    都能對敵軍發信（甚至冒充敵方參謀往來）。ADMIN 不在此列：跨陣營投信是統裁的注入
+    行為，與 `inject`/`control` 同一條線（那兩處也是 `is_white_cell`），
+    ADMIN 是系統管理不是統裁。
+
+    目標陣營必須真的存在於本局：打錯字的話信會落在一個沒有人收得到的陣營——
+    送出 201、對方永遠看不到，正是「存得進去、讀得回來、實際沒效果」那種病。
+    """
+    if not requested or requested == part.faction:
+        return part.faction
+    if not is_white_cell(role):
+        raise AuthForbiddenError(
+            "跨陣營發信限白軍/統裁",
+            details={"to_faction": requested, "my_faction": part.faction},
+        )
+    validate_faction_id(requested)
+    known = _session_factions(db, session_id)
+    if requested not in known:
+        raise FactionInvalidError(
+            f"本局沒有這個陣營：{requested}",
+            details={"to_faction": requested, "known": sorted(known)},
+        )
+    return requested
+
+
 def _push(
     settings: Settings,
     session_id: str,
@@ -195,6 +283,26 @@ def _username(db: Session, user_id: str | None) -> str:
     return u.username if u is not None else "?"
 
 
+def _msg_view(db: Session, m: Message) -> MessageView:
+    """信文列 → view。**只此一處組裝**（申請單那側的 `_req_view` 同理）。
+
+    原本 list/send 各自手寫一份欄位對應，兩處會漂：`read_at` 就是這樣加在 model 與契約上、
+    卻沒人把它接進 view 的。多一個組裝點就多一個會漏欄位的地方。
+    """
+    return MessageView(
+        id=m.id,
+        kind=m.kind,
+        from_seat=m.from_seat,
+        from_username=_username(db, m.from_user_id),
+        to_seat=m.to_seat,
+        to_faction=m.to_faction,
+        ref_id=m.ref_id,
+        body=m.body,
+        tick=m.tick,
+        read_at=m.read_at,
+    )
+
+
 @router.get("/{session_id}/messages", response_model=list[MessageView])
 def list_messages(
     session_id: str,
@@ -213,19 +321,7 @@ def list_messages(
         mine = part is not None and m.from_user_id == part.user_id
         if not mine and not is_visible(_msg_envelope(m), faction, omniscient, seat):
             continue
-        out.append(
-            MessageView(
-                id=m.id,
-                kind=m.kind,
-                from_seat=m.from_seat,
-                from_username=_username(db, m.from_user_id),
-                to_seat=m.to_seat,
-                to_faction=m.to_faction,
-                ref_id=m.ref_id,
-                body=m.body,
-                tick=m.tick,
-            )
-        )
+        out.append(_msg_view(db, m))
     return out
 
 
@@ -248,7 +344,8 @@ def send_message(
         from_user_id=part.user_id,
         from_seat=part.seat_role,
         to_seat=req.to_seat,
-        to_faction=req.to_faction or part.faction,
+        # 收件陣營的決定權集中在 `_resolve_to_faction`（含跨陣營的白軍閘門）。
+        to_faction=_resolve_to_faction(db, session_id, part, user.role, req.to_faction),
         ref_id=req.ref_id,
         body=req.body,
         tick=_live_tick(db, session_id),
@@ -264,17 +361,72 @@ def send_message(
         m.to_faction,
         m.to_seat.value if m.to_seat is not None else None,
     )
-    return MessageView(
-        id=m.id,
-        kind=m.kind,
-        from_seat=m.from_seat,
-        from_username=_username(db, m.from_user_id),
-        to_seat=m.to_seat,
-        to_faction=m.to_faction,
-        ref_id=m.ref_id,
-        body=m.body,
-        tick=m.tick,
+    return _msg_view(db, m)
+
+
+@router.post("/{session_id}/messages/read", response_model=MarkReadResult)
+def mark_messages_read(
+    session_id: str,
+    req: MarkReadRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MarkReadResult:
+    """把指定（或全部）寄給本人的信文標為已讀。
+
+    在此之前 `Message.readAt` 沒有任何寫入端——欄位在 DB、在契約，就是沒有人寫得進去，
+    所以「已讀」這件事在系統裡從來沒有發生過。
+
+    三條規則，都不是可有可無的：
+    1. **首次已讀為準**：已有時戳就不覆寫。AAR 要問的是「第一次被看到是什麼時候」。
+    2. **寄件備份不算已讀**：寄件者的信自己一定看得見，若也計入，每封信送出即已讀。
+    3. **必須是真收件方**（`_is_addressee`，不吃全知旁通）：統裁看得到全場，
+       但他看過不等於下級看過。
+
+    ⚠ 已知限制：`readAt` 是**每封信一格**，不是每人一格。發給整個陣營的信只要有一位
+    參謀標了已讀，全陣營就都算已讀。要做到逐人已讀需要新的關聯表（DB 變更），
+    這一輪不動 DB。
+    """
+    part, _ = _require_member(db, session_id, user)
+    if part is None:
+        # 全知但未加入本局＝沒有收件身分，不能替任何人宣稱已讀（與發信同一道理）。
+        raise AuthForbiddenError("全知角色未加入本局，無法標示已讀")
+    # 未讀的才撈（長局的信文匣會很長，沒必要把已讀的也拉進記憶體）；
+    # 指定 id 時再收窄一次。受眾判定仍在 Python 側——那是與 WS 共用的同一份規則，
+    # 不在這裡另寫一套 SQL 版（兩份受眾實作會漂，WP-C5 已經有前例）。
+    wanted = set(req.message_ids) if req.message_ids is not None else None
+    stmt = select(Message).where(
+        Message.session_id == session_id,
+        Message.read_at.is_(None),
+        Message.from_user_id != part.user_id,  # 寄件備份不算已讀
     )
+    if wanted is not None:
+        stmt = stmt.where(Message.id.in_(wanted))
+    rows = db.scalars(stmt).all()
+    # 牆鐘時戳：這是「操作員何時看到」，屬 API 層事實，不是模擬時間（模擬側一律 SimClock）。
+    now = datetime.now(UTC).replace(tzinfo=None)
+    marked: list[str] = []
+    for m in rows:
+        if not _is_addressee(m, part):
+            continue
+        m.read_at = now
+        marked.append(m.id)
+    if marked:
+        db.commit()
+        # 讓寄件者那側也知道信被讀了（收件方的面板自己會重載）。受眾收窄到**寄件席位**，
+        # 未指派席位時退回整個收件陣營——推播失敗不影響已讀本身（已落庫，重開面板仍看得到）。
+        marked_set = set(marked)
+        for m in rows:
+            if m.id in marked_set:
+                _push(
+                    settings,
+                    session_id,
+                    "C2_MESSAGE_READ",
+                    {"message_id": m.id},
+                    m.to_faction,
+                    m.from_seat.value if m.from_seat is not None else None,
+                )
+    return MarkReadResult(marked=marked, read_at=now if marked else None)
 
 
 def _req_view(db: Session, r: Request) -> RequestView:

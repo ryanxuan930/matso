@@ -160,6 +160,16 @@ def reconstruct_states(
     `effectiveness_pct`。事件流裡沒有滿編戰力（那是 DB 靜態資料），故由呼叫端注入。
     缺該單位的滿編值時：戰力點照記，但**不猜效能%**（維持既有值），
     寧可少一個數字也不要給一個錯刻度的數字。
+
+    ## 現況：生產環境零呼叫端（2026-07-30 查證）
+
+    地圖重播（WP-D6.1）走的是 `state_frames`——整場一次給逐 tick 差異，前端從基準累加，
+    拖時間軸不必回後端。`/aar/replay/states` 因此只接 `state_frames`，
+    本函式的「某一 tick 的全貌」形式沒有 API 消費者。
+
+    **留著不刪**：兩條路徑共用 `_apply_event`，而 `test_aar.py` 幾乎整支都是拿本函式
+    當那段套用邏輯的 oracle（含「差異流累加 == 同一 tick 的重建」這條交叉驗證）。
+    刪掉等於一併刪掉 `state_frames` 的驗證方式。
     """
     states: dict[str, UnitState] = {}
     auth = authorized or {}

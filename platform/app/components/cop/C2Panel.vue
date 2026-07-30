@@ -8,7 +8,7 @@
  * 尤其收信匣：不在前端做任何過濾（紅線 3），後端已用與 WS 同一套受眾規則濾過。
  * 核覆按鈕的顯示只是 UX，越權時後端仍會回 REQUEST_APPROVAL_DENIED。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   KINDS_NEEDING_TARGET,
   MESSAGE_KIND_LABELS,
@@ -17,13 +17,14 @@ import {
   decideRequest,
   fetchMessages,
   fetchRequests,
+  markMessagesRead,
   sendMessage,
   submitRequest,
   type MessageView,
   type RequestKind,
   type RequestList,
 } from '~/composables/useC2'
-import { SEAT_ROLE_LABELS } from '~/composables/useParticipants'
+import { SEAT_ROLE_LABELS, fetchRoster } from '~/composables/useParticipants'
 
 const props = defineProps<{
   sessionId: string
@@ -37,6 +38,9 @@ const props = defineProps<{
   aimPoint?: { lng: number; lat: number } | null
 }>()
 
+const auth = useAuthStore()
+const stream = useSessionStreamStore()
+
 const tab = ref<'inbox' | 'requests'>('inbox')
 const messages = ref<MessageView[]>([])
 const reqs = ref<RequestList | null>(null)
@@ -44,8 +48,47 @@ const busy = ref(false)
 const err = ref('')
 const draft = ref('')
 const draftSeat = ref('')
+const draftFaction = ref('')
+const factionOptions = ref<string[]>([])
 const reqKind = ref<RequestKind>('AIR_RECON')
 const reqNote = ref('')
+
+/**
+ * 跨陣營發信的入口只給白軍/統裁看——**這只是 UX**，真正的閘門在後端
+ * （`_resolve_to_faction`：非白軍指定他人陣營一律 403）。前端不做權限，也不做迷霧過濾。
+ */
+const canCrossFaction = computed(() =>
+  ['EXERCISE_DIRECTOR', 'WHITE_CELL_STAFF'].includes(auth.user?.role ?? ''),
+)
+
+/** 席位全名太長（含權限括號），信文標頭只取前段。 */
+function shortSeat(seat: string): string {
+  return (SEAT_ROLE_LABELS[seat] ?? seat).replace(/（.*$/, '')
+}
+function factionLabel(f: string): string {
+  return f === 'WHITE_CELL' ? '統裁' : f
+}
+/**
+ * 收件對象。原本一律顯示「→ 全軍」，那是錯的：未指定席位＝**該陣營全體**，不是全軍；
+ * 白軍跨陣營發信之後更是分不出這封是發給誰的。
+ */
+function addressee(m: MessageView): string {
+  const f = m.to_faction ? factionLabel(m.to_faction) : ''
+  const seat = m.to_seat ? shortSeat(m.to_seat) : ''
+  if (!f) return seat || '全體'
+  return seat ? `${f} · ${seat}` : `${f} 全體`
+}
+/** 寄件備份（自己寄的）——已讀狀態對它的意思是「對方讀了沒」，且不該由自己標示。 */
+function isMine(m: MessageView): boolean {
+  return !!auth.user && m.from_username === auth.user.username
+}
+function readLabel(m: MessageView): string {
+  if (isMine(m)) return m.read_at ? '對方已讀' : '對方未讀'
+  return m.read_at ? '已讀' : '未讀'
+}
+
+/** 可由本人標示已讀的信文（不是自己寄的、且還沒被標過）。 */
+const unread = computed(() => messages.value.filter((m) => !m.read_at && !isMine(m)))
 
 async function reload() {
   err.value = ''
@@ -58,17 +101,62 @@ async function reload() {
     err.value = `載入失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
   }
 }
-onMounted(reload)
+
+/** 可選的收件陣營（本局實際存在的）。名冊是統裁級端點，非白軍拿不到也不影響信文匣。 */
+async function loadFactions() {
+  if (!canCrossFaction.value) return
+  try {
+    factionOptions.value = (await fetchRoster(props.sessionId)).factions
+  } catch {
+    factionOptions.value = []
+  }
+}
+
+onMounted(() => {
+  void reload()
+  void loadFactions()
+})
+
+/**
+ * 後端送信/核覆時一直有推 `C2_MESSAGE` / `C2_REQUEST`，**前端從來沒有訂閱端**——
+ * 於是信文匣只在掛載時抓一次，新信與已讀狀態非重整頁面看不到。
+ * 只認 C2_* 事件：每個 STATE_DIFF 都去打 API 會把後端打爆。
+ */
+const C2_EVENTS = new Set(['C2_MESSAGE', 'C2_MESSAGE_READ', 'C2_REQUEST'])
+watch(
+  () => stream.events[stream.events.length - 1],
+  (last) => {
+    if (last && C2_EVENTS.has(last.type)) void reload()
+  },
+)
 
 async function doSend() {
   if (!draft.value.trim()) return
   busy.value = true
   try {
-    await sendMessage(props.sessionId, draft.value, { toSeat: draftSeat.value || null })
+    await sendMessage(props.sessionId, draft.value, {
+      toSeat: draftSeat.value || null,
+      toFaction: draftFaction.value || null,
+    })
     draft.value = ''
     await reload()
   } catch (e) {
     err.value = `送信失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+  } finally {
+    busy.value = false
+  }
+}
+
+/** 標示已讀；`ids` 省略＝把所有寄給我的未讀一次標掉。 */
+async function doMarkRead(ids?: string[]) {
+  busy.value = true
+  try {
+    const res = await markMessagesRead(props.sessionId, ids)
+    await reload()
+    // 後端會跳過已讀過/自己寄的/不是寄給我的——沒標到就明講，不要讓按鈕看起來有效。
+    if (!res.marked.length) err.value = '沒有可標示的信文（已讀過，或不是寄給你的）'
+  } catch (e) {
+    err.value = `標示已讀失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
   } finally {
     busy.value = false
   }
@@ -132,22 +220,53 @@ const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat ==
   <p v-if="err" class="c2-err" data-testid="c2-error">{{ err }}</p>
 
   <template v-if="tab === 'inbox'">
+    <div class="c2-inbox-hd">
+      <span :class="{ dim: !unread.length }" data-testid="c2-unread-count">未讀 {{ unread.length }}</span>
+      <button
+        v-if="unread.length"
+        :disabled="busy"
+        data-testid="c2-mark-all-read"
+        @click="doMarkRead()"
+      >全部標示已讀</button>
+    </div>
     <ul class="c2-list" data-testid="c2-messages">
-      <li v-for="m in messages" :key="m.id" data-testid="c2-message">
+      <li v-for="m in messages" :key="m.id" :class="{ unread: !m.read_at && !isMine(m) }" data-testid="c2-message">
         <div class="m-hd">
           <span class="m-kind">{{ MESSAGE_KIND_LABELS[m.kind] ?? m.kind }}</span>
           <span class="m-from">{{ m.from_username }}</span>
-          <span v-if="m.to_seat" class="m-to">→ {{ SEAT_ROLE_LABELS[m.to_seat] ?? m.to_seat }}</span>
-          <span v-else class="m-to dim">→ 全軍</span>
+          <!-- 寄件席位：後端一直有給，信文匣卻只顯示帳號——參謀分不出這封是哪個席位發的 -->
+          <span v-if="m.from_seat" class="m-seat" data-testid="c2-from-seat">
+            〔{{ shortSeat(m.from_seat) }}〕
+          </span>
+          <span class="m-to" data-testid="c2-msg-to">→ {{ addressee(m) }}</span>
+          <span
+            class="m-read"
+            :class="{ 'is-read': !!m.read_at }"
+            :title="m.read_at ? `已讀時戳 ${m.read_at}` : '收件方尚未標示已讀'"
+            data-testid="c2-read-state"
+          >{{ readLabel(m) }}</span>
           <span class="m-tick">T{{ m.tick }}</span>
         </div>
         <div class="m-body">{{ m.body }}</div>
+        <div v-if="!m.read_at && !isMine(m)" class="r-act">
+          <button :disabled="busy" data-testid="c2-mark-read" @click="doMarkRead([m.id])">標示已讀</button>
+        </div>
       </li>
       <li v-if="!messages.length" class="empty">（無信文）</li>
     </ul>
     <div class="c2-compose">
+      <!-- 跨陣營發信（白軍/統裁）。一般席位看不到這個選單，後端仍會擋越權。 -->
+      <select
+        v-if="canCrossFaction"
+        v-model="draftFaction"
+        class="c2-sel"
+        data-testid="c2-to-faction"
+      >
+        <option value="">本陣營</option>
+        <option v-for="f in factionOptions" :key="f" :value="f">{{ factionLabel(f) }}</option>
+      </select>
       <select v-model="draftSeat" class="c2-sel" data-testid="c2-to-seat">
-        <option value="">全軍</option>
+        <option value="">全體</option>
         <option v-for="(label, k) in SEAT_ROLE_LABELS" :key="k" :value="k">{{ label }}</option>
       </select>
       <input v-model="draft" placeholder="信文內容" data-testid="c2-draft" @keyup.enter="doSend">
@@ -169,7 +288,15 @@ const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat ==
           <span class="m-kind">{{ REQUEST_KIND_LABELS[r.kind] ?? r.kind }}</span>
           <span class="r-st" :class="`st-${r.status}`">{{ REQUEST_STATUS_LABELS[r.status] ?? r.status }}</span>
           <span class="m-from">{{ r.requested_by }}</span>
+          <span v-if="r.requested_seat" class="m-seat" data-testid="c2-req-seat">
+            〔{{ shortSeat(r.requested_seat) }}〕
+          </span>
           <span class="m-tick">T{{ r.requested_at_tick }}</span>
+        </div>
+        <!-- 核覆留痕（誰、第幾 tick）。schema 註解寫明這是給 AAR 重建事件鏈用的，
+             但申請人在畫面上一直看不到是誰核的——只看得到一句核覆說明。 -->
+        <div v-if="r.decided_by" class="r-decided" data-testid="c2-decided-by">
+          核覆：{{ r.decided_by }} · T{{ r.decided_at_tick ?? '?' }}
         </div>
         <div v-if="r.decision_note" class="m-body dim">{{ r.decision_note }}</div>
         <div v-if="r.status === 'PENDING' && mayDecide" class="r-act">
@@ -218,15 +345,27 @@ const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat ==
 }
 .c2-tabs button.on { border-color: #2563eb; color: #e2e8f0; background: #1e293b; }
 .c2-err { color: #f87171; margin: 0; font-size: 0.72rem; }
+.c2-inbox-hd { display: flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; color: #94a3b8; }
+.c2-inbox-hd button {
+  margin-left: auto; padding: 0.1rem 0.4rem; font-size: 0.68rem;
+  border: 1px solid #334155; border-radius: 0.2rem;
+  background: transparent; color: #cbd5e1; cursor: pointer;
+}
 .c2-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 .c2-list li { padding: 0.3rem 0.4rem; border: 1px solid #1e293b; border-radius: 0.25rem; }
+/* 未讀＝左緣加粗（不靠顏色單獨表意，投影幕上也分得出來）。 */
+.c2-list li.unread { border-left: 3px solid #fcd34d; }
 .c2-list .empty { color: #64748b; border: 0; }
 .m-hd { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; font-size: 0.7rem; }
 .m-kind { color: #93c5fd; }
 .m-from { color: #e2e8f0; font-weight: 600; }
+.m-seat { color: #7dd3fc; }
 .m-to { color: #fca5a5; }
+.m-read { padding: 0 0.25rem; border-radius: 0.2rem; background: #1e293b; color: #fcd34d; }
+.m-read.is-read { color: #86efac; }
 .m-tick { margin-left: auto; color: #64748b; font-variant-numeric: tabular-nums; }
 .m-body { color: #cbd5e1; margin-top: 0.15rem; }
+.r-decided { margin-top: 0.15rem; font-size: 0.68rem; color: #86efac; }
 .dim { color: #64748b; }
 .r-st { padding: 0 0.25rem; border-radius: 0.2rem; background: #1e293b; }
 .r-st.st-APPROVED { color: #86efac; }
@@ -239,8 +378,9 @@ const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat ==
   border: 1px solid #334155; border-radius: 0.2rem;
   background: transparent; color: #cbd5e1; cursor: pointer;
 }
-.c2-compose { display: flex; gap: 0.3rem; }
-.c2-compose input { flex: 1 1 auto; min-width: 0; }
+/* 多了跨陣營選單後，窄工具視窗裡塞不下一列——允許換行，否則輸入框會被擠成沒有寬度。 */
+.c2-compose { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.c2-compose input { flex: 1 1 6rem; min-width: 0; }
 .c2-compose input, .c2-sel, .c2-compose button {
   padding: 0.2rem 0.35rem; font-size: 0.72rem;
   border: 1px solid #334155; border-radius: 0.25rem;

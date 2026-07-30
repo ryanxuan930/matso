@@ -226,3 +226,36 @@ def test_every_tunable_actually_reaches_the_engine() -> None:
         f"這些推演參數在設定頁調得動、引擎卻不讀：{unread}。\n"
         "接上它，或（若對應功能尚未實作）連同這條斷言一起說明為什麼。"
     )
+
+
+def test_the_contract_default_matches_the_constant() -> None:
+    """契約的說明數字與程式常數漂開時，**照契約算的 client 會全部算錯**。
+
+    `suppression_decay` 就發生過：契約寫「預設 0.85」而程式是 0.7。
+    0.85 要 29 分鐘才清得掉壓制，那讓一次砲擊看起來像戰損——差的不是小數點，是模型行為。
+    這條掃契約文字裡的數字，兩邊對不上就紅。
+    """
+    import re
+    from pathlib import Path
+
+    from app.adjudication import suppression as sup
+
+    contract = (Path(__file__).resolve().parents[3] / "contracts" / "core_api.yaml").read_text(
+        encoding="utf-8"
+    )
+    checks = {
+        "suppression_decay": sup.SUPPRESSION_DECAY,
+        "suppression_fire_penalty": sup.SUPPRESSION_FIRE_PENALTY,
+        "suppression_move_penalty": sup.SUPPRESSION_MOVE_PENALTY,
+    }
+    for field, value in checks.items():
+        block = contract.split(f"{field}:", 1)
+        if len(block) < 2:
+            continue
+        stated = re.findall(r"預設\s*\*{0,2}([0-9.]+)", block[1][:600])
+        if not stated:
+            continue  # 說明沒寫數字 → 沒有漂開的機會
+        assert float(stated[0]) == value, (
+            f"契約說 {field} 預設 {stated[0]}，程式是 {value}。"
+            "照契約算的 client 會算錯——權威在程式（golden 是以程式的值錄的）。"
+        )

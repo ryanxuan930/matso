@@ -71,6 +71,14 @@ export interface MovementPreviewBody {
   to_h3?: string | null
   to_lat?: number | null
   to_lng?: number | null
+  /**
+   * 行軍節奏（#80）：`NORMAL` ｜ `FORCED_MARCH`。**不帶＝後端當 NORMAL**。
+   *
+   * 這一欄不帶的後果不是「少一個選項」而是**預覽在說謊**：後端的 `speed_kmh`、
+   * `duration_ticks` 與 `est_attrition` 三個數字全部乘了 tempo 係數，用常速算出來的預覽
+   * 配上一道強行軍的令，就是這一輪一直在修的「預覽與實跑不一致」。
+   */
+  tempo?: string
 }
 export function fetchMovementPreview(
   sessionId: string,
@@ -112,6 +120,18 @@ export const ZONE_CLASSES = [
 export function featureZoneClass(f: MapFeature): string {
   const z = (f.attributes as Record<string, unknown> | undefined)?.zone_class
   return typeof z === 'string' ? z : ''
+}
+
+/**
+ * 名稱看起來是禁射區。
+ *
+ * 補的是一段完全沒有回饋的沉默：一個叫「XX 禁射區」的多邊形若沒有 `zone_class`，
+ * 對火力裁決**毫無效力**——而它在地圖上與真的禁射區長得一模一樣，
+ * 沒有人會回頭去點一個「已經畫好」的區來檢查。所以要在畫的當下就講。
+ */
+const NO_STRIKE_NAME_RE = /禁射|禁止射擊|限制射擊|no[\s_-]?strike|restricted[\s_-]?fire/i
+export function looksLikeNoStrikeName(label: string): boolean {
+  return NO_STRIKE_NAME_RE.test(label)
 }
 
 /** 標註線寬（#96）：`attributes.width`；未設 → 預設 2（既有標註維持原樣）。夾在 0.5–12。 */

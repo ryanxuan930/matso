@@ -88,7 +88,18 @@ def command_delivery(
 
 
 def can_receive_command(state: LinkState) -> bool:
-    """OFFLINE 無法接收新指令（SPEC §6.2）。"""
+    """OFFLINE 無法接收新指令（SPEC §6.2）。
+
+    ## 現況：生產環境零呼叫端（2026-07-30 查證）
+
+    執行期的閘門是下面的 `order_admissible`——它同時處理 OFFLINE 拒收**與** DEGRADED 的
+    N tick 延遲（`adjudication/adjudicator.py` 的 ENGAGE drain、`engine/fire_wiring.py`
+    的火力任務都走它）。只問「收不收得到」會漏掉延遲那一半，所以接線層沒有用本函式。
+
+    **留著不刪**：它仍在 `app.comms.__all__`（套件公開介面），且 `test_comms.py` 以它
+    逐 LinkState 釘住 §6.2 表格第一列。要清掉得同時改 `comms/__init__.py` 的 re-export
+    與那支測試——那超出本批次的可改範圍，硬拆只會留下 import 不到的公開名稱。
+    """
     return state is not LinkState.OFFLINE
 
 
@@ -120,7 +131,17 @@ def parse_link_state(value: object) -> LinkState:
 
 
 def position_report_frozen(state: LinkState) -> bool:
-    """OFFLINE 單位位置對己方 COP 凍結為最後回報點（fog of war 對己方也成立）。"""
+    """OFFLINE 單位位置對己方 COP 凍結為最後回報點（fog of war 對己方也成立）。
+
+    ## 現況：生產環境零呼叫端（2026-07-30 查證）
+
+    位置投影現在由下面的 `project_position` 負責（`ai_loop/world_view.py` 消費）：
+    它回的是**要拿什麼座標取代真實位置**，而不只是「凍不凍結」。DEGRADED 也要用落後的
+    回報點，只判布林值的話那一段就沒地方接，所以呼叫端直接用了投影版。
+
+    **留著不刪**：同 `can_receive_command`——仍在 `app.comms.__all__`，且 `test_comms.py`
+    以它逐 LinkState 釘住 §6.2 表格第三列。要清掉得連 re-export 與測試一起處理。
+    """
     return state is LinkState.OFFLINE
 
 

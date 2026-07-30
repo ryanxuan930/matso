@@ -1,8 +1,11 @@
 """Kernel 裁決接線（O3.6）——把 VALIDATED ENGAGE 指令接上純函數裁決引擎。
 
 - `EngageOrderSource`（OrderSource）：drain VALIDATED ENGAGE → EngageCommand，轉 EXECUTING。
-- `EngagementAdjudicator`（Adjudicator）：resolve 每筆 → 呼叫 resolve_engagement（O3.2，純函數）
-  → 依結果更新熱狀態（彈藥 −1、目標血量）→ 轉 COMPLETED → 回事件。
+- `EngagementAdjudicator`（Adjudicator）：resolve 每筆 → 依射手選出裁決路徑（營級以上走
+  `_resolve_aggregate` 的 Lanchester、持 ≥2 武器系統且未指名武器走 `_resolve_combined`、
+  其餘走 `resolve_engagement` 的單發/齊射）→ 依結果更新熱狀態（彈藥、戰力、血量、壓制）
+  → 轉 COMPLETED → 回事件。**彈藥不是恆扣 1**：齊射扣發射數、聯合兵種逐武器扣、
+  聚合按編制數扣（見 `_spend_aggregate_ammo`）。
 
 **紅線**：物理裁決仍是純函數；本層只做 I/O 邊界（讀熱狀態、寫回、狀態轉移），AI 不介入。
 武器/環境（射程、LOS、天氣係數）以 callable 注入——由 Kernel 事先收集（terrain client + O5）。
@@ -332,6 +335,21 @@ class EngagementAdjudicator:
             suppression=_c1_suppression(target_state),
             posture=_c1_posture(target_state),
         )
+        # `aimed_fraction` **刻意留在預設 1.0（＝純 square law）**，不是漏傳。
+        #
+        # 導出來源本身站得住：間瞄就是面射擊，`weapon.indirect_fire` 是現成的判準。
+        # 擋住這一步的是**量級不是語義**——`aggregate._AREA_SCALE = 100.0` 自己標著
+        # 「v0 佔位」，而 linear 項是 `攻方戰力 × 守方戰力 ÷ _AREA_SCALE`，
+        # 於是那個常數的實質意義是「linear 與 square 等值時的守方戰力」。
+        # 照現值把 aimed_fraction 接成 0：守方戰力 500 的營被面射擊，殺傷直接變 5 倍；
+        # 守方戰力 30 的連反而剩 0.3 倍——倍率完全由一個沒有來源的數字決定，
+        # **方向還會隨目標大小翻轉**。那不是把模型接上去，那是讓佔位常數開始產生戰損。
+        #
+        # 要接就得同時給 `_AREA_SCALE` 一個站得住的定義（例如取守方滿編戰力，
+        # 使滿編時 linear≡square、再隨兵力密度下降——那才是 linear law 的物理意義），
+        # 那要動 `aggregate.py`。查證過：`core/tests/replay/goldens/` 五份 golden
+        # 沒有一份走聚合路徑（replay 想定用的是手搭的純記憶體 Kernel），
+        # 所以真要改的時候擋路的不是 golden，是校準。
         agg_env = AggregateEnv(
             terrain_modifier=env.terrain_cover_modifier,
             weather_modifier=env.weather_modifier,
