@@ -83,3 +83,38 @@ def test_the_proto_cell_carries_wind_so_no_contract_change_was_needed() -> None:
 
     fields = {f.name for f in weather_client.weather_pb2.WeatherCell.DESCRIPTOR.fields}
     assert {"wind_ms", "wind_dir_deg"} <= fields
+
+
+# ---- 過期告警：`WeatherState.stale` 過去除定義處外全 repo 零讀取端 ----
+
+
+def test_a_stale_snapshot_is_reported_once() -> None:
+    """契約要求「stale > 30 分鐘 Core 需告警」，插件也照實回報——core 就是沒人讀。
+
+    後果：來源斷線半小時，白軍畫面上什麼提示都沒有，
+    命中率/機動修正繼續套一份不知道多舊的天氣。
+    """
+    from app.engine.weather_wiring import WeatherCache
+    from app.weather import WeatherState
+
+    fresh = WeatherState({}, stale=False)
+    stale = WeatherState({}, stale=True)
+    seq = [stale, stale, fresh]
+    cache = WeatherCache(lambda _t: seq.pop(0), refresh_ticks=1, initial=fresh)
+
+    cache.at(1)
+    assert cache.take_stale_change() is True  # 轉為過期 → 報一次
+    cache.at(2)
+    assert cache.take_stale_change() is None  # 還是過期 → 不重複報（別灌爆 feed）
+    cache.at(3)
+    assert cache.take_stale_change() is False  # 恢復 → 也要報，好清掉告警
+
+
+def test_a_never_stale_session_never_reports() -> None:
+    """既有局（天氣正常/無天氣服務）一則告警都不該冒出來。"""
+    from app.engine.weather_wiring import WeatherCache
+
+    cache = WeatherCache(lambda _t: None, refresh_ticks=0)
+
+    assert cache.take_stale_change() is None
+    assert cache.stale is False

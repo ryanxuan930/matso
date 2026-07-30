@@ -878,6 +878,22 @@ class SimManager:
                 )
                 if rf:
                     await asyncio.to_thread(_emit, rf)
+                # 天氣過期告警（`weather_payload.schema.json`：stale > 30 分鐘 Core 需告警）。
+                # **在此之前 `WeatherState.stale` 全 repo 零讀取端**——來源斷線半小時，
+                # 白軍畫面上什麼提示都沒有，命中率/機動修正繼續套一份不知道多舊的天氣。
+                weather_cache.at(sim_clock.now().tick)  # 讓 refresh 有機會發生
+                stale_change = weather_cache.take_stale_change()
+                if stale_change is not None:
+                    await asyncio.to_thread(
+                        _emit,
+                        [
+                            LedgerEvent(
+                                event_type="WEATHER_STALE" if stale_change else "WEATHER_FRESH",
+                                tick=sim_clock.now().tick,
+                                ai_decision={"stale": stale_change},
+                            )
+                        ],
+                    )
                 # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
                 # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
                 await asyncio.to_thread(

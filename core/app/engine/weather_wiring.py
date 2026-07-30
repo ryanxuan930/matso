@@ -57,6 +57,29 @@ class WeatherCache:
         self._refresh_ticks = max(0, int(refresh_ticks))
         self._state = initial
         self._fetched_at: int | None = 0 if initial is not None else None
+        # 上次回報過的過期狀態。**以 False 起始**——開局就拿到過期資料時要報一次。
+        self._was_stale = False
+
+    @property
+    def stale(self) -> bool:
+        """目前這份快照是不是過期資料（插件說的）。無快照 → False。"""
+        return bool(getattr(self._state, "stale", False))
+
+    def take_stale_change(self) -> bool | None:
+        """過期狀態**有變**才回新值，否則 None。
+
+        `weather_payload.schema.json` 要求「stale > 30 分鐘 Core 需告警」，插件也照實回報
+        （`WeatherClient` 有把 `resp.stale` 帶進 `WeatherState`）——但 `WeatherState.stale`
+        除了定義處**全 repo 零讀取端**：來源斷線超過半小時，白軍畫面上什麼提示都沒有，
+        命中率/機動修正繼續套一份不知道多舊的天氣。
+
+        只回「變化」而不是「現在是不是」：每 tick 報一次同一件事只會把戰況 feed 灌爆。
+        """
+        now = self.stale
+        if now == self._was_stale:
+            return None
+        self._was_stale = now
+        return now
 
     @property
     def refreshes(self) -> bool:
