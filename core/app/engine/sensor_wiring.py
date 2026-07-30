@@ -57,35 +57,69 @@ class SensorResolver:
     def __init__(self, db: Session, session_id: str) -> None:
         self._by_unit: dict[str, SensorProfile] = {}
         self._faction_by_unit: dict[str, str] = {}
+        self._session_id = session_id
+        # 惰性補查（同 `WeaponResolver` 的理由）：MSEL `SPAWN_UNITS` 會在局中憑空生出單位，
+        # 建構時的快取是 runner 啟動當下的世界。沒有補查的話那些增援的 `faction_for`
+        # 回空字串——而 STATE_DIFF 的每陣營投影**對空字串是 fail-open 的**，
+        # 於是增援的即時座標會廣播給所有陣營。
+        self._factory: Callable[[], Session] | None = None
+        self._known_empty: set[str] = set()
         self._build(db, session_id)
+
+    def enable_lazy_lookup(self, factory: Callable[[], Session]) -> None:
+        """開啟惰性補查（部署層注入 session factory）。不開＝維持純快取行為。"""
+        self._factory = factory
+
+    def _lazy_load(self, unit_id: str) -> None:
+        """局中才出現的單位：現查現快取。查不到也記著，免得每 tick 重查。"""
+        if self._factory is None or unit_id in self._known_empty:
+            return
+        with self._factory() as db:
+            unit = db.get(TacticalUnit, unit_id)
+            if unit is None or unit.session_id != self._session_id:
+                self._known_empty.add(unit_id)
+                return
+            self._load_unit(db, unit)
 
     def _build(self, db: Session, session_id: str) -> None:
         units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
         for unit in units:
-            self._faction_by_unit[unit.id] = unit.faction
-            best: SensorProfile | None = None
-            instances = db.scalars(
-                select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)
-            ).all()
-            for inst in instances:
-                tmpl = db.get(EquipmentTemplate, inst.template_id)
-                if tmpl is None or tmpl.category != _SENSOR_CATEGORY:
-                    continue
-                try:
-                    profile = SensorProfile.from_base_stats(tmpl.base_stats)
-                except (ValueError, KeyError, TypeError):
-                    continue  # baseStats 壞 → 略過該件（不讓一件壞資料弄瞎整個單位）
-                if best is None or profile.max_range_m > best.max_range_m:
-                    best = profile
-            # 無感測裝備 → 內建基本目視（見模組 docstring）。
-            self._by_unit[unit.id] = best or INTRINSIC_OPTICAL
+            self._load_unit(db, unit)
+
+    def _load_unit(self, db: Session, unit: TacticalUnit) -> None:
+        """把單一單位的感測器與陣營讀進快取。`_build` 與惰性補查共用。"""
+        self._faction_by_unit[unit.id] = unit.faction
+        best: SensorProfile | None = None
+        instances = db.scalars(
+            select(EquipmentInstance).where(EquipmentInstance.owner_id == unit.id)
+        ).all()
+        for inst in instances:
+            tmpl = db.get(EquipmentTemplate, inst.template_id)
+            if tmpl is None or tmpl.category != _SENSOR_CATEGORY:
+                continue
+            try:
+                profile = SensorProfile.from_base_stats(tmpl.base_stats)
+            except (ValueError, KeyError, TypeError):
+                continue  # baseStats 壞 → 略過該件（不讓一件壞資料弄瞎整個單位）
+            if best is None or profile.max_range_m > best.max_range_m:
+                best = profile
+        # 無感測裝備 → 內建基本目視（見模組 docstring）。
+        self._by_unit[unit.id] = best or INTRINSIC_OPTICAL
 
     def sensor_for(self, unit_id: str) -> SensorProfile | None:
         return self._by_unit.get(unit_id)
 
     def faction_for(self, unit_id: str) -> str:
-        """單位陣營；查無（熱狀態有但 DB 無）→ 空字串，sweep 端會視為與任何人皆非同盟。"""
-        return self._faction_by_unit.get(unit_id, "")
+        """單位陣營；查無（熱狀態有但 DB 無）→ 空字串。
+
+        局中新增的單位（MSEL `SPAWN_UNITS`）會先走一次惰性補查——沒有它的話，
+        增援的陣營一直是空字串，而 STATE_DIFF 的投影對空字串是 fail-open 的。
+        """
+        known = self._faction_by_unit.get(unit_id)
+        if known is None:
+            self._lazy_load(unit_id)
+            known = self._faction_by_unit.get(unit_id)
+        return known or ""
 
     def factions(self) -> list[str]:
         """本局有單位的陣營（確定性排序）。STATE_DIFF 每陣營投影用它列出觀測方（WP-C5）。"""

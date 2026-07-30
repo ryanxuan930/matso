@@ -130,7 +130,8 @@ def ground_truth_enemies(
             "unit_id": u.id,
             "faction": u.faction,
             "designation": u.designation,
-            "unit_type": u.unit_level.value,
+            "echelon": u.unit_level.value,
+            "branch": u.branch.value,
         }
         if u.current_lat is not None and u.current_lng is not None:
             enemy["lat"] = float(u.current_lat)

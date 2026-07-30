@@ -414,6 +414,20 @@ class SimManager:
                     )
                 ],
             )
+            # ⚠ **也要推到 WS 流**。過去只寫 Ledger，於是前端的勝負橫幅永遠不出現
+            # ——`cop.vue` 是在串流上等 `SESSION_CONCLUDED` 的，而收場後 runner 就停了，
+            # 不會再有任何一次 tick 廣播把它帶出去。
+            # 失敗不可以擋住收場：旗標沒設好會讓 runner 一直重啟。
+            with contextlib.suppress(Exception):
+                RedisBroadcaster(client, session_id).publish_events_now(  # type: ignore[arg-type]
+                    [
+                        LedgerEvent(
+                            event_type="SESSION_CONCLUDED",
+                            tick=tick,
+                            ai_decision={"winners": winners, "source": "victory"},
+                        )
+                    ]
+                )
             client.set(concluded_key, "1")  # type: ignore[attr-defined]
 
         return asyncio.create_task(
@@ -472,6 +486,9 @@ class SimManager:
             await asyncio.to_thread(seed_combat_state, engage_db, hot, session_id, resolver)
             # #97 偵測：單位→感測器規格/陣營的解析（一次建好快取，sweep 每 tick 查）。
             sensor_resolver = await asyncio.to_thread(SensorResolver, engage_db, session_id)
+            # 同 `resolver` 的理由（WP-B2）：MSEL 增援的陣營必須查得到。查不到 → STATE_DIFF
+            # 的每陣營投影會把那個單位整筆剔除（fail-closed），增援對自己人也看不見。
+            sensor_resolver.enable_lazy_lookup(self._factory)
             # #98 該局的陣營關係矩陣（未宣告→全 HOSTILE，與過去語義相同）。
             relations = await asyncio.to_thread(load_session_relations, engage_db, session_id)
             # WP-B6 該局的想定 ROE（未宣告→無限制）。**runner 啟動時讀一次**——與 sim_params

@@ -93,6 +93,55 @@ def test_non_sensor_equipment_is_ignored(db: Session) -> None:
     assert SensorResolver(db, "s1").sensor_for("u1") == INTRINSIC_OPTICAL
 
 
+def test_unit_spawned_mid_session_is_resolved_lazily(db: Session) -> None:
+    """MSEL `SPAWN_UNITS` 的增援：建構時 DB 裡還沒有它。
+
+    沒有惰性補查 → `faction_for` 永遠回空字串 → STATE_DIFF 的每陣營投影（fail-closed）
+    把增援整筆剔除，連自己人都看不到自己的援軍。
+    """
+    _session_with_unit(db)
+    resolver = SensorResolver(db, "s1")
+    assert resolver.faction_for("late") == ""  # 尚未出生
+
+    db.add(
+        TacticalUnit(
+            id="late",
+            session_id="s1",
+            designation="R",
+            unit_level="SQUAD",
+            faction="RED",
+            attributes={},
+        )
+    )
+    db.commit()
+    resolver.enable_lazy_lookup(sessionmaker(bind=db.get_bind()))
+
+    assert resolver.faction_for("late") == "RED"
+    assert resolver.sensor_for("late") == INTRINSIC_OPTICAL  # 感測器也一併補齊
+    assert "RED" in resolver.factions()  # 新陣營要進得了觀測方名單
+
+
+def test_lazy_lookup_refuses_units_of_other_sessions(db: Session) -> None:
+    """補查是「查這一局」，不是「查全表」——別局的單位不得混進本局的投影。"""
+    _session_with_unit(db)
+    db.add(WargameSession(id="s2", name="other", master_seed=2, current_weather={}))
+    db.add(
+        TacticalUnit(
+            id="foreign",
+            session_id="s2",
+            designation="X",
+            unit_level="SQUAD",
+            faction="RED",
+            attributes={},
+        )
+    )
+    db.commit()
+    resolver = SensorResolver(db, "s1")
+    resolver.enable_lazy_lookup(sessionmaker(bind=db.get_bind()))
+
+    assert resolver.faction_for("foreign") == ""
+
+
 def _pair() -> tuple[SensorUnit, TargetUnit]:
     observer = SensorUnit("o", "BLUE", 23.7, 121.0, INTRINSIC_OPTICAL)
     return observer, TargetUnit("t", "RED", 23.71, 121.0)

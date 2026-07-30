@@ -197,7 +197,12 @@ def project_diff(
     out: SessionDiff = {}
     for unit_id, fields in diff.items():
         owner = faction_for(unit_id)
-        if owner and owner not in visible:
+        # **fail-closed**：查不到擁有者就不送。過去是 `if owner and ...`——空字串（＝解析器
+        # 不認得這個單位）直接跳過整層過濾，把該單位的即時座標送給每一個陣營。
+        # MSEL `SPAWN_UNITS` 的增援正是這種單位（見 `SensorResolver.faction_for` 的惰性補查）：
+        # 熱狀態有、解析器快取沒有 → 敵軍增援一落地，全場都看得到它每 tick 的真實座標。
+        # 補查是讓自己人看得見的那一半；這裡是「真的查不出來就寧可不送」的那一半。
+        if owner not in visible:
             continue
         projected = _public_fields(fields)
         transition = "comms_state" in fields
@@ -296,8 +301,20 @@ class RedisBroadcaster:
         """把裁決事件推到 WS 事件流（戰況 feed）。與 STATE_DIFF 共用 seq/ring/channel（原子）。"""
         feed = [e for e in events if e.event_type not in _FEED_EXCLUDE]
         if feed:
-            metrics.ws_fanout(len(feed))  # WP-E4：扇出量（不帶 session 標籤，見 metrics 模組說明）
-            await asyncio.to_thread(self._publish_events_sync, feed)
+            await asyncio.to_thread(self.publish_events_now, feed)
+
+    def publish_events_now(self, events: Sequence[LedgerEvent]) -> None:
+        """**同步**推事件到 WS 流——給不在 event loop 裡的呼叫端（勝負監視器、pre_tick）。
+
+        存在的理由很具體：勝負監視器的 `on_conclude` 是同步回呼，過去只寫 Ledger、
+        沒有任何地方 publish，於是**前端的勝負橫幅永遠不會出現**
+        （`cop.vue` 是在串流上等 `SESSION_CONCLUDED` 的）。
+        """
+        feed = [e for e in events if e.event_type not in _FEED_EXCLUDE]
+        if not feed:
+            return
+        metrics.ws_fanout(len(feed))  # WP-E4：扇出量（不帶 session 標籤，見 metrics 模組說明）
+        self._publish_events_sync(feed)
 
     def _publish_events_sync(self, events: list[LedgerEvent]) -> None:
         for e in events:

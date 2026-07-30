@@ -210,7 +210,10 @@ def _fmt_own(u: dict[str, Any]) -> str:
 def _fmt_ally(u: dict[str, Any]) -> str:
     pos = f"({u['lat']:.4f},{u['lng']:.4f})" if "lat" in u else "位置未知"
     return (
-        f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('unit_type', '?')}"
+        # ⚠ 鍵名跟著 `_own_unit_view` 走。改名時只改生產端、忘了渲染端的話，
+        # prompt 裡會靜靜變成「?」——LLM 拿不到編制/兵科，而且**不會有任何錯誤**。
+        f"- {u['unit_id']}（{u.get('designation', '?')}｜{u.get('echelon', '?')}"
+        f"{'/' + str(u['branch']) if u.get('branch') and u['branch'] != 'UNKNOWN' else ''}"
         f"｜{u.get('faction', '?')}）@ {pos}"
     )
 
@@ -226,7 +229,11 @@ def _fmt_enemy(e: dict[str, Any]) -> str:
     ident = e.get("unit_id") or e.get("contact_id") or "未知接觸"
     lat, lng = _num(e.get("lat")), _num(e.get("lng"))
     pos = f"({lat:.4f},{lng:.4f})" if lat is not None and lng is not None else "位置不明"
-    extras = [str(e[k]) for k in ("faction", "designation", "unit_type", "type") if e.get(k)]
+    # `echelon`/`branch` 是 2026-07-30 從 `unit_type` 拆出來的（那一欄名實不符：
+    # 叫兵種、裝的是階層）。渲染端沒跟著改的話，**CLASSIFIED 以上的情報一個字都不會進 prompt**。
+    # `unit_type` 保留在清單裡是為了相容尚未改名的資料來源。
+    keys = ("faction", "designation", "echelon", "branch", "unit_type", "type")
+    extras = [str(e[k]) for k in keys if e.get(k) and e[k] != "UNKNOWN"]
     tail = f"｜{' '.join(extras)}" if extras else ""
     seen = ""
     if e.get("last_seen_tick") is not None:

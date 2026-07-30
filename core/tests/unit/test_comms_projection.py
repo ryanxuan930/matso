@@ -131,6 +131,24 @@ def test_projected_diff_drops_units_of_invisible_factions() -> None:
     assert set(out) == {"b1", "g1"}
 
 
+def test_unit_of_unknown_owner_is_not_broadcast_to_anyone() -> None:
+    """查不到擁有者 → 不送（fail-closed）。
+
+    過去的條件是 `if owner and owner not in visible`：空字串（＝解析器不認得這個單位）
+    會**跳過整層過濾**，於是該單位對每一個陣營副本都照送真實座標。
+    MSEL `SPAWN_UNITS` 生出來的增援正好是這種單位——敵軍增援一落地，全場都看得見。
+    """
+    diff = {"b1": {"lat": 1.0}, "ghost": {"lat": 2.0}}
+    for viewer in (frozenset({"BLUE"}), frozenset({"RED"})):
+        out = project_diff(
+            diff,
+            visible=viewer,
+            faction_for=_faction_for,  # "ghost" 不在 _FACTIONS → ""
+            state_for=lambda _uid: {"comms_state": "ONLINE"},
+        )
+        assert "ghost" not in out
+
+
 def test_projected_diff_freezes_offline_units() -> None:
     states = {
         "b1": {"comms_state": "OFFLINE", **_reported(23.0, 120.0, 30)},
