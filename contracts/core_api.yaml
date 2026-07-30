@@ -1012,10 +1012,51 @@ components:
         created_at: { type: string, format: date-time }
     OrderType:
       type: string
-      enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE, FIRE_MISSION]
+      enum: [MOVE, ENGAGE, RECON, RESUPPLY, POSTURE, FIRE_MISSION, MISSION]
     OrderStatus:
       type: string
       enum: [PENDING, VALIDATED, EXECUTING, COMPLETED, REJECTED, CANCELLED]
+    MissionType:
+      type: string
+      description: >-
+        任務型（WP-A2，[IST160 p.4–5]）。**下的是任務，不是動作**——
+        展開成低階令（MOVE/ENGAGE/…）的是確定性的符號層分解器，不是 LLM。
+        LLM 只負責選任務型與參數，那正是 Neuro-Symbolic 的分工。
+      enum:
+        - SEIZE      # 奪佔：沿 axis 機動 → 對目標區內敵接戰 → 佔領後轉守
+        - DEFEND     # 防守：就位 → 設 DEFENSE 姿態 → 對進入射界之敵接戰
+        - SCREEN     # 掩護幕：沿線佔位 → 偵測回報但不接戰 → 受壓後退
+        - MOVE_MARCH # 行軍序列：按序出發、維持間距
+    MissionPhase:
+      type: string
+      description: >-
+        任務階段（WP-A2）。**一套階段涵蓋四種任務型**——各任務型只是走過其中不同的子集。
+        另立四套階段機會讓 AAR 的任務時間軸沒有共同語彙。
+      enum:
+        - PLANNED       # 已受理、尚未分解（下一個 tick 才展開）
+        - MOVING        # 機動中
+        - ENGAGING      # 接敵中
+        - CONSOLIDATING # 鞏固中（佔領後整理／構工中）
+        - HOLDING       # 穩定狀態（守備／掩護幕在位）
+        - COMPLETE
+        - FAILED        # 被殲/彈盡/目標不可達——單位轉 HOLD
+    MissionPayload:
+      type: object
+      description: >-
+        MISSION 令載荷。`params` 的形狀依 `mission_type` 而異——
+        逐型的必要欄位由後端 `orders/mission.py` 的 typed model 驗證，
+        不合法的參數在 submit 就被擋下（不是等到分解時才失敗）。
+      required: [mission_type, params]
+      properties:
+        mission_type: { $ref: "#/components/schemas/MissionType" }
+        params:
+          type: object
+          additionalProperties: true
+          description: >-
+            SEIZE={objective:{lat,lng}, axis?:[{lat,lng}], objective_radius_m?}；
+            DEFEND={area:{lat,lng,radius_m}, orientation_deg?}；
+            SCREEN={line:[{lat,lng}]}；
+            MOVE_MARCH={route:[{lat,lng}], spacing_km?}。
     OrderRequest:
       type: object
       required: [unit_id, order_type]
@@ -1025,7 +1066,7 @@ components:
         payload:
           type: object
           additionalProperties: true
-          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。"
+          description: "依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。MISSION={mission_type,params}＝任務級下令（WP-A2）：由確定性分解器展開成低階令，見 MissionPayload。"
         acknowledge_restricted:
           type: boolean
           description: "WP-A3（省略＝false）：下令者明確確認『目標位於限制射擊區（RESTRICTED_FIRE）仍要射擊』。僅對 RESTRICTED_FIRE 有效——NO_STRIKE 不可 override。為 true 且確實落在限制射擊區時，伺服端寫一筆 ORDER_RESTRICTED_FIRE_OVERRIDE 至 Ledger 供 AAR 追究。"
@@ -1067,6 +1108,21 @@ components:
         resolved_at_tick: { type: [integer, "null"] }
         target_unit_id: { type: [string, "null"], description: ENGAGE 目標單位 }
         target_h3: { type: [string, "null"], description: MOVE 目的地 hex }
+        parent_order_id:
+          type: [string, "null"]
+          description: >-
+            分解自哪一道 MISSION 令（WP-A2）。null＝直接下的令。
+            取消母令會連帶取消所有**尚未終結**的子令——已執行的不追溯（那是既成事實）。
+        mission_type:
+          oneOf:
+            - { $ref: "#/components/schemas/MissionType" }
+            - { type: "null" }
+          description: 僅 MISSION 令有值
+        mission_phase:
+          oneOf:
+            - { $ref: "#/components/schemas/MissionPhase" }
+            - { type: "null" }
+          description: 僅 MISSION 令有值；每 tick 由 `mission_runtime` 評估
 paths:
   /auth/login:
     post:

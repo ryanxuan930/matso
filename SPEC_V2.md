@@ -91,12 +91,12 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 | 1 | AI 敵情用 ground truth，迷霧對 AI 不成立 | —（內部盤點；[IST160 p.6] 分層 AI 原則） | `ai_loop/worker.py` 的 `enemy_visibility` 預設 `ground_truth_enemies`；IntelService 已上線未接 | ★★★ | A1 | ✅ 2026-07-29 |
 | 2 | 只有低階令（MOVE/ENGAGE/RESUPPLY），無任務級下令與準則分解 | [IST160 p.4–5]（Attack 任務自動展開）；[JCATS-F p.12–13] | orders 僅三型＋fire_policy；AI 逐令微操 | ★★★ | A2 |  |
 | 3 | G4 no-strike 形同空轉（欄位不匹配＋無資料源） | —（內部盤點） | G4 只認 `target_h3`，AI 令帶 `target_lat/lng`；`no_strike_hexes` 恆空 | ★★★ | A3 | ✅ 2026-07-29 |
-| 4 | MSEL 排程執行引擎缺位 | [JTLS-F p.1053,1059]；[JCATS-A p.14–15] | `TriggerChecker` NoOp；inject 無世界效果；DSL 無時間/持續條件 | ★★★ | B2 |  |
-| 5 | 無演習生命週期管理（整備→實施→撤收） | [JCATS-A p.9–16 圖7] | 無演習專案實體；session 即全部 | ★★ | B1 |  |
+| 4 | MSEL 排程執行引擎缺位 | [JTLS-F p.1053,1059]；[JCATS-A p.14–15] | `TriggerChecker` NoOp；inject 無世界效果；DSL 無時間/持續條件 | ★★★ | B2 | ✅ 2026-07-31（a/b/c）|
+| 5 | 無演習生命週期管理（整備→實施→撤收） | [JCATS-A p.9–16 圖7] | 無演習專案實體；session 即全部 | ★★ | B1 | ✅ 2026-07-31（a/b/c）|
 | 6 | 無想定文書層（一般/特別狀況、訓令、反想定） | [JCATS-A p.10–11,16–21] | 想定=資料 JSON；無敘事文件與發佈節奏 | ★★ | B3 |  |
-| 7 | 無參數凍結/簽證治理 | [JCATS-A p.14,25–26] | 裝備庫/參數隨時可改；演習公正性與重播性無保障 | ★★ | B4 |  |
-| 8 | 無申請-核覆工作流（空偵/火協/申補） | [JCATS-A p.13,15,26]；[JCATS-F p.12–14] | 下令即時生效，無異步審批鏈 | ★★ | B5 |  |
-| 9 | 壓制/姿態係數恆 1.0；無隊形；無乘駐車 | [JCATS-A p.7,12,25,26] | `EnvSnapshot` 兩係數無來源；TacticalUnit 無 posture/formation/mounted | ★★★ | C1/C3 |  |
+| 7 | 無參數凍結/簽證治理 | [JCATS-A p.14,25–26] | 裝備庫/參數隨時可改；演習公正性與重播性無保障 | ★★ | B4 | ✅ 2026-07-31 |
+| 8 | 無申請-核覆工作流（空偵/火協/申補） | [JCATS-A p.13,15,26]；[JCATS-F p.12–14] | 下令即時生效，無異步審批鏈 | ★★ | B5 | B5.1/B5.2/B5.3 ✅ 2026-07-30；B5.4（標繪分送/殲敵 REPORT）未做 |
+| 9 | 壓制/姿態係數恆 1.0；無隊形；無乘駐車 | [JCATS-A p.7,12,25,26] | `EnvSnapshot` 兩係數無來源；TacticalUnit 無 posture/formation/mounted | ★★★ | C1/C3 | C1 ✅ 2026-07-31；C3（乘駐車/隊形）未做 |
 | 10 | 無障礙工事/工兵裁決（雷區/斷橋/鐵絲網） | [JCATS-A p.5–6,12]；[JTLS-F p.1058] | MapFeature OBSTACLE 只是圖形，不參與裁決 | ★★★ | C2 |  |
 | 11 | 天氣單快照；無晝夜/照明；無煙幕 | [JCATS-A p.7,19] | weather 啟動讀一次；SimClock 有時刻但不影響偵測 | ★★ | C4 |  |
 | 12 | comms 粒度後果未接投影（位置凍結/敵情粗化） | —（內部盤點；SPEC_FULL §6.2 MUST） | `intel_granularity`/`position_report_*` 已定義無消費者 | ★★ | C5 | ✅ 2026-07-30 |
@@ -104,7 +104,7 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 | 14 | 後勤只有油料；無 Class 體系/彈藥人員裝備補充/修復 | [JTLS-F p.1058]；[JCATS-A p.26–27] | `ResupplySystem` 撥交油料+彈藥；無再訂購水位、無修復、無整補時間 | ★★★ | C7 |  |
 | 15 | 無 MRM（聚合↔實體解聚合） | [JTLS-F p.1056–1058]；[IST160 p.4] | 兩種裁決並存但單位粒度固定 | ★★ | C8 |  |
 | 16 | 友軍誤傷語意：關係矩陣「阻止」而非「照裁」 | [JCATS-A p.5–6] | precheck 擋友軍目標；成熟系統語意是命令照執行後果照裁 | ★ | C9 |  |
-| 17 | 無計畫火力/call-for-fire 鏈/BDA 回報 | [JCATS-F p.12–13]；[JCATS-A p.24,26] | 砲兵是即時 ENGAGE 一種 | ★★ | C10 |  |
+| 17 | 無計畫火力/call-for-fire 鏈/BDA 回報 | [JCATS-F p.12–13]；[JCATS-A p.24,26] | 砲兵是即時 ENGAGE 一種 | ★★ | C10 | ✅ 2026-07-30/31（C10.1–C10.5 五張全數結案）|
 | 18 | 無蒙地卡羅批次/參數掃描 | [INDSR] 全書方法論（30–50 次/組） | 一次一局；決定性引擎已是完美地基 | ★★★ | D1 |  |
 | 19 | 無 MOE 框架/成本效益指標 | [INDSR p.19–20]（MER/DR/KR、hit/kill/destroy） | 勝負 DSL 只裁勝負；AAR 統計初階 | ★★★ | D2 |  |
 | 20 | 無態勢分析圖層/自動戰術線 | [IST160 p.15–17,20] | 單一單位 viewshed/射界有；聯集與戰力比分區無 | ★★ | D3 |  |
@@ -260,7 +260,24 @@ AAR 可過濾出所有 AI 生成訊息。
 <a id="wp-b"></a>
 ### WP-B：演習生命週期與想定體系
 
-#### WP-B1 演習專案（Exercise）實體與生命週期　★★｜golden：不動
+#### WP-B1 演習專案（Exercise）實體與生命週期　★★｜golden：不動　✅ 2026-07-31（B1a/b/c）
+
+> ✅ **完成**——worklog `docs/worklog/exercise-lifecycle.md`。切為 B1a（實體 + 階段機 + 稽核 +
+> 整備勾稽 + 掛/卸 session）、B1b（撤收建檔 + 銷毀模式）、B1c（lobby 演習分頁）。
+> **與規格不同的實作裁決**：
+> ① **刪掉契約裡的 `/sessions/{id}/lifecycle`**——它有 `START|PAUSE|RESUME|END|ROLLBACK` 的描述字串，
+>   **無 security、無 schema、無實作**，長得就像本卡要的端點。採用它等於繼承一個未認證的規格殘骸；
+>   實際的每局控制早就在 `POST /sessions/{id}/control`。
+> ② 稽核表加**演習內單調 `seq`**（規格只說「專屬 audit 表」）：以 `(at, id)` 排序等於隨機排序
+>   （同一請求內兩筆 `at` 相同、uuid 當 tiebreak），讀不出「先勾稽才推階段」的因果。
+> ③ **階段不可倒退**（規格未明說）：B4 的簽證與稽核的意義都來自單調；要重來就開新演習。
+> ④ 掛 session **用既有的局，不用 `clone_session`**——那條路徑會掉七個想定衍生欄
+>   （msel/roe/mobilityOverrides/noStrikeZones/…），預推局會沒有 MSEL、沒有 ROE 地跑（已記 Backlog）。
+> ⑤ **銷毀限 UserRole.ADMIN**（規格寫「管理員權限」）：`is_omniscient` 包含每一位白軍幕僚，
+>   用它等於把不可逆的銷毀開放給整個統裁組。這是 repo 裡第一個嚴格 ADMIN 閘門。
+> **順手修掉的既有缺陷**：`delete_session` 的手寫刪除清單漏了 Message/Request/FirePlan/FirePlanTarget
+> （prisma 裡無 FK 故不噴錯，列永遠孤兒化），且完全不清 Redis——對一個以資料銷毀為目的的功能
+> 而言那是資料殘留。改成由 SQLAlchemy mapper registry 自省。
 
 **動機**：[JCATS-A p.9–16 圖7] 的 17 步 SOP 顯示「一場演習」遠大於「一局模擬」：
 整備會議、想定發佈（D-45）、系統飽和測試、預推、正式實施、每日檢討、撤收建檔。
@@ -338,7 +355,28 @@ runner 啟動時建構的 WeaponResolver 快取要能吸收局中新單位（連
 
 **驗收**：tutorial 想定補齊全套文書；BLUE 席位讀不到 RED 訓令；LLM 草稿與人工定稿的 diff 留檔（供 F 系列評測）。
 
-#### WP-B4 參數治理：凍結、簽證、審計　★★｜golden：不動
+#### WP-B4 參數治理：凍結、簽證、審計　★★｜golden：不動　✅ 2026-07-31
+
+> ✅ **完成**——worklog `docs/worklog/parameter-seal.md`。
+> **與規格不同的三個實作裁決**（規格的寫法在這個 codebase 上不成立）：
+> ① **鎖住的是全域，不是「該演習關聯 session」**。`EquipmentTemplate` 是全域武器庫（無 sessionId）、
+>   `SimParams` 存在 `SystemConfiguration.integrationConfig["sim"]`（DB 單一列），
+>   而 `POST /equipment-templates` 與 `PUT /system/config` **根本不帶 session_id**——沒有東西可以 scope。
+>   實際規則只能是「有任何演習簽證生效中，全域寫入一律拒絕」。驗收條文的「散局不受影響」
+>   講的是**開局不被拒**，不是寫入保持開放。
+> ② **簽證是 REHEARSAL 期間的明示動作**（`POST /exercises/{id}/seal`），不是進 EXECUTION 的副作用。
+>   照規格做會**死鎖**：`params_sealed` 同時是離開 REHEARSAL 的必要勾稽項，
+>   而勾是進 EXECUTION 以後才發生的。
+> ③ **`PUT /system/config` 選擇性拒絕**：該端點同時寫 `ai.*`（H 層，規格明說不凍）與 `sim`；
+>   整條擋掉會讓白軍演習中連 LLM 端點都換不了。且**值沒變就放行**（前端每次存檔送整包）。
+> **另加一條規格沒有的解鎖路徑** `DELETE /exercises/{id}/seal`：沒有它，一場被忘記的演習會讓
+> 全域武器庫**永遠唯讀**（`active_seal` 看 phase，而 phase 推不動就卡住）。
+> 它改變的是「有沒有簽證」這個事實本身且進稽核軌跡——**不是**在寫入端點加 `force` 旗標（紅線 3 的精神）。
+> **擋掉一個很難查的自傷**：`seed_equipment._upsert_templates` 跑在每次由想定開局時且會覆寫既有範本，
+> 簽證期間照做的話，在已簽證的演習裡新開一個預推局就會靜靜改掉被鎖的表，
+> 然後該演習每一局都因雜湊不符而拒起、毫無痕跡。改成只擋覆寫、不擋新建。
+> **已知界線**：`docs/PARAMS.md` 的 P 層還有 25+ 個硬編模組常數沒進 `SimParams`，改不了也就鎖不了；
+> 簽證只涵蓋目前真的可調的子集，這比宣稱「R+P 全鎖」誠實。
 
 **動機**：[JCATS-A p.14,25–26]：動態參數（偵測/運動/交戰距離、戰損率、攜行量）想定編輯期可調，
 「參數確認後簽證鎖定不得再改」。MATSO 裝備庫/SimParams 隨時可改——多人演習的公正性與重播性沒有制度保障。
@@ -425,7 +463,21 @@ joint-defense 兩個官方想定建置（[JCATS-A] 的裝甲旅突穿攻擊想�
 > 每一項的係數 MUST 進 `SimParams`（P 層，預設＝關閉或中性值 1.0，golden 以預設跑＝不變），
 > 待 [JCATS-A p.14] 語意的「動態參數」由想定編輯者調整。這讓「加保真」與「不破壞既有局」解耦。
 
-#### WP-C1 壓制與姿態系統（Suppression & Posture）　★★★｜golden：預設中性→不重錄；啟用值另立 golden 案例
+#### WP-C1 壓制與姿態系統（Suppression & Posture）　★★★｜golden：預設中性→不重錄；啟用值另立 golden 案例　✅ 2026-07-31
+
+> ✅ **完成**——worklog `docs/worklog/suppression-posture.md`。既有 3 個 golden **未重錄**
+> （中性預設守住），新增 golden 案例 `suppression_defense_60`（並做過 mutation test）。
+> **接線做完跑驗收條文第一次就紅，砲兵那條路徑整條漏掉**——三個規格沒點破的缺口：
+> ① `AreaFireAdjudicator` **完全沒有累積壓制**（壓制只掛在直射命中，「砲兵用來壓制」的砲兵路徑沒接上）；
+> ② `resolve_area_fire` **完全不看姿態**（掘壕與露天傷亡一模一樣——工事最該擋的就是砲擊）；
+> ③ **壓制半徑 ≠ 殺傷半徑**（新增 `SUPPRESSION_RADIUS_MULT = 3.0`，逐單位帶「幾發落進它的壓制半徑」）。
+> **與規格不同的實作裁決**：衰減率取 **0.7 不是常見的 0.85**（1 tick = 1 分鐘，0.85 要 29 分鐘才清得掉，
+> 那讓一次砲擊長得像戰損；壓制是**可逆的**，這是它與戰損最根本的差別）；
+> 聚合裁決的壓制/姿態放 `AggregateForce` **不放 `AggregateEnv`**（多方混戰裡每支部隊被壓制的程度不同），
+> 且係數**只在非中性時才進 `coefficients`**，否則會改掉既有局每一則事件的序列化內容與 ledger 雜湊鏈。
+> **驗收實測**：20 發 155mm 打滿編 120 步兵連 → DUG_IN 傷亡 0.64 / 露天 1.28（剛好一半），
+> 落彈當下射擊效能修正 **0.40**。殲滅極慢、壓制顯著，條文成立。
+> ⚠ 移交出去的一項：面射擊的**絕對**殺傷量偏低（`area_fire._loss_for` 自標 v0 佔位），已記 Backlog。
 
 **動機**：`EnvSnapshot.shooter_suppression_modifier / target_posture_modifier` 從交戰真實化時代就恆 1.0——
 掛點早就留好，系統一直缺席。沒有壓制，砲兵的主要戰術功能（壓制敵火力而非殲滅）無法表現；
@@ -956,10 +1008,12 @@ V2 的 B2（MSEL 世界效果）、C7（補給體系）、H1（多站）都是�
 ### V2.1「演習系統」（CPX 能力成形）
 
 ```
-B5.1 ✅ 席位模型 → B5.2 ✅ 信文/申請核覆 → B5.3 ✅ 火協 gate → C10.1 ✅ 臨機火力申請（2026-07-30）→ C10.2 FirePlan/排程
-B2 ✅ MSEL 執行引擎（2026-07-31）→ B1 演習專案 → B4 參數凍結簽證
-A2 任務級下令（decomposer → runtime → LLM → UI 四卡）
-C1 壓制/姿態 → C3 乘駐車/隊形 → C2 障礙工兵 → C9 誤傷語意
+B5.1 ✅ 席位模型 → B5.2 ✅ 信文/申請核覆 → B5.3 ✅ 火協 gate（2026-07-30）→ B5.4 標繪分送/殲敵 REPORT（未做）
+C10 ✅ 五張全數結案（2026-07-30/31）：C10.1 臨機火力申請 → C10.2 面目標射擊 → C10.3 火力計畫/排程
+      → C10.4a 觀測判定 + C10.4b BDA 回報 → C10.5 陣地變換
+B2 ✅ MSEL 執行引擎（2026-07-31）→ B1 ✅ 演習專案（2026-07-31）→ B4 ✅ 參數凍結簽證（2026-07-31）
+A2 任務級下令（decomposer → runtime → LLM → UI 四卡）　← **進行中**
+C1 ✅ 壓制/姿態（2026-07-31）→ C3 乘駐車/隊形 → C2 障礙工兵 → C9 誤傷語意
 C4 環境演進（天氣 tick 化/晝夜/煙幕）
 C7 後勤體系（三卡）
 F3 RoleManager/稽核接線；F1 INGEST 最小切片
