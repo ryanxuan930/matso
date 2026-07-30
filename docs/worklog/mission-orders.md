@@ -1,205 +1,75 @@
 ---
-task: WP-A2          # SPEC_V2 §6 WP-A2（任務級下令與準則分解器）
+task: V2.1 WP-A2（收尾修正）
 status: DONE
-started: 2026-07-31T19:00+08:00
-updated: 2026-07-31T19:00+08:00
+started: 2026-07-30T00:00+08:00
+updated: 2026-07-30T00:00+08:00
 agent: Opus 5
 ---
 
-# WP-A2 任務級下令與準則分解器
+# WP-A2 收尾：任務令在活執行期根本沒有被執行
 
-## 目標摘要
+使用者回報「任務的功能好像異常」。查證結果：**不是異常，是從來沒有接上過。**
 
-[IST160 p.4–5] 的核心論證：成熟系統下的是**任務**（Attack(axis, objective, limit lines)），
-由準則庫展開成路徑/梯隊/交戰/脫離；一人可指揮整旅。
+## 兩個各自獨立的斷點
 
-MATSO 現在**人與 LLM 都在微操三種低階令**——LLM 每個心跳要重新推理「下一步走哪」，
-呼叫頻率高、幻覺面積大。**把分解交給符號層正是 Neuro-Symbolic 的本義**
-（SPEC_V2 §3 的第 3 條原則：任務級指揮的分解器是符號層，LLM 只選任務與參數）。
+**斷點 1：`sim_runtime` 從來沒有把 planner 傳進 `Kernel`。**
+`MissionPlanner` 在 repo 裡只有兩個引用——`subsystems.py` 的 Protocol 與 `NoOpMissionPlanner`。
+grep 不到第三個。於是活執行期一直吃 NoOp：MISSION 令收得下、預檢會過、狀態變 VALIDATED、
+指令列看得到——**然後什麼都不會發生**。沒有子令、沒有階段轉移、沒有錯誤訊息。
 
-## 切卡（規格自己建議 4 張）
+⚠ 與 WP-B2 記過的 MSEL 缺陷同一類：**槽留好了、實作寫好了、就是沒有人把它接上**。
+下次再看到「Protocol + NoOp 各一個，grep 不到第三個引用」，那就是這個病。
 
-1. 契約 + `decomposer.py` 純函數 + 分解快照測試。
-2. `mission_runtime.py` 接進 Kernel + 事件 + golden。
-3. LLM 詞彙表 + G3 擴充 + 自主推演實測。
-4. COP 下令 UI + AAR 任務時間軸。
+**斷點 2：就算接上了，每一道 MOVE 子令都會被驗證層打回。**
+`decomposer` 產的 MOVE payload 是 `{to_lat, to_lng, mobility_profile}`，
+而 `MovePayload.to_h3` 是必填。**那不是分解器的疏漏**：它的 import 被白名單鎖在
+`{__future__, typing, app.orders.mission}`（用來擋「分解器偷看地形/DB」），
+它不能 import h3。latlng→hex 的正確位置是接線層。
 
-## 執行紀錄
+補這一段之前，子令一律拋 `OrderValidationError("MOVE 載荷格式錯誤")`，
+而第一版的 `_submit` 把它記成 INFO log 就吞了——**任務看起來在跑，實際上一步都不動**。
 
-### 開工前的偵察推翻了規格的一個判斷
+## 為什麼 golden 抓不到
 
-規格寫「**golden：重錄（新增令型）**」。動手前派 5 個平行 agent 掃過去，其中一個逐檔追下來
-**推翻了它**：`core/tests/replay/` 的四個案例都是**手搭的純記憶體 Kernel**
-（`scenarios.py` 自建 order source 與 adjudicator），**不碰 `OrderType`、不碰 DB、不走 `sim_runtime`**。
-新增一個列舉成員、一個分解器、一個 mission 子系統，沒有任何一條路會改到那四個雜湊。
+`mission_seize_60` 在 `core/tests/replay/scenarios.py` 裡自帶一個 `_A2MissionPlanner`
+（純記憶體版，直接把子令套進熱狀態）。它釘住的是**分解邏輯**，不是生產接線——
+兩個斷點都在它照不到的地方。
 
-→ 改採 **WP-C1 用過的那一招：新增第五個 golden 案例**。SPEC_V2 §6 WP-A2 已同步更正。
-**重錄會摧毀 golden 的唯一價值**——那四個雜湊有用，正是因為它們沒有被人為重設過。
-
-另記一個看起來像 golden 壞掉、其實不是的情況：若 `mission_runtime` 以**必填** kwarg 進
-`Kernel.__init__`（有 9 個建構點），四個案例會噴 `TypeError` 而不是雜湊不符。
-那要補 NoOp 預設，**不是**去跑 `rerecord_golden.py`。
-
-### 卡 1 完成（契約 + 分解器純函數 + 測試）
+## 檔案異動
 
 | 檔案 | 動作 | 說明 |
-|---|---|---|
-| `contracts/core_api.yaml` | 改 | `OrderType` 加 MISSION；`MissionType`/`MissionPhase`/`MissionPayload`；`OrderResponse` 加 `parent_order_id`/`mission_type`/`mission_phase` |
-| `core/app/orders/mission.py` | 新增 | 載荷與階段（**純資料 + 純函數**）；逐任務型的 params typed model |
-| `core/app/orders/decomposer.py` | 新增 | `step(mission, state, unit, world_view, *, tick) -> MissionStep`（**純同步純函數**）|
-| `core/app/orders/validator.py` | 改 | `_PAYLOAD_MODELS[MISSION] = MissionPayload` |
-| `core/app/orders/precheck.py` | 改 | `_precheck_mission` 目標可達性（**重用** `_precheck_move`）|
+|------|------|------|
+| core/app/engine/mission_wiring.py | 新增 | `LiveMissionPlanner`：撈令 → 評估 → 送子令 → 記進度；`_hydrate` 補 `to_h3` |
+| core/app/sim_runtime.py | 修改 | Kernel 傳入 `LiveMissionPlanner`（取代 NoOp） |
+| core/tests/unit/test_mission_wiring.py | 新增 | 9 條，全部打在**接線層**（DB 的令進、DB 的子令出） |
 
-**測試**：`test_decomposer.py`（16）、`test_mission_payload.py`（14）。
+## 設計裁決
 
-#### 兩個 fail-open 的洞（scout 找到，本卡一起補）
+**進度存在令上，不存在記憶體。** `MissionMemory` 只活在 planner 實例裡的話，
+runner 一重啟（`SimManager` 每 3 秒掃描重建）任務就從 PLANNED 重跑一遍——SEIZE 會退回去
+走第一個航路點。故寫回 `Order.payload._mission_state`：與 MOVE 的 `_leg`、
+ENGINEER 的 `_work_until_tick` 同一套，**checkpoint 與重啟自動涵蓋**，不必另開熱狀態鍵。
 
-1. **`run_precheck` 對未知 payload 型別掉進 `else: checks = []`，而 `all([]) is True`**——
-   MISSION 令會**無條件通過預檢**。那不會報錯，只是靜靜放行，沒有任何測試會自然發現。
-2. **`_PAYLOAD_MODELS` 沒登錄的令型會靜靜略過 payload 驗證**（`_parse_payload` 讓它以裸 dict
-   通過；RECON/RESUPPLY 至今就是這樣）。壞掉的 params 會等到 Kernel tick 之中的分解時才炸，
-   而 `run_tick` 對子系統的例外**沒有任何防護**——一個 raise 讓 runner 崩潰後被每 3 秒重建一次。
+**`world_view` 走 `build_faction_context()`**——與 LLM 指揮官看的是同一份投影。
+自己組一份「反正分解器是確定性的」會直接違反紅線 3。
 
-#### 迷霧陷阱做成靜態約束
+**子令被打回要留下痕跡。** 兩條都要在：帳本 `MISSION_SUBORDER_REJECTED`（供 AAR 追究）
+＋ `OrderService.submit` 本來就會落的 REJECTED 列（供操作員當場看見）。
+只記 INFO log 的版本正是這張卡要修的病。
 
-SPEC_V2 對本卡點名的陷阱是「分解器讀的 world_view 必須走迷霧投影」。
-`decomposer.py` 的 import 白名單由**測試**釘住（`test_decomposer_imports_nothing_that_could_see_ground_truth`）：
-只准 `typing` 與自己的純資料模組，`app.models` / `app.state` / `sqlalchemy` 一律禁止。
-讓「有沒有偷看」變成**讀簽名就能回答**的問題，比事後稽核可靠。
+**planner 的例外一律吞在自己這一層。** `run_tick` 對子系統沒有任何防護，
+一個 raise 會讓 runner 崩潰後被 `SimManager` 每 3 秒重建成無限重啟迴圈。
 
-地形**不走 world_view**：地形是公開地理不是秘密，路徑規劃仍由 `PhysicsGateway` 在預檢處理。
-兩者一旦共用同一個參數，「這裡有沒有洩漏」就不再是讀簽名能回答的問題。
+## 測試證據
 
-#### 兩個刻意的行為（scout 的敵情分析改變了設計）
+- `uv run pytest -q` → **1781 passed, 8 skipped**（+9；golden **未重錄**）
+- ruff / mypy(253) / schema-sync / 前端 lint+typecheck → clean
+- **活系統實測**（`e2e-orders`，重建 core 容器後）：使用者原本卡住的 2 道 MISSION 令
+  由 VALIDATED 轉 EXECUTING，並產出 **5 道帶 `parentOrderId` 的 MOVE 子令**
+  （1 COMPLETED / 4 EXECUTING）——修正前該 session 一道子令都沒有。
 
-1. **對 contact 下 ENGAGE 是對的，即使那個 contact 是鬼**。`IntelContact` 沒有存活性欄位
-   ——敵人死了或走了仍留在名單上。打一個已經不在那裡的目標**正是迷霧下該有的行為**；
-   為了「修掉」它去查 DB 核對，那就是陷阱本身。
-2. **階段推進只看己方單位狀態，不看「敵人清光了沒」**。理由同上：contact 不會消失，
-   以「無敵蹤」當佔領條件的話任務**永遠到不了 HOLDING**。有一條測試專門釘這件事。
+## 中斷續作指引
 
-### 卡 2–4 未做（下一步）
-
-- 卡 2：`mission_runtime` 接進 Kernel（**沒有 pre-movement 槽位**，要新增 Protocol +
-  9 個 Kernel 建構點給 NoOp 預設）+ `parent_order_id` migration + 取消母令連帶取消子令
-  （`cancel` 現在只動一列，沒有任何 cascade）+ 新增第五個 golden。
-- 卡 3：LLM 詞彙表。⚠ **`contracts/ai_output.schema.json` 的 order_type enum 必須先加 MISSION**，
-  否則 G1 schema 驗證會擋掉整個決策（不只那一道令），OPFOR 重試兩次後 fallback 成零令。
-  且 `orders_bridge.tactical_order_to_request` 的 `else: return None` 會讓 G3 靜靜剔除 100% 的
-  MISSION 令——症狀看起來會像「LLM 不肯用任務令」。
-- 卡 4：COP 下令 UI + AAR 任務時間軸。
-- ⚠ **G4 護欄洞**：`_STRIKE_ORDER_TYPES = frozenset({"ENGAGE"})` 連 FIRE_MISSION 都沒包，
-  MISSION 更沒有。SPEC_V2 §WP-A3 已明列「ENGAGE/MISSION」。屬卡 2/3 範圍，先記在這裡。
-
-### 卡 2 前半完成（Kernel 槽位 + 執行期 + 第五個 golden）
-
-| 檔案 | 動作 | 說明 |
-|---|---|---|
-| `core/app/engine/subsystems.py` | 改 | `MissionPlanner` Protocol + `NoOpMissionPlanner` |
-| `core/app/engine/kernel.py` | 改 | 任務槽位**在 movement 之前**；**NoOp 預設** |
-| `core/app/orders/mission_runtime.py` | 新增 | 每 tick 推進、階段事件、記憶（可進 checkpoint）|
-| `core/tests/replay/scenarios.py` | 改 | 第五個 golden `mission_seize_60` |
-
-**任務跑在 movement 之前**：這一 tick 決定往哪走，移動這一 tick 就走出去。放在後面的話，
-分解出的新 MOVE 要等下一 tick 才生效，每次階段轉換都白白慢一拍。
-
-**槽位給 NoOp 預設而非必填**：repo 有 9 個 Kernel 建構點。改成必填會讓四個 golden 噴
-`TypeError`——那看起來像 golden 壞掉，而「golden 紅了」最容易招來的錯誤反應就是去跑 rerecord。
-
-**每道任務各自 try/except**：`kernel.run_tick` 對子系統例外**沒有任何防護**，一個 raise 會讓
-runner 崩潰後被 `SimManager` 每 3 秒重建一次，形成無限重啟迴圈。一道壞任務不該拖垮整局。
-
-**階段寫 `ai_decision` 不寫 `detail`**：`detail` 刻意不入 hash chain（非證據性診斷欄），
-而任務階段是 AAR 任務時間軸要用的事實。
-
-### golden 差點變成一份沒有意義的雜湊——兩個各自獨立的錯誤
-
-**第一個：只記終狀態的 golden 抓不到漂移。**
-第一版只把位置與姿態寫進 stateHash。移動是漸近收斂的——跑滿 60 tick 之後，
-不論抵達容差設多少終點都一樣。實測把 `ARRIVAL_TOLERANCE_M` 120→300，**雜湊完全沒變**。
-要釘住的是「任務照這個節奏走過這些階段」，所以改成把**各階段首次進入的 tick** 寫進熱狀態。
-（當下階段也不行——那同樣會被終狀態吃掉。）
-
-**第二個：`__pycache__` 讓連續好幾次的 mutation test 全部是假的。**
-`120.0` 與 `300.0` **位元組長度相同**，而我用 `cp` 還原檔案時 Python 沒有讓 pyc 失效，
-於是行程裡的常數與磁碟上的檔案長期不一致——`decomposer.__file__` 指著寫著 120 的檔案，
-`ARRIVAL_TOLERANCE_M` 卻是 300。連帶後果是 **golden 是在被突變過的原始碼下錄的**：
-差一點就把一份「釘住錯誤基準」的雜湊提交進去。
-
-清掉 `__pycache__` 重錄後，兩個突變（容差 120→300、佔領後姿態 DEFENSE→HASTY）
-**各自都讓 `mission_seize_60` 轉紅，而其餘四個 golden 不動**。
-
-教訓寫在這裡給下一個人：**mutation test 之後要清 `__pycache__`**，
-尤其當突變前後的字面值長度相同時。長度相同的字面值替換是這個陷阱最容易觸發的形式。
-
-### 卡 3 完成（LLM 詞彙表 + 三道護欄關）
-
-三件事全部都是 **fail-silent** 的——任何一道沒接好，症狀都是「LLM 好像不肯用任務令」
-或更糟的「任務令穿過了護欄」，而不是任何一則錯誤訊息。
-
-**G1（schema）**：`contracts/ai_output.schema.json` 的 `order_type` enum 加 MISSION +
-`mission_type` + `params`。⚠ **沒加的話 G1 會擋掉整個決策，不只那一道令**——
-`gateway.evaluate` 在 schema 失敗時直接早退，OPFOR 重試兩次後 fallback 成零令。
-症狀是那個陣營整個不動。
-
-**G3（橋接）**：`tactical_order_to_request` 原本 `else: return None`
-→ 每道 MISSION 回 None → `is_feasible` False → **G3 靜靜剔除 100% 的 MISSION 令**。
-而且同一個函式**也是 submit 路徑**：只補 G3 那一半的話，令會通過護欄然後落進
-`BridgeResult.skipped`，變成完全沒有痕跡的 no-op。
-
-**G4（禁射區）——這是本卡補掉的實質護欄洞：**
-
-1. `_STRIKE_ORDER_TYPES` 原本 **只有 `ENGAGE`**。`FIRE_MISSION` 與 `MISSION` 都會造成毀傷
-   卻不受禁射區約束：同一座標 ENGAGE 打不了、面射擊卻可以——那不是保護，是繞道。
-   BL-1 已在**預檢**端修過同一個洞，但 **AI 側的 G4 沒有跟上**。而 SEIZE 會分解出對
-   目標區內敵的 ENGAGE，母令不擋等於整條禁射區在任務級下令面前失效。
-2. `UnitTargetLocator.locate` 的**註解宣稱支援「未來的 MISSION objective」，實際不支援**
-   ——它只讀頂層 `target_lat/lng`，MISSION 一律回 None，而 G4 對 `locate` 回 None 的政策是
-   **不擋**。等於一道打進禁射區的 SEIZE 直接穿過 G4。
-   註解與行為不一致是最難查的那種錯，故連同註解一起改。
-   SCREEN/MOVE_MARCH **刻意不參與**禁射區判定（掩護幕明確不接戰、行軍只是移動）——
-   與「MOVE 不擋」是同一條規則。
-
-**系統提示的既有矛盾一併修掉**：`ai/prompts/FACTION_COMMANDER.md` 第 3 條寫
-`MOVE→target_h3`，而 `decider.py` 的使用者訊息寫 `target_lat/target_lng`——
-**系統訊息是模型先讀到的那一份**。加 MISSION 而不動它，等於留下兩份互相矛盾的指示。
-
-（一併記下：我第一版把「本條原本寫 target_h3」這句改動說明寫進了提示檔本身。
-那是給人看的變更紀錄，不是給模型的指示，會佔 prompt 篇幅又可能誤導——已移到這裡。）
-
-**測試**：`test_mission_llm_bridge.py`（14），三道關各自釘住。
-
-### 卡 4 完成（COP 下令 UI + AAR 任務時間軸）
-
-**前端刻意不預覽分解結果**。分解是符號層**每 tick 依當下敵情**重新決定的，
-前端畫出來的任何「預計路線」都會在第一次接敵時失真——與其給一條會騙人的線，
-不如只顯示收到的幾何。
-
-**SEIZE 先收目標點、之後的點才是軸線**：與「先定目標、再定怎麼去」的下令習慣一致。
-換任務型會清掉幾何——SEIZE 的 objective 與 SCREEN 的 line 語義完全相反，
-留著上一個任務型的點只會送出一道意思相反的令。
-
-**AAR 任務時間軸**（`aar/missions.py` 純函數 + `GET /aar/missions`）：
-從帳本重建「每道任務走過哪些階段、各花了多久」。
-- 為什麼不查任務當前狀態：當前狀態只回答「現在到哪」，AAR 要回答的是「**怎麼**走到這裡」；
-  而且已結束的局根本沒有當前狀態可查（記憶活在 runner 行程），從帳本重建是唯一事後仍成立的做法。
-- 起始階段**不必猜**——它就寫在第一則事件的 `from_phase` 裡。
-- 迷霧走 `_visible_events`，與其他 AAR 端點同一條路徑。在這裡另做投影會是第二套規則。
-
-### 容器實測
-
-- COP 下令面板：令型多出「任務（奪佔/防守/掩護/行軍）」，四種任務型各帶一句準則說明；
-  點地圖標定目標後送出鍵解禁。
-- **`TERRAIN_UNAVAILABLE` 是對的**：第一次點在地圖中央（離部隊很遠、超出已建置地形範圍），
-  預檢確實擋下——證明 `_precheck_mission` 不是 fail-open（那正是本卡補掉的洞之一）。
-- 目標改到單位附近 → `VALIDATED`，precheck 回 `reachability passed`。
-- 壞掉的 params（缺 objective）→ **422 `ORDER_INVALID_PAYLOAD`**，不是靜靜通過。
-- 驗證用的任務令已取消。
-
-順帶修掉一處使用者可見的字串：任務型說明裡的 `**不接戰**` 在 `<option>` 裡會原樣顯示星號
-（DOM 不解析 markdown）。
-
-### 未做並明記
-
-SPEC 要求記錄「LLM 平均每決策心跳產生令數」的**前後對比**——那需要跑一場真實自主推演
-（要 LLM 端點），屬部署環境的實測，本卡未做。
+- **下一步第一件事**：回到 V2.1 路線圖（C9 誤傷語意）。
+- **未竟項**：SEIZE/DEFEND/SCREEN 三種任務型在活系統只做過 MOVE_MARCH 的端到端實測；
+  任務被取消時未連帶取消已派生的子令（UI 文案已宣稱會，後端尚未做）。

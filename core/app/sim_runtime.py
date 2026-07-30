@@ -41,6 +41,7 @@ from app.engine.fire_wiring import AreaFireAdjudicator, FireMissionCommand, Fire
 from app.engine.formation_wiring import drain_formation_orders
 from app.engine.kernel import Kernel
 from app.engine.logistics import ResupplySystem
+from app.engine.mission_wiring import LiveMissionPlanner
 from app.engine.movement import UnitMovementSystem
 from app.engine.obstacle_wiring import drain_engineer_orders
 from app.engine.rng import DeterministicRNG
@@ -466,6 +467,17 @@ class SimManager:
                             bda_rng=rngs["bda"],
                         ),
                     }
+                ),
+                # WP-A2 收尾：**在此之前這個槽一直是 `NoOpMissionPlanner`**——MISSION 令
+                # 收得下、預檢會過、指令列看得到，然後什麼都不會發生（沒有子令、沒有階段
+                # 轉移、沒有錯誤訊息）。golden `mission_seize_60` 抓不到，因為它自帶一個
+                # 純記憶體的測試用 planner，釘住的是分解邏輯而不是生產接線。
+                mission_planner=LiveMissionPlanner(
+                    engage_db,
+                    session_id,
+                    hot,
+                    gateway=_engage_gateway(),
+                    relations=relations,
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,
