@@ -89,7 +89,7 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 | # | 差距 | 文獻依據 | 現況 | 嚴重度 | WP | 狀態 |
 |---|------|----------|------|--------|-----|------|
 | 1 | AI 敵情用 ground truth，迷霧對 AI 不成立 | —（內部盤點；[IST160 p.6] 分層 AI 原則） | `ai_loop/worker.py` 的 `enemy_visibility` 預設 `ground_truth_enemies`；IntelService 已上線未接 | ★★★ | A1 | ✅ 2026-07-29 |
-| 2 | 只有低階令（MOVE/ENGAGE/RESUPPLY），無任務級下令與準則分解 | [IST160 p.4–5]（Attack 任務自動展開）；[JCATS-F p.12–13] | orders 僅三型＋fire_policy；AI 逐令微操 | ★★★ | A2 |  |
+| 2 | 只有低階令（MOVE/ENGAGE/RESUPPLY），無任務級下令與準則分解 | [IST160 p.4–5]（Attack 任務自動展開）；[JCATS-F p.12–13] | orders 僅三型＋fire_policy；AI 逐令微操 | ★★★ | A2 | ✅ 2026-07-31（四張卡）|
 | 3 | G4 no-strike 形同空轉（欄位不匹配＋無資料源） | —（內部盤點） | G4 只認 `target_h3`，AI 令帶 `target_lat/lng`；`no_strike_hexes` 恆空 | ★★★ | A3 | ✅ 2026-07-29 |
 | 4 | MSEL 排程執行引擎缺位 | [JTLS-F p.1053,1059]；[JCATS-A p.14–15] | `TriggerChecker` NoOp；inject 無世界效果；DSL 無時間/持續條件 | ★★★ | B2 | ✅ 2026-07-31（a/b/c）|
 | 5 | 無演習生命週期管理（整備→實施→撤收） | [JCATS-A p.9–16 圖7] | 無演習專案實體；session 即全部 | ★★ | B1 | ✅ 2026-07-31（a/b/c）|
@@ -180,7 +180,26 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 **陷阱**：contact 是「最後已知位置」——單位移走後 AI 會打空點，這是**正確行為**（迷霧的本義），
 不要「順手修好」；AAR 敘事可標記「基於過時情報的攻擊」供教學。
 
-#### WP-A2 任務級下令與準則分解器（Mission Orders + Doctrinal Decomposer）　★★★｜golden：**不重錄，改為新增案例**（原本寫「重錄」，開工前查證後推翻）
+#### WP-A2 任務級下令與準則分解器（Mission Orders + Doctrinal Decomposer）　★★★｜golden：**不重錄，改為新增案例**（原本寫「重錄」，開工前查證後推翻）　✅ 2026-07-31（四張卡）
+
+> ✅ **完成**——worklog `docs/worklog/mission-orders.md`。新增 golden `mission_seize_60`，
+> **既有四個未動**。**與規格不同 / 規格沒點破的實作裁決**：
+> ① **golden 不重錄**（見下方原本就寫在標題的更正）。
+> ② **分解器一次只推一步**，不是一次展開整個計畫：一次吐出全部子令等於在還沒接敵時就先下好
+>   ENGAGE，而那些令的目標是分解當下的 contact——`IntelContact` 沒有存活性欄位，contact 永不過期。
+> ③ **對鬼 contact 下 ENGAGE 是對的**（迷霧下該有的行為），**不可以**為了修掉它去查 DB 核對；
+>   而**階段推進只看己方單位狀態**，以「無敵蹤」當佔領條件的話任務永遠到不了 HOLDING。
+> ④ 迷霧陷阱做成**靜態約束**：`decomposer.py` 的 import 白名單由測試釘住
+>   （禁 `app.models`/`app.state`/`sqlalchemy`），讓「有沒有偷看」變成讀簽名就能回答的問題。
+>   地形**刻意不走 world_view**——兩者共用一個參數，這個問題就不再讀得出來。
+> ⑤ Kernel 的任務槽位給 **NoOp 預設**而非必填（9 個建構點；必填會讓四個 golden 噴 `TypeError`，
+>   而那看起來像 golden 壞掉）。
+> **補掉四個 fail-open 的洞**（全部不報錯、只靜靜放行）：`run_precheck` 對未知 payload
+> `all([]) is True`、`_PAYLOAD_MODELS` 未登錄則跳過驗證、`ai_output.schema.json` 缺 enum 會擋掉
+> **整個決策**、`orders_bridge` 的 `else: return None` 靜靜剔除 100% 的 MISSION 令。
+> **並補掉兩個實質護欄洞**：`_STRIKE_ORDER_TYPES` 原本只有 ENGAGE（FIRE_MISSION 與 MISSION
+> 都不受禁射區約束）；`UnitTargetLocator.locate` 的註解宣稱支援 MISSION objective 而**實際不支援**，
+> 且 G4 對 locate 回 None 的政策是不擋——等於打進禁射區的 SEIZE 直接穿過 G4。
 
 > ⚠ **修正原本的 golden 判斷**（2026-07-31，A2 開工前的偵察）。本節原本寫「golden：重錄（新增令型）」，
 > 但逐檔追下去**不成立**：`core/tests/replay/` 的四個案例都是**手搭的純記憶體 Kernel**
@@ -1026,7 +1045,7 @@ B5.1 ✅ 席位模型 → B5.2 ✅ 信文/申請核覆 → B5.3 ✅ 火協 gate�
 C10 ✅ 五張全數結案（2026-07-30/31）：C10.1 臨機火力申請 → C10.2 面目標射擊 → C10.3 火力計畫/排程
       → C10.4a 觀測判定 + C10.4b BDA 回報 → C10.5 陣地變換
 B2 ✅ MSEL 執行引擎（2026-07-31）→ B1 ✅ 演習專案（2026-07-31）→ B4 ✅ 參數凍結簽證（2026-07-31）
-A2 任務級下令（decomposer → runtime → LLM → UI 四卡）　← **進行中**
+A2 ✅ 任務級下令（2026-07-31，四張卡）
 C1 ✅ 壓制/姿態（2026-07-31）→ C3 乘駐車/隊形 → C2 障礙工兵 → C9 誤傷語意
 C4 環境演進（天氣 tick 化/晝夜/煙幕）
 C7 後勤體系（三卡）
