@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（十）：地圖編輯器終於標得出「有型別的障礙」**。WP-C2 把五種障礙的裁決效果都做好了（減速倍率、觸雷機率、破障工時），但**想定端一直無法預先佈置**——只能靠 API/MSEL 注入，因為編輯器沒有型別欄位。現補上型別下拉（雷區/鐵絲網/戰車壕/路障/斷橋 + 「不指定」）與密度欄位（選了型別才出現）。**不指定＝維持過去的純幾何障礙**：`obstacle_type_of()` 對缺鍵回 None、`effect_of(None)` 全中性，既有標註零影響。另加一條閘門：障礙型別現在寫在三個地方（`ObstacleType` enum、`EngineerPayload` 的 regex、前端下拉），前兩者已用測試釘住一致性——不釘的下場很具體：enum 加了新型別但 regex 忘了改，想定畫得出來、ENGINEER 令卻在 422 被擋掉，而錯誤訊息只會說「格式不符」。**驗收**：pytest 1972（+1）、mypy 266、ruff/eslint/vue-tsc 綠；活系統實測下拉五型 + 密度欄位連動。
+
 - 2026-07-30：**Backlog 清倉（九）：同一個誤命名的第三、四例 + DEFEND 派生工兵設障**。`ContactView.unit_type` 裝的是階層這件事，在 `world_view.allied_units`（`"unit_type": u.unit_level.value`）與 `UnitMeta.unit_type`（`worker.py:98`）**又各出現一次**——全 repo 共四處把「階層」叫成「兵種」。四處一起改名 `echelon` 並補上真正的 `branch`。**這同時解掉一張卡了很久的 Backlog**：「SEIZE/DEFEND 可以派生 ENGINEER 子令但沒有做」，卡點原文是「分解器看得到的 `world_view` 沒有 `unit_kind`，所以它分不出誰是工兵——對非工兵派 EMPLACE 會每個 tick 被預檢打回一次」。`branch` 上線後這個問題問得出來了：DEFEND 抵達防區時，工兵多派一道 `EMPLACE WIRE`（防區前緣設障），非工兵與**沒有 branch 的既有想定**都只轉姿態、行為不變。兩個方向的突變驗過會紅（全部單位都派／工兵也不派）。**驗收**：pytest 1971（+1）、mypy 266、ruff 綠。
 
 - 2026-07-30：**Backlog 清倉（八）：補齊 `UnitLevel` 缺的四級 + 釘住「宣告順序＝編制大小」**。符號卡做階層符號時發現 2525C 的 `C/G/K/L` 四個字母永遠用不到——因為 enum 缺 SECTION/REGIMENT/ARMY/ARMY_GROUP，且 CORPS 之上直接跳 THEATER。補的過程挖出一件**沒有被寫下來、卻有兩處在依賴的事**：`aggregate.py:25` 與 `engine/comms.py:39` 都用 `enumerate(UnitLevel)` 當編制大小的秩，再以 `rank <= _SIZE_RANK[BATTALION]` 判「營級以上＝指揮節點」——**enum 的宣告順序直接決定模擬行為**。在尾端追加新層級（最自然的做法）會讓它變成比 INDIVIDUAL 還小，不拋錯、不紅燈，只會讓聚合門檻與通信指揮節點判定悄悄跑掉。已把四級**插進正確的大小位置**，並加 `test_unit_level_order.py` 三條測試釘住（清單、語義比較、指揮節點門檻）——實測「追加到尾端」這個突變會讓三條全紅。同步 prisma migration（MySQL ENUM 值是字串，既有列不受影響）、契約 enum、前端型別/標籤/下拉/echelon 對照（`SECTION→C`、`REGIMENT→G`、`ARMY→K`、`ARMY_GROUP→L`）。**驗收**：pytest 1970（+3）、mypy 266、schema sync 233 欄、eslint/vue-tsc 綠。
@@ -256,9 +258,9 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   分解器只從那份清單挑目標）。③直射濺射（同格/鄰格友軍距離衰減）是**新能力**不是新係數：
   `Target`/`EnvSnapshot` 沒有 lat/lng，且 `lethal_radius_m` 只在武器契約的 artillery `$def`
   ——KINETIC 範本一律 0.0。要做得先改契約（紅線 4）。
-- **地圖編輯器標障礙時不能選 `obstacle_type`/`density`、ORBAT 不能勾 `unit_kind=ENGINEER`**
-  （WP-C2 剩餘）：COP 現在下得了 ENGINEER/FORMATION 令，但**想定端仍無法預先佈置有型別的
-  障礙、也無法標記工兵單位**——只能靠 API/MSEL 注入。2525 mounted 修飾符同樣未做。
+- ~~地圖編輯器不能選 `obstacle_type`/`density`、ORBAT 不能設兵科~~ —— **兩者皆已補**
+  （2026-07-30）：地圖編輯器加型別下拉（五型 + 「不指定」）與密度欄位；ORBAT 兵科由
+  `UnitBranch` 提供（想定編輯器下拉 + ORBAT PATCH）。2525 mounted 修飾符仍未做。
 - **斷橋只是「不減速的障礙」**（WP-C2）：`blocks_road()` 寫好了但還沒接進路由/道路加速，
   也沒有涉水判定。障礙 contact 偵測（敵障礙轉本軍標註）同樣未做。
 - **令沒有 TTL**（WP-C10.3）：`at_tick` 到期的令若因射手 OFFLINE 被通信閘門擋下，會留在

@@ -32,6 +32,15 @@ defineProps<{
 }>()
 
 defineEmits<{ (e: 'toggle-hidden', id: string): void }>()
+
+/** WP-C2 障礙型別。與 `core/app/adjudication/obstacles.py` 的 `ObstacleType` 一致。 */
+const OBSTACLE_TYPES = [
+  { value: 'MINEFIELD', label: '雷區', hint: '通過時可能觸雷（依密度）' },
+  { value: 'WIRE', label: '鐵絲網', hint: '減速；工兵可破障' },
+  { value: 'TANK_DITCH', label: '戰車壕', hint: '車輛難以通過' },
+  { value: 'ABATIS', label: '路障', hint: '倒木/障礙物阻絕' },
+  { value: 'BRIDGE_DEMO', label: '斷橋', hint: '橋樑破壞' },
+]
 </script>
 
 <template>
@@ -73,6 +82,27 @@ defineEmits<{ (e: 'toggle-hidden', id: string): void }>()
       </label>
       <label v-if="editor.drawFeatureKind === 'OBSTACLE' || editor.drawFeatureKind === 'BUILDING'" class="me-h">
         高度<input v-model.number="editor.drawHeight" type="number" min="0" step="0.5"> m
+      </label>
+    </div>
+    <!-- WP-C2 障礙型別/密度：不填＝純幾何障礙（與過去相同），填了才進裁決。 -->
+    <div v-if="editor.drawFeatureKind === 'OBSTACLE'" class="me-row">
+      <label class="me-h">型別
+        <select v-model="editor.drawObstacleType" data-testid="draw-obstacle-type">
+          <option value="">（不指定）</option>
+          <option v-for="o in OBSTACLE_TYPES" :key="o.value" :value="o.value" :title="o.hint">
+            {{ o.label }}
+          </option>
+        </select>
+      </label>
+      <label v-if="editor.drawObstacleType" class="me-h" title="0–1；愈高愈難通過、觸雷機率愈大">
+        密度<input
+          v-model.number="editor.drawDensity"
+          type="number"
+          min="0"
+          max="1"
+          step="0.1"
+          data-testid="draw-density"
+        >
       </label>
     </div>
     <NatoSymbolSelect v-model="editor.drawSidc" data-testid="draw-sidc" title="北約符號（僅點）" />

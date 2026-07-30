@@ -169,3 +169,21 @@ def test_emplacement_gate_is_neutral_when_the_unit_never_moved() -> None:
 
     off = SimpleNamespace(profile=SimpleNamespace(emplace_ticks=0))
     assert AreaFireAdjudicator._emplacement_block(off, _ExplodingState(), now) is None
+
+
+def test_obstacle_types_agree_between_the_enum_and_the_order_schema() -> None:
+    """障礙型別現在寫在三個地方：`ObstacleType` enum、`EngineerPayload` 的 regex、
+    以及前端地圖編輯器的下拉。前兩者可以自動釘住，這條就是那道閘門。
+
+    不釘的下場很具體：enum 加了新型別但 regex 忘了改 → 想定/地圖畫得出來、
+    ENGINEER 令卻在 422 被擋掉，而錯誤訊息只會說「格式不符」。
+    """
+    import re
+
+    from app.adjudication.obstacles import ObstacleType
+    from app.orders.schemas import EngineerPayload
+
+    pattern = EngineerPayload.model_fields["obstacle_type"].metadata[0].pattern
+    in_regex = set(re.findall(r"[A-Z_]+", pattern.strip("^$()")))
+    declared = {t.value for t in ObstacleType}
+    assert in_regex == declared, f"enum 與 regex 不一致：{in_regex ^ declared}"

@@ -59,6 +59,10 @@ export function useMapEditor(opts: {
   const drawNotes = ref('')
   const drawHeight = ref<number | null>(null)
   const drawSidc = ref('')
+  // WP-C2 障礙型別與密度。**空字串＝不指定**——`obstacle_type_of()` 對缺鍵回 None、
+  // `effect_of(None)` 是全中性，所以不填就等於過去的「純幾何障礙」，既有想定行為不變。
+  const drawObstacleType = ref('')
+  const drawDensity = ref<number | null>(null)
   const drawWidth = ref(DEFAULT_FEATURE_WIDTH)
   const selectedFeatureId = ref<string | null>(null)
   // 選取特徵的編輯欄位（#11）
@@ -134,6 +138,8 @@ export function useMapEditor(opts: {
     drawColor.value = ''
     drawNotes.value = ''
     drawSidc.value = ''
+    drawObstacleType.value = ''
+    drawDensity.value = null
     // 障礙/建築預設高度 2m（#11）。
     drawHeight.value = featureKind === 'OBSTACLE' || featureKind === 'BUILDING' ? 2 : null
   }
@@ -179,6 +185,11 @@ export function useMapEditor(opts: {
     if (drawNotes.value.trim()) attrs.notes = drawNotes.value.trim()
     if (drawHeight.value != null) attrs.height_m = drawHeight.value
     if (drawSidc.value && drawKind.value === 'POINT') attrs.sidc = drawSidc.value
+    // 只有障礙類才帶——把型別掛在建築上只會讓裁決層讀到看不懂的值。
+    if (drawFeatureKind.value === 'OBSTACLE') {
+      if (drawObstacleType.value) attrs.obstacle_type = drawObstacleType.value
+      if (drawDensity.value != null) attrs.density = drawDensity.value
+    }
     const body: FeatureCreate = {
       kind: drawFeatureKind.value,
       geometry_type: isShape ? 'POLYGON' : drawKind.value,
@@ -509,6 +520,8 @@ export function useMapEditor(opts: {
     drawNotes,
     drawHeight,
     drawSidc,
+    drawObstacleType,
+    drawDensity,
     drawWidth,
     selectedFeatureId,
     selectedFeature,
