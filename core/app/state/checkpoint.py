@@ -41,8 +41,17 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.errors import CheckpointTooLargeError, RollbackTargetNotFoundError
-from app.models import Order, SimCheckpoint, TacticalEventLog, TacticalUnit
-from app.models.enums import OrderStatus
+from app.models import (
+    EquipmentInstance,
+    FirePlan,
+    FirePlanTarget,
+    MapFeature,
+    Order,
+    SimCheckpoint,
+    TacticalEventLog,
+    TacticalUnit,
+)
+from app.models.enums import FirePlanTargetStatus, OrderStatus
 from app.state.hot_state import HotStateStore, UnitState
 from app.state.ledger import LedgerEvent, LedgerWriter, canonical_json
 
@@ -138,6 +147,74 @@ def orders_snapshot(db: Session, session_id: str) -> dict[str, Any]:
     }
 
 
+# 模擬**自己**生出來的地圖物件。回滾要把它們一併退回去：
+# 500 tick 埋的雷區，回滾到 300 之後如果還躺在那裡，那不是同一個戰場。
+# 玩家手繪的標繪（其他 kind）刻意不動——那是講評用的註記，不是世界狀態。
+SIM_OWNED_FEATURE_KINDS = ("OBSTACLE", "SMOKE", "SUPPLY_POINT")
+
+
+def equipment_snapshot(db: Session, session_id: str) -> dict[str, Any]:
+    """本局所有裝備實例的 `currentState`（彈藥與油料就存在這裡）。
+
+    **回滾非做不可**：熱狀態的 `ammo`/`fuel` 由 `hot_state.restore` 復原，但 DB 這一份
+    不會——於是回滾後 `GET /units/{id}/weapons` 顯示的是回滾前打光的彈量，
+    而補給/整備讀的也是 DB。兩份真相對不起來，且看得見的那一份是錯的。
+    """
+    unit_ids = list(
+        db.scalars(select(TacticalUnit.id).where(TacticalUnit.session_id == session_id)).all()
+    )
+    if not unit_ids:
+        return {}
+    rows = db.scalars(
+        select(EquipmentInstance).where(EquipmentInstance.owner_id.in_(unit_ids))
+    ).all()
+    return {row.id: dict(row.current_state or {}) for row in rows}
+
+
+def sim_features_snapshot(db: Session, session_id: str) -> list[dict[str, Any]]:
+    """模擬生成的地圖物件（障礙/煙幕/補給點）整列快照。
+
+    存整列而不是只存 id：回滾也要能**復活**——被工兵開闢掉、被 API 刪掉的障礙
+    在快照當時是存在的，只留 id 就重建不回來。
+    """
+    rows = db.scalars(
+        select(MapFeature).where(
+            (MapFeature.session_id == session_id) & MapFeature.kind.in_(SIM_OWNED_FEATURE_KINDS)
+        )
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "kind": r.kind,
+            "geometry_type": r.geometry_type,
+            "geometry": r.geometry,
+            "owner_faction": r.owner_faction,
+            "label": r.label,
+            "influence_radius_m": r.influence_radius_m,
+            "weapon_template_id": r.weapon_template_id,
+            "attributes": dict(r.attributes or {}),
+        }
+        for r in rows
+    ]
+
+
+def fire_plan_snapshot(db: Session, session_id: str) -> dict[str, Any]:
+    """預劃目標的執行狀態。回滾不還原的話，回到射擊之前那個 tick，
+    已 FIRED 的目標仍是 FIRED——**那發準備射擊再也不會落下**。
+    """
+    plan_ids = list(db.scalars(select(FirePlan.id).where(FirePlan.session_id == session_id)).all())
+    if not plan_ids:
+        return {}
+    rows = db.scalars(select(FirePlanTarget).where(FirePlanTarget.plan_id.in_(plan_ids))).all()
+    return {
+        r.id: {
+            "status": str(r.status.value if hasattr(r.status, "value") else r.status),
+            "fire_request_id": r.fire_request_id,
+        }
+        for r in rows
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class CheckpointRecord:
     tick: int
@@ -154,6 +231,20 @@ class CheckpointRecord:
     def order_states(self) -> dict[str, Any]:
         raw = self.extras.get("orders")
         return dict(raw) if isinstance(raw, dict) else {}
+
+    def equipment_states(self) -> dict[str, Any] | None:
+        """裝備 currentState。**None ＝快照裡沒有這一段**（舊快照）→ 回滾不動裝備，
+        而不是把每件裝備清成空狀態。"""
+        raw = self.extras.get("equipment")
+        return dict(raw) if isinstance(raw, dict) else None
+
+    def sim_features(self) -> list[dict[str, Any]] | None:
+        raw = self.extras.get("sim_features")
+        return [dict(x) for x in raw if isinstance(x, dict)] if isinstance(raw, list) else None
+
+    def fire_plan_states(self) -> dict[str, Any] | None:
+        raw = self.extras.get("fire_plan_targets")
+        return dict(raw) if isinstance(raw, dict) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +321,10 @@ class CheckpointManager:
         extras = self._extras()
         with self._session_factory() as db:
             extras["orders"] = orders_snapshot(db, session_id)
+            # 這三段與 orders 同理由：崩潰復原不需要（DB 就是權威），**回滾需要**。
+            extras["equipment"] = equipment_snapshot(db, session_id)
+            extras["sim_features"] = sim_features_snapshot(db, session_id)
+            extras["fire_plan_targets"] = fire_plan_snapshot(db, session_id)
         blob = serialize_state(build_snapshot(state, extras))
         if len(blob) > MAX_CHECKPOINT_BYTES:
             raise CheckpointTooLargeError(
@@ -363,6 +458,86 @@ def _restore_unit_rows(db: Session, session_id: str, units: Mapping[str, Any]) -
     return written
 
 
+def _restore_equipment(db: Session, session_id: str, states: Mapping[str, Any] | None) -> int:
+    """把裝備的 `currentState`（彈藥/油料）回捲到快照當時；回傳寫入件數。
+
+    快照沒有這一段（舊快照）→ 回 0 且**一件都不動**：把每件裝備清成空狀態
+    比不還原糟得多（單位會忽然沒彈也沒油）。
+    """
+    if states is None:
+        return 0
+    unit_ids = list(
+        db.scalars(select(TacticalUnit.id).where(TacticalUnit.session_id == session_id)).all()
+    )
+    if not unit_ids:
+        return 0
+    written = 0
+    for row in db.scalars(
+        select(EquipmentInstance).where(EquipmentInstance.owner_id.in_(unit_ids))
+    ).all():
+        snap = states.get(row.id)
+        if not isinstance(snap, Mapping):
+            continue  # 快照之後才配發的裝備：留著（刪掉會讓編裝憑空少一件）
+        row.current_state = dict(snap)
+        written += 1
+    return written
+
+
+def _restore_sim_features(db: Session, session_id: str, rows: list[dict[str, Any]] | None) -> int:
+    """把模擬生成的地圖物件（障礙/煙幕/補給點）回捲；回傳還原的列數。
+
+    先刪光同類再依快照重建——**刪+建**而不是逐列 diff：快照當時存在、之後被開闢/
+    消散掉的物件必須復活，逐列 update 做不到這件事。
+    玩家手繪的標繪不在 `SIM_OWNED_FEATURE_KINDS` 裡，一律不碰。
+    """
+    if rows is None:
+        return 0
+    db.execute(
+        delete(MapFeature).where(
+            (MapFeature.session_id == session_id) & MapFeature.kind.in_(SIM_OWNED_FEATURE_KINDS)
+        )
+    )
+    for r in rows:
+        db.add(
+            MapFeature(
+                id=str(r.get("id")),
+                session_id=session_id,
+                kind=str(r.get("kind")),
+                geometry_type=str(r.get("geometry_type")),
+                geometry=r.get("geometry"),
+                owner_faction=str(r.get("owner_faction") or ""),
+                label=r.get("label"),
+                influence_radius_m=r.get("influence_radius_m"),
+                weapon_template_id=r.get("weapon_template_id"),
+                attributes=dict(r.get("attributes") or {}),
+            )
+        )
+    return len(rows)
+
+
+def _restore_fire_plan_targets(
+    db: Session, session_id: str, states: Mapping[str, Any] | None
+) -> int:
+    """把預劃目標的執行狀態回捲；回傳寫入筆數。快照無此段 → 一筆都不動。"""
+    if states is None:
+        return 0
+    plan_ids = list(db.scalars(select(FirePlan.id).where(FirePlan.session_id == session_id)).all())
+    if not plan_ids:
+        return 0
+    written = 0
+    for row in db.scalars(select(FirePlanTarget).where(FirePlanTarget.plan_id.in_(plan_ids))).all():
+        snap = states.get(row.id)
+        if not isinstance(snap, Mapping):
+            continue
+        try:
+            row.status = FirePlanTargetStatus(str(snap.get("status")))
+        except ValueError:
+            continue  # 認不得的狀態值 → 保持現狀，不猜
+        row.fire_request_id = snap.get("fire_request_id")
+        written += 1
+    return written
+
+
 def _count_events_after_seq(db: Session, session_id: str, seq: int) -> int:
     """checkpoint 之後的事件數——以單調的 seq 計數（tick 在 rollback 後不可靠）。"""
     stmt = select(func.count()).where(
@@ -457,6 +632,12 @@ def rollback(
         # 單位列也要回捲——否則 runner 一重啟，seed_combat_state 會用回滾前的
         # DB 座標把熱狀態蓋回去（見 _restore_unit_rows 的說明）。
         restored_units = _restore_unit_rows(db, session_id, record.state)
+        # 彈藥/油料（裝備列）、模擬生成的地圖物件、預劃目標狀態——三者過去都不在回滾範圍：
+        # 回滾後 `/weapons` 顯示的是打光的彈量、500 tick 埋的雷區還躺在 300 tick 的戰場上、
+        # 已 FIRED 的準備射擊再也不會落下。
+        restored_equipment = _restore_equipment(db, session_id, record.equipment_states())
+        restored_features = _restore_sim_features(db, session_id, record.sim_features())
+        restored_targets = _restore_fire_plan_targets(db, session_id, record.fire_plan_states())
         db.commit()
         discarded = int(result.rowcount or 0)
     hot_state.restore(record.state)
@@ -476,6 +657,9 @@ def rollback(
                     "orders_restored": restored_orders,
                     "orders_cancelled": cancelled_orders,
                     "units_restored": restored_units,
+                    "equipment_restored": restored_equipment,
+                    "sim_features_restored": restored_features,
+                    "fire_plan_targets_restored": restored_targets,
                 },
             )
         ],

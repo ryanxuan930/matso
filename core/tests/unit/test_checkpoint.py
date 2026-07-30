@@ -422,3 +422,237 @@ def test_msel_memory_survives_a_checkpoint(
     assert record is not None
     assert restore_msel_memory(record, fresh) is True
     assert fresh.check(type("T", (), {"tick": 9})()) == [], "重啟後 once 條目又觸發了一次"
+
+
+# ---- 回滾涵蓋範圍：彈藥/油料、模擬生成的地圖物件、預劃目標 ----
+
+
+def test_rollback_rewinds_ammo_and_fuel_in_the_db(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """熱狀態的彈藥由 `restore` 復原，**但 DB 那一份過去不會**。
+
+    於是回滾後 `GET /units/{id}/weapons` 顯示的是回滾前打光的彈量，
+    而補給與整備讀的也是 DB——兩份真相對不起來，且看得見的那一份是錯的。
+    """
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    uid = _seed_unit(session_factory, session_id)
+    with session_factory() as db:
+        tmpl = EquipmentTemplate(name="rifle", category="KINETIC", base_stats={})
+        db.add(tmpl)
+        db.flush()
+        inst = EquipmentInstance(
+            template_id=tmpl.id, owner_id=uid, quantity=1, current_state={"ammo": 200, "fuel": 90.0}
+        )
+        db.add(inst)
+        db.commit()
+        inst_id = inst.id
+
+    mgr = CheckpointManager(session_factory)
+    hot = InMemoryHotState()
+    hot.put_unit(uid, {"lat": 23.0, "lng": 121.0})
+    mgr.checkpoint(session_id, tick=0, state=hot.get_all(), ledger_seq=-1)
+
+    with session_factory() as db:  # 打了一場、跑了一段路
+        row = db.get(EquipmentInstance, inst_id)
+        assert row is not None
+        row.current_state = {"ammo": 12, "fuel": 3.0}
+        db.commit()
+
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+
+    with session_factory() as db:
+        row = db.get(EquipmentInstance, inst_id)
+        assert row is not None
+        assert row.current_state == {"ammo": 200, "fuel": 90.0}
+
+
+def test_rollback_removes_obstacles_laid_after_the_target_tick(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """500 tick 埋的雷區，回滾到 300 之後如果還躺在那裡，那不是同一個戰場。"""
+    from app.models.tables import MapFeature
+
+    _seed_unit(session_factory, session_id)
+    mgr = CheckpointManager(session_factory)
+    hot = InMemoryHotState()
+    mgr.checkpoint(session_id, tick=0, state=hot.get_all(), ledger_seq=-1)
+
+    with session_factory() as db:
+        db.add(
+            MapFeature(
+                id="mine-1",
+                session_id=session_id,
+                kind="OBSTACLE",
+                geometry_type="Point",
+                geometry=[121.0, 23.0],
+                owner_faction="BLUE",
+                attributes={"obstacle_type": "MINEFIELD"},
+            )
+        )
+        db.commit()
+
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+
+    with session_factory() as db:
+        assert db.get(MapFeature, "mine-1") is None
+
+
+def test_rollback_revives_an_obstacle_that_was_breached_afterwards(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """開闢掉的障礙必須**復活**——所以是刪+建，不是逐列 update。"""
+    from app.models.tables import MapFeature
+
+    _seed_unit(session_factory, session_id)
+    with session_factory() as db:
+        db.add(
+            MapFeature(
+                id="wire-1",
+                session_id=session_id,
+                kind="OBSTACLE",
+                geometry_type="Point",
+                geometry=[121.0, 23.0],
+                owner_faction="RED",
+                attributes={"obstacle_type": "WIRE"},
+            )
+        )
+        db.commit()
+
+    mgr = CheckpointManager(session_factory)
+    hot = InMemoryHotState()
+    mgr.checkpoint(session_id, tick=0, state=hot.get_all(), ledger_seq=-1)
+
+    with session_factory() as db:  # 工兵開闢後整列被刪掉
+        db.delete(db.get(MapFeature, "wire-1"))
+        db.commit()
+
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+
+    with session_factory() as db:
+        revived = db.get(MapFeature, "wire-1")
+        assert revived is not None and revived.attributes["obstacle_type"] == "WIRE"
+
+
+def test_rollback_leaves_hand_drawn_annotations_alone(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """玩家手繪的標繪是講評用的註記，不是世界狀態——回滾不該把它擦掉。"""
+    from app.models.tables import MapFeature
+
+    _seed_unit(session_factory, session_id)
+    mgr = CheckpointManager(session_factory)
+    hot = InMemoryHotState()
+    mgr.checkpoint(session_id, tick=0, state=hot.get_all(), ledger_seq=-1)
+
+    with session_factory() as db:
+        db.add(
+            MapFeature(
+                id="note-1",
+                session_id=session_id,
+                kind="CONTROL_MEASURE",
+                geometry_type="Point",
+                geometry=[121.0, 23.0],
+                owner_faction="BLUE",
+                attributes={},
+            )
+        )
+        db.commit()
+
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+
+    with session_factory() as db:
+        assert db.get(MapFeature, "note-1") is not None
+
+
+def test_rollback_rearms_a_fire_plan_target_that_already_fired(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """回到射擊之前那個 tick，已 FIRED 的目標若仍是 FIRED，**那發準備射擊再也不會落下**。"""
+    from app.models.enums import FirePlanTargetStatus
+    from app.models.tables import FirePlan, FirePlanTarget
+
+    uid = _seed_unit(session_factory, session_id)
+    with session_factory() as db:
+        plan = FirePlan(id="fp-1", session_id=session_id, faction="BLUE", name="AGM")
+        db.add(plan)
+        db.add(
+            FirePlanTarget(
+                id="tgt-1",
+                plan_id="fp-1",
+                seq=1,
+                target_lat=23.1,
+                target_lng=121.1,
+                shooter_unit_id=uid,
+                status=FirePlanTargetStatus.PENDING,
+            )
+        )
+        db.commit()
+
+    mgr = CheckpointManager(session_factory)
+    hot = InMemoryHotState()
+    mgr.checkpoint(session_id, tick=0, state=hot.get_all(), ledger_seq=-1)
+
+    with session_factory() as db:
+        db.get(FirePlanTarget, "tgt-1").status = FirePlanTargetStatus.FIRED  # type: ignore[union-attr]
+        db.commit()
+
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+
+    with session_factory() as db:
+        assert db.get(FirePlanTarget, "tgt-1").status is FirePlanTargetStatus.PENDING  # type: ignore[union-attr]
+
+
+def test_an_old_snapshot_without_the_new_sections_touches_nothing(
+    session_factory: sessionmaker[Session], session_id: str
+) -> None:
+    """舊快照沒有這三段 → **一件都不動**。
+
+    把每件裝備清成空狀態、把地圖物件全刪光，比不還原糟得多。
+    """
+    from app.models.tables import EquipmentInstance, EquipmentTemplate, MapFeature
+
+    uid = _seed_unit(session_factory, session_id)
+    with session_factory() as db:
+        tmpl = EquipmentTemplate(name="r", category="KINETIC", base_stats={})
+        db.add(tmpl)
+        db.flush()
+        inst = EquipmentInstance(
+            template_id=tmpl.id, owner_id=uid, quantity=1, current_state={"ammo": 50}
+        )
+        db.add(inst)
+        db.add(
+            MapFeature(
+                id="old-mine",
+                session_id=session_id,
+                kind="OBSTACLE",
+                geometry_type="Point",
+                geometry=[121.0, 23.0],
+                owner_faction="RED",
+                attributes={},
+            )
+        )
+        db.commit()
+        inst_id = inst.id
+
+    # v1 裸 units map（沒有 extras）——正是升級前留下的那些快照。
+    hot = InMemoryHotState()
+    hot.put_unit(uid, {"lat": 23.0, "lng": 121.0})
+    with session_factory() as db:
+        db.add(
+            SimCheckpoint(
+                session_id=session_id,
+                tick=0,
+                ledger_seq=-1,
+                state_blob=serialize_state(hot.get_all()),
+                state_hash=compute_state_hash(hot.get_all()),
+            )
+        )
+        db.commit()
+
+    rollback(session_factory, LedgerWriter(session_factory), session_id, hot, target_tick=0)
+
+    with session_factory() as db:
+        assert db.get(EquipmentInstance, inst_id).current_state == {"ammo": 50}  # type: ignore[union-attr]
+        assert db.get(MapFeature, "old-mine") is not None
