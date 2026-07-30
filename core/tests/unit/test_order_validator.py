@@ -240,3 +240,36 @@ def test_wrong_faction_reported_before_seat(session_factory: sessionmaker[Sessio
         validate_order(
             db, world.session_id, _req(world, unit_id=world.red_unit_id), world.blue_issuer_id
         )
+
+
+# ---- 席位表的漂移守門 ----
+
+
+def test_every_order_type_belongs_to_some_seat() -> None:
+    """**新增令型時必須決定它歸誰。**
+
+    `SEAT_ORDER_TYPES` 過去只給作戰官 MOVE，而 MISSION/POSTURE/FORMATION/ENGINEER
+    是後來幾張卡新增的令型——新增時只改了 `OrderType` 與預檢，沒回來改這張表。
+    後果：前端顯示得出下拉選項、送出去被 ORDER_SEAT_DENIED 擋掉，而且沒有任何測試會紅
+    （既有測試只釘住「S3 能 MOVE、不能 ENGAGE」，那兩條一直是對的）。
+
+    `S4_LOG` 更久：註解寫「待補給令型（WP-C7）」，但那張卡早就完成了。
+    """
+    from app.seats import COMMANDER_ONLY_ORDER_TYPES, SEAT_ORDER_TYPES
+
+    staffed: set[OrderType] = set()
+    for seat, types in SEAT_ORDER_TYPES.items():
+        if seat is not SeatRole.COMMANDER:
+            staffed |= set(types)
+    unassigned = set(OrderType) - staffed - set(COMMANDER_ONLY_ORDER_TYPES)
+
+    assert not unassigned, (
+        f"這些令型沒有任何幕僚席位下得了：{sorted(t.value for t in unassigned)}。"
+        "要嘛指派席位，要嘛明確列入 COMMANDER_ONLY_ORDER_TYPES。"
+    )
+
+
+def test_the_commander_can_still_issue_everything() -> None:
+    from app.seats import SEAT_ORDER_TYPES
+
+    assert SEAT_ORDER_TYPES[SeatRole.COMMANDER] == frozenset(OrderType)

@@ -19,13 +19,32 @@ from app.orders.schemas import OrderType
 # **空集合＝不能下任何令**，與「未指派席位」是兩件不同的事，不要合併。
 SEAT_ORDER_TYPES: dict[SeatRole, frozenset[OrderType]] = {
     SeatRole.COMMANDER: frozenset(OrderType),  # 指揮官：全部
-    SeatRole.S3_OPS: frozenset({OrderType.MOVE}),  # 作戰官：機動
+    # 作戰官：兵力運用的全部——機動、任務級下令、姿態、乘駐車/隊形、障礙作業、偵蒐派遣。
+    # **這張表過去只有 MOVE**，而 MISSION/POSTURE/FORMATION/ENGINEER 是後來幾張卡新增的
+    # 令型：新增時只改了 OrderType 與預檢，沒回來改這裡，於是作戰官連任務令都下不了
+    # （前端顯示得出下拉選項，送出去被 ORDER_SEAT_DENIED 擋掉）。
+    SeatRole.S3_OPS: frozenset(
+        {
+            OrderType.MOVE,
+            OrderType.MISSION,
+            OrderType.POSTURE,
+            OrderType.FORMATION,
+            OrderType.ENGINEER,
+            OrderType.RECON,
+        }
+    ),
     # 火力支援協調官：火力（含面目標射擊——WP-C10.2 新增令型時只改這一張表）
     SeatRole.FSO_FIRES: frozenset({OrderType.ENGAGE, OrderType.FIRE_MISSION}),
-    SeatRole.S2_INTEL: frozenset(),  # 情報官：唯讀
-    SeatRole.S4_LOG: frozenset(),  # 後勤官：待補給令型（WP-C7）
+    SeatRole.S2_INTEL: frozenset(),  # 情報官：唯讀（使用者裁示 2026-07-30，偵蒐派遣歸 S3）
+    # 後勤官：補給撥交。舊註解寫「待補給令型（WP-C7）」——**那張卡早就完成了**，
+    # `RESUPPLY` 與 `ResupplySystem` 都在，只有這張表沒跟上，後勤官一直是不能下令的。
+    SeatRole.S4_LOG: frozenset({OrderType.RESUPPLY}),
     SeatRole.OBSERVER: frozenset(),  # 觀察員：唯讀
 }
+
+# 只有指揮官能下的令型。**目前是空的**——留這個集合是為了讓底下那條漂移守門有話可說：
+# 新增 OrderType 時必須明確決定它歸誰，不能靜默落成「只有指揮官下得了而沒人發現」。
+COMMANDER_ONLY_ORDER_TYPES: frozenset[OrderType] = frozenset()
 
 SEAT_LABELS: dict[SeatRole, str] = {
     SeatRole.COMMANDER: "指揮官",
@@ -48,4 +67,9 @@ def seat_may_order(seat: SeatRole | None, order_type: OrderType) -> bool:
     return order_type in SEAT_ORDER_TYPES.get(seat, frozenset())
 
 
-__all__ = ["SEAT_LABELS", "SEAT_ORDER_TYPES", "seat_may_order"]
+__all__ = [
+    "COMMANDER_ONLY_ORDER_TYPES",
+    "SEAT_LABELS",
+    "SEAT_ORDER_TYPES",
+    "seat_may_order",
+]
