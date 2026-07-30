@@ -109,12 +109,21 @@ export function useCopWidgets() {
     }
   }
 
-  /** 某個小工具的開關雙向代理（`coordQuery` / `mapEditorOpen` 這類別名用）。 */
+  /**
+   * 某個小工具的開關雙向代理（`coordQuery` / `mapEditorOpen` 這類別名用）。
+   *
+   * ⚠ **打開時要一併拉到最上層**。這個 setter 原本只寫 `open = v`，
+   * 於是經別名打開的小工具（座標查詢、地圖標繪）保持它預設的 z——
+   * 而預設 z 比任何「被點過一次」的小工具都低，結果是**打開了卻被別的視窗蓋住**，
+   * 使用者只看到「按了沒反應」。從選單打開走的是 `toggleWidget`（有 focus），
+   * 兩條路徑行為不一致，所以這個病只在某些操作順序下出現。
+   */
   function openFlag(id: WidgetId): Ref<boolean> {
     return computed({
       get: () => widgets.value[id].open,
       set: (v: boolean) => {
         widgets.value[id].open = v
+        if (v) focusWidget(id)
       },
     })
   }

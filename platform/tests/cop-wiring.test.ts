@@ -409,3 +409,34 @@ test('下令面板要有行軍節奏選項、地圖編輯要有禁射級別下�
   assert.match(editor, /data-testid="draw-zone-class"/, '繪製表單沒有禁射級別下拉')
   assert.match(editor, /data-testid="draw-zone-warn"/, '繪製表單沒有「名稱像禁射區卻沒選級別」的提示')
 })
+
+test('打開小工具要拉到最上層——否則會被別的視窗蓋住', async () => {
+  const { useCopWidgets } = await import('~/composables/useCopWidgets')
+  const w = useCopWidgets()
+
+  // 先把別的視窗點到很上面（模擬「使用者剛操作過那個」）。
+  w.focusWidget('units')
+  const busyZ = w.widgets.value.units.z
+
+  // 經別名旗標打開座標查詢——這條路徑原本只寫 open、不 focus，
+  // 於是它保持預設 z（比 busyZ 低）→ 打開了卻被蓋住，看起來像「按了沒反應」。
+  const coordQuery = w.openFlag('coords')
+  coordQuery.value = true
+
+  assert.equal(w.widgets.value.coords.open, true)
+  assert.ok(
+    w.widgets.value.coords.z > busyZ,
+    `打開後 z 應高於已聚焦的視窗：coords=${w.widgets.value.coords.z} units=${busyZ}`,
+  )
+})
+
+test('關閉小工具不會動層序（只有打開才拉上來）', async () => {
+  const { useCopWidgets } = await import('~/composables/useCopWidgets')
+  const w = useCopWidgets()
+  const flag = w.openFlag('coords')
+  flag.value = true
+  const z = w.widgets.value.coords.z
+  flag.value = false
+
+  assert.equal(w.widgets.value.coords.z, z)
+})

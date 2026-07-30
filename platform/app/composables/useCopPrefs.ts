@@ -101,6 +101,8 @@ export function useCopPrefs(widgets: Ref<Record<WidgetId, WStat>>) {
             y: typeof s.y === 'number' ? s.y : cur.y,
             w: typeof s.w === 'number' ? s.w : cur.w,
             h: typeof s.h === 'number' ? s.h : cur.h,
+            // z **刻意不還原**：層序是「這一次工作階段誰在上面」，不是偏好。
+            // 還原它會讓上次留在最上層的視窗蓋住這次剛打開的。
             z: cur.z,
           }
         }

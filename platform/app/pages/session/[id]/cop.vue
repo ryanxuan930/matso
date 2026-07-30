@@ -81,6 +81,19 @@ const prefsView = reactive(prefs)
 // 座標查詢（#10）：點地圖 → 該點經緯度 + MGRS。
 const queryPoint = ref<{ lng: number; lat: number } | null>(null)
 const queryMgrs = ref('')
+/** 座標查詢「標定」要飛過去的點。序號遞增＝一次新的標定（見 MapCanvas 的 flyTo 說明）。 */
+const coordFly = ref<{ lat: number; lng: number; seq: number } | null>(null)
+
+/** 座標查詢輸入 → 標在地圖上並飛過去。解析已在 `CoordReadout` 做完（失敗不會走到這裡）。 */
+function locateCoord(p: { lat: number; lng: number }) {
+  queryPoint.value = { lng: p.lng, lat: p.lat }
+  try {
+    queryMgrs.value = mgrsForward([p.lng, p.lat], 5)
+  } catch {
+    queryMgrs.value = '—'
+  }
+  coordFly.value = { ...p, seq: (coordFly.value?.seq ?? 0) + 1 }
+}
 
 const hiddenFeatureIds = ref<string[]>([]) // session-local：隱藏的地圖元素
 function toggleFeatureHidden(id: string) {
@@ -797,6 +810,7 @@ onBeforeUnmount(() => {
             :mgrs-grid="mgrsGrid"
             :grid-step-deg="gridStepDeg"
             :query-point="queryPoint"
+            :fly-to="coordFly"
             :hex-max-res="hexMaxRes"
             :hex-limit-km="hexLimitKm"
             :day-night="dayNight"
@@ -897,7 +911,7 @@ onBeforeUnmount(() => {
         <!-- 座標查詢讀值（#10）：點地圖任一點顯示經緯度 + MGRS。 -->
         <ClientOnly>
         <CopWidget id="coords" :ui="copUiView" :open="coordQuery">
-          <CoordReadout :point="queryPoint" :mgrs="queryMgrs" />
+          <CoordReadout :point="queryPoint" :mgrs="queryMgrs" @locate="locateCoord" />
         </CopWidget>
         </ClientOnly>
 

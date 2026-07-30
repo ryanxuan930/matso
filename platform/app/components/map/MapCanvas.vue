@@ -126,6 +126,12 @@ const props = withDefaults(
     mgrsGrid?: boolean // MGRS 標記（#9）
     gridStepDeg?: number // 網格密度（度，#9）
     queryPoint?: { lng: number; lat: number } | null // 座標查詢點（#10）
+    /**
+     * 要飛過去的位置。**帶 `seq`**：使用者對同一個座標按第二次「標定」時，
+     * 只看 lat/lng 的 watch 不會觸發（值沒變）——那會變成「按了沒反應」。
+     * 序號遞增才是「這是一次新的標定動作」的訊號。
+     */
+    flyTo?: { lat: number; lng: number; seq: number } | null
     hexMaxRes?: number // 六角網格最細解析度上限（設定最小網格）
     hexLimitKm?: number // 交戰範圍：僅計算視野中心此半徑內的格（0=不限）
     dayNight?: boolean // 日照視覺（晨昏/夜間色調，#6）
@@ -179,6 +185,7 @@ const props = withDefaults(
     mgrsGrid: false,
     gridStepDeg: 0.5,
     queryPoint: null,
+    flyTo: null,
     hexMaxRes: 8,
     hexLimitKm: 0,
     dayNight: false,
@@ -1686,6 +1693,17 @@ watch(
   },
 )
 watch(() => props.queryPoint, syncQuery)
+// 座標查詢的「標定」：飛到該點並放大到可辨識的比例尺。
+// **不改動使用者已放得更大的視圖**（取 max），突然縮小比不動更擾人。
+watch(
+  () => props.flyTo?.seq,
+  () => {
+    const t = props.flyTo
+    if (t && map) {
+      map.flyTo({ center: [t.lng, t.lat], zoom: Math.max(map.getZoom(), 13), duration: 700 })
+    }
+  },
+)
 watch(
   () => props.selectedFeatureId,
   (v) => {
