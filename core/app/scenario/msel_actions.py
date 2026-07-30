@@ -29,6 +29,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.engine.engage_wiring import WeaponResolver, seed_combat_state
 from app.models.enums import MessageKind, SeatRole, UnitLevel
 from app.models.tables import EquipmentInstance, EquipmentTemplate, Message, TacticalUnit
 from app.state.hot_state import HotStateStore
@@ -154,20 +155,14 @@ def _spawn_units(
                     )
                 )
             created.append(uid)
-            # 播熱狀態——不播的話這個單位在地圖、裁決、MSEL 脈絡裡都不存在。
-            hot.put_unit(
-                uid,
-                {
-                    "lat": unit.current_lat,
-                    "lng": unit.current_lng,
-                    "strength": strength,
-                    "authorized_strength": strength,
-                    "health": 100.0,
-                    "armor_class": str(unit.attributes.get("armor_class", "INFANTRY")),
-                    "platform_count": int(unit.attributes.get("platform_count", 1) or 1),
-                },
-            )
         db.commit()
+        # 播熱狀態——不播的話這個單位在地圖、裁決、MSEL 脈絡裡都不存在。
+        # **走 `seed_combat_state` 這條與開局同一的路徑**，不自己捲一份鍵集：
+        # 手捲的那份漏了 `footprint_m`/`ammo`/`ammo_by_weapon`（增援一發都打不出去），
+        # 且 `platform_count` 退回寫死的 1、`armor_class` 只讀 attributes
+        # ——正是 `adjudication/establishment.py` 與 `armor.py` 修掉的那兩個病。
+        if created:
+            seed_combat_state(db, hot, session_id, WeaponResolver(db, session_id), created)
     if not created:
         return []
     return [

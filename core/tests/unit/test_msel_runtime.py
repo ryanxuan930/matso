@@ -403,3 +403,42 @@ def test_a_lazily_spawned_unit_can_find_its_weapons(session_factory) -> None:  #
     )
     weapons = resolver.weapons_for(spawn_unit_id("late", 0))
     assert [w.template_name for w in weapons] == ["REINF_RIFLE"]
+
+
+def test_spawned_unit_gets_the_same_hot_state_keys_as_a_scenario_unit(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """增援的熱狀態鍵集必須與開局播入的一致——**鍵集有兩份就一定會漂**。
+
+    `_spawn_units` 過去自己手捲一份 `hot.put_unit`，漏了三個鍵、錯了兩個預設：
+
+    - 無 `ammo` / `ammo_by_weapon` → 裁決當它沒彈藥，增援一發都打不出去。
+    - 無 `footprint_m` → 面射擊拿預設散佈算覆蓋率，砲擊效果失真。
+    - `platform_count` 寫死 1 → 一發步槍命中就抹掉整個排（`establishment.py` 修掉的病）。
+    - `armor_class` 只讀 attributes → 增援的主戰車被當步兵打（`armor.py` 修掉的病）。
+    """
+    from _order_fakes import seed_world
+
+    from app.engine.engage_wiring import WeaponResolver, seed_combat_state
+    from app.scenario.msel_actions import make_applier, spawn_unit_id
+    from app.state.hot_state import InMemoryHotState
+
+    world = seed_world(session_factory)
+    hot = InMemoryHotState()
+    with session_factory() as db:
+        seed_combat_state(db, hot, world.session_id, WeaponResolver(db, world.session_id))
+    baseline = set(hot.get_unit(world.blue_unit_id) or {})
+
+    make_applier(world.session_id, session_factory, hot)(
+        "reinforce",
+        {
+            "action": "SPAWN_UNITS",
+            "faction": "RED",
+            "units": [{"designation": "R-KEYS", "lat": 23.9, "lng": 121.4}],
+        },
+        200,
+    )
+    spawned = hot.get_unit(spawn_unit_id("reinforce", 0)) or {}
+
+    missing = baseline - set(spawned) - {"ammo_by_weapon"}  # 無裝備 → 該鍵兩邊都不寫
+    assert not missing, f"增援缺少開局會播的鍵：{sorted(missing)}"
+    assert spawned["platform_count"] > 1  # 預設 PLATOON 編制，不是「單體」
+    assert spawned["footprint_m"] > 0

@@ -14,7 +14,7 @@ O3.6 已有純函數裁決引擎（adjudication/）與接線層（EngageOrderSou
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -261,14 +261,28 @@ def _platform_count_of(unit: TacticalUnit) -> int:
 
 
 def seed_combat_state(
-    db: Session, hot: HotStateStore, session_id: str, resolver: WeaponResolver
+    db: Session,
+    hot: HotStateStore,
+    session_id: str,
+    resolver: WeaponResolver,
+    unit_ids: Sequence[str] | None = None,
 ) -> int:
     """把單位戰鬥狀態播入熱狀態，供裁決引擎讀取。回傳處理的單位數。
 
     座標永遠以 DB 同步（權威）；血量/裝甲/彈藥僅在熱狀態尚無時播入——避免執行期重啟時把
     交戰進度（Redis 內已扣的血量/彈藥）重置回 DB 初值。
+
+    `unit_ids` 限定只播某幾個單位（局中生成的增援用；見 `msel_actions._spawn_units`）。
+    **增援必須走這條同一路徑**——MSEL 過去自己手捲一份 `hot.put_unit`，於是漏掉了
+    `footprint_m` / `ammo` / `ammo_by_weapon`，且 `platform_count` 退回寫死的 1。
+    後果：增援打不出子彈，且一發步槍就能把一個排抹掉。鍵集有兩份就一定會漂。
     """
-    units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
+    stmt = select(TacticalUnit).where(TacticalUnit.session_id == session_id)
+    if unit_ids is not None:
+        if not unit_ids:
+            return 0
+        stmt = stmt.where(TacticalUnit.id.in_(list(unit_ids)))
+    units = db.scalars(stmt).all()
     # 裝甲級別**由編裝導出**（見 `adjudication/armor.py`）。批次查一次避免 N+1。
     # 過去只讀 `unit.attributes["armor_class"]`，但沒有任何想定 schema 定義那個欄位、
     # loader 也從不寫 attributes ——於是「缺鍵 → INFANTRY」變成唯一路徑，主戰車被步槍打死。
