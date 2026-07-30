@@ -28,9 +28,16 @@ MOUNTED_KEY = "mounted"
 FORMATION_KEY = "formation"
 
 
-def read_formation(state: dict[str, Any]) -> tuple[Formation, bool]:
-    """熱狀態 → (隊形, 是否乘車)。缺鍵 → (COLUMN, False)，即中性預設。"""
-    return formation_of(state.get(FORMATION_KEY)), bool(state.get(MOUNTED_KEY))
+def read_formation(state: dict[str, Any]) -> tuple[Formation, bool | None]:
+    """熱狀態 → (隊形, 乘駐車三態)。
+
+    ⚠ **乘駐車是三態**：`None` ＝從未宣告（既有局）、`True` ＝乘車、`False` ＝已下車。
+    把 `None` 當 False 會讓既有局的每個單位都被當成「已下車」而吃到 0.8 的受彈面折減
+    ——**第一版真的這樣做了**，等於所有既有局的命中率無聲下降 20%。
+    缺鍵一律讀回 `None`，中性由 `adjudication/formation.py` 的係數函式負責。
+    """
+    raw = state.get(MOUNTED_KEY)
+    return formation_of(state.get(FORMATION_KEY)), (None if raw is None else bool(raw))
 
 
 def set_formation(

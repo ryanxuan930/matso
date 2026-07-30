@@ -33,10 +33,32 @@ from app.state.hot_state import InMemoryHotState
 # ---- 中性預設：既有局位元不變 ----
 
 
-def test_missing_keys_read_as_column_and_dismounted() -> None:
-    """**這條是本卡最重要的保護**：既有局的熱狀態沒有這兩個鍵。"""
+def test_missing_keys_read_as_column_and_undeclared() -> None:
+    """**這條是本卡最重要的保護**：既有局的熱狀態沒有這兩個鍵。
+
+    `mounted` 必須讀回 `None`（從未宣告）而**不是** `False`——見下一條測試。
+    """
     formation, mounted = read_formation({})
-    assert formation is Formation.COLUMN and mounted is False
+    assert formation is Formation.COLUMN and mounted is None
+
+
+def test_an_existing_session_gets_exactly_1_0_from_both_modifiers() -> None:
+    """**第一版真的做錯了這件事**：`mounted` 缺鍵被 `bool()` 收成 False → 判定為「已下車」
+    → 每個既有局的目標都吃到 0.8 的受彈面折減，全域命中率無聲下降 20%。
+
+    golden 抓不到（沒有一個案例跑直射交戰），交戰單元測試也抓不到（它們直接建
+    `EnvSnapshot`，用的是欄位預設 1.0）——錯在**接線**那一層，所以測試要打在接線上。
+    """
+    formation, mounted = read_formation({})
+    assert direct_fire_target_modifier(formation, mounted) == 1.0
+    assert shooter_frontage_modifier(formation, mounted) == 1.0
+
+
+def test_declaring_mounted_true_is_not_the_same_as_undeclared_for_shooting() -> None:
+    """宣告「我在車上」要吃車內射擊的折減；沒宣告則不吃。兩者不可混為一談。"""
+    assert shooter_frontage_modifier(Formation.COLUMN, True) < shooter_frontage_modifier(
+        Formation.COLUMN, None
+    )
 
 
 def test_column_is_the_neutral_formation() -> None:
@@ -79,7 +101,7 @@ def test_herringbone_is_a_halt_formation() -> None:
 
 
 def test_dismounting_makes_you_harder_to_hit() -> None:
-    """規格明列 dismounted target modifier × 0.8。"""
+    """規格明列 dismounted target modifier × 0.8（相對於**明確宣告乘車**）。"""
     mounted = direct_fire_target_modifier(Formation.COLUMN, mounted=True)
     dismounted = direct_fire_target_modifier(Formation.COLUMN, mounted=False)
     assert dismounted == pytest.approx(mounted * DISMOUNTED_EXPOSURE)

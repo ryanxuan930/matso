@@ -43,6 +43,28 @@ COLUMN 是「沒有特別展開」的預設，不是「最好的隊形」——
 一次可以同時改兩者（「下車並展開成橫隊」是一個動作）。
 **None 代表不動該欄**：只想下車的令不該把隊形一起重設。
 
+## 差點放進去的一個無聲回歸：`mounted` 是三態不是布林
+
+第一版的 `read_formation` 寫 `bool(state.get(MOUNTED_KEY))`——**缺鍵收成 `False`**，
+於是既有局的每個單位都被判定為「已下車」而吃到 0.8 的受彈面折減。
+**所有既有局的命中率會無聲下降 20%。**
+
+兩層測試都抓不到：
+- **golden 抓不到**：五個案例沒有一個跑直射交戰（`suppression_defense_60` 走的是面射擊，
+  而面射擊的 `AreaTarget.formation` 有 `"COLUMN"` 字面預設，剛好是 1.0）。
+- **交戰單元測試也抓不到**：它們直接建 `EnvSnapshot`，用的是**欄位預設 1.0**，
+  根本不經過接線那一層。
+
+錯在**接線**，而兩層測試都在接線的兩側。是我在提交後自己回頭算了一次
+「既有局讀到什麼」才發現的。
+
+修法：`mounted` 改成三態——`None`（從未宣告）／`True`（乘車）／`False`（已下車），
+`None` 一律 1.0。並補一條**打在接線上**的測試（`test_an_existing_session_gets_exactly_1_0_from_both_modifiers`），
+以及實測 `make_engage_env` 對無鍵單位回 (1.0, 1.0)。
+
+教訓：**中性預設的測試要打在接線層，不是純函數層**。純函數的預設參數天生就是中性的，
+測它等於測 dataclass 的預設值；真正會出事的是「接線怎麼把熱狀態翻譯成參數」。
+
 ## 順手修掉我自己在 B4 埋的 import 環
 
 `app.sim_params` → `app.adjudication`（套件 `__init__`）→ `seed_equipment`
@@ -60,7 +82,7 @@ COLUMN 是「沒有特別展開」的預設，不是「最好的隊形」——
 - 「dismounted target modifier × 0.8」——有測試。
 - 中性預設不改變面射擊結果——有測試。
 
-`test_formation.py`（17）。全關卡：pytest 1736、mypy 250、ruff、OpenAPI、前端兩閘門綠。
+`test_formation.py`（19）。全關卡：pytest 1736、mypy 250、ruff、OpenAPI、前端兩閘門綠。
 
 ## 未做（本卡剩餘）
 

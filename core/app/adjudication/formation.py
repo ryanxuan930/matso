@@ -12,7 +12,8 @@
 
 ## 中性預設
 
-`mounted` 缺鍵讀作 False、`formation` 缺鍵讀作 COLUMN**且 COLUMN 的三個係數都是 1.0**
+`formation` 缺鍵讀作 COLUMN**且 COLUMN 的三個係數都是 1.0**；
+`mounted` 缺鍵讀作 **`None`（從未宣告）而不是 `False`**，係數一律 1.0
 ——既有局的位元完全不動。這與 WP-C1 的紀律相同：加保真與不破壞既有局是解耦的。
 
 ⚠ COLUMN 當中性值是刻意的：它是「沒有特別展開」的預設隊形，而不是「最好的隊形」。
@@ -62,12 +63,22 @@ FORMATION_COEFFS: dict[Formation, FormationCoeffs] = {
 
 # 乘車 vs 下車的被命中暴露。**乘車目標更大**（車比人大）；下車受彈面小。
 # 規格明列 dismounted target modifier × 0.8。
+#
+# ⚠ **`mounted` 是三態，不是布林**：`None` ＝從未宣告（既有局），必須是 1.0。
+# 把 `None` 當 False 的話，既有局的每一次交戰都憑空吃到 0.8——
+# **那是我第一版真的做錯的事**：所有既有局的命中率無聲下降 20%。
+# golden 抓不到（沒有一個案例跑直射交戰），交戰單元測試也抓不到
+# （它們直接建 `EnvSnapshot`，用的是欄位預設 1.0）——錯在**接線**那一層。
 MOUNTED_EXPOSURE = 1.0
 DISMOUNTED_EXPOSURE = 0.8
+UNDECLARED_EXPOSURE = 1.0  # 未宣告＝維持原狀
 
 # 載具毀損 → 乘員傷亡折算（[JTLS-F p.1058]）。
 # 車被打掉時，車上的人**不是全滅也不是沒事**——這個係數是那一刀。
 CREW_CASUALTY_FRACTION = 0.5
+
+# 乘車射擊的火力折減（車內射孔受限）。
+MOUNTED_FIRE_PENALTY = 0.7
 
 
 def formation_of(raw: object) -> Formation:
@@ -92,21 +103,28 @@ def area_exposure_modifier(formation: Formation) -> float:
     return coeffs_of(formation).exposure_mult
 
 
-def direct_fire_target_modifier(formation: Formation, mounted: bool) -> float:
+def direct_fire_target_modifier(formation: Formation, mounted: bool | None) -> float:
     """目標被直射命中的修正（乘進 `EnvSnapshot.target_exposure_modifier`）。
 
     隊形的正面倍率**不進這裡**——那是射手能發揚多少火力，不是目標多好打。
     兩者放同一個數字會讓「我方展開成橫隊」同時變成「敵人比較好打我」。
+
+    `mounted=None`（未宣告）→ 1.0。見 `DISMOUNTED_EXPOSURE` 的警語。
     """
-    return (MOUNTED_EXPOSURE if mounted else DISMOUNTED_EXPOSURE) * coeffs_of(
-        formation
-    ).exposure_mult
+    if mounted is None:
+        exposure = UNDECLARED_EXPOSURE
+    else:
+        exposure = MOUNTED_EXPOSURE if mounted else DISMOUNTED_EXPOSURE
+    return exposure * coeffs_of(formation).exposure_mult
 
 
-def shooter_frontage_modifier(formation: Formation, mounted: bool) -> float:
-    """射手可發揚的火力正面。**乘車時打不出全額火力**（車內射擊受限）。"""
+def shooter_frontage_modifier(formation: Formation, mounted: bool | None) -> float:
+    """射手可發揚的火力正面。**乘車時打不出全額火力**（車內射擊受限）。
+
+    `mounted=None`（未宣告）→ 不套乘車折減。同 `direct_fire_target_modifier` 的理由。
+    """
     base = coeffs_of(formation).fire_frontage_mult
-    return base * 0.7 if mounted else base
+    return base * MOUNTED_FIRE_PENALTY if mounted else base
 
 
 def crew_casualties(vehicle_loss: float, fraction: float = CREW_CASUALTY_FRACTION) -> float:
@@ -119,6 +137,8 @@ __all__ = [
     "DISMOUNTED_EXPOSURE",
     "FORMATION_COEFFS",
     "MOUNTED_EXPOSURE",
+    "MOUNTED_FIRE_PENALTY",
+    "UNDECLARED_EXPOSURE",
     "Formation",
     "FormationCoeffs",
     "area_exposure_modifier",
