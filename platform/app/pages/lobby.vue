@@ -228,11 +228,24 @@ const scopeEditFor = ref('')
 function unitsOfFaction(faction: string) {
   return (roster.value?.units ?? []).filter((u) => u.faction === faction)
 }
-function toggleScopeUnit(p: { user_id: string; faction: string; role: string; unit_scope?: string[] }, unitId: string) {
+function toggleScopeUnit(
+  p: {
+    user_id: string
+    faction: string
+    role: string
+    unit_scope?: string[]
+    seat_role?: string | null
+  },
+  unitId: string,
+) {
   const cur = new Set(p.unit_scope ?? [])
   if (cur.has(unitId)) cur.delete(unitId)
   else cur.add(unitId)
-  doReassign(p.user_id, p.faction, p.role, [...cur])
+  // ⚠ `seat_role` **一定要帶回去**。`doReassign` 的預設是 null，而 `assignParticipant`
+  // 會如實送 `seat_role: null`——漏傳的話，勾一個「限指揮第 3 連」就把這個人的席位
+  // 靜默清成未指派。連鎖後果：C2 面板的 `mySeat === null` 被判為「沿用角色權限」，
+  // 他反而多出了核覆申請單的按鈕。同列另外三個控制項都有帶（見下方 template）。
+  doReassign(p.user_id, p.faction, p.role, [...cur], p.seat_role ?? null)
 }
 async function doRemoveParticipant(userId: string) {
   if (!rosterFor.value) return

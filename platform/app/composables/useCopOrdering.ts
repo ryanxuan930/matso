@@ -84,9 +84,29 @@ export function useCopOrdering(opts: {
   // 換目標 → 確認自動失效。勾一次就能連續對不同友軍開火的話，這個勾選等於沒有意義。
   watch(targetUnitId, () => {
     fratricideAck.value = false
+    restrictedAck.value = false
   })
   const precheck = ref<OrderResponse['precheck'] | null>(null)
   const message = ref('')
+  /**
+   * WP-A3 限制射擊區的二次確認。
+   *
+   * 後端擋下來時明講「確認仍要射擊請重送並勾選確認」，放行條件是
+   * `OrderRequest.acknowledge_restricted`——但這個欄位**前端從來沒送過**，
+   * 於是在地圖上畫了「限制射擊區（需確認）」之後，該區就變成事實上的絕對禁射區，
+   * 跟 NO_STRIKE 沒有差別，而畫面上還一直叫你去勾一個不存在的核取方塊。
+   *
+   * 與誤傷確認同紀律：**換目標/換落點就自動失效**——勾一次就能一路往管制區裡打，
+   * 那個確認等於沒有意義。
+   */
+  const restrictedAck = ref(false)
+  /** 上一次送出被「限制射擊區」擋下來 → 面板才顯示那個核取方塊。 */
+  const restrictedBlocked = computed(
+    () =>
+      precheck.value?.checks?.some(
+        (c) => c.name === 'no_strike' && !c.passed && String(c.detail ?? '').includes('限制射擊'),
+      ) ?? false,
+  )
 
   // #28 移動路徑預覽：目的地/自訂路徑 → 試算距離/tick/油耗/可行性/強穿阻礙。
   const movePreview = ref<MovementPreview | null>(null)
@@ -314,7 +334,12 @@ export function useCopOrdering(opts: {
     if (orderType.value === 'MOVE') {
       return {
         to_h3: destH3.value,
-        mobility_profile: 'FOOT',
+        // **用預覽算出來的那個 profile**，不是寫死 'FOOT'。
+        // 後端吃 payload 的值（`precheck.path_reachable` 與 `movement/system.plan` 都用它），
+        // 所以寫死等於：面板顯示「履帶 32 km/h、已繞開不可通行區」，送出去卻用徒步規劃——
+        // 沼澤/陡坡對兩者可通行性相反，預覽畫的路線與實際走的可以完全不同。
+        // 預覽還沒回來（剛點下去就送出）→ 退回 FOOT，與改版前相同。
+        mobility_profile: movePreview.value?.mobility_profile ?? 'FOOT',
         ...(destLatLng.value
           ? { to_lat: destLatLng.value.lat, to_lng: destLatLng.value.lng }
           : {}),
@@ -385,15 +410,18 @@ export function useCopOrdering(opts: {
       return
     }
     message.value = ''
-    precheck.value = null
     const payload = buildPayload()
     try {
       const resp = await submitOrder(sessionId.value, {
         unit_id: selectedId.value,
         order_type: orderType.value,
         payload,
+        // 只在使用者真的勾了才送——這個欄位是「我知道那是管制區，仍要射擊」的留痕，
+        // 無條件帶 false 會讓 body 多一個沒有意義的欄位。
+        ...(restrictedAck.value ? { acknowledge_restricted: true } : {}),
       })
       precheck.value = resp.precheck ?? null
+      restrictedAck.value = false  // 收下了就退回未確認（同誤傷確認的紀律）
       message.value = `已下令（${orderStatusLabel(resp.status)}）`
       toasts.push({
         severity: 'success',
@@ -439,6 +467,8 @@ export function useCopOrdering(opts: {
     targeting,
     targetUnitId,
     fratricideAck,
+    restrictedAck,
+    restrictedBlocked,
     precheck,
     message,
     movePreview,

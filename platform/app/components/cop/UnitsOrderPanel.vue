@@ -455,6 +455,18 @@ const fratricideTarget = computed(
         >。</span
       >
     </label>
+    <!-- WP-A3 限制射擊區二次確認。**只在後端真的因此擋下來時才出現**——
+         平時掛一個「我要往管制區裡打」的核取方塊只會被順手勾掉。 -->
+    <label
+      v-if="ordering.restrictedBlocked"
+      class="fratricide"
+      data-testid="restricted-ack"
+    >
+      <input v-model="ordering.restrictedAck" type="checkbox" >
+      <span
+        >⚠ <b>目標位於限制射擊區</b>：確認仍要射擊請勾選後重送。此令將<b>記入 AAR</b>。</span
+      >
+    </label>
     <template v-if="ordering.weapons.length">
       <select v-model="ordering.weaponId" data-testid="engage-weapon">
         <option :value="null">{{ ordering.weapons.length >= 2 ? '聯合火力（全武器一起打）' : '預設武器' }}</option>

@@ -4,9 +4,11 @@ import { useSessionStreamStore } from '~/stores/sessionStream'
 import type { UnitView } from '~/composables/useOrders'
 import { apiFetch } from '~/composables/useApi'
 import {
+  fetchCheckpoints,
   injectEvent,
   sessionControl,
   unitsAsFaction,
+  type CheckpointPoint,
   type ControlAction,
 } from '~/composables/useWhiteCell'
 import type { InjectAction } from '~/composables/useConditionDsl'
@@ -28,11 +30,37 @@ async function loadUnits() {
   }
 }
 
-async function control(action: ControlAction) {
-  const target = action === 'ROLLBACK' ? Number(prompt('回放到哪個 tick？') ?? 0) : undefined
+// 回滾目標**必須剛好是既有的快照 tick**（後端 `_request_rollback` 的硬性條件），
+// 所以這裡列出實際可選的點。過去這裡用 `prompt()`：使用者只能瞎猜一個數字，
+// 十之八九拿到 ROLLBACK_TARGET_NOT_FOUND；而按「取消」時 `null ?? 0` 會變成 0，
+// 直接送出「回滾到 tick 0」＝整局重來。
+const checkpoints = ref<CheckpointPoint[]>([])
+const rollbackTick = ref<number | null>(null)
+
+async function loadCheckpoints() {
   try {
-    await sessionControl(sessionId, action, target)
-    status.value = `已送出 ${action}`
+    checkpoints.value = await fetchCheckpoints(sessionId)
+    if (rollbackTick.value === null && checkpoints.value.length) {
+      rollbackTick.value = checkpoints.value[0]!.tick
+    }
+  } catch {
+    checkpoints.value = []
+  }
+}
+
+async function control(action: ControlAction) {
+  if (action === 'ROLLBACK' && rollbackTick.value === null) {
+    status.value = '請先選一個快照點——回滾目標必須是既有的快照 tick。'
+    return
+  }
+  const target = action === 'ROLLBACK' ? rollbackTick.value! : undefined
+  try {
+    const res = await sessionControl(sessionId, action, target)
+    status.value =
+      action === 'ROLLBACK'
+        ? `已排入回滾至 tick ${res.rollback_requested_tick ?? target}；該局將停在暫停狀態，請確認後按「續行」。`
+        : `已送出 ${action}`
+    if (action === 'ROLLBACK') await loadCheckpoints()
   } catch (e) {
     status.value = `控制失敗：${(e as { message?: string }).message ?? e}`
   }
@@ -147,6 +175,7 @@ onMounted(() => {
   loadUnits()
   loadPerms()
   loadMsel()
+  loadCheckpoints()
   stream.connect(sessionId)
 })
 onUnmounted(() => stream.disconnect())
@@ -174,7 +203,20 @@ watch(viewpoint, loadUnits)
         <h2>時間控制</h2>
         <button data-testid="pause" @click="control('PAUSE')">⏸ 暫停</button>
         <button data-testid="resume" @click="control('RESUME')">▶ 續行</button>
-        <button data-testid="rollback" @click="control('ROLLBACK')">回放</button>
+        <label class="rollback-pick">
+          回放至
+          <select v-model.number="rollbackTick" data-testid="rollback-tick">
+            <option v-if="!checkpoints.length" :value="null">（尚無快照點）</option>
+            <option v-for="c in checkpoints" :key="c.tick" :value="c.tick">
+              tick {{ c.tick }} · seq {{ c.ledger_seq }} · {{ c.state_hash.slice(0, 8) }}
+            </option>
+          </select>
+        </label>
+        <button
+          data-testid="rollback"
+          :disabled="!checkpoints.length"
+          @click="control('ROLLBACK')"
+        >回放</button>
       </div>
       <div class="inject-box">
         <h2>注入事件</h2>
@@ -284,4 +326,11 @@ button:hover { border-color: #2563eb; }
 .edit { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem; }
 .edit label { display: flex; gap: 0.375rem; align-items: center; font-size: 0.8125rem; }
 .hint { color: #64748b; }
+.rollback-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  font-size: 12px;
+}
 </style>

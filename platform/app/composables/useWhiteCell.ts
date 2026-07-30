@@ -10,12 +10,31 @@ export function unitsAsFaction(sessionId: string, asFaction: string | null): Pro
   return apiFetch<UnitView[]>(`/sessions/${sessionId}/units${q}`)
 }
 
+/** 可回滾的快照點（WP-E1）。**回滾目標必須剛好是其中一個 tick**，否則後端回
+ * `ROLLBACK_TARGET_NOT_FOUND`——所以這個清單不是裝飾，是唯一能讓白軍選對值的東西。 */
+export interface CheckpointPoint {
+  tick: number
+  ledger_seq: number
+  state_hash: string
+  created_at: string
+}
+
+export function fetchCheckpoints(sessionId: string): Promise<CheckpointPoint[]> {
+  return apiFetch<CheckpointPoint[]>(`/sessions/${sessionId}/checkpoints`)
+}
+
+export interface ControlResult {
+  seq: number
+  /** 實際被接受的回滾點。後端回滾完會把該局留在暫停狀態，需白軍自行續行。 */
+  rollback_requested_tick?: number | null
+}
+
 /** 時間控制（PAUSE/RESUME/ROLLBACK）。 */
 export function sessionControl(
   sessionId: string,
   action: ControlAction,
   targetTick?: number,
-): Promise<{ seq: number }> {
+): Promise<ControlResult> {
   return apiFetch(`/sessions/${sessionId}/control`, {
     method: 'POST',
     body: { action, target_tick: targetTick ?? null },
