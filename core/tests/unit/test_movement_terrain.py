@@ -242,3 +242,91 @@ def test_road_bypasses_terrain_cost(session_factory: sessionmaker[Session]) -> N
         _dist_covered(session_factory, "fstroad", froad_id)
         > _dist_covered(session_factory, "fst", forest_id) * 3
     )
+
+
+# ---- WP-C4b：天氣機動（逐格） ----
+
+
+def _run_weather(factory: sessionmaker[Session], sid: str, weather_for, ticks: int) -> None:
+    mover = UnitMovementSystem(
+        session_id=sid,
+        session_factory=factory,
+        hot_state=InMemoryHotState(),
+        tick_rate_ms=60_000,
+        rng=DeterministicRNG(1, "movement"),
+        weather_for=weather_for,
+    )
+    clock = SimClock(tick_rate_ms=60_000)
+    for _ in range(ticks):
+        asyncio.run(mover.step(clock.now()))
+        clock.advance()
+
+
+def _mud_at(lat: float, lng: float, modifier: float):
+    """把起點那一格設成泥濘的天氣快照。"""
+    import h3
+
+    from app.weather import CellEffects, WeatherState
+
+    return WeatherState({h3.latlng_to_cell(lat, lng, 8): CellEffects(mobility_modifier=modifier)})
+
+
+def test_bad_weather_slows_the_march(session_factory: sessionmaker[Session]) -> None:
+    """**`weather_mobility` 過去一個呼叫端都沒有**——想定裡下暴雨，部隊照晴天速度行軍。
+
+    天氣對機動的整條路徑（`movement_mobility_modifier`）是死碼。
+    """
+    with session_factory() as db:
+        clear_id = _seed(db, "wx-clear", vehicle=None)
+        db.commit()
+    with session_factory() as db:
+        mud_id = _seed(db, "wx-mud", vehicle=None)
+        db.commit()
+    _run_weather(session_factory, "wx-clear", None, 10)
+    _run_weather(session_factory, "wx-mud", lambda: _mud_at(*_START, 0.5), 10)
+
+    clear = _dist_covered(session_factory, "wx-clear", clear_id)
+    mud = _dist_covered(session_factory, "wx-mud", mud_id)
+    assert clear > 0
+    assert abs(mud - clear * 0.5) < 0.02
+
+
+def test_weather_only_slows_the_cell_it_covers(session_factory: sessionmaker[Session]) -> None:
+    """天氣是**逐格**的：暴雨下在別處，這裡的部隊不該跟著慢下來。
+
+    （全局單一倍率會把整場一起罰——那不是天氣，是規則。）
+    """
+    with session_factory() as db:
+        uid = _seed(db, "wx-elsewhere", vehicle=None)
+        db.commit()
+    with session_factory() as db:
+        base_id = _seed(db, "wx-base", vehicle=None)
+        db.commit()
+    _run_weather(session_factory, "wx-base", None, 10)
+    _run_weather(session_factory, "wx-elsewhere", lambda: _mud_at(0.0, 0.0, 0.1), 10)
+
+    assert _dist_covered(session_factory, "wx-elsewhere", uid) == _dist_covered(
+        session_factory, "wx-base", base_id
+    )
+
+
+def test_weather_service_failure_does_not_halt_the_march(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """天氣服務炸了 → 退回中性，不是停止行軍（同 `has_los` 中斷不致盲的紀律）。"""
+
+    def _boom() -> None:
+        raise RuntimeError("weather down")
+
+    with session_factory() as db:
+        uid = _seed(db, "wx-down", vehicle=None)
+        db.commit()
+    with session_factory() as db:
+        base_id = _seed(db, "wx-ok", vehicle=None)
+        db.commit()
+    _run_weather(session_factory, "wx-ok", None, 5)
+    _run_weather(session_factory, "wx-down", _boom, 5)
+
+    assert _dist_covered(session_factory, "wx-down", uid) == _dist_covered(
+        session_factory, "wx-ok", base_id
+    )

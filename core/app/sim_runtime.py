@@ -636,6 +636,9 @@ class SimManager:
                     speed_kmh=_UNIT_SPEED_KMH,
                     rng=rngs["movement"],  # #28 強穿隨機耗損
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
+                    # WP-C4b 天氣機動：**在此之前 `weather_mobility` 一個呼叫端都沒有**，
+                    # 天氣對行軍速度的影響整條是死碼（暴雨照晴天速度走）。回呼而非值。
+                    weather_for=lambda: weather_cache.at(sim_clock.now().tick),
                     path_fn=build_terrain_path_fn(),  # #82 A* 繞路（不可達→直線）
                     sim_params=sim_params,  # #93 可調速度/耗損
                     mobility_rules=mobility_rules,  # WP-B6 想定機動覆寫

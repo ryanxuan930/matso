@@ -57,6 +57,7 @@ from app.movement.router import PathFn, plan_route
 from app.sim_params import SimParams
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
+from app.weather import WeatherState, movement_mobility_modifier
 
 # 單次行軍的耗損上限（佔進入時戰力）——避免長途一次歸零（強穿另有其上限）。
 _MARCH_LOSS_CAP_PCT = 0.30
@@ -126,6 +127,7 @@ class UnitMovementSystem:
         rng: DeterministicRNG | None = None,
         terrain_sampler: TerrainSampler | None = None,
         weather_mobility: float = 1.0,
+        weather_for: Callable[[], WeatherState | None] | None = None,
         path_fn: PathFn | None = None,
         sim_params: SimParams | None = None,
         mobility_rules: MobilityRules | None = None,
@@ -143,7 +145,14 @@ class UnitMovementSystem:
         self._rng = rng
         # #81 Phase B：地形取樣器（None＝不調速）+ 天氣機動修正 + 每格成本快取（地形靜態）。
         self._terrain_sampler = terrain_sampler
+        # 全局後備倍率。**過去這是唯一的天氣入口，而且沒有任何呼叫端傳過它**——
+        # 於是天氣對機動的影響（`movement_mobility_modifier`）整條是死碼：
+        # 想定裡下暴雨，部隊照著晴天的速度行軍。
         self._weather_mobility = weather_mobility if weather_mobility > 0 else 1.0
+        # WP-C4b：逐 tick、**逐格**的天氣。回呼而非值——傳一份快照進來，整局就永遠
+        # 停在建構當下那一份（同 `make_engage_env` / `make_detect_env` 的紀律）。
+        # None → 整段跳過，只用後備倍率＝既有行為，一個位元都不差。
+        self._weather_for = weather_for
         self._terrain_cost_cache: dict[tuple[str, str], float | None] = {}
         # WP-B6 想定機動覆寫：**該局**的規則物件（None → 出貨預設）。刻意以建構參數注入而非
         # 改全域快取——同一 core 行程同時跑 N 局，全域可變狀態會跨局污染（見 mobility_matrix）。
@@ -303,6 +312,23 @@ class UnitMovementSystem:
             return [(float(lng), float(lat))]
         return []
 
+    def _weather_mobility_at(self, lat: float, lng: float) -> float:
+        """該座標所在格的機動天氣倍率。無回呼/無快照/查無該格 → 後備倍率（中性）。
+
+        天氣格網的解析度由插件決定，core 不能假設——所以要先把座標換算到
+        **快照自己的**解析度再查（同 `make_engage_env` 的做法）。
+        """
+        if self._weather_for is None:
+            return self._weather_mobility
+        try:
+            state = self._weather_for()
+        except Exception:  # 天氣服務抖一下不該讓全場停止行軍
+            return self._weather_mobility
+        if state is None:
+            return self._weather_mobility
+        cell = h3.latlng_to_cell(lat, lng, state.resolution())
+        return self._weather_mobility * movement_mobility_modifier(state.effects_at(cell))
+
     def _advance_unit(
         self,
         o: Order,
@@ -341,7 +367,9 @@ class UnitMovementSystem:
         tgt_lng, tgt_lat = targets[leg]
         cur_lat, cur_lng = float(unit.current_lat or 0.0), float(unit.current_lng or 0.0)
         # #81 Phase B：以目前所在格地形類別+坡度調速；不可通行→停在此 + MOVE_BLOCKED。
-        step_km *= self._weather_mobility
+        # WP-C4b：天氣倍率逐格查（泥濘/暴風雪只罰在那片天氣底下的部隊，不是全場齊罰）。
+        weather_mob = self._weather_mobility_at(cur_lat, cur_lng)
+        step_km *= weather_mob
         # WP-C2：先算出腳下有哪些障礙——**道路分支要用到它**（斷橋讓道路加速失效）。
         here = typed(obstacles or [])
         if here:
@@ -363,7 +391,7 @@ class UnitMovementSystem:
             if factor is not None:
                 raw_road = payload.get("_road_step_km")
                 if isinstance(raw_road, (int, float)) and raw_road > 0:
-                    step_km = float(raw_road) * self._weather_mobility * factor
+                    step_km = float(raw_road) * weather_mob * factor
             else:
                 cost = self._terrain_cost(cell, prof)
                 if cost is None:

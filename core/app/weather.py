@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import h3
+
 
 @dataclass(frozen=True, slots=True)
 class CellEffects:
@@ -52,6 +54,19 @@ class WeatherState:
 
     def effects_at(self, h3_index: str) -> CellEffects:
         return self._cells.get(h3_index, CLEAR)
+
+    def resolution(self) -> int:
+        """本快照的 h3 解析度——**呼叫端要先把座標換算到同一級才查得到格**。
+
+        插件決定格網粗細，core 不能假設。空快照 → 8（與插件出貨值一致）；
+        鍵壞掉也回 8：查不到就是 CLEAR，比拋例外讓整個 tick 掛掉好。
+        """
+        if not self._cells:
+            return 8
+        try:
+            return int(h3.get_resolution(next(iter(self._cells))))
+        except (ValueError, TypeError):
+            return 8
 
 
 # ---------------- 效果 → 各 env 的 weather_modifier（Core 的解讀，v0） ----------------

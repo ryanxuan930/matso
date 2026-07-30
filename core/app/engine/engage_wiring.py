@@ -328,17 +328,6 @@ def seed_combat_state(
 _ENGAGE_OBS_M = 10.0
 
 
-def _weather_res(weather: WeatherState) -> int:
-    """由天氣快照的 cell 鍵推得其 h3 解析度（供把射手座標換算到同解析度查修正）。預設 8。"""
-    cells = getattr(weather, "_cells", None)
-    if isinstance(cells, dict) and cells:
-        try:
-            return int(h3.get_resolution(next(iter(cells))))
-        except (ValueError, TypeError):
-            return 8
-    return 8
-
-
 def _as_float(raw: object) -> float:
     return float(raw) if isinstance(raw, (int, float)) else 0.0
 
@@ -383,7 +372,7 @@ def make_engage_env(  # type: ignore[no-untyped-def]
         否則沿用建構時的快照（＝既有行為）。"""
         return weather_for() if weather_for is not None else weather
 
-    w_res = _weather_res(weather) if weather is not None else 8
+    w_res = weather.resolution() if weather is not None else 8
 
     def env_for(shooter_id: str, target_id: str, indirect_fire: bool = False) -> EnvSnapshot:
         s = hot.get_unit(shooter_id) or {}
