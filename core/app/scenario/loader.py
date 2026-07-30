@@ -97,6 +97,23 @@ def _load_yaml(path: Path, label: str) -> dict[str, Any]:
     return data
 
 
+# core 全系統以 h3 res 8 運作（`orders/precheck.py`、`movement/router.py`、`fires/displacement.py`
+# 等十餘處各自寫死）。想定宣告別的值**不會有任何效果**——把它接成可調是一張功能卡，
+# 不是接線。在那之前寧可**明講拒收**，也不要靜默忽略：靜默忽略正是這個 codebase
+# 一再出事的那個型態（想定作者以為調了，實際上沒有）。
+FIXED_HEX_RESOLUTION = 8
+
+
+def _validate_hex_resolution(raw: Any) -> int:
+    value = int(raw)
+    if value != FIXED_HEX_RESOLUTION:
+        raise ScenarioError(
+            f"hex_resolution 目前只支援 {FIXED_HEX_RESOLUTION}（宣告了 {value}）："
+            "core 的地形取樣/路徑規劃/預檢皆固定在該解析度，宣告別的值不會生效。"
+        )
+    return value
+
+
 def _validate_schema(data: dict[str, Any], schema_name: str, label: str) -> None:
     schema = json.loads((_CONTRACTS / schema_name).read_text(encoding="utf-8"))
     errors = sorted(Draft202012Validator(schema).iter_errors(data), key=lambda e: list(e.path))
@@ -126,7 +143,7 @@ def _build(
         mode=sc["mode"],
         bbox=list(sc["bbox"]),
         tick_rate_ms=sc["tick_rate_ms"],
-        hex_resolution=sc.get("hex_resolution", 8),
+        hex_resolution=_validate_hex_resolution(sc.get("hex_resolution", 8)),
         aggregate_adjudication_level=sc.get("aggregate_adjudication_level", "BATTALION"),
         faction_ids=faction_ids,
         faction_colors={f["id"]: f["color"] for f in sc["factions"] if "color" in f},
@@ -435,6 +452,10 @@ def create_session_from_scenario(
         # 因為 `should_aggregate()` 一直吃它自己的預設 BATTALION。
         aggregate_adjudication_level=_agg_level(loaded.aggregate_adjudication_level),
         day_night=loaded.day_night or None,
+        # 該局的 tick 長度落地。**過去 `tick_rate_ms` 只進得了匯出檔**——想定 schema 把它
+        # 列為必填、loader 讀得進 LoadedScenario，但沒有任何一條路把它帶進執行期，
+        # 於是每一局都跑系統設定那個值（roundtrip 測試仍綠，因為 loader→dump 對得上）。
+        tick_rate_ms=int(loaded.tick_rate_ms) if loaded.tick_rate_ms else None,
         # WP-C10.5 陣地變換落地：未宣告存 None ＝ 停用（既有局零變更）。
         survivability_move=loaded.survivability_move or None,
         # WP-B2 MSEL 落地：**過去整個漏掉**——想定的 msel 載得進來卻進不了執行期。

@@ -99,6 +99,10 @@ class WargameSession(Base):
     )
     # WP-C4a：NULL＝未宣告＝整場白天（既有局語義）。
     day_night: Mapped[dict | None] = mapped_column("dayNight", JSON, nullable=True)  # type: ignore[type-arg]
+    # 該局的 tick 長度（ms 模擬時間），開局從想定快照。**None＝沿用系統設定**。
+    # 想定 schema 一直把 tick_rate_ms 列為必填、loader 也讀得進來，但它過去只被
+    # `dump.py` 拿去做 roundtrip 匯出——沒有任何一條路把它帶進執行期。
+    tick_rate_ms: Mapped[int | None] = mapped_column("tickRateMs", Integer, nullable=True)
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "orbatEditFactions", JSON, nullable=True
     )

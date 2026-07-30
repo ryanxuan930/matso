@@ -78,7 +78,7 @@ from app.scenario.msel_actions import make_applier
 from app.scenario.msel_runtime import MselRuntime
 from app.scenario.session_msel import load_session_msel, make_context_fn
 from app.sim_control import session_concluded_key, session_pause_key, session_restart_key
-from app.sim_params import load_sim_params
+from app.sim_params import load_sim_params, session_tick_rate_ms
 from app.state.broadcaster import RedisBroadcaster
 from app.state.checkpoint import CheckpointManager, restore_msel_memory
 from app.state.hot_state import RedisHotState
@@ -537,6 +537,11 @@ class SimManager:
                 )
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
+            # 該局的 tick 長度：想定宣告優先。**在此之前想定的 tick_rate_ms 只進得了
+            # 匯出檔**——載得進 LoadedScenario、卻沒有一條路帶進執行期。
+            tick_rate_ms = await asyncio.to_thread(
+                session_tick_rate_ms, engage_db, session_id, sim_params
+            )
             # WP-C4a 晝夜：開局快照該局的日出日落宣告（同 create_session_from_scenario 的
             # 紀律——推演中途改想定不影響進行中的局）。未宣告 → `declared` 為 False，
             # 底下每個消費端都整段跳過，既有局位元不變。
@@ -555,7 +560,7 @@ class SimManager:
             if resumed.start_tick:
                 _LOG.info("session %s 自 tick=%d 續跑", session_id, resumed.start_tick)
             sim_clock = SimClock(  # #93 可調節奏
-                tick_rate_ms=sim_params.tick_rate_ms, start_tick=resumed.start_tick
+                tick_rate_ms=tick_rate_ms, start_tick=resumed.start_tick
             )
             kernel = Kernel(
                 session_id=session_id,
@@ -632,7 +637,7 @@ class SimManager:
                     session_id=session_id,
                     session_factory=self._factory,
                     hot_state=hot,
-                    tick_rate_ms=sim_params.tick_rate_ms,
+                    tick_rate_ms=tick_rate_ms,
                     speed_kmh=_UNIT_SPEED_KMH,
                     rng=rngs["movement"],  # #28 強穿隨機耗損
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
@@ -715,7 +720,7 @@ class SimManager:
                 ),
                 checkpoint_interval=sim_params.checkpoint_interval_ticks,  # #93 可調
             )
-            pacer = TickPacer(sim_params.tick_rate_ms, compression=sim_params.pace_compression)
+            pacer = TickPacer(tick_rate_ms, compression=sim_params.pace_compression)
             # White Cell 暫停旗標（新 #6）：control 端點 PAUSE 設 Redis 鍵、RESUME 清除；
             # 迴圈輪詢此鍵 → 暫停時凍結活模擬。
             pause_key = session_pause_key(session_id)
@@ -781,7 +786,7 @@ class SimManager:
                     _supply_tick,
                     hot,
                     sim_clock.now().tick,
-                    sim_params.tick_rate_ms,
+                    tick_rate_ms,
                     sim_params.supply_daily_rates,
                 )
                 # WP-C7.2 自動補給：低於再訂購水位 → 從最近的己方補給點拉貨。
@@ -800,7 +805,7 @@ class SimManager:
                     session_id,
                     sensor_resolver.faction_for,
                     sim_clock.now().tick,
-                    sim_params.tick_rate_ms,
+                    tick_rate_ms,
                     sim_params.repair_per_day,
                 )
                 if rf:

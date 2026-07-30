@@ -80,7 +80,7 @@ export function emptyScenario(): ScenarioModel {
     version: '1.0',
     bbox: [120.9, 23.6, 121.4, 23.9],
     mode: 'REALTIME',
-    tickRateMs: 1000,
+    tickRateMs: 60000,  // 1 tick ＝ 1 分模擬時間（此值會決定執行期節奏）
     factions: [{ id: 'BLUE', color: '#3b7dd8' }, { id: 'RED', color: '#d83b3b' }],
     relations: [{ a: 'BLUE', b: 'RED', relation: 'HOSTILE' }],
     units: [],
@@ -192,7 +192,7 @@ export function importScenario(bundle: {
     ...(s.description !== undefined ? { description: s.description as string } : {}),
     bbox: s.bbox as [number, number, number, number],
     mode: (s.mode as ScenarioModel['mode']) ?? 'REALTIME',
-    tickRateMs: (s.tick_rate_ms as number) ?? 1000,
+    tickRateMs: (s.tick_rate_ms as number) ?? 60000,
     ...(s.hex_resolution !== undefined ? { hexResolution: s.hex_resolution as number } : {}),
     ...(s.aggregate_adjudication_level !== undefined
       ? { aggregateAdjudicationLevel: s.aggregate_adjudication_level as ScenarioModel['aggregateAdjudicationLevel'] }

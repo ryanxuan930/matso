@@ -37,7 +37,7 @@ from app.movement.params import (
 from app.movement.router import plan_route
 from app.movement.session_mobility import load_session_mobility_rules
 from app.movement.terrain_sampler import build_terrain_cell_sampler
-from app.sim_params import load_sim_params
+from app.sim_params import load_sim_params, session_tick_rate_ms
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["movement"])
@@ -215,7 +215,8 @@ def preview_movement(
         waypoints,
         obstacles,
         speed_kmh=speed_kmh,
-        tick_rate_ms=sim_params.tick_rate_ms,  # #93 與執行端同一份
+        # #93 與執行端同一份：想定宣告的 tick 長度優先，未宣告才用系統設定。
+        tick_rate_ms=session_tick_rate_ms(db, session_id, sim_params),
         attrition_per_km=attrition_per_km,
         fuel_per_km=unit_fuel.burn_per_km,
     )

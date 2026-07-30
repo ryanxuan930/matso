@@ -153,3 +153,33 @@ def test_a_broken_supply_rate_drops_only_that_class() -> None:
     ).supply_daily_rates
 
     assert rates == {"FOOD": 1.5}
+
+
+# ---- 該局的 tick 長度：想定宣告 > 系統設定 ----
+
+
+def test_scenario_tick_rate_beats_the_system_setting(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """想定的 `tick_rate_ms` **過去只進得了匯出檔**。
+
+    schema 把它列為必填、loader 讀得進 `LoadedScenario`，但唯一的消費者是 `dump.py`
+    ——沒有任何一條路把它帶進執行期，於是每一局都跑系統設定那個值。
+    roundtrip 測試一直是綠的，因為 loader→dump 對得上。
+    """
+    from app.models.tables import WargameSession
+    from app.sim_params import session_tick_rate_ms
+
+    params = SimParams(tick_rate_ms=60_000)
+    with session_factory() as db:
+        db.add(
+            WargameSession(
+                id="s-declared", name="x", master_seed=1, current_weather={}, tick_rate_ms=30_000
+            )
+        )
+        db.add(WargameSession(id="s-silent", name="y", master_seed=1, current_weather={}))
+        db.commit()
+
+        assert session_tick_rate_ms(db, "s-declared", params) == 30_000
+        # 未宣告 → 系統設定（既有局零變更）。
+        assert session_tick_rate_ms(db, "s-silent", params) == 60_000
+        # 查無此局 → 系統設定，不炸。
+        assert session_tick_rate_ms(db, "nope", params) == 60_000

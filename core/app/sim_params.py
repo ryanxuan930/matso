@@ -228,6 +228,19 @@ def to_config(p: SimParams) -> dict[str, Any]:
     }
 
 
+def session_tick_rate_ms(db: Session, session_id: str, params: SimParams) -> int:
+    """**該局**的 tick 長度：想定宣告優先，未宣告 → 系統設定。
+
+    預覽端與執行端都要走這裡。兩邊各自決定會重演 SPEC_MOVEMENT 當初要消滅的
+    「預覽與實跑不一致」——預覽說走 3 個 tick、實際跑 180 個。
+    """
+    from app.models.tables import WargameSession
+
+    row = db.get(WargameSession, session_id)
+    declared = getattr(row, "tick_rate_ms", None) if row is not None else None
+    return int(declared) if isinstance(declared, int) and declared > 0 else params.tick_rate_ms
+
+
 def load_sim_params(db: Session) -> SimParams:
     """由 DB 單例讀推演參數。查無設定 → 全預設（＝原硬編碼行為）。"""
     from app.models.tables import SystemConfiguration

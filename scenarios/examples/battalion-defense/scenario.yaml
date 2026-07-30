@@ -25,7 +25,9 @@ description: |
   「預備隊投入時機」與「反裝甲火力分配」兩項決心。
 bbox: [121.10, 24.65, 121.40, 24.95]
 mode: REALTIME
-tick_rate_ms: 1000
+tick_rate_ms: 60000  # 1 tick ＝ 1 分模擬時間。**這個值從此真的會生效**（過去只進得了匯出檔）；
+                     # 原本寫的 1000（＝1 秒/tick）是 schema 預設值被原封帶過來的，以那個節奏
+                     # 一個排一 tick 只走 1.4 公尺，每日消耗要 86400 個 tick 才算一天。
 hex_resolution: 8
 # 營級以上才走 Lanchester 聚合；本場主要交戰發生在連/排，故實際上多為逐單位裁決。
 aggregate_adjudication_level: BATTALION

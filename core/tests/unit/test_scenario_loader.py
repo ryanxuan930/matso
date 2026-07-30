@@ -181,3 +181,15 @@ def test_create_session_from_scenario_builds_units_and_parents() -> None:
         # parent 連結建立（B-1PLT → B-CO）
         assert by_desig["B-1PLT"].parent_id == by_desig["B-CO"].id
         assert by_desig["B-CO"].parent_id is None
+
+
+def test_a_non_default_hex_resolution_is_rejected_not_ignored() -> None:
+    """core 全系統寫死 h3 res 8。宣告別的值**過去被靜默吃掉**——想定作者以為調了。
+
+    靜默忽略正是這個 codebase 一再出事的型態；在接成可調之前，明講拒收才誠實。
+    """
+    from app.scenario.loader import ScenarioError, _validate_hex_resolution
+
+    assert _validate_hex_resolution(8) == 8
+    with pytest.raises(ScenarioError, match="hex_resolution"):
+        _validate_hex_resolution(9)

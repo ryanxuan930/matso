@@ -41,14 +41,15 @@
       ]
     },
     "tick_rate_ms": {
+      "description": "1 tick 的模擬時間（ms）。60000 ＝ 1 分。此值會決定該局執行期的節奏——速度、耗損、每日消耗全部以它為分母。",
       "type": "integer",
       "minimum": 100,
-      "default": 1000
+      "default": 60000
     },
     "hex_resolution": {
+      "description": "戰術格網的 h3 解析度。**目前只支援 8**：core 的地形取樣/路徑規劃/預檢皆固定在該解析度，宣告別的值 loader 會直接拒載（而不是靜默忽略）。",
       "type": "integer",
-      "minimum": 7,
-      "maximum": 9,
+      "const": 8,
       "default": 8
     },
     "aggregate_adjudication_level": {
