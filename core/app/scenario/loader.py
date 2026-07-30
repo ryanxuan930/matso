@@ -471,6 +471,10 @@ def create_session_from_scenario(
         # 因為 `should_aggregate()` 一直吃它自己的預設 BATTALION。
         aggregate_adjudication_level=_agg_level(loaded.aggregate_adjudication_level),
         day_night=loaded.day_night or None,
+        # 陣營顯示資訊落地。**過去只到得了匯出檔**——解析得出來、dump 匯得出去，
+        # 但沒有持久化也沒有 API 回傳，於是地圖上所有陣營都落回寫死的預設色。
+        faction_colors=dict(loaded.faction_colors) or None,
+        faction_display_names=dict(loaded.faction_display_names) or None,
         # 勝負條件落地。**過去這份宣告只到得了匯出檔**——載得進、`_validate_victory`
         # 驗得過、劇本編輯器編得動，卻沒有一條路帶進執行期。
         victory_conditions=list(loaded.victory_conditions) or None,

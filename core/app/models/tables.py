@@ -99,6 +99,13 @@ class WargameSession(Base):
     )
     # WP-C4a：NULL＝未宣告＝整場白天（既有局語義）。
     day_night: Mapped[dict | None] = mapped_column("dayNight", JSON, nullable=True)  # type: ignore[type-arg]
+    # 本局的陣營顏色/顯示名（想定 `factions[]` 開局快照）。**None＝未宣告＝前端預設**。
+    faction_colors: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
+        "factionColors", JSON, nullable=True
+    )
+    faction_display_names: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
+        "factionDisplayNames", JSON, nullable=True
+    )
     # 本局的勝負條件（想定 `victory_conditions` 開局快照）。**None＝未宣告＝最後存活**。
     victory_conditions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "victoryConditions", JSON, nullable=True

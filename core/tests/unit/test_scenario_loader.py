@@ -230,3 +230,29 @@ def test_a_weather_script_declaration_is_rejected_not_ignored() -> None:
     _reject_weather_script({"weather_script": ""})  # 空字串 ＝沒宣告
     with pytest.raises(ScenarioError, match="WEATHER_OVERRIDE"):
         _reject_weather_script({"weather_script": "weather.yaml"})
+
+
+def test_faction_colours_reach_the_session_row() -> None:
+    """想定定義的陣營顏色**過去只到得了匯出檔**。
+
+    loader 解析得出來、dump 匯得出去（roundtrip 測試一直綠），但沒有持久化、
+    也沒有任何 API 回傳——前端 `MapCanvas` 的 palette 參數唯一的呼叫端傳的是字面量 `{}`，
+    於是所有陣營落回寫死的 BLUE/RED 或 id 雜湊色。
+    這是 TASKS O6.10 / O10.4 的驗收條文「faction 顏色（scenario 定義）」。
+    """
+    from app.models.tables import WargameSession
+    from app.scenario.loader import create_session_from_scenario, load_scenario_package
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    loaded = load_scenario_package(_TUTORIAL)
+
+    with sessionmaker(bind=engine)() as db:
+        sid = create_session_from_scenario(db, loaded, master_seed=1)
+        db.commit()
+        row = db.get(WargameSession, sid)
+
+    assert row is not None
+    # 出貨想定有沒有宣告顏色都可以，但**只要宣告了就必須落地**。
+    assert (row.faction_colors or {}) == loaded.faction_colors
+    assert (row.faction_display_names or {}) == loaded.faction_display_names

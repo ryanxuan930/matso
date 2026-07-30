@@ -872,6 +872,18 @@ components:
           type: array
           items: { type: string }
           description: 本局所有陣營 id（供 UI 列舉；不含 WHITE_CELL）
+        colors:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            陣營代表色 {factionId: "#RRGGBB"}（想定 `factions[].color` 的**開局快照**）。
+            未宣告 → 空物件，前端沿用預設調色盤。
+            ⚠ **不是 fog 敏感資訊**：陣營的名稱與代表色是公開的部隊識別，不是誰在哪裡。
+        display_names:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            陣營顯示名（例：BLUE → 「第 21 砲兵營」）。未宣告 → 空物件，直接顯示 id。
     ContactView:
       type: object
       description: >-

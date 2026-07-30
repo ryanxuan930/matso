@@ -30,6 +30,12 @@ class FactionRelationsView(BaseModel):
     observer: str | None
     relations: dict[str, str]
     factions: list[str]
+    # 陣營顯示資訊（想定 `factions[].color` / `display_name` 的開局快照）。
+    # **不是 fog 敏感資訊**：陣營的名稱與代表色是公開的部隊識別，不是誰在哪裡。
+    # 掛在這裡而不是另開端點，是因為 COP 已經在同一個 `/state` 快照裡拿 relations，
+    # 另開一支就會多一次 round trip、而且兩邊的「本局有哪些陣營」可能不一致。
+    colors: dict[str, str] = {}
+    display_names: dict[str, str] = {}
 
 
 @router.get("/{session_id}/relations", response_model=FactionRelationsView)
@@ -57,12 +63,37 @@ def get_faction_relations(
         ).all()
         if f != WHITE_CELL
     )
+    colors, display_names = _faction_meta(db, session_id)
     if observer is None:
-        return FactionRelationsView(observer=None, relations={}, factions=factions)
+        return FactionRelationsView(
+            observer=None,
+            relations={},
+            factions=factions,
+            colors=colors,
+            display_names=display_names,
+        )
 
     rel = load_session_relations(db, session_id)
     return FactionRelationsView(
         observer=observer,
         relations={f: rel.relation(observer, f).value for f in factions},
         factions=factions,
+        colors=colors,
+        display_names=display_names,
     )
+
+
+def _faction_meta(db: Session, session_id: str) -> tuple[dict[str, str], dict[str, str]]:
+    """本局的陣營顏色與顯示名（開局從想定快照）。未宣告 → 空 dict ＝前端用預設調色盤。"""
+    from app.models.tables import WargameSession
+
+    row = db.get(WargameSession, session_id)
+    if row is None:
+        return {}, {}
+
+    def _strmap(raw: object) -> dict[str, str]:
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): str(v) for k, v in raw.items() if isinstance(v, str) and v}
+
+    return _strmap(row.faction_colors), _strmap(row.faction_display_names)

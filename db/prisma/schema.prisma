@@ -80,6 +80,11 @@ model WargameSession {
   /// 聚合裁決門檻（此級以上走 Lanchester）。NULL＝BATTALION（既有預設）。
   aggregateAdjudicationLevel UnitLevel?
   dayNight Json?
+  /// 本局的陣營顏色 {factionId: "#RRGGBB"}（想定 `factions[].color` 開局快照）。
+  /// NULL＝未宣告＝前端預設調色盤。**在此之前想定定義的顏色只到得了匯出檔**。
+  factionColors Json?
+  /// 本局的陣營顯示名 {factionId: "第 21 砲兵營"}。NULL＝未宣告＝直接顯示 id。
+  factionDisplayNames Json?
   /// 本局的勝負條件（想定 `victory_conditions` 開局快照）。NULL＝未宣告＝「最後存活」。
   /// **在此之前這份宣告只到得了匯出檔**：載得進、驗得過、編輯器編得動，
   /// 卻沒有一條路帶進執行期，於是每一局的判定都是「最後存活」。
