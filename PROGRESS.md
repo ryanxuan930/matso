@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-08-02：**全面盤點 + 修掉 16 條「建好但沒接線／值存在但被忽略」**。兩輪多 agent 盤點（核心引擎/契約/想定 + 前端）交叉驗證，逐條抽驗證據後修。已修：STATE_DIFF 每陣營投影 fail-open（MSEL 增援的即時座標廣播給所有陣營，紅線 3 破洞）、MSEL SPAWN_UNITS 熱狀態鍵集有兩份（增援漏 `ammo`/`footprint_m` → 一發打不出去；`platform_count` 退回 1）、`weather_mobility` 零呼叫端（暴雨照晴天速度行軍）、`mesh_states(nodes)` 兩參數從沒傳過（稜線後面與平原上通聯完全一樣；`rf_attenuation_db` 全系統零消費者）、`SimParams` 11 欄不在解析器 + **另 10 欄引擎完全不讀**（WP-C4b 天氣刷新與 WP-C7.1 每日消耗在生產環境根本開不起來；`foot_xc_kmh` 預覽端有傳實跑端沒傳 → 預覽 ETA 變了實跑照舊）、想定 `tick_rate_ms` 只到得了匯出檔（出貨想定寫的 1000 是 schema 預設被原封帶過來的，1 秒/tick 下一個排一 tick 走 1.4 公尺）、回滾三個缺口（彈藥/油料 DB 不還原、500 tick 埋的雷區還躺在 300 tick 的戰場、已 FIRED 的準備射擊再也不會落下）、席位可下令表停在只有 MOVE/ENGAGE 的年代（S3 下不了任務令、S4 完全不能下令）、AI 橋接靜默丟掉 POSTURE 令（LLM 決定掘壕、令蒸發、沒有錯誤訊息）、pre_tick 事件進不了 WS feed（破障/斷橋/補給要重新整理才看得到）、**營級以上打仗不耗彈不受斷補不壓制**、**想定 ROE 有三條繞過路徑**（模組說明寫著「沒有繞過的路徑」）、**想定勝負條件永遠不生效 + 人人對戰的局永遠不收場**、天氣 `stale` 零讀取端、前端四條「顯示的跟送出的不一樣」（MOVE 一律送 FOOT、`acknowledge_restricted` 從沒送過 → 限制射擊區變絕對禁射、回放 prompt 按取消送 tick 0、勾限指揮單位會清掉席位）。**每一條都做過 mutation check**。另加五道防漂移守門：SimParams roundtrip、SimParams 引擎讀取點掃描、席位表涵蓋所有令型、勝負監視器不在任何 if 之內（AST）、`seed_combat_state` 為熱狀態鍵集的單一寫入路徑。**驗收**：pytest 2044、mypy 268、schema sync 236 欄、eslint/vue-tsc 綠。
+
 - 2026-07-30：**面射擊校準的活系統端對端驗證**（使用者授權自開新局）。開了「校準驗證局」：建 155mm 火砲範本 → BLUE 砲兵單位（FIRETEAM，佔地 15m）+ RED 步兵連（COMPANY，佔地 150m）→ 實際下 18 發火力任務。**結果與錨點吻合**：有前觀時 `dispersion_mult=1.0`、傷亡 **14.63%**（錨點預測 14.8%）。過程中先拿到 2.98%，一度以為校準壞了——查出來是 **WP-C10.4 的無前觀懲罰**（`NO_OBSERVER_DISPERSION_MULT=2.0` 把散布加倍，期望值降到 4.86%，單次抽樣拿到 2.98% 在變異範圍內）。**這個誤判值得記下來**：準則上的火力效能數字本來就假設是修正過的射擊，所以錨點指的是**有前觀**的射擊；不知道這件事的人在系統裡打一發無前觀任務、看到個位數傷亡，都會合理地以為校準壞了。已加測試 `test_an_unobserved_mission_is_far_less_effective` 把這個關係釘成規格。另外意外驗到**誤傷語意**：站在落點旁 60m 的己方前觀（FIRETEAM）承受 **64.6%** 傷亡——面射擊確實不挑人。同時驗到 `footprint_m` 熱狀態播種正確（COMPANY=150.0、FIRETEAM=15.0）、`branch` 進 API、`rounds_per_mission` 進 WeaponView。**另記一個既有行為**：`WeaponResolver` 於 runner 起跑時建一次，局中經 DB/API 新增的裝備要**重啟 runner** 才看得到（惰性補查只對局中新增的**單位**生效，不含既有單位的新裝備）——測試時被這個絆了兩次。**驗收**：pytest 1985（+1）、mypy 267、ruff 綠。
 
 - 2026-07-30：**面射擊殺傷校準（使用者指示先做）**。改的是**結構加係數**，不只是調數字。**結構**：舊 `_loss_for` 量的是「落點到單位座標」的距離——但一個連散在 200–400m 正面，落在連隊區域內、離中心 100m 的彈會被算成 0 傷害。改為「**覆蓋率 × 強度**」：覆蓋率＝單位圓盤與殺傷圓的交集面積 ÷ 單位面積（大單位天生難被一發彈傷到、小單位整個罩住）；強度＝重疊區的人平均離爆點多近。⚠ 強度**不能用圓心距算**——重疊區的人依定義就在殺傷半徑之內，不是在 d 之外；我第一版就是這樣算的，結果反推出 pk=6.88（>1）、傷亡 400%。改用重疊區等效半徑的 2/3 才對。損失改用**當前**戰力而非滿編（被打殘的連隊剩下的人才是可能傷亡的人）。**係數**：`pk` 的意義隨之改變（現在＝「在爆點上的人成為傷亡的機率」），依錨點「18 發 155mm 打露天步兵連 → 15% 傷亡」反推得 0.32，其餘火砲與裝甲級別按**原比例**同倍率縮放（×0.457）——相對關係完全沒變，只有絕對值被錨定。**⚠ 錨點是假設值不是量測值**，已寫成可執行斷言（`test_area_fire_calibration.py`），傷亡與 pk 嚴格線性，要改只需等比例調。**實測結果**（18 發）：伍 51%、班 44%、排 19%、連 15%、營 4.3%、旅 0.9%。**golden 重錄一份**（`suppression_defense_60`——唯一走面射擊的情境，其餘四份 hash 不變）。兩條驗收測試依新語義更新並寫明理由（跨 5 輪的掘壕/露天比不再剛好 0.5，因為損失與當前戰力成正比會複利）。四個方向的突變驗過會紅。**驗收**：pytest 1984（+4）、mypy 267、ruff 綠。
@@ -206,6 +208,94 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-20：契約 fuzz 用 schemathesis **v4**（v3 不支援 FastAPI 產生的 OpenAPI 3.1）；order 端點只斷言「不 5xx」。ruff B008 放行 FastAPI `Depends()` 慣例。
 
 ## Backlog / 發現的問題
+
+### 🔬 全面盤點（2026-08-02，兩輪 agent：核心/契約/想定 + 前端，逐條抽驗證據）
+
+上一輪（2026-07-30）的 24 項已全數處理。本輪又找出 30+ 項，**HIGH 六條已全部修完**
+（見狀態摘要）。以下是**確認為真但尚未修**的，依「使用者會不會被誤導」排序。
+
+#### 尚未修（大）
+
+- **[H2] 軍械庫 30+ 個欄位對推演零影響**（一整張保真卡，不是接線）。
+  `top_attack` + `armor_by_aspect_mm`（打正面與打頂面完全一樣）、`min_engage_range_m`
+  （ATGM 貼臉 20m 照樣發射命中）、`rate_of_fire_rpm`（**全 repo 零命中**）、
+  SENSOR 5 欄（`fov_deg` 設 60 度它照樣看背後）、MISSILE 6 欄、DRONE 整組 10 欄
+  （續航/資料鏈/風速上限全無效）、COMMS 4 欄（勾了加密不影響任何事；
+  `mesh_capable: false` 的電台照樣當中繼）、LOGISTICS `transport.*` 5 欄
+  （`FORMATION {mounted:true}` 不檢查任何載運上限）。
+  ⚠ 沒有任何閘門在**欄位層級**比對 schema 與解析器——這是它會一直累積的原因。
+- **[M6] 載具被打掉不折算乘員傷亡**：`formation.crew_casualties()` 零呼叫端；
+  `dismounted_exposure`（下車受彈面）同樣沒有消費端。兩個係數都已進 SimParams，
+  兩端就是沒接上（`test_sim_params.py` 的守門測試有把這兩個名字明列為例外）。
+- **[E6/E7] 五個想定設定在任何 UI 都設不到**：`request_quotas`、`day_night`、
+  `allow_fratricide`、`indirect_fire_requires_approval`、`survivability_move`
+  ——`useScenarioEditor.ts:60` 的註解自己承認「現在就正在被漏掉」。
+  後果具體：C2 的申請配額永遠顯示「不限」、COP 的誤傷確認核取方塊永遠不出現、
+  火協核准單流程無從觸發。劇本編輯器也缺 bbox / hex 解析度 / 彙整裁決層級。
+
+#### 尚未修（中）
+
+- **[M1] 想定的陣營顏色/顯示名不落地**：loader 解析得出、dump 匯得出，但沒有持久化、
+  沒有任何 API 回傳；`MapCanvas.vue:711` 傳的是字面量 `{}`。所有陣營落回寫死的
+  BLUE/RED 或 id 雜湊色。這是 TASKS O6.10/O10.4 的驗收條文。
+- **[M2] 任務令參數**：`orientation_deg` / `spacing_km` 收得下、分解器不讀
+  （設「面向東方防守」照樣 360 度接戰；`spacing_km` 2 與 0.1 走出來一模一樣）。
+  另 `core_api.yaml:1095` 的 DEFEND 半徑欄位名寫成巢狀 `area.radius_m`，
+  後端是頂層 `area_radius_m` → 照 OpenAPI 生的 client 送的半徑被靜默丟棄。
+- **[M3] SCREEN 的「受壓後退」沒有實作**：契約與 payload 說明都寫了，
+  分解器的 HOLDING 分支只有註解。掩護幕部隊被壓到死也站在原地。
+- **[M4] 煙幕不隨風漂移**：`obscurants.drift()` 有實作與 8 條測試、風場也一路讀進
+  `CellEffects`，生產零呼叫端；`purge_expired_smoke()` 同樣零呼叫端。
+- **[M5] 戰力低於 30% 的單位 COP 顯示血量 0**（`effectiveness_pct` 的斷點），
+  但它還活著、還能全速移動。`health_state()`（OK/DEGRADED/DOWN）生產零呼叫端，
+  前端也沒有戰備狀態欄——操作員會把 0 讀成「已殲滅」。
+- **[M7] MSEL 的 `WEATHER_OVERRIDE` 仍落 `MSEL_INJECT_UNSUPPORTED`**，理由寫「待 WP-C4」
+  但那張卡已完成。白軍想在演習中注入暴雨仍然做不到。
+- **[M8] 強行軍（`tempo`）人類指揮官沒有入口**：後端完整實作、AI 用得到，
+  契約的 MOVE payload 沒宣告它、前端零命中 → 同一局裡 AI 的機動速度上限比人類高。
+- **[M9] 想定的 `files.weather_script` 全 repo 零命中**：宣告的暴雨腳本永遠不生效。
+- **[M10] `INTEL_UPDATE` / `WEATHER_UPDATE` / `AI_TASK_UPDATE` 三種 WS 推播沒有生產者**
+  （`ws_protocol.md` 宣告了）。敵情只能靠 COP 定時重取；天氣就算開了逐 tick 刷新，
+  前端也永遠不知道變了。
+- **[M11] 兩組 gRPC 能力 Core 端零呼叫**：terrain 的 `GetViewshed`（模組已實作 →
+  感測涵蓋只能逐目標問 CheckLos，COP 畫不出視域）、plugin_base 的
+  `GetManifest`/`Configure`/`contract_version`（換上不相容的插件 Core 照樣連上去用）。
+- **[F] 戰況事件流 37/44 種事件顯示為裸英文代號**且不帶單位番號
+  （`MOVE_HALTED_FUEL` / `GUARDRAIL_INTERVENTION` / `MINE_STRIKE`…）。
+  白軍暫停時其他人的 COP 也只冒一行 `SESSION_CONTROL`，沒有暫停橫幅。
+  指令面板則有三種令型顯示成英文、四種令型不顯示目標。
+- **[E1] AAR 重播地圖上所有單位都沒有番號**：`useAarReplay.ts` 組 `OwnUnit` 時漏了
+  `designation`/`unit_level`/`strength`（後端都有回）。檢討會上滿螢幕無名方塊。
+- **[E2] 「銷毀模式」沒有按鈕**（後端 `POST /exercises/{id}/destroy` 已實作，
+  階段提示也寫「可執行銷毀模式」）。
+  **[E3] 「歸檔封包」下載鈕會壞**：相對路徑打到 Nuxt、且瀏覽器導覽不帶 Bearer
+  （同一個坑 AAR 匯出已修過並留了註解）。
+  **[E4]** 自主推演的 `objectives` 前端寫死空陣列。
+  **[E5]** `ai_ground_truth` 後端讀、前端每次存檔都把它清掉（WP-A1 對照實驗的開關）。
+- **[D] 十餘個後端有回、前端零讀取的欄位**：`est_attrition`（路徑試算不列行軍耗損）、
+  `mission_phase`/`parent_order_id`（任務跑到哪一階段看不到；子令與人下的令混在一起）、
+  `ExerciseAuditEntry.actor_id`（**稽核軌跡不顯示誰做的**）、`SealView` 的
+  `sealed_by`/`sealed_at`/`current_hash`（簽證不符時無從判斷是誰改了什麼）、
+  `RequestView.decided_by`/`decided_at_tick`、`MessageView.from_seat`/`read_at`/`to_faction`
+  （跨陣營發信 UI 上做不到）、`AiFactionStatus.thinking_since_s`（AI 卡 5 分鐘與 5 秒長得一樣）、
+  `expires_in`（不排程續期，閒置後第一個動作必先失敗）。
+- **[I1] 畫禁射區時沒有「禁射級別」選項**：畫完的多邊形對火力裁決完全沒有效力，
+  要回頭點選它再從編輯下拉選一次，中間沒有任何警告。
+  **[I2]** COP 不顯示武器最小射程（迫砲死角在卡片上看不到）。
+
+#### 低
+
+- 聚合裁決永遠是純 square law（`AggregateEnv.aimed_fraction` 恆為預設 1.0 →
+  linear-law 項恆為 0，`_AREA_SCALE = 100.0` 這個「v0 佔位」從未被行使）。
+- 預檢對 POSTURE/RECON/RESUPPLY/FORMATION 無條件放行（`else: checks = []` → `all([]) is True`）。
+- 重複實作的死函式：`fratricide.fratricide_victims()`、`weather` 的三個 modifier、
+  `aar/replay.reconstruct_states()`、`comms/consequences` 兩個、`movement/planner.py` 整檔。
+- 契約數值與程式不符：`core_api.yaml` 寫 `suppression_decay` 預設 0.85、程式是 0.7。
+- `ENGAGE.payload.fire_request_id` 契約沒宣告卻會擋令 → 開了火協的想定，
+  照契約寫的 client 對砲兵下 ENGAGE 一律被拒且無從修正。
+- 推演模式 WEGO / IGO_UGO 是純裝飾（只有 enum，引擎完全不分支）；lobby 建局也不送 mode。
+- C2 信文永遠沒有已讀狀態（`read_at` 有欄位、沒有 mark-read 端點）。
+- `api/system.py:11` 的模組說明仍寫「AI 決策迴路尚未接入活執行期 Kernel」（已接入）。
 
 ### 🔬 累積未竟事項系統性盤點（2026-07-30，30-agent 六路掃描 + 逐項敵意查證）
 
