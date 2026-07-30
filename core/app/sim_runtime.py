@@ -38,6 +38,7 @@ from app.engine.engage_wiring import (
     seed_combat_state,
 )
 from app.engine.fire_wiring import AreaFireAdjudicator, FireMissionCommand, FireMissionOrderSource
+from app.engine.formation_wiring import drain_formation_orders
 from app.engine.kernel import Kernel
 from app.engine.logistics import ResupplySystem
 from app.engine.movement import UnitMovementSystem
@@ -177,6 +178,12 @@ def _posture_tick(factory: Any, session_id: str, hot: Any, tick: int) -> int:
     """POSTURE 令的執行。另開 DB session——不借用 engage_db（那條在 tick 之中被 commit）。"""
     with factory() as db:
         return drain_posture_orders(db, session_id, hot, tick)
+
+
+def _formation_tick(factory: Any, session_id: str, hot: Any, tick: int) -> int:
+    """FORMATION 令的執行（WP-C3）。另開 DB session——理由同 `_posture_tick`。"""
+    with factory() as db:
+        return drain_formation_orders(db, session_id, hot, tick)
 
 
 def _suppress_hit(hot: Any, unit_id: str, category: str) -> None:
@@ -576,6 +583,10 @@ class SimManager:
                 # POSTURE 令（在此之前是 NoOp——令收得下、狀態機也走得完，就是沒有任何效果）。
                 await asyncio.to_thread(
                     _posture_tick, self._factory, session_id, hot, sim_clock.now().tick
+                )
+                # WP-C3 隊形/乘駐車令。與 POSTURE 同款：沒有裁決階段，走 pre_tick。
+                await asyncio.to_thread(
+                    _formation_tick, self._factory, session_id, hot, sim_clock.now().tick
                 )
                 # WP-C10.5 陣地變換：打夠次數的砲自動換位置。事件走 LedgerWriter，
                 # 因為 pre_tick 不在 Kernel 的事件蒐集路徑上。

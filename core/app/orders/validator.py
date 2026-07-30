@@ -24,6 +24,7 @@ from app.orders.mission import MissionPayload
 from app.orders.schemas import (
     EngagePayload,
     FireMissionPayload,
+    FormationPayload,
     MovePayload,
     OrderRequest,
     OrderType,
@@ -36,7 +37,14 @@ _OVERRIDE_ROLES = frozenset({UserRole.WHITE_CELL_STAFF, UserRole.EXERCISE_DIRECT
 
 _PAYLOAD_MODELS: dict[
     OrderType,
-    type[MovePayload | EngagePayload | FireMissionPayload | PosturePayload | MissionPayload],
+    type[
+        MovePayload
+        | EngagePayload
+        | FireMissionPayload
+        | PosturePayload
+        | MissionPayload
+        | FormationPayload
+    ],
 ] = {
     OrderType.MOVE: MovePayload,
     OrderType.ENGAGE: EngagePayload,
@@ -46,6 +54,7 @@ _PAYLOAD_MODELS: dict[
     # RECON/RESUPPLY 至今就是這樣。MISSION 的參數若不驗，壞掉的形狀會等到 Kernel tick
     # 之中的分解時才炸——而 `run_tick` 對子系統例外沒有任何防護。
     OrderType.MISSION: MissionPayload,
+    OrderType.FORMATION: FormationPayload,
 }
 
 
@@ -59,6 +68,7 @@ class ValidatedOrder:
         | FireMissionPayload
         | PosturePayload
         | MissionPayload
+        | FormationPayload
         | dict[str, object]
     )
 
@@ -145,6 +155,7 @@ def _parse_payload(
     | FireMissionPayload
     | PosturePayload
     | MissionPayload
+    | FormationPayload
     | dict[str, object]
 ):
     model = _PAYLOAD_MODELS.get(req.order_type)

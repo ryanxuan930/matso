@@ -26,8 +26,14 @@ from app.adjudication.adjudicator import EngageCommand
 from app.adjudication.combined import CombinedWeapon
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
+from app.adjudication.formation import (
+    direct_fire_target_modifier,
+    formation_of,
+    shooter_frontage_modifier,
+)
 from app.adjudication.suppression import Posture, fire_modifier, posture_modifier
 from app.adjudication.weapon import WeaponProfile
+from app.engine.formation_wiring import FORMATION_KEY, MOUNTED_KEY
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.state.hot_state import HotStateStore
 from app.terrain import engagement_cover_modifier
@@ -377,6 +383,13 @@ def make_engage_env(  # type: ignore[no-untyped-def]
             # WP-C1：射手被壓制 → 打不準；目標有工事 → 更難被打中。
             shooter_suppression_modifier=fire_modifier(_as_float(s.get("suppression"))),
             target_posture_modifier=posture_modifier(_posture_of(t)),
+            # WP-C3：目標乘車/隊形 → 好不好打；射手乘車/隊形 → 打得出多少火力。
+            target_exposure_modifier=direct_fire_target_modifier(
+                formation_of(t.get(FORMATION_KEY)), bool(t.get(MOUNTED_KEY))
+            ),
+            shooter_frontage_modifier=shooter_frontage_modifier(
+                formation_of(s.get(FORMATION_KEY)), bool(s.get(MOUNTED_KEY))
+            ),
         )
 
     return env_for

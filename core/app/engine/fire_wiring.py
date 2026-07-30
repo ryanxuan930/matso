@@ -32,6 +32,7 @@ from app.adjudication.weapon import INDIRECT_CATEGORIES
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.engage_wiring import WeaponEntry
+from app.engine.formation_wiring import FORMATION_KEY
 from app.engine.rng import DeterministicRNG
 from app.engine.suppression_wiring import POSTURE_KEY, apply_area_suppression
 from app.fires.survivability import MISSION_COUNT_KEY
@@ -390,6 +391,8 @@ class AreaFireAdjudicator:
                     platform_count=int(state.get("platform_count") or 1),
                     # WP-C1：**已就位**的姿態（缺鍵讀作 MOVING）。掘壕對砲擊的防護最有意義。
                     posture=str(state.get(POSTURE_KEY) or "MOVING"),
+                    # WP-C3：縱隊擠在一條線上，挨砲最慘。
+                    formation=str(state.get(FORMATION_KEY) or "COLUMN"),
                 )
             )
         # 穩定序：純函數逐目標算距離不抽樣，順序不影響數值，但影響事件內字典的鍵序（hash chain）。

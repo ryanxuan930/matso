@@ -40,7 +40,6 @@ from sqlalchemy.orm import Session
 
 from app.models import EquipmentTemplate, Exercise, ExercisePhase, ParameterSeal
 from app.movement.mobility_matrix import _MATRIX_PATH
-from app.sim_params import load_sim_params, to_config
 from app.state.ledger import canonical_json
 
 # 簽證生效中的階段。REVIEW 之後解鎖——演習已經結束，檢討期間再鎖著沒有意義。
@@ -54,6 +53,14 @@ def build_seal_payload(db: Session) -> dict[str, Any]:
     `docs/PARAMS.md` 的 P 層還有 25+ 個硬編模組常數沒有進 `SimParams`——
     它們改不了也就鎖不了，**明說這個界線**比宣稱「R+P 全鎖」誠實。
     """
+    # ⚠ **延遲 import 是為了斷開一個 import 環**：
+    # `app.sim_params` → `app.adjudication`（套件 __init__）→ `seed_equipment`
+    # → `app.governance`（本模組）→ `app.sim_params`（部分初始化）→ ImportError。
+    # 環是 WP-B4 把簽證閘門接進 `seed_equipment` 時形成的；在跑起來的 app 裡因為
+    # 進入點的 import 順序而不會踩到，但**直接 `import app.sim_params` 就會炸**。
+    # 移進函式即可——這裡真正需要它的時機是執行期而非 import 期。
+    from app.sim_params import load_sim_params, to_config
+
     templates = db.execute(select(EquipmentTemplate).order_by(EquipmentTemplate.id)).scalars().all()
     try:
         mobility = _MATRIX_PATH.read_text(encoding="utf-8")

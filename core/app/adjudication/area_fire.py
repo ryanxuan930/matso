@@ -17,6 +17,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.adjudication.formation import area_exposure_modifier, formation_of
 from app.adjudication.suppression import Posture, posture_modifier
 from app.adjudication.weapon import WeaponProfile
 from app.engine.rng import DeterministicRNG
@@ -45,6 +46,9 @@ class AreaTarget:
     # WP-C1 姿態。**掘壕對砲擊的防護最有意義**——不接這條的話，構工只擋得住直射火力，
     # 那把「為什麼要挖散兵坑」整個弄反了。中性預設 MOVING ⇒ 修正 1.0，既有局位元不變。
     posture: str = "MOVING"
+    # WP-C3 隊形。**縱隊擠在一條線上，挨砲最慘**（[JCATS-A p.7,26]）。
+    # COLUMN（中性預設）⇒ 倍率 1.0。
+    formation: str = "COLUMN"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +112,12 @@ def _loss_for(weapon: WeaponProfile, target: AreaTarget, distance_m: float) -> f
         pk = weapon.damage_by_armor_class.get(target.armor_class, 0.0) / 100.0
     auth = target.authorized_strength
     cp_per_platform = (auth / max(1, target.platform_count)) if auth else 1.0
-    return max(0.0, pk * falloff * cp_per_platform * _cover(target))
+    return max(0.0, pk * falloff * cp_per_platform * _cover(target) * _exposure(target))
+
+
+def _exposure(target: AreaTarget) -> float:
+    """隊形 → 面殺傷的暴露倍率（WP-C3）。**大於 1 代表更慘**（縱隊）。"""
+    return area_exposure_modifier(formation_of(target.formation))
 
 
 def _cover(target: AreaTarget) -> float:

@@ -1994,9 +1994,14 @@ export interface components {
             created_at: string;
         };
         /** @enum {string} */
-        OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE" | "FIRE_MISSION" | "MISSION";
+        OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE" | "FIRE_MISSION" | "MISSION" | "FORMATION";
         /** @enum {string} */
         OrderStatus: "PENDING" | "VALIDATED" | "EXECUTING" | "COMPLETED" | "REJECTED" | "CANCELLED";
+        /**
+         * @description 隊形（WP-C3，[JCATS-A p.7,26]）。三個係數：行軍速度、面殺傷暴露、火力正面。 **COLUMN 是中性預設**（三個係數皆 1.0）——它是「沒有特別展開」而不是「最好的隊形」； 把 LINE 當中性值會讓既有局憑空獲得火力加成。
+         * @enum {string}
+         */
+        Formation: "COLUMN" | "LINE" | "WEDGE" | "VEE" | "HERRINGBONE";
         /**
          * @description 任務型（WP-A2，[IST160 p.4–5]）。**下的是任務，不是動作**—— 展開成低階令（MOVE/ENGAGE/…）的是確定性的符號層分解器，不是 LLM。 LLM 只負責選任務型與參數，那正是 Neuro-Symbolic 的分工。
          * @enum {string}
@@ -2018,7 +2023,7 @@ export interface components {
         OrderRequest: {
             unit_id: string;
             order_type: components["schemas"]["OrderType"];
-            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。MISSION={mission_type,params}＝任務級下令（WP-A2）：由確定性分解器展開成低階令，見 MissionPayload。 */
+            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。MISSION={mission_type,params}＝任務級下令（WP-A2）：由確定性分解器展開成低階令，見 MissionPayload。FORMATION={formation?,mounted?}＝乘駐車與隊形（WP-C3）：兩者至少指定一項，未指定的欄位維持原狀（只想下車的令不該把隊形一起重設）。 */
             payload?: {
                 [key: string]: unknown;
             };

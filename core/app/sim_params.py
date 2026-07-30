@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.adjudication import formation as _formation
 from app.adjudication import suppression as _sup
 from app.movement import params as _mp
 
@@ -79,6 +80,11 @@ class SimParams:
     suppression_decay: float = _sup.SUPPRESSION_DECAY
     suppression_fire_penalty: float = _sup.SUPPRESSION_FIRE_PENALTY
     suppression_move_penalty: float = _sup.SUPPRESSION_MOVE_PENALTY
+    # --- 乘駐車與隊形（WP-C3）---
+    # 載具毀損 → 乘員傷亡折算（[JTLS-F p.1058]）。車被打掉時車上的人不是全滅也不是沒事。
+    crew_casualty_fraction: float = _formation.CREW_CASUALTY_FRACTION
+    # 下車的受彈面（乘車＝1.0 為基準）。
+    dismounted_exposure: float = _formation.DISMOUNTED_EXPOSURE
     # --- 崩潰復原（WP-E1）---
     # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），
     # 而牆鐘會隨 TickPacer 的過載降頻漂移。600 tick ≈ 5 分鐘牆鐘（@ 預設 0.5s/tick）。

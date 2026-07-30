@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.enums import OrderStatus
 
@@ -25,6 +25,10 @@ class OrderType(enum.StrEnum):
     # 任務級下令（WP-A2）：下的是任務，展開成低階令的是確定性的符號層分解器。
     # 與 FIRE_MISSION 只是名字相近，兩者無關。
     MISSION = "MISSION"
+    # 乘駐車與隊形（WP-C3）。規格寫「MOUNT/DISMOUNT 令」，實作收成**一個令型**：
+    # 三個令型會讓席位表、payload 表、預檢分派、前端下拉各多兩個分支，
+    # 而它們表達的是同一件事——宣告本單位要以什麼狀態行動（與 POSTURE 同類）。
+    FORMATION = "FORMATION"
 
 
 class OrderRequest(BaseModel):
@@ -82,6 +86,23 @@ class PosturePayload(BaseModel):
     """
 
     posture: str = Field(pattern="^(MOVING|HASTY|DEFENSE|DUG_IN)$")
+
+
+class FormationPayload(BaseModel):
+    """FORMATION 指令載荷（WP-C3）：宣告隊形與/或乘駐車狀態。
+
+    **兩者皆可省**，但不能都省——至少要宣告一件事。
+    只想下車的令不該把隊形一起重設，故 None 代表「不動該欄」。
+    """
+
+    formation: str | None = Field(default=None, pattern="^(COLUMN|LINE|WEDGE|VEE|HERRINGBONE)$")
+    mounted: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> FormationPayload:
+        if self.formation is None and self.mounted is None:
+            raise ValueError("formation 與 mounted 至少要指定一項")
+        return self
 
 
 class PrecheckCheck(BaseModel):

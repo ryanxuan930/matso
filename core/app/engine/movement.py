@@ -22,9 +22,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.adjudication.effectiveness import effectiveness_pct
+from app.adjudication.formation import formation_of, march_speed_modifier
 from app.adjudication.suppression import move_modifier
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
+from app.engine.formation_wiring import FORMATION_KEY
 from app.engine.rng import DeterministicRNG
 from app.engine.suppression_wiring import SUPPRESSION_KEY, interrupt_posture
 from app.models import MapFeature, Order, OrderStatus, TacticalUnit
@@ -292,6 +294,9 @@ class UnitMovementSystem:
         raw_sup = hot_state.get(SUPPRESSION_KEY)
         if isinstance(raw_sup, (int, float)) and raw_sup > 0:
             step_km *= move_modifier(float(raw_sup))
+        # WP-C3：隊形的行軍速度倍率。縱隊最快、魚骨（停下來的警戒隊形）幾乎不動。
+        # COLUMN（中性預設）＝1.0，既有局位元不變。
+        step_km *= march_speed_modifier(formation_of(hot_state.get(FORMATION_KEY)))
         interrupt_posture(self._hot_state, unit.id, now.tick)
         tgt_lng, tgt_lat = targets[leg]
         cur_lat, cur_lng = float(unit.current_lat or 0.0), float(unit.current_lng or 0.0)

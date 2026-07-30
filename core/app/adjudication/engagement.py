@@ -66,6 +66,10 @@ class EnvSnapshot:
     weather_modifier: float = 1.0
     shooter_suppression_modifier: float = 1.0
     target_posture_modifier: float = 1.0
+    # WP-C3 乘駐車與隊形。**與姿態分成兩欄**：姿態是「有沒有挖掩體」，
+    # 隊形/乘駐車是「怎麼擺開、在不在車上」——兩者可以同時成立，混成一欄就分不清。
+    target_exposure_modifier: float = 1.0  # 目標被直射命中的暴露（乘車大、下車小）
+    shooter_frontage_modifier: float = 1.0  # 射手可發揚的火力正面（乘車時打不出全額）
     # 彈道飛彈拋物線是否淨空（地形/障礙未阻隔）；由 wiring 查 terrain + 障礙得出（#飛彈）。
     # 僅不可變軌飛彈（weapon.ballistic）會檢查此欄；其餘武器忽略。
     trajectory_clear: bool = True
@@ -113,12 +117,20 @@ def resolve_engagement(
         "suppression": env.shooter_suppression_modifier,
         "target_posture": env.target_posture_modifier,
     }
+    # WP-C3：**只在非中性時才進 coefficients**（同 aggregate 的紀律）——
+    # 無條件加兩個 1.0 會改掉既有局每一則 ENGAGEMENT_RESOLVED 的序列化內容與 ledger 雜湊鏈。
+    if env.target_exposure_modifier != 1.0:
+        coefficients["target_exposure"] = env.target_exposure_modifier
+    if env.shooter_frontage_modifier != 1.0:
+        coefficients["shooter_frontage"] = env.shooter_frontage_modifier
     p_hit = _clamp01(
         base
         * env.terrain_cover_modifier
         * env.weather_modifier
         * env.shooter_suppression_modifier
         * env.target_posture_modifier
+        * env.target_exposure_modifier
+        * env.shooter_frontage_modifier
     )
 
     # squad 齊射（#30）：quantity>1 且目標有 strength 三欄 → 走「全員射擊」火力容量路徑。
