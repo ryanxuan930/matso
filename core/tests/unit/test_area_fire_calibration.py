@@ -17,6 +17,16 @@
 落在「壓制」（10–30% 傷亡）的中段。傷亡與 `pk` 是**嚴格線性**的，
 要改錨點只需等比例調整 `seed_weapons.py` 的 `pk_by_armor_class`。
 
+⚠⚠ **這個錨點指的是「有前觀校射」的射擊**（`dispersion_mult=1.0`）。
+準則上的火力效能數字本來就假設是修正過的射擊。**沒有前觀時 WP-C10.4 會把散布加倍**
+（`NO_OBSERVER_DISPERSION_MULT=2.0`），同樣 18 發的期望傷亡掉到約 4.9%——
+少了三分之二。活系統實測（2026-07-30，無前觀）拿到 2.98%，與 4.86% 的期望值
+在單次抽樣的變異範圍內。
+
+**不知道這件事的人會這樣誤判**：在系統裡打一發無前觀的火力任務、看到 3%，
+然後以為校準壞了。下面的 `test_an_unobserved_mission_is_far_less_effective`
+就是把這個關係釘住，讓它變成規格而不是驚喜。
+
 這一檔把錨點寫成可執行的斷言：改了公式或係數而沒有一起改錨點，就會紅。
 """
 
@@ -102,3 +112,43 @@ def test_casualties_scale_linearly_with_round_count() -> None:
     a = _fire("COMPANY", rounds=9)
     b = _fire("COMPANY", rounds=18)
     assert b == pytest.approx(a * 2, rel=0.35), f"9 發 {a:.2f}% vs 18 發 {b:.2f}% 非線性"
+
+
+def test_an_unobserved_mission_is_far_less_effective() -> None:
+    """沒有前觀 → 散布加倍 → 傷亡大幅下降（WP-C10.4）。
+
+    這條把「校準錨點是**有前觀**的射擊」這件事寫成可執行的規格。
+    沒有它，任何人在系統裡打一發無前觀的火力任務、看到個位數傷亡，
+    都會合理地以為校準壞了——我自己在活系統實測時就先這樣誤判了一次。
+    """
+    weapon = WeaponProfile.from_base_stats(SEED_ARTILLERY["HOWITZER_155_SP"])
+    target = AreaTarget(
+        unit_id="T",
+        faction="RED",
+        lat=_AIM[0],
+        lng=_AIM[1],
+        armor_class="INFANTRY",
+        current_strength=_STRENGTH,
+        authorized_strength=_STRENGTH,
+        footprint_radius_m=footprint_for("COMPANY"),
+    )
+
+    def run(mult: float) -> float:
+        r = resolve_area_fire(
+            weapon,
+            _AIM,
+            [target],
+            DeterministicRNG(master_seed=11, stream_id="obs"),
+            tick=0,
+            shooter_id="GUN",
+            rounds=18,
+            dispersion_mult=mult,
+        )
+        return r.losses.get("T", 0.0)
+
+    observed = run(1.0)
+    unobserved = run(2.0)
+    assert unobserved < observed, "無前觀應該明顯較差"
+    # 散布加倍 → 期望傷亡約剩三分之一（14.8% → 4.9%）。放寬到 0.2–0.6 容納抽樣變異。
+    ratio = unobserved / observed
+    assert 0.2 <= ratio <= 0.6, f"無前觀/有前觀 = {ratio:.2f}，與散布加倍的預期不符"
