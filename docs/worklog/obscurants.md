@@ -46,7 +46,12 @@ broadcaster、`compute_state_hash`）都得學會忽略它——四處要改、�
 
 ## 測試證據
 
-- `uv run pytest -q` → **1844 passed, 8 skipped**；`core/tests/replay` → **8 passed（golden 未重錄）**
+- `uv run pytest -q -m "not benchmark"` → **1840 passed, 8 skipped, 4 deselected**（連跑三次全綠）；
+  `core/tests/replay` → **8 passed（golden 未重錄）**
+  ⚠ **`-m "not benchmark"` 才是本專案真正的閘門**（`.github/workflows/ci.yml:36`）。
+  裸 `uv run pytest -q` 會把 `test_check_los_p99_under_20ms` 這類**牆鐘延遲斷言**一起跑，
+  那條在機器有負載時（例如同時在 build container）本來就會紅——marker 的說明自己寫著
+  「共享 CI runner 不穩，故 CI 排除」。我先前幾張卡引用的數字都是含 benchmark 的版本。
 - ruff / mypy(258) / schema-sync / buf / 前端 lint+typecheck → clean（**無 DB migration**——煙重用 MapFeature）
 - 突變測試：M1 點到直線而非線段、M2 過期照樣擋、M3 發數不影響時長、M4 弄丟雙面性、
   M5b 座標非數值不略過 → **全部轉紅**。

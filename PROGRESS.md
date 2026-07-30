@@ -169,6 +169,14 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - **取消單一子令等於沒取消**（WP-A2）：去重鍵要求有「進行中的同款令」才算重複
   （`service.py:149-158`），所以被取消的子令下一個 tick 就會被分解器原樣重建。
   COP 若要對子令提供逐列取消，得先決定語義（隱藏該按鈕、或連帶暫停母任務）。
+- **驗收指令要帶 `-m "not benchmark"`**（`.github/workflows/ci.yml:36` 就是這樣跑的）。
+  裸 `uv run pytest -q` 會多跑 4 條**牆鐘延遲斷言**（`test_check_los_p99_under_20ms` 等），
+  機器有負載時（例如同時 `docker compose build`）本來就會紅——marker 的說明自己寫著
+  「絕對時間依硬體而定，共享 CI runner 不穩，故 CI 排除」。**那不是回歸**。
+  正確數字：`1840 passed, 8 skipped, 4 deselected`。
+- **`test_checkpoint_recovery::test_rollback_unknown_tick_raises` 偶發紅**（本 session 遇到兩次）：
+  單獨跑必綠、整包跑偶爾紅 → 是**跨測試的 Redis 殘留狀態**，不是邏輯錯。
+  修法是給該檔一個乾淨的 Redis namespace 或 per-test flush，尚未做。
 - **WP-C9 的三個未竟口**：①前端 COP 仍把盟軍濾出 ENGAGE 下拉、且拒絕點擊友軍為目標
   （`cop.vue`）——`allow_fratricide` 開了後端放行，**操作員還是點不到**；需要 affordance +
   確認對話框。②AI 結構上不可能誤傷（`worker.py` 在 LLM 看到敵情前就用 `is_hostile` 濾過，
