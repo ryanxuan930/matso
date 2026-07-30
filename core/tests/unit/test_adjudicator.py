@@ -444,3 +444,106 @@ async def test_missing_unit_completes_without_event(
         events = _adjudicator(db, hot).resolve(cmd, SimTime(0, 0))
         assert events == []
         assert db.get(Order, oid).status is OrderStatus.COMPLETED  # type: ignore[union-attr]
+
+
+# ── WP-B6 ROE：`roe.py` 說明寫「沒有繞過的路徑」，實際上有三條 ──────────────
+
+
+def _adjudicator_roe(
+    db: Session,
+    hot: InMemoryHotState,
+    forbidden: frozenset[str],
+    *,
+    category: str = "MISSILE",
+    name: str = "MLRS",
+) -> EngagementAdjudicator:
+    return EngagementAdjudicator(
+        db,
+        hot,
+        DeterministicRNG(1, "adjudication"),
+        lambda _cmd: _WEAPON,
+        lambda _s, _t, _indirect=False: EnvSnapshot(range_m=500.0, los_clear=True),
+        roe_for=lambda _uid: (None, forbidden),
+        weapon_category_for=lambda _cmd: category,
+        weapon_name_for=lambda _cmd: name,
+    )
+
+
+async def test_a_single_weapon_unit_obeys_the_scenario_roe(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """裁決層唯一的 ROE 套用點在 `_resolve_combined`，其進入條件是「持 ≥2 武器且未指名」。
+
+    於是**單武器單位的 ENGAGE 完全不過 ROE**：想定宣告禁用飛彈，它照打不誤。
+    """
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(world.blue_unit_id, {"ammo": 10})
+        hot.put_unit(world.red_unit_id, {"health": 100.0, "armor_class": "INFANTRY"})
+        events = _adjudicator_roe(db, hot, frozenset({"MISSILE"})).resolve(cmd, SimTime(0, 0))
+
+    assert events[0].ai_decision["reason"] == "ROE"  # type: ignore[index]
+    assert hot.get_unit(world.red_unit_id)["health"] == 100.0
+    assert hot.get_unit(world.blue_unit_id)["ammo"] == 10  # 沒發射就不耗彈
+
+
+async def test_roe_can_ban_a_specific_template_not_just_a_category(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """想定寫得出 `forbid_templates: [T-90]`——比對範本名這條路過去在裁決層不存在。"""
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(world.blue_unit_id, {"ammo": 10})
+        hot.put_unit(world.red_unit_id, {"health": 100.0, "armor_class": "INFANTRY"})
+        events = _adjudicator_roe(db, hot, frozenset({"MLRS"})).resolve(cmd, SimTime(0, 0))
+
+    assert events[0].ai_decision["reason"] == "ROE"  # type: ignore[index]
+
+
+async def test_an_allowed_weapon_still_fires(session_factory: sessionmaker[Session]) -> None:
+    """守門不可過寬：沒被禁的武器照常交戰（否則這條修正會把整局的火力鎖死）。"""
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(world.blue_unit_id, {"ammo": 10})
+        hot.put_unit(world.red_unit_id, {"health": 100.0, "armor_class": "INFANTRY"})
+        events = _adjudicator_roe(db, hot, frozenset({"LASER"})).resolve(cmd, SimTime(0, 0))
+
+    assert events[0].ai_decision.get("reason") != "ROE"  # type: ignore[union-attr]
+
+
+async def test_a_battalion_obeys_the_scenario_roe(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """`_resolve_aggregate` 從不碰 `self._roe_for`——禁用 MLRS 的想定裡，一個旅照樣拿它打。"""
+    from app.models.enums import UnitLevel
+    from app.models.tables import TacticalUnit
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        blue = db.get(TacticalUnit, world.blue_unit_id)
+        assert blue is not None
+        blue.unit_level = UnitLevel.BATTALION
+        db.commit()
+        _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(
+            world.blue_unit_id, {"ammo": 999, "strength": 100.0, "authorized_strength": 100.0}
+        )
+        hot.put_unit(
+            world.red_unit_id,
+            {"strength": 100.0, "authorized_strength": 100.0, "armor_class": "INFANTRY"},
+        )
+        events = _adjudicator_roe(db, hot, frozenset({"MISSILE"})).resolve(cmd, SimTime(0, 0))
+
+    assert events[0].ai_decision["reason"] == "ROE"  # type: ignore[index]
+    assert hot.get_unit(world.red_unit_id)["strength"] == 100.0

@@ -311,6 +311,18 @@ def _weapon_category(resolver: WeaponResolver, cmd: Any) -> str:
     return entries[0].category
 
 
+def _weapon_name(resolver: WeaponResolver, cmd: Any) -> str:
+    """射手這次用的武器範本名（WP-B6 ROE 可依範本名禁用）。挑法與 `_weapon_category` 同。"""
+    entries = resolver.weapons_for(cmd.shooter_id)
+    if not entries:
+        return ""
+    if cmd.weapon_template_id:
+        named = [e for e in entries if e.weapon_id == cmd.weapon_template_id]
+        if named:
+            return named[0].template_name
+    return entries[0].template_name
+
+
 def _set_pause(client: Any, session_id: str) -> None:
     """MSEL 的 PAUSE 注入與白軍控制台共用同一個暫停旗標——兩套暫停就是兩套會打架的狀態。"""
     client.set(session_pause_key(session_id), "1")
@@ -620,6 +632,8 @@ class SimManager:
                             # WP-C1：命中即累積壓制。武器類別決定累積量（砲兵高、直射低）。
                             suppress=lambda uid, cat: _suppress_hit(hot, uid, cat),
                             weapon_category_for=lambda cmd: _weapon_category(resolver, cmd),
+                            # ROE 的禁用清單可以寫範本名（如「MLRS」），不只裝備類別。
+                            weapon_name_for=lambda cmd: _weapon_name(resolver, cmd),
                             # 聚合裁決門檻由想定宣告（此級以上走 Lanchester）。
                             # 過去這個值載得進 LoadedScenario 卻沒有持久化，
                             # `should_aggregate()` 一律吃自己的預設 BATTALION。
@@ -641,6 +655,9 @@ class SimManager:
                             # WP-C9：友軍傷亡的判準（含盟軍），不是字串相等。
                             relations=relations,
                             session_id=session_id,  # WP-C4c 發煙任務要把煙落庫
+                            # WP-B6 ROE：**本檔過去一條 ROE 都不過**——想定禁用集束彈，
+                            # 面射擊照打不誤。
+                            roe_for=_make_roe_lookup(roe, sensor_resolver.faction_for),
                         ),
                     }
                 ),

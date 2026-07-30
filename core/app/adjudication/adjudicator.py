@@ -168,6 +168,7 @@ class EngagementAdjudicator:
         roe_for: RoeLookup | None = None,
         suppress: Callable[[str, str], None] | None = None,
         weapon_category_for: Callable[[EngageCommand], str] | None = None,
+        weapon_name_for: Callable[[EngageCommand], str] | None = None,
         aggregate_level: UnitLevel | None = None,
     ) -> None:
         self._db = db
@@ -186,6 +187,8 @@ class EngagementAdjudicator:
         # WP-C1 壓制累積（None → 不累積，既有呼叫端零行為變更）。
         self._suppress = suppress
         self._weapon_category_for = weapon_category_for
+        # WP-B6 ROE 的禁用清單可以寫**範本名**（不只類別）。None → 只比類別。
+        self._weapon_name_for = weapon_name_for
         # 聚合裁決門檻（此級以上走 Lanchester）。**None＝BATTALION**——
         # 這個參數過去根本不存在，`should_aggregate()` 一律吃自己的預設，
         # 於是想定裡的 `aggregate_adjudication_level` 寫了也沒有作用。
@@ -215,6 +218,11 @@ class EngagementAdjudicator:
             cweapons = self._combined_weapons_for(order.shooter_id)
             if len(cweapons) >= 2:
                 return self._resolve_combined(order, cweapons, shooter_state, target_state, now)
+
+        # WP-B6 ROE：單武器單位走這條路，過去完全不過 ROE（唯一套用點在 combined）。
+        blocked = self._roe_blocked(order)
+        if blocked is not None:
+            return [self._roe_reject(order, blocked, "SINGLE", now)]
 
         # #30 射手建制數量 + 效能：quantity>1 → 齊射（全員射擊）；effectiveness 由射手戰力比導出。
         quantity = self._quantity_for(order) if self._quantity_for is not None else 1
@@ -270,6 +278,12 @@ class EngagementAdjudicator:
         """
         # 合法性（射程/LOS/彈道 **與彈藥**）。過去這裡塞的是 `ammo_count=1` 的探子，
         # 於是 `resolve_engagement` 的 NO_AMMO 檢查對聚合路徑形同虛設。
+        # WP-B6 ROE：聚合路徑過去也完全不過 ROE——禁用 MLRS 的想定裡，
+        # 一個旅照樣拿它打（`_resolve_aggregate` 從不碰 `self._roe_for`）。
+        blocked = self._roe_blocked(order)
+        if blocked is not None:
+            return [self._roe_reject(order, blocked, "AGGREGATE", now)]
+
         ammo = int(shooter_state.get("ammo", 0) or 0)  # type: ignore[call-overload]
         reason = _legality_reason(weapon, Shooter(order.shooter_id, ammo_count=ammo), env)
         if reason is not None:
@@ -403,6 +417,51 @@ class EngagementAdjudicator:
         self._hot.update_unit(unit.id, {"strength": strength_after, "health": health})
         unit.current_strength = strength_after
         unit.health_status = health
+
+    def _roe_blocked(self, order: EngageCommand) -> str | None:
+        """這道令要用的武器是否被想定 ROE 禁用；回禁用理由或 None。
+
+        ## 為什麼要有這個
+
+        `roe.py` 的模組說明寫著「人類令與 AI 令都走這裡，因此**沒有繞過的路徑**」——
+        但裁決層唯一套用點在 `_resolve_combined`，而那條路徑的進入條件是
+        「持 ≥2 武器系統**且**未指名武器」。於是：
+        - 單武器單位的 ENGAGE 完全不過 ROE
+        - 營級以上的聚合交戰完全不過 ROE
+
+        想定宣告「本局禁用 MLRS」，統裁以為鎖住了，這兩種部隊照打不誤。
+        比對規則與 `combined.py` 一致：**裝備類別或範本名**命中即禁。
+        """
+        if self._roe_for is None:
+            return None
+        _policy, forbidden = self._roe_for(order.shooter_id)
+        if not forbidden:
+            return None
+        category = self._weapon_category(order)
+        name = self._weapon_name_for(order) if self._weapon_name_for is not None else ""
+        if category in forbidden:
+            return category
+        if name and name in forbidden:
+            return name
+        return None
+
+    def _roe_reject(self, order: EngageCommand, item: str, mode: str, now: SimTime) -> LedgerEvent:
+        self._complete(order.order_id, now.tick)
+        return LedgerEvent(
+            event_type="ENGAGEMENT_RESOLVED",
+            tick=now.tick,
+            initiator_id=order.shooter_id,
+            target_id=order.target_id,
+            damage_calc=0.0,
+            # reason 標 `ROE` 而不是 REJECTED——AAR 要分得出「規則上不准打」與
+            # 「打不到」（同 `combined.py` 對 HELD/ROE 的處理）。
+            ai_decision={
+                "status": "REJECTED",
+                "reason": "ROE",
+                "reason_detail": f"想定 ROE 禁用：{item}",
+                "mode": mode,
+            },
+        )
 
     def _weapon_category(self, order: EngageCommand) -> str:
         """射手用的武器類別——決定壓制累積量（砲兵高、直射低）。查不到 → KINETIC。"""

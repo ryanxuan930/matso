@@ -201,6 +201,7 @@ class AreaFireAdjudicator:
         bda_rng: DeterministicRNG | None = None,
         relations: FactionRelations | None = None,
         session_id: str = "",
+        roe_for: Callable[[str], tuple[str | None, frozenset[str]]] | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -218,6 +219,22 @@ class AreaFireAdjudicator:
         # WP-C9：判「誰是友軍」的唯一判準。None → 退回字串相等（既有行為不變），
         # 但那對聯軍是錯的——盟軍傷亡會被算成正常戰果。正式路徑一定要注入。
         self._relations = relations
+        # WP-B6 ROE。**本檔過去一個 roe/forbidden/fire_policy 都沒有**——
+        # 想定宣告「禁用集束彈」，面射擊照打不誤，而 ROE 模組說明寫著「沒有繞過的路徑」。
+        # None → 不設限（既有行為不變）。
+        self._roe_for = roe_for
+
+    def _roe_banned(self, order: FireMissionCommand, entry: WeaponEntry) -> str | None:
+        """這次火力任務用的砲/彈是否被想定 ROE 禁用；回被禁的那一項或 None。"""
+        if self._roe_for is None:
+            return None
+        _policy, forbidden = self._roe_for(order.shooter_id)
+        if not forbidden:
+            return None
+        for item in (entry.category, entry.template_name, (order.ammo_type or "").upper()):
+            if item and item in forbidden:
+                return item
+        return None
 
     def resolve(self, order: FireMissionCommand, now: SimTime) -> list[LedgerEvent]:
         shooter = self._hot.get_unit(order.shooter_id)
@@ -237,6 +254,12 @@ class AreaFireAdjudicator:
         entry = self._pick_weapon(order)
         if entry is None:
             return self._reject(order, now, "NO_INDIRECT_WEAPON", "此單位無可用的曲射武器")
+
+        # WP-B6 ROE：**在扣彈之前判**。比對規則與 `combined.py` 一致（類別或範本名），
+        # 另外也擋彈種——「禁用集束彈」禁的是彈藥不是砲。
+        banned = self._roe_banned(order, entry)
+        if banned is not None:
+            return self._reject(order, now, "ROE", f"想定 ROE 禁用：{banned}")
 
         aim = (order.target_lat, order.target_lng)
         reason = self._legality(order, entry, shooter, aim, now)

@@ -364,3 +364,43 @@ def test_dispatching_adjudicator_routes_by_command_type() -> None:
     assert [e.event_type for e in out] == ["F"]
     assert engage.seen == 0
     assert dispatcher.resolve(object(), _NOW) == []  # 未登錄型別不炸鍋
+
+
+# ---- WP-B6 ROE：本檔過去一個 roe/forbidden 都沒有 ----
+
+
+def _fire_with_roe(forbidden: frozenset[str]) -> tuple[list[LedgerEvent], float]:
+    """在 ROE 底下打一次面射擊。回 (events, 目標剩餘戰力)。"""
+    with _factory()() as db:
+        world = World(db)
+        _order(db, world, {"target_lat": _AIM_LAT, "target_lng": _AIM_LNG, "rounds": 3})
+        hot = InMemoryHotState()
+        resolver = WeaponResolver(db, world.session_id)
+        seed_combat_state(db, hot, world.session_id, resolver)
+        adj = AreaFireAdjudicator(
+            db,
+            hot,
+            DeterministicRNG(master_seed=7, stream_id="area_fire"),
+            resolver.weapons_for,
+            faction_for=lambda uid: world.factions.get(uid, ""),
+            roe_for=lambda _uid: (None, forbidden),
+        )
+        cmds = asyncio.run(FireMissionOrderSource(db, world.session_id).drain())
+        events = adj.resolve(cmds[0], _NOW)
+        return events, _strength(db, world.red_id)
+
+
+def test_a_forbidden_gun_may_not_fire_a_mission() -> None:
+    """想定宣告「禁用火砲」，面射擊過去照打不誤——`fire_wiring` 全檔沒有任何 ROE。"""
+    events, red_strength = _fire_with_roe(frozenset({"ARTILLERY"}))
+
+    assert events and events[0].ai_decision["reason"] == "ROE"  # type: ignore[index]
+    assert red_strength == 100.0
+
+
+def test_an_unrestricted_mission_still_fires() -> None:
+    """守門不可過寬：沒被禁就照打（否則這條修正會把砲兵整個鎖死）。"""
+    events, red_strength = _fire_with_roe(frozenset({"LASER"}))
+
+    assert events and events[0].event_type == "AREA_FIRE_RESOLVED"
+    assert red_strength < 100.0

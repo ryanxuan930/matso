@@ -3,14 +3,23 @@
 與 `orders/no_strike.py` 同一套結構紀律：**純函數的解析層**（`parse_roe`，無 DB、無 I/O，
 可被裁決層與測試直接用）＋**一個讀 DB 的載入層**（`load_session_roe`）。
 
-## 生效點（只有兩個，且兩個都真的會擋）
+## 生效點
 
-1. **裁決層（權威）**：`adjudication/combined.resolve_combined_engagement` 逐武器篩選時，
+裁決層是權威，而**裁決層有四條各自獨立的路徑**——這裡曾經只接了其中一條：
+
+1. **聯合兵種**（`adjudication/combined.resolve_combined_engagement`）：逐武器篩選，
    被禁的武器不發射、不耗彈、不抽 dispersion——與既有 `fire_policy` 的 HELD 同一條路徑。
-   人類令與 AI 令都走這裡，因此**沒有繞過的路徑**。
-2. **下令端（早退 + 留痕）**：`orders/precheck` 對「明確指名被禁武器」的 ENGAGE 令直接拒絕
-   （`ORDER_NO_STRIKE_ZONE` 之外的另一個 ROE 錯誤碼 `ORDER_ROE_VIOLATION`）。
-   只做「明確指名」這一種——沒指名武器的令交由裁決層篩，不在 submit 端猜。
+2. **單武器 ENGAGE**（`adjudicator._resolve` 的落回路徑）。
+3. **聚合交戰**（`adjudicator._resolve_aggregate`，營級以上）。
+4. **面射擊**（`engine/fire_wiring.AreaFireAdjudicator`）——這條另外還擋**彈種**
+   （「禁用集束彈」禁的是彈藥不是砲）。
+
+⚠ 這段說明曾經寫著「只有兩個生效點，因此**沒有繞過的路徑**」，而實際上
+1 的進入條件是「持 ≥2 武器系統**且**未指名武器」——於是 2/3/4 三條路徑完全不過 ROE：
+單武器單位、營級以上部隊、以及所有面射擊照打不誤。**新增裁決路徑時要回來接這裡。**
+
+下令端另有一道早退 + 留痕：`orders/precheck` 對「明確指名被禁武器」的 ENGAGE 令直接拒絕
+（`ORDER_ROE_VIOLATION`）。只做「明確指名」這一種——沒指名武器的令交由裁決層篩。
 
 **刻意不做的第三個生效點**：護欄 G4。AI 的 ENGAGE 令幾乎不帶 `weapon_id`（decider 的
 輸出指引只提 `fire_policy`），而裁決層已完整覆蓋 AI 路徑；為此在零 DB 的護欄層注入一個
