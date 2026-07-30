@@ -20,6 +20,7 @@ from app.errors import (
 )
 from app.models.enums import UserRole
 from app.models.tables import SessionParticipant, TacticalUnit, WargameSession
+from app.orders.mission import MissionPayload
 from app.orders.schemas import (
     EngagePayload,
     FireMissionPayload,
@@ -34,12 +35,17 @@ from app.seats import SEAT_LABELS, seat_may_order
 _OVERRIDE_ROLES = frozenset({UserRole.WHITE_CELL_STAFF, UserRole.EXERCISE_DIRECTOR})
 
 _PAYLOAD_MODELS: dict[
-    OrderType, type[MovePayload | EngagePayload | FireMissionPayload | PosturePayload]
+    OrderType,
+    type[MovePayload | EngagePayload | FireMissionPayload | PosturePayload | MissionPayload],
 ] = {
     OrderType.MOVE: MovePayload,
     OrderType.ENGAGE: EngagePayload,
     OrderType.POSTURE: PosturePayload,
     OrderType.FIRE_MISSION: FireMissionPayload,
+    # ⚠ 未登錄的令型會**靜靜略過 payload 驗證**（`_parse_payload` 讓它以裸 dict 通過）。
+    # RECON/RESUPPLY 至今就是這樣。MISSION 的參數若不驗，壞掉的形狀會等到 Kernel tick
+    # 之中的分解時才炸——而 `run_tick` 對子系統例外沒有任何防護。
+    OrderType.MISSION: MissionPayload,
 }
 
 
@@ -47,7 +53,14 @@ _PAYLOAD_MODELS: dict[
 class ValidatedOrder:
     unit: TacticalUnit
     order_type: OrderType
-    payload: MovePayload | EngagePayload | FireMissionPayload | PosturePayload | dict[str, object]
+    payload: (
+        MovePayload
+        | EngagePayload
+        | FireMissionPayload
+        | PosturePayload
+        | MissionPayload
+        | dict[str, object]
+    )
 
 
 def validate_order(
@@ -126,7 +139,14 @@ def _check_permission(
 
 def _parse_payload(
     req: OrderRequest,
-) -> MovePayload | EngagePayload | FireMissionPayload | PosturePayload | dict[str, object]:
+) -> (
+    MovePayload
+    | EngagePayload
+    | FireMissionPayload
+    | PosturePayload
+    | MissionPayload
+    | dict[str, object]
+):
     model = _PAYLOAD_MODELS.get(req.order_type)
     if model is None:
         return dict(req.payload)  # 其餘類型（RECON/RESUPPLY）O3.x 再細化

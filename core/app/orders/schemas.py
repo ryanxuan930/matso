@@ -22,6 +22,9 @@ class OrderType(enum.StrEnum):
     # 面目標射擊（WP-C10.2）：打座標而非打單位。ENGAGE 表達不了「攻擊準備射擊」
     # 這種「不管有沒有人在那裡都要打一片」的火力。
     FIRE_MISSION = "FIRE_MISSION"
+    # 任務級下令（WP-A2）：下的是任務，展開成低階令的是確定性的符號層分解器。
+    # 與 FIRE_MISSION 只是名字相近，兩者無關。
+    MISSION = "MISSION"
 
 
 class OrderRequest(BaseModel):

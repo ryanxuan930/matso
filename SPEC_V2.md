@@ -180,7 +180,21 @@ N 陣營關係矩陣與後端迷霧、契約先行工程紀律、每一步都有
 **陷阱**：contact 是「最後已知位置」——單位移走後 AI 會打空點，這是**正確行為**（迷霧的本義），
 不要「順手修好」；AAR 敘事可標記「基於過時情報的攻擊」供教學。
 
-#### WP-A2 任務級下令與準則分解器（Mission Orders + Doctrinal Decomposer）　★★★｜golden：重錄（新增令型）
+#### WP-A2 任務級下令與準則分解器（Mission Orders + Doctrinal Decomposer）　★★★｜golden：**不重錄，改為新增案例**（原本寫「重錄」，開工前查證後推翻）
+
+> ⚠ **修正原本的 golden 判斷**（2026-07-31，A2 開工前的偵察）。本節原本寫「golden：重錄（新增令型）」，
+> 但逐檔追下去**不成立**：`core/tests/replay/` 的四個案例都是**手搭的純記憶體 Kernel**
+> （`scenarios.py` 自建 order source 與 adjudicator），**不碰 `OrderType`、不碰 DB、不走 `sim_runtime`**。
+> 新增一個列舉成員、一個 `decomposer.py`、一個 `mission_runtime` 子系統，
+> 沒有任何一條路會改到那四個雜湊。
+>
+> 正確做法是 **WP-C1 用過的那一招：新增第五個 golden 案例**（`mission_seize_60`），
+> 讓 MISSION 分解有自己的漂移偵測，同時讓既有四個雜湊維持成未被污染的歷史基準。
+> **重錄會摧毀 golden 的唯一價值**——那四個雜湊之所以有用，正是因為它們沒有被人為重設過。
+>
+> 另記一個**看起來像 golden 壞掉、其實不是**的情況：若 `mission_runtime` 以**必填** kwarg 進
+> `Kernel.__init__`，四個案例會噴 `TypeError` 而不是雜湊不符。那要補 NoOp 預設，
+> **不是**去跑 `rerecord_golden.py`。動手前先讀斷言訊息。
 
 **動機**：[IST160 p.4–5] 的核心論證：成熟系統下的是「任務」（Attack(axis, objective, limit lines)），
 由準則庫展開成路徑/梯隊/交戰/脫離；一人可指揮整旅。MATSO 現在人與 LLM 都在微操三種低階令——

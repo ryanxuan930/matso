@@ -30,6 +30,12 @@ from app.models.tables import (
     TacticalUnit,
     WargameSession,
 )
+from app.movement.mobility import resolve_unit_mobility
+from app.orders.mission import (
+    DefendParams,
+    MissionPayload,
+    SeizeParams,
+)
 from app.orders.no_strike import ZoneClass, load_no_strike_cells
 from app.orders.roe import load_session_roe
 from app.orders.schemas import (
@@ -346,6 +352,8 @@ def run_precheck(
         checks.extend(_precheck_no_strike(db, validated.unit, payload, acknowledge_restricted))
         checks.extend(_precheck_roe_weapon(db, validated.unit, payload))
         checks.extend(_precheck_fire_approval(db, validated.unit, payload))
+    elif isinstance(payload, MissionPayload):
+        checks = _precheck_mission(db, validated.unit, payload, gateway)
     else:
         checks = []  # 其餘類型（RECON/RESUPPLY/POSTURE）之物理檢查於 O3.x
     feasible = all(c.passed for c in checks)
@@ -359,6 +367,49 @@ def precheck_error_code(result: PrecheckResult) -> str:
         if not check.passed:
             return _CHECK_ERROR_CODES.get(check.name, "ORDER_PRECHECK_FAILED")
     return "ORDER_PRECHECK_FAILED"
+
+
+def _precheck_mission(
+    db: Session, unit: TacticalUnit, payload: MissionPayload, gateway: PhysicsGateway
+) -> list[PrecheckCheck]:
+    """MISSION 令的可達性檢查（WP-A2）——**任務目標走得到嗎**。
+
+    ⚠ 沒有這個分支的話，`run_precheck` 會掉進最後的 `else: checks = []`，
+    而 `all([]) is True`——MISSION 令會**無條件通過預檢**。那是 fail-open，
+    而且不會有任何測試自然發現（它不報錯，只是靜靜放行）。
+
+    重用 `_precheck_move` 而非另寫一套：任務目標的可達性與移動目標的可達性是同一個問題，
+    兩份實作必然漂移。`objective` 的取法逐任務型不同，取不到就不擋
+    （SCREEN 的線、MOVE_MARCH 的航路點都有多個點，逐點檢查會讓一次下令打 N 次地形服務）。
+    """
+    objective = _mission_objective(payload)
+    if objective is None:
+        return [
+            PrecheckCheck(
+                name="mission_params",
+                passed=True,
+                detail="此任務型無單一目標點；可達性於分解時逐段檢查",
+            )
+        ]
+    lat, lng = objective
+    profile = resolve_unit_mobility(db, unit.id).profile
+    move = MovePayload(
+        to_h3=h3.latlng_to_cell(lat, lng, _HEX_RES),
+        mobility_profile=profile,
+        to_lat=lat,
+        to_lng=lng,
+    )
+    return _precheck_move(unit, move, gateway)
+
+
+def _mission_objective(payload: MissionPayload) -> tuple[float, float] | None:
+    """任務的**主**目標點。SCREEN/MOVE_MARCH 是多點任務，回 None。"""
+    params = payload.typed_params()
+    if isinstance(params, SeizeParams):
+        return params.objective.lat, params.objective.lng
+    if isinstance(params, DefendParams):
+        return params.area.lat, params.area.lng
+    return None
 
 
 def _precheck_move(

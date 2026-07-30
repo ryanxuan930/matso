@@ -1994,13 +1994,31 @@ export interface components {
             created_at: string;
         };
         /** @enum {string} */
-        OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE" | "FIRE_MISSION";
+        OrderType: "MOVE" | "ENGAGE" | "RECON" | "RESUPPLY" | "POSTURE" | "FIRE_MISSION" | "MISSION";
         /** @enum {string} */
         OrderStatus: "PENDING" | "VALIDATED" | "EXECUTING" | "COMPLETED" | "REJECTED" | "CANCELLED";
+        /**
+         * @description 任務型（WP-A2，[IST160 p.4–5]）。**下的是任務，不是動作**—— 展開成低階令（MOVE/ENGAGE/…）的是確定性的符號層分解器，不是 LLM。 LLM 只負責選任務型與參數，那正是 Neuro-Symbolic 的分工。
+         * @enum {string}
+         */
+        MissionType: "SEIZE" | "DEFEND" | "SCREEN" | "MOVE_MARCH";
+        /**
+         * @description 任務階段（WP-A2）。**一套階段涵蓋四種任務型**——各任務型只是走過其中不同的子集。 另立四套階段機會讓 AAR 的任務時間軸沒有共同語彙。
+         * @enum {string}
+         */
+        MissionPhase: "PLANNED" | "MOVING" | "ENGAGING" | "CONSOLIDATING" | "HOLDING" | "COMPLETE" | "FAILED";
+        /** @description MISSION 令載荷。`params` 的形狀依 `mission_type` 而異—— 逐型的必要欄位由後端 `orders/mission.py` 的 typed model 驗證， 不合法的參數在 submit 就被擋下（不是等到分解時才失敗）。 */
+        MissionPayload: {
+            mission_type: components["schemas"]["MissionType"];
+            /** @description SEIZE={objective:{lat,lng}, axis?:[{lat,lng}], objective_radius_m?}； DEFEND={area:{lat,lng,radius_m}, orientation_deg?}； SCREEN={line:[{lat,lng}]}； MOVE_MARCH={route:[{lat,lng}], spacing_km?}。 */
+            params: {
+                [key: string]: unknown;
+            };
+        };
         OrderRequest: {
             unit_id: string;
             order_type: components["schemas"]["OrderType"];
-            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。 */
+            /** @description 依 order_type 而異：MOVE={to_h3,mobility_profile,to_lat?,to_lng?}（to_lat/to_lng＝精確移動，跳過六角格心吸附）；ENGAGE={target_unit_id,weapon_id?,ammo_type?,fire_policy?}。指定 weapon_id＝僅該武器射擊；未指定＝以武器組合聯合兵種加總（SPEC_EXTEND），fire_policy 精修（見 FirePolicy）。FIRE_MISSION={target_lat,target_lng,rounds?,weapon_id?,fire_request_id?}＝面目標射擊（打座標而非打單位，WP-C10.2）：落彈依武器 CEP 散布，殺傷半徑內**敵我單位一律受影響**；本局要求火協時須附已核准的 FIRE_SUPPORT 申請單。MISSION={mission_type,params}＝任務級下令（WP-A2）：由確定性分解器展開成低階令，見 MissionPayload。 */
             payload?: {
                 [key: string]: unknown;
             };
@@ -2035,6 +2053,12 @@ export interface components {
             target_unit_id?: string | null;
             /** @description MOVE 目的地 hex */
             target_h3?: string | null;
+            /** @description 分解自哪一道 MISSION 令（WP-A2）。null＝直接下的令。 取消母令會連帶取消所有**尚未終結**的子令——已執行的不追溯（那是既成事實）。 */
+            parent_order_id?: string | null;
+            /** @description 僅 MISSION 令有值 */
+            mission_type?: components["schemas"]["MissionType"] | null;
+            /** @description 僅 MISSION 令有值；每 tick 由 `mission_runtime` 評估 */
+            mission_phase?: components["schemas"]["MissionPhase"] | null;
         };
     };
     responses: never;

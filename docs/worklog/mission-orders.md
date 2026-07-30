@@ -25,3 +25,68 @@ MATSO 現在**人與 LLM 都在微操三種低階令**——LLM 每個心跳要�
 4. COP 下令 UI + AAR 任務時間軸。
 
 ## 執行紀錄
+
+### 開工前的偵察推翻了規格的一個判斷
+
+規格寫「**golden：重錄（新增令型）**」。動手前派 5 個平行 agent 掃過去，其中一個逐檔追下來
+**推翻了它**：`core/tests/replay/` 的四個案例都是**手搭的純記憶體 Kernel**
+（`scenarios.py` 自建 order source 與 adjudicator），**不碰 `OrderType`、不碰 DB、不走 `sim_runtime`**。
+新增一個列舉成員、一個分解器、一個 mission 子系統，沒有任何一條路會改到那四個雜湊。
+
+→ 改採 **WP-C1 用過的那一招：新增第五個 golden 案例**。SPEC_V2 §6 WP-A2 已同步更正。
+**重錄會摧毀 golden 的唯一價值**——那四個雜湊有用，正是因為它們沒有被人為重設過。
+
+另記一個看起來像 golden 壞掉、其實不是的情況：若 `mission_runtime` 以**必填** kwarg 進
+`Kernel.__init__`（有 9 個建構點），四個案例會噴 `TypeError` 而不是雜湊不符。
+那要補 NoOp 預設，**不是**去跑 `rerecord_golden.py`。
+
+### 卡 1 完成（契約 + 分解器純函數 + 測試）
+
+| 檔案 | 動作 | 說明 |
+|---|---|---|
+| `contracts/core_api.yaml` | 改 | `OrderType` 加 MISSION；`MissionType`/`MissionPhase`/`MissionPayload`；`OrderResponse` 加 `parent_order_id`/`mission_type`/`mission_phase` |
+| `core/app/orders/mission.py` | 新增 | 載荷與階段（**純資料 + 純函數**）；逐任務型的 params typed model |
+| `core/app/orders/decomposer.py` | 新增 | `step(mission, state, unit, world_view, *, tick) -> MissionStep`（**純同步純函數**）|
+| `core/app/orders/validator.py` | 改 | `_PAYLOAD_MODELS[MISSION] = MissionPayload` |
+| `core/app/orders/precheck.py` | 改 | `_precheck_mission` 目標可達性（**重用** `_precheck_move`）|
+
+**測試**：`test_decomposer.py`（16）、`test_mission_payload.py`（14）。
+
+#### 兩個 fail-open 的洞（scout 找到，本卡一起補）
+
+1. **`run_precheck` 對未知 payload 型別掉進 `else: checks = []`，而 `all([]) is True`**——
+   MISSION 令會**無條件通過預檢**。那不會報錯，只是靜靜放行，沒有任何測試會自然發現。
+2. **`_PAYLOAD_MODELS` 沒登錄的令型會靜靜略過 payload 驗證**（`_parse_payload` 讓它以裸 dict
+   通過；RECON/RESUPPLY 至今就是這樣）。壞掉的 params 會等到 Kernel tick 之中的分解時才炸，
+   而 `run_tick` 對子系統的例外**沒有任何防護**——一個 raise 讓 runner 崩潰後被每 3 秒重建一次。
+
+#### 迷霧陷阱做成靜態約束
+
+SPEC_V2 對本卡點名的陷阱是「分解器讀的 world_view 必須走迷霧投影」。
+`decomposer.py` 的 import 白名單由**測試**釘住（`test_decomposer_imports_nothing_that_could_see_ground_truth`）：
+只准 `typing` 與自己的純資料模組，`app.models` / `app.state` / `sqlalchemy` 一律禁止。
+讓「有沒有偷看」變成**讀簽名就能回答**的問題，比事後稽核可靠。
+
+地形**不走 world_view**：地形是公開地理不是秘密，路徑規劃仍由 `PhysicsGateway` 在預檢處理。
+兩者一旦共用同一個參數，「這裡有沒有洩漏」就不再是讀簽名能回答的問題。
+
+#### 兩個刻意的行為（scout 的敵情分析改變了設計）
+
+1. **對 contact 下 ENGAGE 是對的，即使那個 contact 是鬼**。`IntelContact` 沒有存活性欄位
+   ——敵人死了或走了仍留在名單上。打一個已經不在那裡的目標**正是迷霧下該有的行為**；
+   為了「修掉」它去查 DB 核對，那就是陷阱本身。
+2. **階段推進只看己方單位狀態，不看「敵人清光了沒」**。理由同上：contact 不會消失，
+   以「無敵蹤」當佔領條件的話任務**永遠到不了 HOLDING**。有一條測試專門釘這件事。
+
+### 卡 2–4 未做（下一步）
+
+- 卡 2：`mission_runtime` 接進 Kernel（**沒有 pre-movement 槽位**，要新增 Protocol +
+  9 個 Kernel 建構點給 NoOp 預設）+ `parent_order_id` migration + 取消母令連帶取消子令
+  （`cancel` 現在只動一列，沒有任何 cascade）+ 新增第五個 golden。
+- 卡 3：LLM 詞彙表。⚠ **`contracts/ai_output.schema.json` 的 order_type enum 必須先加 MISSION**，
+  否則 G1 schema 驗證會擋掉整個決策（不只那一道令），OPFOR 重試兩次後 fallback 成零令。
+  且 `orders_bridge.tactical_order_to_request` 的 `else: return None` 會讓 G3 靜靜剔除 100% 的
+  MISSION 令——症狀看起來會像「LLM 不肯用任務令」。
+- 卡 4：COP 下令 UI + AAR 任務時間軸。
+- ⚠ **G4 護欄洞**：`_STRIKE_ORDER_TYPES = frozenset({"ENGAGE"})` 連 FIRE_MISSION 都沒包，
+  MISSION 更沒有。SPEC_V2 §WP-A3 已明列「ENGAGE/MISSION」。屬卡 2/3 範圍，先記在這裡。
