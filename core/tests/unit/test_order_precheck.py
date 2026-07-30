@@ -343,8 +343,14 @@ def test_terrain_down_propagates(session_factory: sessionmaker[Session]) -> None
         run_precheck(db, _validated_move(db, world.blue_unit_id), DownGateway())
 
 
-def test_non_physical_order_feasible_no_checks(session_factory: sessionmaker[Session]) -> None:
-    # RECON 等目前無物理檢查 → feasible=True、checks 空（O3.x 再補）
+def test_a_non_physical_order_passes_with_an_explicit_check(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """狀態宣告類的令（POSTURE/FORMATION/RESUPPLY）沒有物理前提，放行是對的。
+
+    但要**明白寫成一條通過的檢查**，不是靠 `all([]) is True` 的副作用：
+    空清單在 UI 上看起來像「預檢沒跑」，而放行與沒跑是兩件很不一樣的事。
+    """
     world = seed_world(session_factory)
     with session_factory() as db:
         unit = db.get(TacticalUnit, world.blue_unit_id)
@@ -352,7 +358,8 @@ def test_non_physical_order_feasible_no_checks(session_factory: sessionmaker[Ses
         validated = ValidatedOrder(unit=unit, order_type=OrderType.RECON, payload={"area": "n"})
         result = run_precheck(db, validated, FakeGateway())
     assert result.feasible
-    assert result.checks == []
+    assert [c.name for c in result.checks] == ["physics"]
+    assert result.checks[0].passed
 
 
 def test_engage_own_faction_rejected_by_roe(session_factory: sessionmaker[Session]) -> None:
