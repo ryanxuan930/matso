@@ -35,6 +35,9 @@ class SensorProfile:
     sensor_kind: str  # OPTICAL / IR / RADAR / ACOUSTIC / SIGINT
     max_range_m: float
     detect_curve: tuple[tuple[float, float], ...]  # (range_max_m, p_detect) 控制點
+    # WP-C4a：夜視能力。**掛在裝備上不是單位上**——掛單位的話一個連配一支夜視鏡就整連
+    # 免罰，而那正是夜戰最關鍵的差別（有沒有配發到人）。缺鍵→False（無夜視）。
+    night_capable: bool = False
 
     @classmethod
     def from_base_stats(cls, stats: dict[str, Any]) -> SensorProfile:
@@ -50,6 +53,7 @@ class SensorProfile:
             sensor_kind=str(stats["sensor_kind"]),
             max_range_m=float(stats["max_range_m"]),
             detect_curve=curve,
+            night_capable=bool(stats.get("night_capable", False)),
         )
 
     @property
@@ -78,6 +82,10 @@ class DetectionEnv:
     weather_modifier: float = 1.0
     target_signature_modifier: float = 1.0  # 尺寸/熱訊號/移動中→放大；隱形→縮小
     concealment_modifier: float = 1.0  # 隱蔽姿態→縮小
+    # WP-C4a 光照。**兩個分開**：`light_modifier` 是「我看多遠」（有夜視則 1.0），
+    # `concealment_modifier` 已存在且被光照乘進去＝「我多好被看到」（對雙方都成立）。
+    # 合成一個數字會讓「我方有夜視」同時變成「敵人比較容易看見我」。
+    light_modifier: float = 1.0
 
 
 def detect_probability(sensor: SensorProfile, range_m: float, env: DetectionEnv) -> float:
@@ -91,6 +99,7 @@ def detect_probability(sensor: SensorProfile, range_m: float, env: DetectionEnv)
         * env.weather_modifier
         * env.target_signature_modifier
         * env.concealment_modifier
+        * env.light_modifier
     )
     return min(1.0, max(0.0, p))
 

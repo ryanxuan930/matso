@@ -21,12 +21,14 @@ import h3
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from app.adjudication.daylight import move_speed_modifier as night_move_modifier
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.formation import formation_of, march_speed_modifier
 from app.adjudication.obstacles import MINE_STRIKE_STRENGTH_LOSS
 from app.adjudication.suppression import move_modifier
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
+from app.engine.daylight_wiring import LightClock
 from app.engine.formation_wiring import FORMATION_KEY
 from app.engine.obstacle_wiring import (
     apply_mine_suppression,
@@ -121,6 +123,7 @@ class UnitMovementSystem:
         path_fn: PathFn | None = None,
         sim_params: SimParams | None = None,
         mobility_rules: MobilityRules | None = None,
+        light: LightClock | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
@@ -141,6 +144,9 @@ class UnitMovementSystem:
         self._mobility = mobility_rules or default_rules()
         # #82 Phase C：地形 A* 路徑查詢（None＝不規劃，維持 Phase A/B 直線）。
         self._path_fn = path_fn
+        # WP-C4a 晝夜。**該局沒宣告日出日落就是 None**，逐 tick 那段整個跳過——
+        # 「一次都不算」比「算出來剛好是 1.0」更省，也更不會在改係數時意外動到既有局。
+        self._light = light if (light is not None and light.declared) else None
 
     async def step(self, now: SimTime) -> list[LedgerEvent]:
         # 同步 DB/H3 計算移到執行緒，避免阻塞 event loop（HOW_TO §3.1）。
@@ -313,6 +319,12 @@ class UnitMovementSystem:
         # WP-C3：隊形的行軍速度倍率。縱隊最快、魚骨（停下來的警戒隊形）幾乎不動。
         # COLUMN（中性預設）＝1.0，既有局位元不變。
         step_km *= march_speed_modifier(formation_of(hot_state.get(FORMATION_KEY)))
+        # WP-C4a：夜間行軍。**有夜視器材的單位不受罰**——那正是夜戰的關鍵差別。
+        # 無宣告日出日落 → `self._light` 為 None → 整段跳過（一次都不算，位元不變）。
+        if self._light is not None:
+            step_km *= night_move_modifier(
+                self._light.level_at(now), night_capable=self._unit_night_capable(unit)
+            )
         interrupt_posture(self._hot_state, unit.id, now.tick)
         tgt_lng, tgt_lat = targets[leg]
         cur_lat, cur_lng = float(unit.current_lat or 0.0), float(unit.current_lng or 0.0)
@@ -386,6 +398,16 @@ class UnitMovementSystem:
             initiator_id=o.unit_id,
             detail={"order_id": o.id, "lat": nlat, "lng": nlng},
         )
+
+    @staticmethod
+    def _unit_night_capable(unit: TacticalUnit) -> bool:
+        """單位有沒有夜視器材（`attributes.night_capable`）。缺鍵→False。
+
+        與感測器的 `night_capable` 分開：那個是「這具感測器看不看得見」，
+        這個是「這支部隊摸不摸得黑走路」。同一個連可以有夜視鏡卻沒有駕駛用夜視。
+        """
+        attrs = unit.attributes if isinstance(unit.attributes, dict) else {}
+        return bool(attrs.get("night_capable"))
 
     def _roll_mine(
         self,

@@ -66,6 +66,8 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
         out["survivability_move"] = dict(loaded.survivability_move)
     if loaded.allow_fratricide:
         out["allow_fratricide"] = True
+    if loaded.day_night:
+        out["day_night"] = dict(loaded.day_night)
 
     if files:
         out["files"] = files

@@ -91,6 +91,8 @@ class WargameSession(Base):
     # WP-C9：NULL＝未宣告＝維持既有「非敵對一律拒」。**不可設 NOT NULL + default**，
     # 那會回頭改掉每一個進行中的既有局的語義。
     allow_fratricide: Mapped[bool | None] = mapped_column("allowFratricide", Boolean)
+    # WP-C4a：NULL＝未宣告＝整場白天（既有局語義）。
+    day_night: Mapped[dict | None] = mapped_column("dayNight", JSON, nullable=True)  # type: ignore[type-arg]
     orbat_edit_factions: Mapped[list | None] = mapped_column(  # type: ignore[type-arg]
         "orbatEditFactions", JSON, nullable=True
     )

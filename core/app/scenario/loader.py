@@ -73,6 +73,8 @@ class LoadedScenario:
     indirect_fire_requires_approval: bool = False
     # WP-C9 友軍誤傷裁決。省略＝False＝既有的「非敵對一律拒」。
     allow_fratricide: bool = False
+    # WP-C4a 晝夜宣告。空 dict＝未宣告＝整場白天。
+    day_night: dict[str, Any] = field(default_factory=dict)
     # WP-B6 想定機動覆寫（overrides/mobility_matrix.json 原樣帶入；**局部**覆寫，深合併於預設）。
     mobility_overrides: dict[str, Any] = field(default_factory=dict)
     # 陣地變換（WP-C10.5）：{enabled, missions_before_move, min_km, max_km}。空＝停用。
@@ -134,6 +136,7 @@ def _build(
         request_quotas={str(k): int(v) for k, v in (sc.get("request_quotas") or {}).items()},
         indirect_fire_requires_approval=bool(sc.get("indirect_fire_requires_approval", False)),
         allow_fratricide=bool(sc.get("allow_fratricide", False)),
+        day_night=dict(sc.get("day_night") or {}),
         mobility_overrides=mobility_overrides,
         survivability_move=dict(sc.get("survivability_move") or {}),
         description=sc.get("description"),
@@ -400,6 +403,7 @@ def create_session_from_scenario(
         indirect_fire_requires_approval=loaded.indirect_fire_requires_approval or None,
         # `or None`＝未宣告寫 NULL。NOT NULL + default 會回頭改掉既有局的語義。
         allow_fratricide=loaded.allow_fratricide or None,
+        day_night=loaded.day_night or None,
         # WP-C10.5 陣地變換落地：未宣告存 None ＝ 停用（既有局零變更）。
         survivability_move=loaded.survivability_move or None,
         # WP-B2 MSEL 落地：**過去整個漏掉**——想定的 msel 載得進來卻進不了執行期。

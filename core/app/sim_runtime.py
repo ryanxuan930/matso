@@ -31,6 +31,7 @@ from app.cache import make_redis
 from app.db import default_session_factory
 from app.engine.clock import SimClock
 from app.engine.comms import CommsSystem
+from app.engine.daylight_wiring import LightClock, read_day_night, start_minute
 from app.engine.engage_wiring import (
     WeaponResolver,
     make_combined_weapons_for,
@@ -419,6 +420,11 @@ class SimManager:
                 )
             # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
             sim_params = await asyncio.to_thread(load_sim_params, engage_db)
+            # WP-C4a 晝夜：開局快照該局的日出日落宣告（同 create_session_from_scenario 的
+            # 紀律——推演中途改想定不影響進行中的局）。未宣告 → `declared` 為 False，
+            # 底下每個消費端都整段跳過，既有局位元不變。
+            _session_row = await asyncio.to_thread(engage_db.get, WargameSession, session_id)
+            light_clock = LightClock(read_day_night(_session_row), start_minute(_session_row))
             if resumed.start_tick:
                 _LOG.info("session %s 自 tick=%d 續跑", session_id, resumed.start_tick)
             sim_clock = SimClock(  # #93 可調節奏
@@ -492,6 +498,7 @@ class SimManager:
                     path_fn=build_terrain_path_fn(),  # #82 A* 繞路（不可達→直線）
                     sim_params=sim_params,  # #93 可調速度/耗損
                     mobility_rules=mobility_rules,  # WP-B6 想定機動覆寫
+                    light=light_clock,  # WP-C4a 夜間行軍（無宣告→整段跳過）
                 ),
                 # #97 偵測（取代 NoOp）：每 tick 掃描 → 落 per-faction contacts
                 sensors=SensorSweepSystem(
@@ -501,7 +508,17 @@ class SimManager:
                     rng=rngs["sensors"],
                     sensor_for=sensor_resolver.sensor_for,
                     faction_for=sensor_resolver.faction_for,
-                    env_for=make_detect_env(_engage_gateway(), _weather_snapshot()),
+                    env_for=make_detect_env(
+                        _engage_gateway(),
+                        _weather_snapshot(),
+                        # **每次呼叫現讀**：sweep 跨 tick 重用同一個 env_for，
+                        # 快取一個等級會讓整局停在建立時的那一刻。
+                        light_for=(
+                            (lambda: light_clock.level_at(sim_clock.now()))
+                            if light_clock.declared
+                            else None
+                        ),
+                    ),
                     relations=relations,  # #98 盟軍不互相成為 contact
                     interval_ticks=sim_params.sensor_interval_ticks,  # #93 可調掃描頻率
                 ),

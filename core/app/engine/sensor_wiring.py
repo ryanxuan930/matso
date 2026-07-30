@@ -22,6 +22,11 @@ import h3
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.adjudication.daylight import (
+    LightLevel,
+    concealment_modifier,
+    optical_range_modifier,
+)
 from app.intel.seed_sensors import SEED_SENSORS
 from app.intel.sensor import DetectionEnv, SensorProfile
 from app.intel.sweep import SensorUnit, TargetUnit
@@ -87,7 +92,9 @@ class SensorResolver:
 
 
 def make_detect_env(
-    gateway: object | None = None, weather: WeatherState | None = None
+    gateway: object | None = None,
+    weather: WeatherState | None = None,
+    light_for: Callable[[], LightLevel] | None = None,
 ) -> Callable[[SensorUnit, TargetUnit], DetectionEnv]:
     """回傳 env_for(observer, target) → DetectionEnv（地形 LOS + 天氣），比照 `make_engage_env`。
 
@@ -95,6 +102,8 @@ def make_detect_env(
       （地形服務掛掉不該讓全場忽然變成瞎子——與交戰 LOS 同一退化紀律）。
     - `weather_modifier`：取觀測者所在 cell 的天氣修正，**依感測器種類**（光學看能見度、
       紅外看熱對比、雷達/聲學 v0 不受影響）；無天氣快照 → 1.0（晴天）。
+    - `light_for`（WP-C4a）：**每次呼叫現讀當前光照**——sweep 跨 tick 重用同一個 env_for，
+      快取一個等級會讓整局停在建立時的那一刻。無宣告 → None → 全部 1.0（既有局位元不變）。
     - 座標與快照給定即確定性 → replay 安全。
     """
     w_res = _weather_res(weather) if weather is not None else 8
@@ -117,9 +126,26 @@ def make_detect_env(
                 weather_mod = detection_weather_modifier(effects, observer.sensor.sensor_kind)
             except Exception:
                 weather_mod = 1.0
-        return DetectionEnv(los_clear=los_clear, weather_modifier=weather_mod)
+        light_mod = 1.0
+        conceal_mod = 1.0
+        if light_for is not None:
+            level = light_for()
+            # 「我看多遠」看**觀測者自己的**夜視能力；「我多好被看到」是環境，對雙方成立。
+            light_mod = optical_range_modifier(level, night_capable=_night_capable(observer))
+            conceal_mod = concealment_modifier(level)
+        return DetectionEnv(
+            los_clear=los_clear,
+            weather_modifier=weather_mod,
+            concealment_modifier=conceal_mod,
+            light_modifier=light_mod,
+        )
 
     return env_for
+
+
+def _night_capable(observer: SensorUnit) -> bool:
+    """觀測者的感測器有沒有夜視。**只看裝備**（見 `adjudication/daylight.py` 的模組說明）。"""
+    return bool(getattr(observer.sensor, "night_capable", False))
 
 
 def _weather_res(weather: WeatherState) -> int:

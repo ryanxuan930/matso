@@ -77,6 +77,7 @@ model WargameSession {
   /// 已核准的 FIRE_SUPPORT 申請單。null/false＝不設限（既有局零變更）。
   indirectFireRequiresApproval Boolean?
   allowFratricide Boolean?
+  dayNight Json?
 }
 
 // 地圖標註/工事：武器據點、障礙、建築、控制措施等（點/線/面 + 影響範圍 + 屬性）。

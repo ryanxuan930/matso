@@ -245,6 +245,17 @@
       },
       "additionalProperties": false
     },
+    "day_night": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "晝夜宣告（WP-C4a）。省略＝整場都是白天（所有光照係數 1.0，既有想定零變更）。日出日落用**想定參數**而非天文計算：兵推要的是「白天打還是晚上打」，而夜訓本來就會挑時間。",
+      "properties": {
+        "sunrise_min": {"type": "integer", "minimum": 0, "maximum": 1439, "description": "日出時刻（當日分鐘數，0=00:00）"},
+        "sunset_min": {"type": "integer", "minimum": 0, "maximum": 1439, "description": "日落時刻（當日分鐘數）。可小於 sunrise_min＝跨午夜的夜間。"},
+        "start_min": {"type": "integer", "minimum": 0, "maximum": 1439, "description": "開演時刻（tick 0 對應的當日分鐘）。省略＝午夜開演。"}
+      },
+      "required": ["sunrise_min", "sunset_min"]
+    },
     "allow_fratricide": {
       "type": "boolean",
       "description": "友軍誤傷裁決（WP-C9）：開啟時對**自己陣營/盟軍**的 ENGAGE 不再被 ROE 拒絕，改為強警告＋照常裁決＋記 FRATRICIDE 事件供 AAR 追究。**不涵蓋中立方**（攻中立仍一律拒）。面射擊（FIRE_MISSION）不受本開關影響——砲彈不挑陣營，殺傷半徑內友軍本來就會受傷。省略＝false＝維持既有的「非敵對一律拒」（既有想定零變更）。"
