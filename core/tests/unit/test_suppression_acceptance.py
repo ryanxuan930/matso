@@ -47,7 +47,11 @@ def _howitzer() -> WeaponProfile:
 
 
 def _company(strength: float, posture: str, lat: float = _AIM[0]) -> AreaTarget:
-    """步兵連：滿編 120、以 platform_count 表達「一發不會團滅整個連」。"""
+    """步兵連：滿編 120、佔地半徑 75 m。
+
+    **明確給 `footprint_radius_m`**：面射擊改成「覆蓋率 × 強度」之後，佔地半徑直接決定
+    一發彈能涵蓋這支部隊的多少比例。靠預設值的話，日後改預設會讓這裡的期望值悄悄跑掉。
+    """
     return AreaTarget(
         unit_id="INF",
         faction="RED",
@@ -58,6 +62,7 @@ def _company(strength: float, posture: str, lat: float = _AIM[0]) -> AreaTarget:
         authorized_strength=120.0,
         platform_count=120,
         posture=posture,
+        footprint_radius_m=75.0,
     )
 
 
@@ -123,8 +128,12 @@ def test_digging_in_actually_pays_off_against_artillery() -> None:
     dug_in, _ = _barrage(Posture.DUG_IN)
     exposed, _ = _barrage(Posture.MOVING)
     assert dug_in > exposed
-    # DUG_IN 的被命中率修正是 0.5 → 傷亡應接近露天的一半。
-    assert (120.0 - dug_in) == (120.0 - exposed) * 0.5
+    # DUG_IN 的被命中率修正是 0.5，但**跨 5 輪不會剛好是一半**：
+    # 面射擊的損失與**當前**戰力成正比（被打殘的連隊剩下的人才是可能傷亡的人），
+    # 於是露天那邊掉得快、後幾輪的絕對損失反而變小，比值會**大於** 0.5。
+    # 舊模型用固定的 `cp_per_platform`（與剩餘戰力無關）才會剛好對半。
+    ratio = (120.0 - dug_in) / (120.0 - exposed)
+    assert 0.5 <= ratio < 0.65, f"掘壕/露天 傷亡比 {ratio:.3f} 不合理"
 
 
 def test_suppression_lifts_once_the_shelling_stops() -> None:
@@ -142,10 +151,15 @@ def test_suppression_lifts_once_the_shelling_stops() -> None:
 def test_rounds_that_land_near_but_do_not_hurt_still_suppress() -> None:
     """砲彈在旁邊炸開卻沒傷到你，你照樣得趴下——這正是壓制射擊的定義。
 
-    目標放在瞄準點北方 100 m：殺傷半徑 50 m 之外（**零戰損**），
-    壓制半徑 150 m 之內。要是壓制名單只取 `losses`，這條就會紅。
+    目標放在瞄準點北方 **135 m**：部隊邊緣（佔地半徑 75 m）距爆點 60 m，
+    已在殺傷半徑 50 m 之外（**零戰損**），但仍在壓制半徑 150 m 之內。
+    要是壓制名單只取 `losses`，這條就會紅。
+
+    ⚠ 距離從 100 m 改成 135 m 是**模型修正的結果**，不是把測試調鬆：
+    面射擊改成面對面之後，「落點到單位中心 100 m」代表部隊近側邊緣只距爆點 25 m
+    ——那些人本來就該挨炸。要驗「近失彈不傷人」就得真的落在整個部隊之外。
     """
-    target = _company(120.0, Posture.MOVING.value, lat=_AIM[0] + 100.0 / 111_320.0)
+    target = _company(120.0, Posture.MOVING.value, lat=_AIM[0] + 135.0 / 111_320.0)
     result = resolve_area_fire(
         _howitzer(),
         _AIM,

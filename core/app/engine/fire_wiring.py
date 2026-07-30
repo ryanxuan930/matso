@@ -25,7 +25,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.adjudication.area_fire import AreaTarget, resolve_area_fire
+from app.adjudication.area_fire import DEFAULT_FOOTPRINT_M, AreaTarget, resolve_area_fire
 from app.adjudication.bda import build_bda_event
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.fratricide import is_friendly
@@ -576,11 +576,22 @@ class AreaFireAdjudicator:
                     posture=str(state.get(POSTURE_KEY) or "MOVING"),
                     # WP-C3：縱隊擠在一條線上，挨砲最慘。
                     formation=str(state.get(FORMATION_KEY) or "COLUMN"),
+                    # 部隊佔地半徑（面射擊的關鍵；缺鍵→排級預設，見 area_fire）。
+                    footprint_radius_m=self._footprint_of(state),
                 )
             )
         # 穩定序：純函數逐目標算距離不抽樣，順序不影響數值，但影響事件內字典的鍵序（hash chain）。
         targets.sort(key=lambda t: t.unit_id)
         return targets
+
+    @staticmethod
+    def _footprint_of(state: dict[str, Any]) -> float:
+        """熱狀態的佔地半徑。缺鍵/髒資料 → `DEFAULT_FOOTPRINT_M`（排級）。
+
+        **不可以回 0**：0 會讓交集面積恆為 0，整個面射擊靜靜歸零。
+        """
+        raw = state.get("footprint_m")
+        return float(raw) if isinstance(raw, (int, float)) and raw > 0 else DEFAULT_FOOTPRINT_M
 
     def _count_mission(self, shooter_id: str) -> None:
         """這門砲在這個陣地上又打了一次任務（WP-C10.5 陣地變換的計數）。

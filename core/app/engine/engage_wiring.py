@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication.adjudicator import EngageCommand
+from app.adjudication.area_fire import footprint_for
 from app.adjudication.armor import resolve_units_armor_class
 from app.adjudication.combined import CombinedWeapon
 from app.adjudication.effectiveness import effectiveness_pct
@@ -290,6 +291,10 @@ def seed_combat_state(
         if "health" not in existing:
             # health＝由當前戰力比導出的效能%（與 strength 一致，不再是獨立 HP）。
             patch["health"] = effectiveness_pct(float(unit.current_strength) / authorized)
+        if "footprint_m" not in existing:
+            # 面射擊要知道部隊散得多開（見 `area_fire._loss_for`）。由編制導出，
+            # 與 armor_class 同批播入——熱狀態沒有 unit_level，執行期逐個查 DB 是 N+1。
+            patch["footprint_m"] = footprint_for(unit.unit_level.value)
         if "armor_class" not in existing:
             # 明示優先於導出：想定作者明確寫了 attributes 就照他寫的算。
             ac = unit.attributes.get("armor_class") if isinstance(unit.attributes, dict) else None

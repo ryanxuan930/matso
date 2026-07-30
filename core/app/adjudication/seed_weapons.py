@@ -61,6 +61,19 @@ SEED_WEAPONS: dict[str, dict[str, Any]] = {
 }
 
 # 火砲類（間瞄）種子——category=ARTILLERY。allOf kinetic + 火砲諸元（散布/致命半徑/自走機動）。
+#
+# ## `pk_by_armor_class` 的意義（2026-07-30 重新校準）
+#
+# 面射擊改用「覆蓋率 × 強度」模型之後（見 `area_fire._loss_for`），
+# `pk` ＝**在爆點上的人成為傷亡的機率**，不再是「整個殺傷半徑內一律的機率」。
+#
+# **校準錨點**：一個 155mm 砲兵連 18 發（6 門 ×3 發）打**露天步兵連**
+# → 約 15% 傷亡，落在「壓制」（10–30%）的中段。反推得 `HOWITZER_155_SP`
+# 的 INFANTRY pk ≈ 0.32。其餘火砲與其他裝甲級別按**原本的相對比例**同倍率縮放
+# （×0.457），所以「哪一種砲對哪一類目標比較有效」的相對關係完全沒變，只有絕對值被錨定。
+#
+# ⚠ **這個錨點是假設，不是量測**。要改校準只需等比例調整這些 pk——
+# 傷亡與 pk 是**嚴格線性**的，想把 15% 改成 10% 就全部 ×(10/15)。
 SEED_ARTILLERY: dict[str, dict[str, Any]] = {
     "MORTAR_120": {
         "artillery_kind": "MORTAR",
@@ -69,7 +82,7 @@ SEED_ARTILLERY: dict[str, dict[str, Any]] = {
         "min_range_m": 200,
         "ph_by_range_band": [[3000, 0.55], [7000, 0.35]],
         "damage_by_armor_class": {"INFANTRY": 70, "LIGHT_VEHICLE": 40, "ARMOR": 5},
-        "pk_by_armor_class": {"INFANTRY": 0.55, "LIGHT_VEHICLE": 0.25, "ARMOR": 0.02},
+        "pk_by_armor_class": {"INFANTRY": 0.25, "LIGHT_VEHICLE": 0.11, "ARMOR": 0.01},
         "ammo_types": ["AMMO_120_HE", "AMMO_120_SMOKE"],
         "dispersion_cep_m": 90,
         "lethal_radius_m": 35,
@@ -85,7 +98,7 @@ SEED_ARTILLERY: dict[str, dict[str, Any]] = {
         "min_range_m": 2000,
         "ph_by_range_band": [[15000, 0.50], [30000, 0.30]],
         "damage_by_armor_class": {"INFANTRY": 85, "LIGHT_VEHICLE": 60, "ARMOR": 20},
-        "pk_by_armor_class": {"INFANTRY": 0.70, "LIGHT_VEHICLE": 0.40, "ARMOR": 0.08},
+        "pk_by_armor_class": {"INFANTRY": 0.32, "LIGHT_VEHICLE": 0.18, "ARMOR": 0.04},
         "ammo_types": ["AMMO_155_HE", "AMMO_155_DPICM"],
         "dispersion_cep_m": 150,
         "lethal_radius_m": 60,
@@ -108,7 +121,7 @@ SEED_ARTILLERY: dict[str, dict[str, Any]] = {
         "min_range_m": 8000,
         "ph_by_range_band": [[40000, 0.45], [70000, 0.30]],
         "damage_by_armor_class": {"INFANTRY": 90, "LIGHT_VEHICLE": 75, "ARMOR": 35},
-        "pk_by_armor_class": {"INFANTRY": 0.80, "LIGHT_VEHICLE": 0.55, "ARMOR": 0.15},
+        "pk_by_armor_class": {"INFANTRY": 0.37, "LIGHT_VEHICLE": 0.25, "ARMOR": 0.07},
         "ammo_types": ["ROCKET_227_HE"],
         "dispersion_cep_m": 200,
         "lethal_radius_m": 120,
