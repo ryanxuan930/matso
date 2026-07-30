@@ -57,6 +57,25 @@ const testOk = ref<boolean | null>(null)
 // #93 推演參數編輯狀態（載入時由後端帶入預設）。
 const sim = ref<SimParams | null>(null)
 
+// WP-C7.1 補給類別（北約 Class 編號）。與後端 `adjudication/supply.py` 的 SupplyClass 同一組；
+// 那裡只自管 I（糧秣）與 IX（零附件），III/V 借用水位語義。
+const SUPPLY_CLASSES = ['I', 'III', 'V', 'IX'] as const
+const SUPPLY_CLASS_LABEL: Record<string, string> = {
+  I: 'I 糧秣', III: 'III 油料', V: 'V 彈藥', IX: 'IX 零附件',
+}
+
+function setSupplyRate(cls: string, raw: string) {
+  if (!sim.value) return
+  const value = Number(raw)
+  const keep = Number.isFinite(value) && value > 0
+  // 0 就把鍵拿掉——「不消耗」是沒有這一項，不是寫一個 0（後端的中性預設是空表）。
+  const rates = Object.fromEntries(
+    Object.entries(sim.value.supply_daily_rates).filter(([k]) => k !== cls),
+  )
+  if (keep) rates[cls] = value
+  sim.value = { ...sim.value, supply_daily_rates: rates }
+}
+
 function applyConfig(c: SysConfig) {
   cfg.value = c
   aiMode.value = c.ai.ai_mode
@@ -64,7 +83,13 @@ function applyConfig(c: SysConfig) {
   llmModel.value = c.ai.llm_model
   apiKeyAlreadySet.value = c.ai.llm_api_key_set
   llmApiKey.value = ''
-  sim.value = c.sim ? { ...c.sim, march_attrition: { ...c.sim.march_attrition } } : null
+  sim.value = c.sim
+    ? {
+        ...c.sim,
+        march_attrition: { ...c.sim.march_attrition },
+        supply_daily_rates: { ...c.sim.supply_daily_rates },
+      }
+    : null
 }
 
 async function load() {
@@ -301,6 +326,64 @@ onMounted(async () => {
             <label>狀態快照間隔（tick）
               <input v-model.number="sim.checkpoint_interval_ticks" type="number" min="1" step="50">
               <small>600 ≈ 5 分鐘牆鐘；崩潰最多回退一個間隔</small>
+            </label>
+          </div>
+          <h3 class="sim-h3">環境與後勤</h3>
+          <div class="grid2">
+            <label>天氣刷新間隔（tick）
+              <input v-model.number="sim.weather_refresh_ticks" data-testid="sim-weather-refresh" type="number" min="0" step="10">
+              <small>0 ＝整局沿用開局那一份天氣；&gt;0 才會隨推演演進</small>
+            </label>
+            <label>每日戰力修復（戰力點）
+              <input v-model.number="sim.repair_per_day" type="number" min="0" step="0.5">
+              <small>0 ＝不修復</small>
+            </label>
+          </div>
+          <h3 class="sim-h3">每日消耗率（份 / 模擬日）</h3>
+          <p class="hint">
+            未列出的補給類別＝<strong>不消耗</strong>。要讓部隊會餓、會缺彈、會沒油，這裡就得有值。
+          </p>
+          <div class="grid2">
+            <label v-for="cls in SUPPLY_CLASSES" :key="cls">
+              {{ SUPPLY_CLASS_LABEL[cls] ?? cls }}
+              <input
+                :value="sim.supply_daily_rates[cls] ?? 0"
+                type="number"
+                min="0"
+                step="0.5"
+                @input="setSupplyRate(cls, ($event.target as HTMLInputElement).value)"
+              >
+            </label>
+          </div>
+          <h3 class="sim-h3">保真係數</h3>
+          <p class="hint">
+            壓制、乘駐車、雷區的裁決係數。<strong>預設即現行行為</strong>，動了會改變交戰結果。
+          </p>
+          <div class="grid2">
+            <label>壓制每 tick 衰減比
+              <input v-model.number="sim.suppression_decay" type="number" min="0" max="1" step="0.05">
+            </label>
+            <label>滿壓制射擊效能倍率
+              <input v-model.number="sim.suppression_fire_penalty" type="number" min="0" max="1" step="0.05">
+            </label>
+            <label>滿壓制行軍速度倍率
+              <input v-model.number="sim.suppression_move_penalty" type="number" min="0" max="1" step="0.05">
+            </label>
+            <label>載具毀損乘員傷亡比
+              <input v-model.number="sim.crew_casualty_fraction" type="number" min="0" max="1" step="0.05">
+            </label>
+            <label>下車人員受彈面
+              <input v-model.number="sim.dismounted_exposure" type="number" min="0.1" step="0.1">
+              <small>乘車＝1.0 為基準</small>
+            </label>
+            <label>雷區每公里觸雷機率
+              <input v-model.number="sim.mine_strike_p_per_km" type="number" min="0" max="1" step="0.01">
+            </label>
+            <label>觸雷戰損（戰力點）
+              <input v-model.number="sim.mine_strike_strength_loss" type="number" min="0" step="1">
+            </label>
+            <label>工兵觸雷機率倍率
+              <input v-model.number="sim.engineer_mine_strike_mult" type="number" min="0" max="1" step="0.05">
             </label>
           </div>
           <h3 class="sim-h3">行軍耗損（戰力點 / 公里）</h3>

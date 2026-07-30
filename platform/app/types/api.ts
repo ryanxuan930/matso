@@ -1770,6 +1770,30 @@ export interface components {
             ai_max_orders: number;
             /** @description 狀態快照間隔 tick（WP-E1，預設 600）。以 tick 計而非牆鐘秒——快照點必須是模擬時間上的 確定位置，牆鐘會隨降頻漂移。預設 600 tick ≈ 5 分鐘牆鐘（@ tick_rate_ms=60000 / pace_compression=120，即 0.5s/tick）。崩潰時最多損失一個間隔內的熱狀態。 */
             checkpoint_interval_ticks: number;
+            /** @description 「WP-C1」每 tick 壓制衰減比（預設 0.85） */
+            suppression_decay: number;
+            /** @description 「WP-C1」滿壓制時的射擊效能倍率 */
+            suppression_fire_penalty: number;
+            /** @description 「WP-C1」滿壓制時的行軍速度倍率 */
+            suppression_move_penalty: number;
+            /** @description 「WP-C3」載具毀損時折算的乘員傷亡比 */
+            crew_casualty_fraction: number;
+            /** @description 「WP-C3」下車人員受彈面（乘車＝1.0 為基準） */
+            dismounted_exposure: number;
+            /** @description 「WP-C2」雷區每公里觸雷機率 */
+            mine_strike_p_per_km: number;
+            /** @description 「WP-C2」觸雷戰損（戰力點） */
+            mine_strike_strength_loss: number;
+            /** @description 「WP-C2」工兵通過雷區的機率倍率 */
+            engineer_mine_strike_mult: number;
+            /** @description 「WP-C4b」天氣刷新間隔 tick。**0 ＝永不刷新 ＝整局一份啟動快照**（中性預設， 既有局位元不變）。要讓天氣隨推演演進就把它設 >0。 */
+            weather_refresh_ticks: number;
+            /** @description 「WP-C7.1」每模擬日消耗率 {類別: 份/日}。**空物件＝全 0 ＝部隊不會憑空開始餓肚子。** */
+            supply_daily_rates: {
+                [key: string]: number;
+            };
+            /** @description 「WP-C7.3」每模擬日恢復的戰力點（0＝不修復） */
+            repair_per_day: number;
         };
         /** @description 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。 */
         SystemConfigEdit: {

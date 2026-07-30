@@ -781,7 +781,10 @@ components:
         [foot_xc_kmh, foot_road_kmh, vehicle_fallback_kmh, march_attrition,
          resupply_range_km, intrinsic_optical_range_m, sensor_interval_ticks,
          tick_rate_ms, pace_compression, comms_interval_ticks, ai_heartbeat_s, ai_max_orders,
-         checkpoint_interval_ticks]
+         checkpoint_interval_ticks, suppression_decay, suppression_fire_penalty,
+         suppression_move_penalty, crew_casualty_fraction, dismounted_exposure,
+         mine_strike_p_per_km, mine_strike_strength_loss, engineer_mine_strike_mult,
+         weather_refresh_ticks, supply_daily_rates, repair_per_day]
       properties:
         foot_xc_kmh: { type: number, description: 徒步越野速度 km/h（預設 5.0） }
         foot_road_kmh: { type: number, description: 徒步沿道路速度 km/h（預設 6.5） }
@@ -804,6 +807,25 @@ components:
             狀態快照間隔 tick（WP-E1，預設 600）。以 tick 計而非牆鐘秒——快照點必須是模擬時間上的
             確定位置，牆鐘會隨降頻漂移。預設 600 tick ≈ 5 分鐘牆鐘（@ tick_rate_ms=60000 /
             pace_compression=120，即 0.5s/tick）。崩潰時最多損失一個間隔內的熱狀態。
+        suppression_decay: { type: number, description: 「WP-C1」每 tick 壓制衰減比（預設 0.85） }
+        suppression_fire_penalty: { type: number, description: 「WP-C1」滿壓制時的射擊效能倍率 }
+        suppression_move_penalty: { type: number, description: 「WP-C1」滿壓制時的行軍速度倍率 }
+        crew_casualty_fraction: { type: number, description: 「WP-C3」載具毀損時折算的乘員傷亡比 }
+        dismounted_exposure: { type: number, description: 「WP-C3」下車人員受彈面（乘車＝1.0 為基準） }
+        mine_strike_p_per_km: { type: number, description: 「WP-C2」雷區每公里觸雷機率 }
+        mine_strike_strength_loss: { type: number, description: 「WP-C2」觸雷戰損（戰力點） }
+        engineer_mine_strike_mult: { type: number, description: 「WP-C2」工兵通過雷區的機率倍率 }
+        weather_refresh_ticks:
+          type: integer
+          description: >-
+            「WP-C4b」天氣刷新間隔 tick。**0 ＝永不刷新 ＝整局一份啟動快照**（中性預設，
+            既有局位元不變）。要讓天氣隨推演演進就把它設 >0。
+        supply_daily_rates:
+          type: object
+          additionalProperties: { type: number }
+          description: >-
+            「WP-C7.1」每模擬日消耗率 {類別: 份/日}。**空物件＝全 0 ＝部隊不會憑空開始餓肚子。**
+        repair_per_day: { type: number, description: 「WP-C7.3」每模擬日恢復的戰力點（0＝不修復） }
     SystemConfigEdit:
       type: object
       description: 可編輯設定。省略 `sim` ＝ 不動推演參數（只改 AI/LLM）。

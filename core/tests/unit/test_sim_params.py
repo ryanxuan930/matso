@@ -84,3 +84,72 @@ def test_round_trip_through_config() -> None:
     p = parse_sim_params({"foot_xc_kmh": 6.25, "march_attrition": {"WHEELED": 0.04}})
 
     assert parse_sim_params(to_config(p)) == p
+
+
+# ---- 漂移守門：dataclass / 解析器 / 序列化器三者必須同步 ----
+
+
+def _nudged(p: SimParams) -> SimParams:
+    """每一欄都改成與預設不同的值——roundtrip 才驗得出「有欄位沒接到」。"""
+    from dataclasses import fields, replace
+
+    changes: dict[str, object] = {}
+    for f in fields(SimParams):
+        value = getattr(p, f.name)
+        if isinstance(value, dict):
+            # 有既定鍵的表（`march_attrition` 是固定的 profile 集）改值；
+            # 開放鍵空間的表（`supply_daily_rates`）加一個鍵。
+            changes[f.name] = (
+                {k: float(v) + 0.25 for k, v in value.items()} if value else {"TEST_CLASS": 3.5}
+            )
+        elif isinstance(value, bool):
+            changes[f.name] = not value
+        elif isinstance(value, int):
+            changes[f.name] = int(value) + 7
+        elif isinstance(value, float):
+            changes[f.name] = float(value) + 0.25
+        else:
+            raise AssertionError(f"未知欄位型別，roundtrip 守門要補：{f.name}={value!r}")
+    return replace(p, **changes)
+
+
+def test_every_field_survives_a_config_roundtrip() -> None:
+    """**這是本檔最重要的一條。**
+
+    `SimParams` 曾有 11 個欄位在 dataclass 裡卻不在 `parse_sim_params` 裡：
+    設定寫了也讀不到。後果不只是「調不動」——
+
+    - `weather_refresh_ticks` 永遠是 0 → WP-C4b 的天氣逐 tick 刷新在生產環境開不起來
+    - `supply_daily_rates` 永遠是空表 → WP-C7.1 的每日消耗同樣開不起來
+    - 而 `to_config` 也一起漏了 → **參數凍結簽證（WP-B4）沒有雜湊到這些保真係數**
+
+    逐欄列舉會再漂一次；改用「全欄都改過再 roundtrip」，新增欄位漏接就會紅。
+    """
+    tuned = _nudged(SimParams())
+
+    assert parse_sim_params(to_config(tuned)) == tuned
+
+
+def test_config_view_exposes_every_field() -> None:
+    """`to_config` 是設定頁與封簽雜湊共用的投影——少一欄就是少簽一個係數。"""
+    from dataclasses import fields
+
+    exposed = set(to_config(SimParams()))
+
+    assert exposed == {f.name for f in fields(SimParams)}
+
+
+def test_weather_refresh_ticks_may_be_zero() -> None:
+    """0 ＝「永不刷新」這個中性預設本身。**不可**跟其他間隔一樣夾到最小 1
+    ——那會讓既有局忽然開始每 tick 問一次天氣服務。"""
+    assert parse_sim_params({"weather_refresh_ticks": 0}).weather_refresh_ticks == 0
+    assert parse_sim_params({"weather_refresh_ticks": 30}).weather_refresh_ticks == 30
+
+
+def test_a_broken_supply_rate_drops_only_that_class() -> None:
+    """壞值不該讓整份消耗率表變成空（那等於全軍忽然不用吃飯）。"""
+    rates = parse_sim_params(
+        {"supply_daily_rates": {"FOOD": 1.5, "AMMO": "很多", "FUEL": -1}}
+    ).supply_daily_rates
+
+    assert rates == {"FOOD": 1.5}

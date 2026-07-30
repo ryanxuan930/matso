@@ -136,6 +136,13 @@ def parse_sim_params(raw: object) -> SimParams:
             return fallback
 
     interval = _int("sensor_interval_ticks", DEFAULTS.sensor_interval_ticks)
+    # WP-C7.1 每日消耗率：**只收數字**，壞值整鍵丟掉（不讓一個字串把整份率表變成空）。
+    rates: dict[str, float] = {}
+    raw_rates = raw.get("supply_daily_rates")
+    if isinstance(raw_rates, dict):
+        for cls, value in raw_rates.items():
+            if isinstance(value, (int, float)) and value >= 0:
+                rates[str(cls)] = float(value)
     return SimParams(
         foot_xc_kmh=_positive(raw.get("foot_xc_kmh"), DEFAULTS.foot_xc_kmh),
         foot_road_kmh=_positive(raw.get("foot_road_kmh"), DEFAULTS.foot_road_kmh),
@@ -156,6 +163,38 @@ def parse_sim_params(raw: object) -> SimParams:
         checkpoint_interval_ticks=_int(
             "checkpoint_interval_ticks", DEFAULTS.checkpoint_interval_ticks
         ),
+        # 以下 11 欄過去**在 dataclass 裡但不在解析器裡**——設定寫了也讀不到，
+        # 於是 WP-C4b 的天氣刷新（0＝永不刷新）與 WP-C7.1 的消耗（空表＝不消耗）
+        # 這兩張卡在生產環境根本開不起來，而且 `to_config` 也漏了它們
+        # ＝ **參數凍結簽證（WP-B4）沒有雜湊到這些保真係數**。
+        # 漂移由 test_sim_params 的 roundtrip 測試守住（新欄漏接會紅）。
+        suppression_decay=_non_negative(raw.get("suppression_decay"), DEFAULTS.suppression_decay),
+        suppression_fire_penalty=_non_negative(
+            raw.get("suppression_fire_penalty"), DEFAULTS.suppression_fire_penalty
+        ),
+        suppression_move_penalty=_non_negative(
+            raw.get("suppression_move_penalty"), DEFAULTS.suppression_move_penalty
+        ),
+        crew_casualty_fraction=_non_negative(
+            raw.get("crew_casualty_fraction"), DEFAULTS.crew_casualty_fraction
+        ),
+        dismounted_exposure=_positive(raw.get("dismounted_exposure"), DEFAULTS.dismounted_exposure),
+        mine_strike_p_per_km=_non_negative(
+            raw.get("mine_strike_p_per_km"), DEFAULTS.mine_strike_p_per_km
+        ),
+        mine_strike_strength_loss=_non_negative(
+            raw.get("mine_strike_strength_loss"), DEFAULTS.mine_strike_strength_loss
+        ),
+        engineer_mine_strike_mult=_non_negative(
+            raw.get("engineer_mine_strike_mult"), DEFAULTS.engineer_mine_strike_mult
+        ),
+        # **最小值 0**（不是 1）：0 是「永不刷新」這個中性預設本身，夾到 1 會讓
+        # 既有局忽然開始每 tick 問一次天氣。
+        weather_refresh_ticks=_int(
+            "weather_refresh_ticks", DEFAULTS.weather_refresh_ticks, minimum=0
+        ),
+        supply_daily_rates=rates,
+        repair_per_day=_non_negative(raw.get("repair_per_day"), DEFAULTS.repair_per_day),
     )
 
 
@@ -175,6 +214,17 @@ def to_config(p: SimParams) -> dict[str, Any]:
         "ai_heartbeat_s": p.ai_heartbeat_s,
         "ai_max_orders": p.ai_max_orders,
         "checkpoint_interval_ticks": p.checkpoint_interval_ticks,
+        "suppression_decay": p.suppression_decay,
+        "suppression_fire_penalty": p.suppression_fire_penalty,
+        "suppression_move_penalty": p.suppression_move_penalty,
+        "crew_casualty_fraction": p.crew_casualty_fraction,
+        "dismounted_exposure": p.dismounted_exposure,
+        "mine_strike_p_per_km": p.mine_strike_p_per_km,
+        "mine_strike_strength_loss": p.mine_strike_strength_loss,
+        "engineer_mine_strike_mult": p.engineer_mine_strike_mult,
+        "weather_refresh_ticks": p.weather_refresh_ticks,
+        "supply_daily_rates": dict(p.supply_daily_rates),
+        "repair_per_day": p.repair_per_day,
     }
 
 
