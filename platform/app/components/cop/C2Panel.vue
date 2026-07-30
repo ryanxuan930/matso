@@ -112,9 +112,28 @@ async function loadFactions() {
   }
 }
 
+/**
+ * ⚠ **不可以放在 `onMounted` 裡**。
+ *
+ * `canCrossFaction` 讀 `auth.user?.role`，而 `auth.user` 是父層 `cop.vue` 的 `onMounted`
+ * 裡 `await auth.fetchMe()` 才填的——子元件的 `onMounted` 早於父元件，而且那是一次真的
+ * HTTP 往返。於是 `loadFactions()` 在 `auth.user` 還是 null 時就 `return` 掉，
+ * 收件陣營選單永遠是空的。
+ *
+ * 而且這個路徑**是最常見的那一條**：信文視窗的開關狀態存在 localStorage，
+ * 統裁上次留著開，這次一進來面板就掛載。首次造訪（視窗預設關、手動點開）反而正常
+ * ——「有時會動、重整就不會動」是最難查的那種病。
+ *
+ * 改成監看 `canCrossFaction`：值到齊的那一刻才抓。
+ */
+watch(canCrossFaction, (may) => {
+  if (may) void loadFactions()
+}, { immediate: true })
+
 onMounted(() => {
   void reload()
-  void loadFactions()
+  // `loadFactions` 不在這裡——它依賴 `auth.user`，而那要等父層的 fetchMe 回來。
+  // 見下方 `watch(canCrossFaction, …)` 的說明。
 })
 
 /**
@@ -126,7 +145,13 @@ const C2_EVENTS = new Set(['C2_MESSAGE', 'C2_MESSAGE_READ', 'C2_REQUEST'])
 watch(
   () => stream.events[stream.events.length - 1],
   (last) => {
-    if (last && C2_EVENTS.has(last.type)) void reload()
+    // ⚠ 讀 `payload.event_type`，**不是 `last.type`**。
+    // 串流信封的形狀是 `{type: 'EVENT', payload: {event_type: 'C2_MESSAGE', …}}`
+    // ——`last.type` 對每一則事件都是字串 `'EVENT'`，拿它比對 C2_* 恆為 false，
+    // 這個 watch 會一次都不觸發（而畫面看起來只是「新信沒有自己跳出來」）。
+    // 同一個 repo 裡的正確寫法：`cop.vue` 的 SESSION_CONTROL 判讀、`useCopFeed` 的 formatEvent。
+    const kind = (last?.payload as { event_type?: string } | undefined)?.event_type
+    if (kind && C2_EVENTS.has(kind)) void reload()
   },
 )
 

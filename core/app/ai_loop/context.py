@@ -260,6 +260,22 @@ def _fmt_event(ev: dict[str, Any]) -> str:
     return "- " + "｜".join(p for p in parts if p)
 
 
+def _fmt_objective(raw: object) -> str:
+    """一條任務目標 → 提示詞的一行。
+
+    ⚠ **這裡曾經是 `f"- {o}"`**，而白軍在主控台輸入的目標是 `{"description": "..."}`
+    這種 dict——直接字串化的結果是把 Python 的大括號與單引號送進 LLM 的提示詞：
+    `- {'description': '奪取並確保 218 高地'}`。模型讀得懂，但那是我們在教它讀 repr，
+    而不是讀命令。認不得的形狀退回字串化（總比整條不見好），但已知鍵一律取文字。
+    """
+    if isinstance(raw, dict):
+        for key in ("description", "text", "objective", "name"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return str(raw)
+
+
 def render_context_prompt(ctx: dict[str, Any]) -> str:
     """把 context dict 渲染為緊湊中文 briefing（LLM user prompt 的態勢部分）。
 
@@ -292,7 +308,7 @@ def render_context_prompt(ctx: dict[str, Any]) -> str:
     objectives = ctx.get("objectives") or []
     if objectives:
         lines.append("## 目標/勝負條件")
-        lines.extend(f"- {o}" for o in objectives)
+        lines.extend(f"- {_fmt_objective(o)}" for o in objectives)
 
     events = ctx.get("recent_events") or []
     if events:

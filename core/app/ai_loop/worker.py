@@ -332,6 +332,7 @@ async def run_faction_worker(
     )
     cycles = 0
     total_submitted = 0
+    last_submitted: int | None = None
     while not should_stop():
         _emit_status(
             status_sink,
@@ -340,13 +341,21 @@ async def run_faction_worker(
                 "thinking_since": now(),
                 "heartbeat_s": heartbeat_s,
                 "cycles": cycles,
+                # ⚠ **`last_submitted` 在 thinking 這一則也要帶**。
+                # 遙測是整包覆寫（`_make_status_sink` 用 `hset` 寫整個 JSON），
+                # 少帶一個鍵就等於把它清成 None——而白軍會盯著這一頁的時候，
+                # AI 正好就在 thinking。少了它，「上一次送出幾道」永遠顯示破折號，
+                # 只有 idle 那一瞬間才有數字。
+                "last_submitted": last_submitted,
+                "total_submitted": total_submitted,
             },
         )
         try:
             outcome = await asyncio.to_thread(_cycle_with_db, deps)
             b = outcome.bridge
             cycles += 1
-            total_submitted += len(b.submitted)
+            last_submitted = len(b.submitted)
+            total_submitted += last_submitted
             _emit_status(
                 status_sink,
                 {
@@ -354,7 +363,8 @@ async def run_faction_worker(
                     "last_decision_ts": now(),
                     "heartbeat_s": heartbeat_s,
                     "cycles": cycles,
-                    "last_submitted": len(b.submitted),
+                    "last_submitted": last_submitted,
+                    "total_submitted": total_submitted,
                     "fallback": outcome.turn.fallback_used,
                 },
             )
@@ -396,7 +406,8 @@ async def run_faction_worker(
                     "last_decision_ts": now(),
                     "heartbeat_s": heartbeat_s,
                     "cycles": cycles,
-                    "last_submitted": 0,
+                    "last_submitted": last_submitted,
+                    "total_submitted": total_submitted,
                     "fallback": True,
                 },
             )

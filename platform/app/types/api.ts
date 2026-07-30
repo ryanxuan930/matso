@@ -1434,8 +1434,10 @@ export interface components {
             heartbeat_s?: number | null;
             /** @description 本次思考已歷時秒數（thinking 時） */
             thinking_since_s?: number | null;
-            /** @description 上一次決策落單數 */
+            /** @description 上一個決策週期送出的指令數。⚠ 遙測是**整包覆寫**，thinking 那一則若不帶這個鍵 就等於把它清成 null——而白軍盯著這一頁的時候 AI 正好在 thinking， 於是這一格永遠顯示破折號。thinking 與 idle 兩則都要帶。 */
             last_submitted?: number | null;
+            /** @description 本局累計送出的指令數（判斷「這個 AI 到底有沒有在動」看這個） */
+            total_submitted?: number | null;
             /** @description 累計決策週期數 */
             cycles?: number | null;
         };

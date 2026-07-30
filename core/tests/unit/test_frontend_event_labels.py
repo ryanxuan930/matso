@@ -175,3 +175,54 @@ def test_label_table_has_no_entries_for_events_nobody_emits() -> None:
     labelled = _ts_object_keys(src, "EVENT_LABELS")
     stale = sorted(labelled - backend_event_types())
     assert not stale, f"EVENT_LABELS 有後端已不再發出的事件型別：{stale}"
+
+
+def test_c2_panel_reads_the_event_type_not_the_envelope_type() -> None:
+    """**招牌病**：訂閱端寫了，但讀錯層級 → 一次都不會觸發。
+
+    串流信封的形狀是 `{type: 'EVENT', payload: {event_type: 'C2_MESSAGE', …}}`。
+    `C2Panel` 原本比對 `last.type`，而那對每一則事件都是字串 `'EVENT'`
+    ——`C2_EVENTS.has('EVENT')` 恆為 false，於是「新信自動刷新」從來沒有發生過，
+    而畫面上只是「新信沒有自己跳出來」，沒有任何錯誤。
+
+    同一個 repo 裡的正確寫法就在隔壁：`cop.vue` 的 SESSION_CONTROL 判讀、
+    `useCopFeed.formatEvent`。
+    """
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[3] / "platform/app/components/cop/C2Panel.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "payload as { event_type?: string }" in src or "payload?.event_type" in src, (
+        "C2Panel 必須讀 payload.event_type；讀 envelope 的 type 會恆為 'EVENT'"
+    )
+    assert "C2_EVENTS.has(last.type)" not in src
+
+
+def test_c2_panel_does_not_read_auth_user_during_mount() -> None:
+    """`auth.user` 是**父層** cop.vue 的 onMounted 裡 await fetchMe() 才填的，
+    而子元件的 onMounted 早於父元件、且那是一次真的 HTTP 往返。
+
+    在 onMounted 裡讀它 → `canCrossFaction` 為 false → `loadFactions()` 靜默 return
+    → 收件陣營選單永遠是空的，跨陣營發信等於沒有。
+    而且這條路徑**是最常見的那一條**：視窗開關狀態存在 localStorage，
+    統裁上次留著開，這次一進來面板就掛載；首次造訪反而正常——
+    「有時會動、重整就不會動」是最難查的那種病。
+    """
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[3] / "platform/app/components/cop/C2Panel.vue"
+    ).read_text(encoding="utf-8")
+    mounted = src.split("onMounted(() => {", 1)[1].split("})", 1)[0]
+    # 去掉註解行——本檔的 onMounted 裡就有一行註解在解釋「為什麼 loadFactions 不在這裡」，
+    # 直接找識別字會把那句話當成呼叫。
+    code = "\n".join(
+        line for line in mounted.splitlines() if not line.strip().startswith(("//", "*", "/*"))
+    )
+
+    assert "loadFactions(" not in code, (
+        "loadFactions 不可在 onMounted 呼叫——auth.user 那時還沒到。改用 watch(canCrossFaction)"
+    )
+    assert "watch(canCrossFaction" in src

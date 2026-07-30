@@ -127,6 +127,9 @@ def _faction_status(faction: str, raw: Any, now: float) -> dict[str, Any]:
         "heartbeat_s": heartbeat,
         "thinking_since_s": None,
         "last_submitted": p.get("last_submitted"),
+        # 累計送出令數。**與 `last_submitted` 一起帶**：後者只說「上一週期」，
+        # 白軍要判斷「這個 AI 到底有沒有在動」看的是累計值。
+        "total_submitted": p.get("total_submitted"),
         "cycles": p.get("cycles"),
     }
     if state == "thinking":

@@ -237,3 +237,33 @@ def test_enemy_suppression_never_reaches_the_context() -> None:
     )
     assert "0.9" not in json.dumps(ctx, ensure_ascii=False)
     assert "DUG_IN" not in render_context_prompt(ctx)
+
+
+def test_objectives_reach_the_prompt_as_prose_not_python_repr() -> None:
+    """白軍在主控台輸入的目標是 `{"description": "..."}`，而提示詞組裝原本是 `f"- {o}"`
+    ——直接把 Python 的大括號與單引號送進 LLM：`- {'description': '奪取 218 高地'}`。
+
+    模型讀得懂，但那是我們在教它讀 repr 而不是讀命令。
+    ⚠ 這個缺陷是**自主推演主控台把 objectives 接上那一刻才第一次上線**的：
+    在那之前前端寫死 `[]`，這一行永遠不執行。
+    """
+    from app.ai_loop.context import render_context_prompt
+
+    text = render_context_prompt(
+        {
+            "faction": "BLUE",
+            "tick": 1,
+            "objectives": [
+                {"description": "奪取並確保 218 高地"},
+                {"text": "阻絕紅軍沿 3 號公路增援"},
+                "純字串的目標也要照舊",
+            ],
+        }
+    )
+
+    assert "- 奪取並確保 218 高地" in text
+    assert "- 阻絕紅軍沿 3 號公路增援" in text
+    assert "- 純字串的目標也要照舊" in text
+    # **這一條才是重點**：斷言「218 高地 in text」會被 dict repr 蒙混過去。
+    assert "{" not in text.split("## 目標/勝負條件")[1].split("##")[0]
+    assert "'description'" not in text

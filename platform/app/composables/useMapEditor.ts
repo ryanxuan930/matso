@@ -199,6 +199,22 @@ export function useMapEditor(opts: {
       cancelDraw()
       return
     }
+    // ⚠ **頂點數不足的面會靜默失效**，而且失效得很徹底：後端 `no_strike._ring_to_cells`
+    // 對 `len(pts) < 3` 直接回空集，`zones_to_cells` 再把整個 zone 丟掉 → 火力裁決
+    // 完全不認得它。畫的人只看到「已新增地圖標註」的成功提示。
+    // 這正是禁射級別那條修正要消滅的病（「以為圈好了、其實沒有」），只是換一條路徑復發。
+    const minPts = MIN_VERTICES[drawKind.value] ?? 0
+    if (minPts && draftCoords.value.length < minPts) {
+      toasts.push({
+        severity: 'warn',
+        title: '控制點不足，未建立',
+        detail: `${drawKind.value === 'POLYGON' ? '面' : '線'}至少需要 ${minPts} 個控制點；`
+          + '目前只有 ' + draftCoords.value.length + ' 個。'
+          + (drawZoneClass.value ? '禁射區若以不足的控制點送出，火力裁決會完全讀不到它。' : ''),
+        timeoutMs: 6000,
+      })
+      return
+    }
     const isWeapon = drawFeatureKind.value === 'WEAPON_EMPLACEMENT'
     const tmpl = isWeapon
       ? weaponTemplates.value.find((t) => t.id === drawWeaponTemplate.value)
