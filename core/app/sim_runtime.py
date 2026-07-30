@@ -49,6 +49,7 @@ from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
 from app.engine.smoke_wiring import SmokeCache
 from app.engine.subsystems import ChainedOrderSource, DispatchingAdjudicator
+from app.engine.supply_wiring import tick_supply
 from app.engine.suppression_wiring import (
     apply_hit_suppression,
     drain_posture_orders,
@@ -218,6 +219,21 @@ def _engineer_tick(factory: Any, session_id: str, tick: int) -> list[Any]:
     """
     with factory() as db:
         return drain_engineer_orders(db, session_id, tick)
+
+
+def _supply_tick(hot: Any, tick: int, tick_rate_ms: int, rates: dict[str, float]) -> int:
+    """全場的補給結算（WP-C7.1）。回有變動的單位數。
+
+    掃全場而不是只掃有令的單位——**吃飯不需要下令**。但沒有 `supply` 鍵的單位
+    在 `tick_supply` 第一行就回 None，所以既有局這一圈是純迴圈開銷、無寫入。
+    """
+    changed = 0
+    for unit_id in sorted(hot.get_all()):
+        patch = tick_supply(hot, unit_id, tick, tick_rate_ms, rates)
+        if patch:
+            hot.update_unit(unit_id, patch)
+            changed += 1
+    return changed
 
 
 def _suppress_hit(hot: Any, unit_id: str, category: str) -> None:
@@ -667,6 +683,15 @@ class SimManager:
                     await asyncio.to_thread(
                         publish_pending, client, session_id, msel_runtime.pending()
                     )
+                # WP-C7.1 補給消耗。**沒有 `supply` 鍵的單位一個熱狀態鍵都不會被寫**
+                # ——既有局零成本、STATE_DIFF 零雜訊（見 `supply_wiring` 模組說明）。
+                await asyncio.to_thread(
+                    _supply_tick,
+                    hot,
+                    sim_clock.now().tick,
+                    sim_params.tick_rate_ms,
+                    sim_params.supply_daily_rates,
+                )
                 # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
                 # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
                 await asyncio.to_thread(tick_suppression, hot, sim_clock.now().tick)

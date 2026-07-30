@@ -38,6 +38,7 @@ from app.adjudication.weapon import WeaponProfile
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
+from app.engine.supply_wiring import supply_effectiveness
 from app.engine.suppression_wiring import POSTURE_KEY, SUPPRESSION_KEY
 from app.models.enums import OrderStatus
 from app.models.tables import EquipmentInstance, Order, TacticalUnit
@@ -213,6 +214,9 @@ class EngagementAdjudicator:
         s_auth = float(shooter_state.get("authorized_strength") or 100.0)
         s_cur = float(shooter_state.get("strength") or shooter_state.get("health") or s_auth)
         effectiveness = interp_effectiveness(s_cur / s_auth) if s_auth > 0 else 1.0
+        # WP-C7.1：斷補的部隊打不好。**乘進射手效能而非命中率**——餓肚子影響的是這支
+        # 部隊整體發揮（人累、裝備沒保養），不是彈道。沒有斷補概念的既有局恆為 1.0，位元不變。
+        effectiveness *= supply_effectiveness(shooter_state)
         result = resolve_engagement(
             weapon,
             Shooter(

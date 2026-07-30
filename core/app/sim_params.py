@@ -100,6 +100,9 @@ class SimParams:
     # 天氣刷新間隔（tick）。**0 ＝永不刷新 ＝既有的「整局一份啟動快照」**，
     # 這是中性預設：既有局位元不變、golden 不必重錄。
     weather_refresh_ticks: int = _wx.DEFAULT_REFRESH_TICKS
+    # --- 後勤（WP-C7.1）---
+    # 每模擬日消耗率 {類別: 份/日}。**空 dict ＝全 0 ＝既有局不會憑空開始餓肚子。**
+    supply_daily_rates: dict[str, float] = field(default_factory=dict)
     # --- 崩潰復原（WP-E1）---
     # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），
     # 而牆鐘會隨 TickPacer 的過載降頻漂移。600 tick ≈ 5 分鐘牆鐘（@ 預設 0.5s/tick）。
