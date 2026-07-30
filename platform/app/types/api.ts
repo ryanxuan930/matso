@@ -1447,6 +1447,11 @@ export interface components {
             comms: string;
             /** @description 固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記 */
             is_fixed?: boolean;
+            /**
+             * @description 戰備狀態（由戰力比導出：≥0.90 OK／<0.30 DOWN／其餘 DEGRADED）。 ⚠ **與 `health` 是兩件事**：`health` 是作戰效能%，而效能曲線在戰力比 ≤0.30 就歸零 ——於是一個剩三成兵力的連隊 `health` 顯示 0，但它還活著、還會移動、還能被打。 操作員把 0 讀成「已殲滅」是必然的誤讀，本欄就是為了把那件事說清楚。 DOWN ＝戰鬥不能（仍存在於戰場上），單位真的被殲滅時不會出現在清單裡。
+             * @enum {string}
+             */
+            readiness?: "OK" | "DEGRADED" | "DOWN";
             /** @description 壓制度（WP-C1）。0＝無壓制。被命中會累積（砲兵高、直射低），停火後每 tick 衰減 ——**壓制是可逆的**，那是它與戰損最根本的差別。射擊效能與移動速度都會被它折減。 **只在友軍（己方＋盟軍）單位上供應**，他方單位一律 0：看得到敵軍被壓制多少 等於一份免費的即時戰果評估，那正是 WP-C10.4 在擋的東西。白軍 god view 全供應。 */
             suppression?: number;
             /**

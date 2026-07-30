@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication import WeaponProfile
+from app.adjudication.effectiveness import health_state
 from app.adjudication.establishment import platform_count_for
 from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
@@ -61,6 +62,12 @@ class UnitView(BaseModel):
     # WP-C1 壓制與姿態。**只在自己陣營的單位上供應**——見 `_view` 的說明。
     suppression: float = 0.0
     posture: str = "MOVING"
+    # 戰備狀態 OK / DEGRADED / DOWN（由戰力比導出）。
+    #
+    # ⚠ **為什麼非有不可**：`health` 是「作戰效能%」，而效能曲線在戰力比 ≤0.30 就歸零。
+    # 於是一個剩三成兵力的連隊在 COP 上顯示「血量 0」——它還活著、還會移動、還能被打，
+    # 操作員卻會把 0 讀成「已殲滅」。`health_state()` 一直都在，就是**生產零呼叫端**。
+    readiness: str = "OK"
 
 
 class WeaponView(BaseModel):
@@ -117,6 +124,9 @@ def _view(
         stale_since_tick=stale,
         suppression=_hot_float(hot, "suppression") if own else 0.0,
         posture=(_hot_str(hot, "posture") or "MOVING") if own else "MOVING",
+        readiness=health_state(
+            (u.current_strength / u.authorized_strength) if u.authorized_strength else 0.0
+        ),
     )
 
 

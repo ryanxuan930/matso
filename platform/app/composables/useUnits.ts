@@ -56,6 +56,14 @@ export interface OwnUnit {
   comms: CommsState
   lastReportedTick: number
   health?: number // 0–100 HP（僅我方；供地圖血量環 + 資訊卡 #5）。fog of war：contact 無血量。
+  /**
+   * 戰備狀態 OK / DEGRADED / DOWN。
+   *
+   * ⚠ **不要用 `health` 判死活**：那是作戰效能%，效能曲線在戰力比 ≤0.30 就歸零。
+   * 一個剩三成兵力的連隊 `health` 顯示 0，但它還活著、還會移動、還能被打——
+   * 把 0 讀成「已殲滅」是操作員必然的誤讀，本欄就是為了把那件事說清楚。
+   */
+  readiness?: 'OK' | 'DEGRADED' | 'DOWN'
   isFixed?: boolean // 固定單位（指揮部等）：地圖符號加鎖頭徽章（只我方；不洩漏敵方編成）。
 }
 

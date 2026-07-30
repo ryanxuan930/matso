@@ -370,7 +370,17 @@ def run_precheck(
     elif isinstance(payload, EngineerPayload):
         checks = _precheck_engineer(db, validated.unit, payload)
     else:
-        checks = []  # 其餘類型（RECON/RESUPPLY/POSTURE）之物理檢查於 O3.x
+        # ⚠ **空清單＝無條件放行**（`all([]) is True`）。POSTURE / RESUPPLY / FORMATION
+        # 這三種令確實沒有物理前提（宣告狀態、原地撥交），所以放行是對的——
+        # 但要**明白寫成一條通過的檢查**，而不是靠空清單的副作用：
+        # 前者在 UI 上看得到「預檢：可行（無物理前提）」，後者看起來像預檢沒跑。
+        checks = [
+            PrecheckCheck(
+                name="physics",
+                passed=True,
+                detail=f"{validated.order_type.value} 無物理前提（狀態宣告類令）",
+            )
+        ]
     feasible = all(c.passed for c in checks)
     reason = None if feasible else next(c.detail for c in checks if not c.passed)
     return PrecheckResult(feasible=feasible, checks=checks, reason=reason)

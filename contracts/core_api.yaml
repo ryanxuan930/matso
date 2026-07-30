@@ -403,6 +403,15 @@ components:
         personnel_current: { type: [integer, "null"], description: "當前人員數（顯示用，可空）" }
         comms: { type: string, description: "通聯狀態 ONLINE/DEGRADED/OFFLINE（活模擬中取自熱狀態，非 DB 播種值）" }
         is_fixed: { type: boolean, description: "固定單位（指揮部等）：不接受 MOVE 令，COP 顯示鎖定標記" }
+        readiness:
+          type: string
+          enum: [OK, DEGRADED, DOWN]
+          description: >-
+            戰備狀態（由戰力比導出：≥0.90 OK／<0.30 DOWN／其餘 DEGRADED）。
+            ⚠ **與 `health` 是兩件事**：`health` 是作戰效能%，而效能曲線在戰力比 ≤0.30 就歸零
+            ——於是一個剩三成兵力的連隊 `health` 顯示 0，但它還活著、還會移動、還能被打。
+            操作員把 0 讀成「已殲滅」是必然的誤讀，本欄就是為了把那件事說清楚。
+            DOWN ＝戰鬥不能（仍存在於戰場上），單位真的被殲滅時不會出現在清單裡。
         suppression:
           type: number
           minimum: 0

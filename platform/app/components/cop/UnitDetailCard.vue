@@ -36,6 +36,13 @@ defineProps<{
 
 defineEmits<{ (e: 'close'): void }>()
 
+/** 戰備狀態的中文。DOWN 是「戰鬥不能」不是「已殲滅」——真被殲滅的單位不會在清單裡。 */
+const READINESS_LABELS: Record<string, string> = {
+  OK: '可戰',
+  DEGRADED: '戰力受損',
+  DOWN: '戰鬥不能（仍在戰場）',
+}
+
 /** 編裝編輯器展開狀態——由頁面持有（換單位時要收起），故走 model。 */
 const showOrbat = defineModel<boolean>('showOrbat', { required: true })
 </script>
@@ -94,6 +101,14 @@ const showOrbat = defineModel<boolean>('showOrbat', { required: true })
         {{ force.cur }}/{{ force.auth }}
         <span class="dim">· {{ force.platforms }} 平台</span>
         <span v-if="force.personnel != null" class="dim">· {{ force.personnel }} 人</span>
+      </dd>
+    </div>
+    <!-- 戰備狀態。**存在的理由很具體**：上面那個「作戰效能%」在戰力比 ≤0.30 就顯示 0，
+         而那個 0 會被讀成「已殲滅」——這一列說清楚它還在戰場上，只是戰鬥不能。 -->
+    <div v-if="unit.readiness">
+      <dt>戰備</dt>
+      <dd :class="`rdy-${unit.readiness.toLowerCase()}`" data-testid="unit-readiness">
+        {{ READINESS_LABELS[unit.readiness] }}
       </dd>
     </div>
     <div>
@@ -356,5 +371,15 @@ const showOrbat = defineModel<boolean>('showOrbat', { required: true })
 }
 .unit-card .orbat-toggle:hover {
   color: #bae6fd;
+}
+.rdy-ok {
+  color: var(--p-green-400);
+}
+.rdy-degraded {
+  color: var(--p-amber-400);
+}
+.rdy-down {
+  color: var(--p-red-400);
+  font-weight: 600;
 }
 </style>

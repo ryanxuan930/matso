@@ -154,3 +154,28 @@ def test_reposition_commander_forbidden(session_factory: sessionmaker[Session]) 
         headers=_auth(world),  # 一般 COMMANDER（非全知）
     )
     assert r.status_code == 403
+
+
+def test_a_broken_unit_reports_down_rather_than_looking_annihilated() -> None:
+    """`health` 是**作戰效能%**，而效能曲線在戰力比 ≤0.30 就歸零。
+
+    於是一個剩三成兵力的連隊在 COP 上顯示「血量 0」——它還活著、還會移動、還能被打，
+    操作員卻會把 0 讀成「已殲滅」。`health_state()` 一直都在，就是生產零呼叫端。
+    """
+    from app.adjudication.effectiveness import effectiveness_pct, health_state
+
+    ratio = 0.25
+    assert effectiveness_pct(ratio) == 0.0  # 這正是誤讀的來源
+    assert health_state(ratio) == "DOWN"  # 而這一欄說得清楚
+    assert health_state(0.5) == "DEGRADED"
+    assert health_state(0.95) == "OK"
+
+
+def test_the_unit_view_actually_carries_readiness() -> None:
+    """守門：欄位加了但 `_view` 忘了填，又是一個「契約有、後端不給」。"""
+    import inspect
+
+    from app.api import units as units_api
+
+    assert "readiness=health_state(" in inspect.getsource(units_api._view)
+    assert "readiness" in units_api.UnitView.model_fields
