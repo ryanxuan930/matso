@@ -151,9 +151,18 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 > **2026-07-31 清倉**：火力鏈三個安全洞、想定/軍械庫資料遺失、`has_observer_on` 三缺陷、
 > 回滾座標不同步、e2e 五條紅燈與死 CSS 全部已修（見該日 commit）。以下是**還沒動**的。
 
-- **取消任務令不會連帶取消已派生的子令**（WP-A2）：COP 的說明文字已經寫「取消任務會連帶
-  取消它派生的所有未完成子令」，**後端沒有做**。文件說一套程式做一套。
-- **SEIZE/DEFEND/SCREEN 未在活系統端到端實測**（WP-A2）：接線修好後只實測過 MOVE_MARCH。
+- ~~取消任務令不會連帶取消已派生的子令~~ —— **這條是我記錯的**：`OrderService.cancel`
+  早就有 `_cancel_children`（WP-A2 卡 2，commit `7b0226e`），且有測試
+  （`test_mission_child_orders.py`）。同一段 UI 文字裡**真正假的是另一句**：它宣稱任務會
+  展開成「構工」，而分解器只產 MOVE/ENGAGE/POSTURE——已改掉措辭。
+- **SEIZE/DEFEND 可以派生 ENGINEER 子令但沒有做**（WP-A2 × WP-C2）：C2 之後 `ENGINEER`
+  是真的令型了，防禦就位時構築障礙是對的準則。卡點：分解器看得到的 `world_view` 沒有
+  `unit_kind`（那在 DB 的 `attributes`，不在熱狀態），所以它分不出誰是工兵——
+  對非工兵派 EMPLACE 會每 tick 被預檢打回一次。要嘛把 `unit_kind` 投影進 world_view，
+  要嘛在接線層過濾。
+- **取消單一子令等於沒取消**（WP-A2）：去重鍵要求有「進行中的同款令」才算重複
+  （`service.py:149-158`），所以被取消的子令下一個 tick 就會被分解器原樣重建。
+  COP 若要對子令提供逐列取消，得先決定語義（隱藏該按鈕、或連帶暫停母任務）。
 - **前端下不了 `ENGINEER` 與 `FORMATION` 令**（WP-C2/C3）：後端、預檢、契約、生成型別全通了，
   但 `useCopOrdering.ts` 的 `orderType` union 仍是 `MOVE|ENGAGE|FIRE_MISSION|POSTURE|MISSION`
   ——**使用者點不到**。破障是 V2.1 exit 的 armor-breakthrough CPX 的必要動作，這是那張卡的前置。
