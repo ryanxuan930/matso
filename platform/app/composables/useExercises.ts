@@ -19,7 +19,7 @@ export type SealView = components['schemas']['SealView']
 /** 階段標籤 + 一句話說明（徽章的 tooltip）。 */
 export const EXERCISE_PHASE_LABELS: Record<string, { text: string; hint: string }> = {
   PREP: { text: '整備', hint: '整備會議、想定發佈、系統飽和測試' },
-  REHEARSAL: { text: '預推', hint: '預推演練；參數於此期間簽證鎖定（WP-B4）' },
+  REHEARSAL: { text: '預推', hint: '預推演練；參數於此期間簽證鎖定' },
   EXECUTION: { text: '正式實施', hint: '正式演習進行中——參數凍結' },
   REVIEW: { text: '檢討', hint: '檢討會；參數解鎖' },
   ARCHIVED: { text: '已撤收', hint: '撤收建檔完成；可執行銷毀模式' },

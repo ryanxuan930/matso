@@ -47,9 +47,9 @@ onMounted(refresh)
   <main class="scenarios" data-testid="scenarios-page">
     <header class="sc-bar">
       <Button data-testid="sc-back-lobby" size="small" text @click="navigateTo('/lobby')">← 系統首頁</Button>
-      <h1>劇本管理</h1>
+      <h1>想定管理</h1>
       <Button data-testid="sc-new" class="sc-new-btn" size="small" @click="navigateTo('/scenario-editor')">
-        ＋ 新增劇本
+        ＋ 新增想定
       </Button>
     </header>
 

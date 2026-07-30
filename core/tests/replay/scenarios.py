@@ -303,6 +303,142 @@ def build_suppression_defense_kernel() -> Kernel:
     )
 
 
+# --------------------------------------------------------------------------
+# 任務級下令（WP-A2）。SPEC_V2 原本寫「golden：重錄（新增令型）」——**開工前查證後推翻**：
+# 上面四個案例都是手搭的純記憶體 Kernel，不碰 `OrderType`、不碰 DB、不走 `sim_runtime`，
+# 新增令型改不到它們的雜湊。改採 WP-C1 用過的做法：**新增一個案例**，
+# 讓任務分解有自己的漂移偵測，同時讓那四個雜湊維持成未被污染的歷史基準。
+#
+# 本案例把分解器與任務執行期一起跑進 stateHash：一個連沿軸線奪佔一個目標，
+# 途中在目標圈內遇敵（接戰）、清空後鞏固轉守。
+# --------------------------------------------------------------------------
+
+_A2_TICKS = 60
+_A2_OBJ = {"lat": 24.02, "lng": 121.0}
+
+
+class _A2MissionPlanner:
+    """把 `mission_runtime.evaluate` 的子令直接套進熱狀態。
+
+    活執行期會把子令送進 `OrderService.submit`（要 DB）；golden 是純記憶體，
+    故此處以最小的方式落實子令的效果——**分解與階段轉移的邏輯完全共用生產程式**，
+    被釘住的正是那一段。
+    """
+
+    def __init__(self, hot: InMemoryHotState) -> None:
+        from app.orders.mission import MissionPayload, MissionType
+        from app.orders.mission_runtime import ActiveMission, MissionMemory
+
+        self._hot = hot
+        self._memory = MissionMemory()
+        self._dest: tuple[float, float] | None = None
+        self._missions = [
+            ActiveMission(
+                order_id="m-seize",
+                unit_id="INF",
+                faction="BLUE",
+                payload=MissionPayload(
+                    mission_type=MissionType.SEIZE,
+                    params={
+                        "objective": _A2_OBJ,
+                        "axis": [{"lat": 24.01, "lng": 121.0}],
+                        "objective_radius_m": 400,
+                    },
+                ),
+            )
+        ]
+
+    def _world_view(self, faction: str) -> dict[str, Any]:
+        own = dict(self._hot.get_unit("INF") or {})
+        own["unit_id"] = "INF"
+        enemy = self._hot.get_unit("RED") or {}
+        enemies = (
+            [{"unit_id": "RED", "lat": enemy.get("lat"), "lng": enemy.get("lng")}]
+            if enemy.get("alive")
+            else []
+        )
+        return {"own_units": [own], "known_enemies": enemies}
+
+    def plan(self, now: SimTime) -> list[LedgerEvent]:
+        from app.orders.mission_runtime import evaluate
+
+        to_submit, events = evaluate(self._missions, self._memory, self._world_view, now)
+        for _mission, orders in to_submit:
+            for order in orders:
+                self._accept(order)
+        self._advance()  # 常駐 MOVE 令每 tick 推進（真實的 movement 子系統就是這樣）
+        self._record_phase(now)
+        return events
+
+    def _record_phase(self, now: SimTime) -> None:
+        """把**各階段首次進入的 tick** 寫進熱狀態，讓 stateHash 蓋到任務的時間軸。
+
+        ⚠ 第一版只靠終狀態（位置 + 姿態）——**那個 golden 抓不到漂移**：
+        移動是漸近收斂的，跑滿 60 tick 之後不論容差多少，終點都一樣。
+        實測把 `ARRIVAL_TOLERANCE_M` 120→300 之後雜湊**完全沒變**，
+        等於那個 hash 檔什麼都沒釘住。要釘的是「任務照這個節奏走過這些階段」，
+        所以記的是首次進入時間而不是當下階段（後者也會被終狀態吃掉）。
+        """
+        state = self._memory.states.get("m-seize")
+        if state is None:
+            return
+        seen = dict(self._hot.get_unit("MISSION") or {})
+        key = state.phase.value
+        if key not in seen:
+            self._hot.update_unit("MISSION", {key: now.tick})
+
+    def _accept(self, order: Any) -> None:
+        """收下一道子令。
+
+        ⚠ **MOVE 是常駐令**：分解器在「還在路上」時刻意不重下令（真實系統靠既有的
+        VALIDATED/EXECUTING 令持續推進）。第一版的這個假模型只在收令的那一 tick 移動一次，
+        於是單位走了 40% 就停住、任務永遠到不了目標——**是實測 60 tick 後的終狀態發現的**，
+        不是推理出來的。
+        """
+        if order.order_type == "MOVE":
+            self._dest = (order.payload["to_lat"], order.payload["to_lng"])
+        elif order.order_type == "ENGAGE":
+            self._hot.update_unit("RED", {"alive": False})
+        elif order.order_type == "POSTURE":
+            self._hot.update_unit("INF", {"posture": order.payload["posture"]})
+
+    def _advance(self) -> None:
+        """朝常駐目的地走一步：每 tick 縮短 40% 距離（確定性，不抽隨機）。"""
+        if self._dest is None:
+            return
+        unit = dict(self._hot.get_unit("INF") or {})
+        lat, lng = float(unit.get("lat", 0.0)), float(unit.get("lng", 0.0))
+        self._hot.update_unit(
+            "INF",
+            {
+                "lat": round(lat + (self._dest[0] - lat) * 0.4, 9),
+                "lng": round(lng + (self._dest[1] - lng) * 0.4, 9),
+            },
+        )
+
+
+def build_mission_seize_kernel() -> Kernel:
+    hot = InMemoryHotState()
+    hot.put_unit("INF", {"lat": 24.0, "lng": 121.0, "posture": "MOVING"})
+    hot.put_unit("RED", {"lat": 24.021, "lng": 121.0, "alive": True})
+    return Kernel(
+        session_id="replay",
+        clock=SimClock(),
+        order_source=NoOpOrderSource(),
+        adjudicator=NoOpAdjudicator(),
+        movement=NoOpMovementSystem(),
+        sensors=NoOpSensorSystem(),
+        comms=NoOpCommsSystem(),
+        logistics=NoOpLogisticsSystem(),
+        trigger_checker=NoOpTriggerChecker(),
+        mission_planner=_A2MissionPlanner(hot),
+        broadcaster=NoOpBroadcaster(),
+        event_sink=NoOpEventSink(),
+        hot_state=hot,
+        wall_clock=NullMonotonicClock(),
+    )
+
+
 SCENARIOS: dict[str, ReplayScenario] = {
     "empty_100": ReplayScenario("empty_100", 100, _build_empty),
     "rng_walk_100": ReplayScenario("rng_walk_100", 100, build_rng_walk_kernel),
@@ -310,4 +446,5 @@ SCENARIOS: dict[str, ReplayScenario] = {
     "suppression_defense_60": ReplayScenario(
         "suppression_defense_60", _C1_TICKS, build_suppression_defense_kernel
     ),
+    "mission_seize_60": ReplayScenario("mission_seize_60", _A2_TICKS, build_mission_seize_kernel),
 }

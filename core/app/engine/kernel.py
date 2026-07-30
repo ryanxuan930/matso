@@ -22,8 +22,10 @@ from app.engine.subsystems import (
     CommsSystem,
     EventSink,
     LogisticsSystem,
+    MissionPlanner,
     MonotonicClock,
     MovementSystem,
+    NoOpMissionPlanner,
     OrderSource,
     SensorSystem,
     TriggerChecker,
@@ -63,6 +65,9 @@ class Kernel:
         comms: CommsSystem,
         logistics: LogisticsSystem,
         trigger_checker: TriggerChecker,
+        # WP-A2 任務級指揮。**NoOp 預設**——9 個 Kernel 建構點，改成必填會讓四個 golden
+        # 噴 TypeError，而那看起來像 golden 壞掉（最容易招來的錯誤反應是去跑 rerecord）。
+        mission_planner: MissionPlanner | None = None,
         broadcaster: Broadcaster,
         event_sink: EventSink,
         hot_state: HotStateStore,
@@ -84,6 +89,7 @@ class Kernel:
         self._comms = comms
         self._logistics = logistics
         self._trigger_checker = trigger_checker
+        self._mission_planner = mission_planner or NoOpMissionPlanner()
         self._broadcaster = broadcaster
         self._event_sink = event_sink
         self._hot_state = hot_state
@@ -114,6 +120,9 @@ class Kernel:
         events: list[LedgerEvent] = []
         for order in await self._order_source.drain():
             events.extend(self._adjudicator.resolve(order, now))
+        # WP-A2：任務級指揮**在移動之前**——這一 tick 決定往哪走，移動這一 tick 就走出去。
+        # 放在後面的話，分解出的新 MOVE 要等下一 tick 才生效，每次階段轉換都慢一拍。
+        events.extend(self._mission_planner.plan(now))
         events.extend(await self._movement.step(now))
         events.extend(await self._sensors.sweep(now))
         events.extend(await self._comms.evaluate(now))

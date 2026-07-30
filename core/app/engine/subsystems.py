@@ -73,6 +73,17 @@ class TriggerChecker(Protocol):
 
 
 @runtime_checkable
+class MissionPlanner(Protocol):
+    """任務級指揮的每 tick 評估（WP-A2）。同步、in-memory。
+
+    **跑在 movement 之前**：任務這一 tick 決定「往哪走」，移動這一 tick 才把它走出去。
+    反過來的話，分解出的新 MOVE 令要等下一 tick 才生效，每一次階段轉換都白白慢一拍。
+    """
+
+    def plan(self, now: SimTime) -> list[LedgerEvent]: ...
+
+
+@runtime_checkable
 class Broadcaster(Protocol):
     """增量狀態推播（O1.4 Redis diff / O4.3 WebSocket）。diff 為本 tick 的 per-unit 變動欄位。"""
 
@@ -173,6 +184,19 @@ class NoOpLogisticsSystem:
 
 class NoOpTriggerChecker:
     def check(self, now: SimTime) -> list[LedgerEvent]:
+        return []
+
+
+class NoOpMissionPlanner:
+    """無任務級指揮（預設）。
+
+    Kernel 給這個槽位 **NoOp 預設**而不是必填參數：repo 裡有 9 個 Kernel 建構點
+    （sim_runtime、conftest、三個 kernel 測試、scripted battle、三個 golden 想定）。
+    改成必填會讓四個 golden 噴 `TypeError`——那看起來像 golden 壞掉，其實只是建構式變了，
+    而「golden 紅了」最容易招來的錯誤反應就是去跑 rerecord。
+    """
+
+    def plan(self, now: SimTime) -> list[LedgerEvent]:
         return []
 
 

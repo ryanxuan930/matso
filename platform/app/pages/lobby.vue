@@ -328,7 +328,7 @@ onMounted(async () => {
         :disabled="creating || !selectedScenarioId"
         @click="createFromScenario"
       >
-        從劇本建立
+        從想定建立
       </button>
     </section>
 
@@ -449,7 +449,7 @@ onMounted(async () => {
                 :value="p.seat_role ?? ''"
                 class="r-sel"
                 data-testid="roster-seat"
-                :title="p.seat_role ? SEAT_ROLE_LABELS[p.seat_role] : '未指派席位（沿用角色權限）'"
+                :title="p.seat_role ? SEAT_ROLE_LABELS[p.seat_role] : '未指派席位'"
                 :disabled="rosterBusy"
                 @change="doReassign(p.user_id, p.faction, p.role, p.unit_scope ?? [], ($event.target as HTMLSelectElement).value)"
               >

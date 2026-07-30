@@ -90,3 +90,44 @@ SPEC_V2 對本卡點名的陷阱是「分解器讀的 world_view 必須走迷霧
 - 卡 4：COP 下令 UI + AAR 任務時間軸。
 - ⚠ **G4 護欄洞**：`_STRIKE_ORDER_TYPES = frozenset({"ENGAGE"})` 連 FIRE_MISSION 都沒包，
   MISSION 更沒有。SPEC_V2 §WP-A3 已明列「ENGAGE/MISSION」。屬卡 2/3 範圍，先記在這裡。
+
+### 卡 2 前半完成（Kernel 槽位 + 執行期 + 第五個 golden）
+
+| 檔案 | 動作 | 說明 |
+|---|---|---|
+| `core/app/engine/subsystems.py` | 改 | `MissionPlanner` Protocol + `NoOpMissionPlanner` |
+| `core/app/engine/kernel.py` | 改 | 任務槽位**在 movement 之前**；**NoOp 預設** |
+| `core/app/orders/mission_runtime.py` | 新增 | 每 tick 推進、階段事件、記憶（可進 checkpoint）|
+| `core/tests/replay/scenarios.py` | 改 | 第五個 golden `mission_seize_60` |
+
+**任務跑在 movement 之前**：這一 tick 決定往哪走，移動這一 tick 就走出去。放在後面的話，
+分解出的新 MOVE 要等下一 tick 才生效，每次階段轉換都白白慢一拍。
+
+**槽位給 NoOp 預設而非必填**：repo 有 9 個 Kernel 建構點。改成必填會讓四個 golden 噴
+`TypeError`——那看起來像 golden 壞掉，而「golden 紅了」最容易招來的錯誤反應就是去跑 rerecord。
+
+**每道任務各自 try/except**：`kernel.run_tick` 對子系統例外**沒有任何防護**，一個 raise 會讓
+runner 崩潰後被 `SimManager` 每 3 秒重建一次，形成無限重啟迴圈。一道壞任務不該拖垮整局。
+
+**階段寫 `ai_decision` 不寫 `detail`**：`detail` 刻意不入 hash chain（非證據性診斷欄），
+而任務階段是 AAR 任務時間軸要用的事實。
+
+### golden 差點變成一份沒有意義的雜湊——兩個各自獨立的錯誤
+
+**第一個：只記終狀態的 golden 抓不到漂移。**
+第一版只把位置與姿態寫進 stateHash。移動是漸近收斂的——跑滿 60 tick 之後，
+不論抵達容差設多少終點都一樣。實測把 `ARRIVAL_TOLERANCE_M` 120→300，**雜湊完全沒變**。
+要釘住的是「任務照這個節奏走過這些階段」，所以改成把**各階段首次進入的 tick** 寫進熱狀態。
+（當下階段也不行——那同樣會被終狀態吃掉。）
+
+**第二個：`__pycache__` 讓連續好幾次的 mutation test 全部是假的。**
+`120.0` 與 `300.0` **位元組長度相同**，而我用 `cp` 還原檔案時 Python 沒有讓 pyc 失效，
+於是行程裡的常數與磁碟上的檔案長期不一致——`decomposer.__file__` 指著寫著 120 的檔案，
+`ARRIVAL_TOLERANCE_M` 卻是 300。連帶後果是 **golden 是在被突變過的原始碼下錄的**：
+差一點就把一份「釘住錯誤基準」的雜湊提交進去。
+
+清掉 `__pycache__` 重錄後，兩個突變（容差 120→300、佔領後姿態 DEFENSE→HASTY）
+**各自都讓 `mission_seize_60` 轉紅，而其餘四個 golden 不動**。
+
+教訓寫在這裡給下一個人：**mutation test 之後要清 `__pycache__`**，
+尤其當突變前後的字面值長度相同時。長度相同的字面值替換是這個陷阱最容易觸發的形式。

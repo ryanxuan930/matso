@@ -143,7 +143,7 @@ await refresh()
             <button
               class="edit-btn"
               data-testid="detach-session"
-              title="卸下（該局變回獨立局，不刪任何資料）"
+              title="卸下（該局變回獨立局）"
               :disabled="busy"
               @click="run(() => detachSession(ex.id, s.id))"
             ><i class="pi pi-times" /></button>
@@ -187,7 +187,7 @@ await refresh()
         </ul>
 
         <!-- WP-B4 參數簽證 -->
-        <div class="ex-sub">參數簽證（WP-B4）</div>
+        <div class="ex-sub">參數簽證</div>
         <div class="ex-seal" data-testid="exercise-seal">
           <template v-if="seal">
             <span :class="seal.matches ? 'ok' : 'bad'" data-testid="seal-status">
@@ -224,12 +224,12 @@ await refresh()
             data-testid="download-bundle"
             :href="`/api/v1/exercises/${ex.id}/bundle`"
             target="_blank"
-            title="撤收建檔：帳本原樣 + AAR 統計 + 想定包 + 稽核軌跡"
+            title="建檔：帳本原樣 + AAR 統計 + 想定包 + 稽核軌跡"
           >歸檔封包</a>
           <button
             class="edit-btn danger"
             data-testid="delete-exercise"
-            title="刪除演習專案本身——掛在底下的局變回獨立局，不刪任何推演資料"
+            title="刪除演習專案本身——掛在底下的局變回獨立局"
             :disabled="busy"
             @click="run(() => deleteExercise(ex.id)).then(() => (openId = null))"
           ><i class="pi pi-trash" /></button>
