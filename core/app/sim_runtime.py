@@ -562,6 +562,28 @@ class SimManager:
             sim_clock = SimClock(  # #93 可調節奏
                 tick_rate_ms=tick_rate_ms, start_tick=resumed.start_tick
             )
+            # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）；
+            # WP-C5 起 STATE_DIFF 也改為**每陣營投影**（可見集 + 位置凍結），不再全廣播。
+            # **pre_tick 也用同一個實例**：那條路徑不在 Kernel 的事件蒐集裡，
+            # 過去只寫 Ledger 不 publish——破障、斷橋、陣地變換、補給、整補的事件
+            # 全部進不了 WS 戰況 feed，玩家要重新整理才看得到已經發生的事。
+            live_broadcaster = RedisBroadcaster(
+                client,
+                session_id,
+                sensor_resolver.faction_for,
+                observers=sensor_resolver.factions(),
+                visible_for=_make_visible_for(relations, sensor_resolver.factions()),
+                state_for=hot.get_unit,
+            )
+
+            def _emit(events: list[LedgerEvent]) -> None:
+                """pre_tick 事件：**寫帳本 + 推 feed**。少了後者等於事件沒發生過（對玩家而言）。"""
+                if not events:
+                    return
+                LedgerWriter(self._factory).append(session_id, events)
+                with contextlib.suppress(Exception):  # 推播失敗不該讓 tick 掛掉
+                    live_broadcaster.publish_events_now(events)
+
             kernel = Kernel(
                 session_id=session_id,
                 clock=sim_clock,
@@ -696,14 +718,7 @@ class SimManager:
                 trigger_checker=msel_runtime,
                 # fog of war：事件依所涉單位標受眾陣營（見 broadcaster.event_audience）；
                 # WP-C5 起 STATE_DIFF 也改為**每陣營投影**（可見集 + 位置凍結），不再全廣播。
-                broadcaster=RedisBroadcaster(
-                    client,
-                    session_id,
-                    sensor_resolver.faction_for,
-                    observers=sensor_resolver.factions(),
-                    visible_for=_make_visible_for(relations, sensor_resolver.factions()),
-                    state_for=hot.get_unit,
-                ),
+                broadcaster=live_broadcaster,
                 event_sink=LedgerWriter(self._factory),
                 hot_state=hot,
                 wall_clock=PerfCounterClock(),
@@ -795,7 +810,7 @@ class SimManager:
                     _resupply_tick, self._factory, hot, session_id, sim_clock.now().tick
                 )
                 if sup:
-                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, sup)
+                    await asyncio.to_thread(_emit, sup)
                 # WP-C7.3 整補：戰損單位在補給點旁、無敵情、有料件時逐 tick 恢復。
                 # `repair_per_day=0`（預設）→ 第一行就回空 list，既有局零成本。
                 rf = await asyncio.to_thread(
@@ -809,7 +824,7 @@ class SimManager:
                     sim_params.repair_per_day,
                 )
                 if rf:
-                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, rf)
+                    await asyncio.to_thread(_emit, rf)
                 # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
                 # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
                 await asyncio.to_thread(tick_suppression, hot, sim_clock.now().tick)
@@ -826,12 +841,12 @@ class SimManager:
                     _engineer_tick, self._factory, session_id, sim_clock.now().tick
                 )
                 if eng:
-                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, eng)
+                    await asyncio.to_thread(_emit, eng)
                 # WP-C10.5 陣地變換：打夠次數的砲自動換位置。事件走 LedgerWriter，
                 # 因為 pre_tick 不在 Kernel 的事件蒐集路徑上。
                 moves = await asyncio.to_thread(_displacement_tick, sim_clock.now().tick)
                 if moves:
-                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, moves)
+                    await asyncio.to_thread(_emit, moves)
 
             # 自主推演（O11.4）：本 session 有 AI 指派（Redis ai_config）且 #54 AI 非 OFF 時，
             # 每個 AI 陣營起一條獨立 async 決策 worker（固定心跳、非 pre_tick → 不阻塞 tick）。
