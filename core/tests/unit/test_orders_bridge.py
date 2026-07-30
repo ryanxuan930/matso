@@ -192,3 +192,25 @@ def test_submit_rate_cap(session_factory: sessionmaker[Session]) -> None:
         )
     assert res.capped == 7
     assert len(res.submitted) + len(res.rejected) + len(res.skipped) == 3
+
+
+def test_map_posture() -> None:
+    """**過去這裡回 None**——註解寫「對應子系統 NoOp」，但 WP-C1 完成後
+    `drain_posture_orders` 每 tick 都在跑。
+
+    後果：LLM 決定掘壕、令被靜靜丟掉、AI 以為部隊進入防禦而實際上還站著。
+    """
+    req = tactical_order_to_request({"unit_id": "u1", "order_type": "POSTURE", "posture": "dug_in"})
+
+    assert req is not None
+    assert req.order_type is OrderType.POSTURE
+    assert req.payload == {"posture": "DUG_IN"}
+
+
+def test_posture_without_a_posture_is_dropped() -> None:
+    assert tactical_order_to_request({"unit_id": "u1", "order_type": "POSTURE"}) is None
+
+
+def test_recon_is_not_bridged_because_nothing_executes_it() -> None:
+    """RECON 有 OrderType、有席位表位置…就是沒有任何執行端。落單只會永遠停在 VALIDATED。"""
+    assert tactical_order_to_request({"unit_id": "u1", "order_type": "RECON"}) is None

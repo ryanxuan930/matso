@@ -22,10 +22,10 @@
       "required": ["unit_id", "order_type"],
       "properties": {
         "unit_id": { "type": "string" },
-        "order_type": { "enum": ["MOVE", "ENGAGE", "RECON", "RESUPPLY", "POSTURE", "HOLD", "MISSION"] },
+        "order_type": { "description": "RECON 刻意不在此列：它有 OrderType 卻沒有任何執行端，送出去只會永遠停在 VALIDATED。", "enum": ["MOVE", "ENGAGE", "RESUPPLY", "POSTURE", "HOLD", "MISSION"] },
         "target_h3": { "type": "string" },
         "target_unit_id": { "type": "string" },
-        "posture": { "type": "string" },
+        "posture": { "description": "姿態（order_type=POSTURE 時必填）。轉換要時間：HASTY 即時、DEFENSE 30 分、DUG_IN 4 小時。", "enum": ["MOVING", "HASTY", "DEFENSE", "DUG_IN"] },
         "mission_type": {
           "description": "任務型（WP-A2；order_type=MISSION 時必填）。下的是任務，展開成低階令的是確定性的符號層分解器——LLM 只選任務與參數。",
           "enum": ["SEIZE", "DEFEND", "SCREEN", "MOVE_MARCH"]

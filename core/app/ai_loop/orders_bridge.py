@@ -28,7 +28,13 @@ from app.models.tables import TacticalUnit
 from app.movement.mobility import resolve_unit_mobility
 from app.orders.no_strike import NO_STRIKE_H3_RES
 from app.orders.precheck import PhysicsGateway, run_precheck
-from app.orders.schemas import EngagePayload, MovePayload, OrderRequest, OrderType
+from app.orders.schemas import (
+    EngagePayload,
+    MovePayload,
+    OrderRequest,
+    OrderType,
+    PosturePayload,
+)
 from app.orders.service import OrderService
 from app.orders.validator import ValidatedOrder
 
@@ -40,7 +46,7 @@ _MOVE_H3_RES = 8  # AI MOVE 目標經緯 → H3 解析度（與戰術 hex grid �
 # 單一決策週期落單上限（O11.8 防洗版）：LLM 一次吐幾十上百令時只處理前 N。
 _MAX_ORDERS_PER_CYCLE = 25
 
-_TypedPayload = MovePayload | EngagePayload | dict[str, Any]
+_TypedPayload = MovePayload | EngagePayload | PosturePayload | dict[str, Any]
 
 
 def _num(v: Any) -> float | None:
@@ -140,8 +146,16 @@ def tactical_order_to_request(
         if not isinstance(target_unit_id, str) or not target_unit_id:
             return None
         payload = {"target_unit_id": target_unit_id}
+    elif otype is OrderType.POSTURE:
+        # WP-C1 姿態令。**過去這裡回 None**——註解寫「對應子系統 NoOp」，但 WP-C1 完成後
+        # `drain_posture_orders` 每 tick 都在跑。於是 LLM 決定掘壕、令被靜靜丟掉、
+        # AI 以為部隊進入防禦而實際上還站著，而且沒有任何錯誤訊息。
+        posture = order.get("posture")
+        if not isinstance(posture, str) or not posture:
+            return None
+        payload = {"posture": posture.strip().upper()}
     else:
-        return None  # RECON/POSTURE 首版不橋接（對應子系統 NoOp）
+        return None  # RECON 等尚無執行端的型別：不落單（見 seats.UNIMPLEMENTED_ORDER_TYPES）
 
     return OrderRequest(unit_id=unit_id, order_type=otype, payload=payload)
 
@@ -155,7 +169,12 @@ def _parse_typed_payload(req: OrderRequest) -> _TypedPayload | None:
             return EngagePayload.model_validate(req.payload)
     except ValidationError:
         return None
-    return dict(req.payload)  # 其餘類型（RECON/RESUPPLY/POSTURE）維持 raw dict
+    if req.order_type is OrderType.POSTURE:
+        try:
+            return PosturePayload.model_validate(req.payload)
+        except ValidationError:
+            return None
+    return dict(req.payload)  # 其餘類型（RESUPPLY 等）維持 raw dict
 
 
 class PrecheckFeasibility:

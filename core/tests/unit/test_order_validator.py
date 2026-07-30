@@ -255,13 +255,19 @@ def test_every_order_type_belongs_to_some_seat() -> None:
 
     `S4_LOG` 更久：註解寫「待補給令型（WP-C7）」，但那張卡早就完成了。
     """
-    from app.seats import COMMANDER_ONLY_ORDER_TYPES, SEAT_ORDER_TYPES
+    from app.seats import (
+        COMMANDER_ONLY_ORDER_TYPES,
+        SEAT_ORDER_TYPES,
+        UNIMPLEMENTED_ORDER_TYPES,
+    )
 
     staffed: set[OrderType] = set()
     for seat, types in SEAT_ORDER_TYPES.items():
         if seat is not SeatRole.COMMANDER:
             staffed |= set(types)
-    unassigned = set(OrderType) - staffed - set(COMMANDER_ONLY_ORDER_TYPES)
+    unassigned = (
+        set(OrderType) - staffed - set(COMMANDER_ONLY_ORDER_TYPES) - set(UNIMPLEMENTED_ORDER_TYPES)
+    )
 
     assert not unassigned, (
         f"這些令型沒有任何幕僚席位下得了：{sorted(t.value for t in unassigned)}。"
@@ -269,7 +275,20 @@ def test_every_order_type_belongs_to_some_seat() -> None:
     )
 
 
-def test_the_commander_can_still_issue_everything() -> None:
-    from app.seats import SEAT_ORDER_TYPES
+def test_nobody_can_issue_an_order_type_that_has_no_executor() -> None:
+    """`RECON` 有 OrderType、有 AI schema、有席位…**就是沒有任何執行端**。
 
-    assert SEAT_ORDER_TYPES[SeatRole.COMMANDER] == frozenset(OrderType)
+    送出去的令會永遠停在 VALIDATED，而且 `_PAYLOAD_MODELS` 也沒登錄它——連 payload 都不驗。
+    讓指揮官下得了一道永遠不會執行的令，比擋掉它糟。
+    """
+    from app.seats import SEAT_ORDER_TYPES, UNIMPLEMENTED_ORDER_TYPES
+
+    assert UNIMPLEMENTED_ORDER_TYPES  # 空了就把這條連同守門一起刪掉
+    for seat, types in SEAT_ORDER_TYPES.items():
+        assert not (set(types) & set(UNIMPLEMENTED_ORDER_TYPES)), seat
+
+
+def test_the_commander_can_issue_everything_that_actually_runs() -> None:
+    from app.seats import SEAT_ORDER_TYPES, UNIMPLEMENTED_ORDER_TYPES
+
+    assert SEAT_ORDER_TYPES[SeatRole.COMMANDER] == frozenset(OrderType) - UNIMPLEMENTED_ORDER_TYPES
