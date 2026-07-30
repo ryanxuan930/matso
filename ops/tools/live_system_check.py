@@ -39,6 +39,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+import h3
+
 BASE = os.environ.get("BASE", "http://localhost:8000")
 USER = os.environ.get("SEED_USERNAME", "commander")
 PASSWORD = os.environ.get("SEED_PASSWORD", "exercise")
@@ -194,7 +196,9 @@ def build_scenario() -> dict[str, Any]:
             "name": "LIVE_SYSCHECK",
             "version": "1.0",
             "mode": "REALTIME",
-            "tick_rate_ms": 1000,
+            # 1 tick ＝ 1 分模擬時間。**不要用 1000**：那是 schema 預設值，
+            # 以 1 秒/tick 跑，一個排一 tick 只走 1.4 公尺（見 tutorial-platoon 的註解）。
+            "tick_rate_ms": 60_000,
             "bbox": [120.1, 23.55, 120.5, 23.85],
             "factions": [
                 {"id": "BLUE", "color": "#3b7dd8"},
@@ -321,6 +325,21 @@ class World:
             time.sleep(1.5)
         raise CheckError(f"等「{what}」逾時（{timeout:.0f}s），最後觀測值＝{last!r}")
 
+    def poll_fast(self, predicate: Any, what: str, timeout: float = 60.0) -> Any:
+        """高頻輪詢（0.15 秒）——給**會自己消失**的量用。
+
+        壓制度、通聯瞬斷這類狀態的窗口只有幾秒；`wait_until` 的 1.5 秒間隔會整段
+        錯過，然後看起來像「這個功能沒生效」。誤判成沒生效比逾時更糟：
+        會有人去「修」一個沒壞的東西。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            hit = predicate()
+            if hit:
+                return hit
+            time.sleep(0.15)
+        raise CheckError(f"高頻輪詢「{what}」逾時（{timeout:.0f}s）")
+
     # -- 下令 --------------------------------------------------------------
 
     def order(self, designation: str, order_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -437,7 +456,8 @@ def c3_move(w: World) -> str:
         "BLU_ARM",
         "MOVE",
         {
-            "to_h3": "",
+            # to_h3 供預檢做可達/地形判定；to_lat/to_lng 才是精確落點（見 MovePayload）。
+            "to_h3": h3.latlng_to_cell(dest_lat, dest_lng, 8),
             "mobility_profile": "TRACKED",
             "to_lat": dest_lat,
             "to_lng": dest_lng,
@@ -516,8 +536,21 @@ def c5_engage(w: World) -> str:
 
 @check("C6", "壓制：被打的單位壓制度上升（且只有自己看得到）")
 def c6_suppression(w: World) -> str:
-    # C5 已在對 RED_INF 射擊。壓制度只在「自己陣營」的視角供應——
-    # 以 White Cell 切到 RED 視角讀，才看得到紅軍自己的壓制值。
+    """砲擊 → 目標壓制度上升，且**只有目標自己那一方看得到**。
+
+    ⚠ **必須密集輪詢**：壓制是會自己恢復的，這正是它與戰損最根本的差別。
+    砲兵一次命中累積 0.35，之後每模擬分鐘衰減到 0.7 倍——約 10 個 tick 就歸零。
+    這一局跑在 120× 時間壓縮下（0.5 秒牆鐘＝1 個 tick），窗口只有五秒左右。
+    以 1.5 秒間隔輪詢會**整段錯過**，然後看起來像「壓制沒有生效」。
+    """
+    target = w.unit("RED_INF")
+    w.order(
+        "BLU_ARTY",
+        "FIRE_MISSION",
+        {"target_lat": target["lat"], "target_lng": target["lng"], "rounds": 8},
+    )
+
+    # 壓制度只在「自己陣營」的視角供應——以統裁切到 RED 視角才讀得到紅軍自己的值。
     def suppressed() -> Any:
         snap = w.state(as_faction="RED")
         for u in snap["units"]:
@@ -525,7 +558,7 @@ def c6_suppression(w: World) -> str:
                 return u
         return None
 
-    u = w.wait_until(suppressed, "RED_INF 壓制度 > 0", timeout=120)
+    u = w.poll_fast(suppressed, "RED_INF 壓制度 > 0", timeout=90)
 
     # 藍軍視角看紅軍：壓制度必須被抹掉（看得到敵軍被壓制多少＝免費的戰果評估）。
     blue_view = w.state(as_faction="BLUE")

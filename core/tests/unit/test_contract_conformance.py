@@ -69,7 +69,6 @@ _IMPL_ONLY = {
     ("DELETE", "/api/v1/sessions/{}/autonomy"),
     ("GET", "/api/v1/sessions/{}/orbat-permissions"),
     ("PUT", "/api/v1/sessions/{}/orbat-permissions"),
-    ("PATCH", "/api/v1/sessions/{}/units/{}"),
     ("POST", "/api/v1/sessions/{}/units/{}/reposition"),
     ("POST", "/api/v1/system/config/test-llm"),
 }

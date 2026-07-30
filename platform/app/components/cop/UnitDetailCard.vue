@@ -45,6 +45,13 @@ const READINESS_LABELS: Record<string, string> = {
 
 /** 編裝編輯器展開狀態——由頁面持有（換單位時要收起），故走 model。 */
 const showOrbat = defineModel<boolean>('showOrbat', { required: true })
+
+/**
+ * 單位屬性編輯器展開狀態。與編裝編輯**分開**：那一個管「帶什麼裝備」，
+ * 這一個管「這是一支什麼樣的部隊」（番號/兵科/級別/人數/戰力）。
+ * 本地 state 即可——換單位時 `unitId` 變了、編輯器自己會 reset。
+ */
+const showAttrs = ref(false)
 </script>
 
 <template>
@@ -148,6 +155,20 @@ const showOrbat = defineModel<boolean>('showOrbat', { required: true })
     </ul>
   </div>
   <div v-if="editable" class="card-orbat">
+    <button class="orbat-toggle" data-testid="toggle-attrs" @click="showAttrs = !showAttrs">
+      {{ showAttrs ? '▾ 單位屬性' : '▸ 單位屬性（番號/兵科/人數/戰力）' }}
+    </button>
+    <UnitAttributeEditor
+      v-if="showAttrs && unitId"
+      :session-id="sessionId"
+      :unit-id="unitId"
+      :designation="unit.designation"
+      :branch="unit.branch ?? 'UNKNOWN'"
+      :unit-level="unit.unit_level"
+      :personnel="force?.personnel ?? null"
+      :strength="force?.cur ?? unit.strength ?? 0"
+      :authorized-strength="force?.auth ?? unit.authorized_strength ?? 100"
+    />
     <button class="orbat-toggle" data-testid="toggle-orbat" @click="showOrbat = !showOrbat">
       {{ showOrbat ? '▾ 編裝編輯' : '▸ 編裝編輯（武器/彈藥）' }}
     </button>

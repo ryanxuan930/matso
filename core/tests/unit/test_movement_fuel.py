@@ -215,3 +215,30 @@ def test_ai_context_omits_range_for_foot() -> None:
     view = _own_unit_view("u2", {"lat": 23.75, "lng": 121.2}, meta)
     assert "range_km" not in view
     assert "剩餘行程" not in _fmt_own(view)
+
+
+def test_lazy_full_tank_fills_every_platform_not_just_one(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """惰性滿油要填**整個編成**的油，不是一台車的。
+
+    容量與油耗都乘了 `quantity`，初始油量卻沒乘——於是一個 4 輛 MBT 的連隊
+    開局只有 1/4 的油，卻以 4 倍的速率消耗：續航從 420 km 掉到 105 km。
+    這個症狀在畫面上是「怎麼開沒多遠就拋錨了」，很容易被誤判成地形或編裝問題。
+    """
+    sid = "fuel-qty"
+    with session_factory() as db:
+        unit_id = _seed(db, sid, vehicle=_veh(1900, 4.5))
+        # `_seed` 建的是 quantity 預設值；本例要的是一個 4 輛車的連隊。
+        inst = db.scalars(
+            select(EquipmentInstance).where(EquipmentInstance.owner_id == unit_id)
+        ).one()
+        inst.quantity = 4
+        db.commit()
+
+        fuel = load_unit_fuel(db, unit_id)
+        assert fuel.capacity == 1900 * 4
+        assert fuel.remaining == 1900 * 4, "尚未寫過 fuel 鍵＝滿油，滿的是四台車不是一台"
+        assert fuel.burn_per_km == 4.5 * 4
+        # 續航要回到單車的水準——4 台車一起走並不會讓續航變成 1/4。
+        assert abs(fuel.range_km() - 1900 / 4.5) < 1e-6

@@ -70,3 +70,28 @@ export async function removeUnitEquipment(
     method: 'DELETE',
   })
 }
+
+// ---- 單位屬性（番號/兵科/編制級別/人數/戰力）----
+
+export type UnitEdit = components['schemas']['UnitEdit']
+export type UnitEditView = components['schemas']['UnitEditView']
+
+/**
+ * 編輯單位屬性。PATCH 語義——**只送要改的欄位**。
+ *
+ * `health_status` 不在可編清單裡：它是由戰力比導出的顯示值，裁決層每次命中都會
+ * 覆寫它。後端對它回 422 而不是靜默忽略，所以這裡也不要幫忙塞。
+ *
+ * 回應的 `restart_required` 為真時，代表這次改到了「runner 起跑才讀一次」的東西
+ * （目前只有 `unit_level`）——要告訴使用者，否則他會以為已經生效。
+ */
+export function editUnitAttributes(
+  sessionId: string,
+  unitId: string,
+  body: UnitEdit,
+): Promise<UnitEditView> {
+  return apiFetch<UnitEditView>(`/sessions/${sessionId}/units/${unitId}`, {
+    method: 'PATCH',
+    body,
+  })
+}

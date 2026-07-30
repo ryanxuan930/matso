@@ -90,6 +90,7 @@ from app.state.live_msel import (
     publish_pending,
 )
 from app.state.live_position import apply_pos_cmds, drain_pos_cmds
+from app.state.live_unit import apply_unit_cmds, drain_unit_cmds
 from app.state.resume import apply_pending_rollback, read_live_tick, resume_session
 from app.weather import WeatherState
 
@@ -868,6 +869,10 @@ class SimManager:
                 pos = await asyncio.to_thread(drain_pos_cmds, client, session_id)
                 if pos:
                     apply_pos_cmds(hot, pos)
+                # 單位屬性編輯（人數/戰力/建制數）：只改 DB 的話畫面變了、打起來還是舊編制。
+                unit_cmds = await asyncio.to_thread(drain_unit_cmds, client, session_id)
+                if unit_cmds:
+                    apply_unit_cmds(hot, unit_cmds)
                 # WP-C10.3 火力計畫排程：tick 取自**本迴圈自己的 sim_clock**——Redis 的
                 # `session:{id}:tick` 是廣播器在 tick 跑完之後才寫的，讀它會慢一拍。
                 # 在此落庫的令會被同一個 tick 的 drain 撿走（pre_tick 在 run_tick 之前）。

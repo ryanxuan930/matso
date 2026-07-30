@@ -440,3 +440,41 @@ test('關閉小工具不會動層序（只有打開才拉上來）', async () =>
 
   assert.equal(w.widgets.value.coords.z, z)
 })
+
+// ---- 單位屬性編輯器（番號/兵科/人數/戰力）----
+
+test('單位屬性編輯器只送有改過的欄位（PATCH 語義）', () => {
+  // 一次把整包送上去，會把別人剛改的欄位蓋回去——尤其戰力是活模擬持續在動的量。
+  const src = readSrc('components/UnitAttributeEditor.vue')
+  assert.match(src, /const changes = computed/)
+  assert.match(src, /!== props\.designation/)
+  assert.match(src, /!== props\.strength/)
+  assert.ok(
+    !/body: form/.test(src) && !/editUnitAttributes\([^)]*form\)/.test(src),
+    '不可把整個 form 當 body 送出',
+  )
+})
+
+test('單位屬性編輯器不提供作戰效能輸入欄', () => {
+  // health 是由戰力比導出的顯示值，裁決層每次命中都會覆寫它。
+  // 給一個輸入框等於讓統裁以為這裡可以「補血」，而下一次交戰就會把它打回去。
+  const src = readSrc('components/UnitAttributeEditor.vue')
+  assert.ok(!/health_status/.test(src), '不該送 health_status（後端回 422）')
+  assert.match(src, /effectivenessPreview/, '應改為顯示算出來的戰力比')
+  assert.match(src, /不可直接編輯/)
+})
+
+test('單位屬性編輯器會把「需重啟才生效」講出來', () => {
+  // 改編制級別只有 runner 重啟後才會影響聚合裁決。不講的話使用者會以為已經生效。
+  const src = readSrc('components/UnitAttributeEditor.vue')
+  assert.match(src, /restart_required/)
+  assert.match(src, /重新啟動/)
+})
+
+test('單位資訊卡有掛上單位屬性編輯器', () => {
+  // 這條盯的是「元件寫好了但沒人用」——這個 repo 反覆出現的那類缺陷。
+  const src = readSrc('components/cop/UnitDetailCard.vue')
+  assert.match(src, /<UnitAttributeEditor/)
+  assert.match(src, /toggle-attrs/)
+  assert.match(src, /:unit-level="unit\.unit_level"/)
+})

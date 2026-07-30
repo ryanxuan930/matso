@@ -90,18 +90,24 @@ def load_unit_fuel(db: Session, unit_id: str) -> UnitFuel:
         burn = _fuel_burn_per_km(mob, _num(mob.get("max_cross_country_speed_kmh")))
         if burn <= 0 and capacity <= 0:
             continue  # 無油料模型的載具 → 不納入（不限制其移動）
+        # 每 instance 代表 N 件同型裝備（#30 quantity）→ 油量/油耗按數量放大。
+        qty = max(1, int(inst.quantity or 1))
+        total_capacity = capacity * qty
         state = inst.current_state if isinstance(inst.current_state, dict) else {}
         raw = state.get("fuel")
         # 惰性滿油：尚無 fuel 鍵 → 視為滿油。
-        remaining = _num(raw) if isinstance(raw, (int, float)) else capacity
-        # 每 instance 代表 N 件同型裝備（#30 quantity）→ 油量/油耗按數量放大。
-        qty = max(1, int(inst.quantity or 1))
+        #
+        # ⚠ **要乘 qty**。這裡曾經只填一台車的油（`else capacity`），而容量與油耗都是
+        # 乘過的——於是一個 4 輛 MBT 的連隊開局只有 1/4 的油，卻以 4 倍的速率消耗：
+        # 續航從 420 km 掉到 105 km。畫面上看不出異常（油量是個沒有基準的數字），
+        # 只有「怎麼開沒多遠就拋錨了」這個症狀，而那很容易被當成地形或編裝設定問題。
+        remaining = _num(raw) if isinstance(raw, (int, float)) else total_capacity
         tanks.append(
             _Tank(
                 instance=inst,
                 burn_per_km=burn * qty,
-                capacity=capacity * qty,
-                remaining=min(remaining, capacity * qty) if capacity > 0 else remaining,
+                capacity=total_capacity,
+                remaining=min(remaining, total_capacity) if capacity > 0 else remaining,
             )
         )
     return UnitFuel(tanks=tanks)

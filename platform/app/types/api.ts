@@ -547,6 +547,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/units/{uid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * @description 編輯單位屬性（番號／兵科／編制級別／人數／戰力／attributes）——編裝編輯權限
+         *     （白軍全開，或本軍且該局開放自編）。
+         *
+         *     人數與戰力**同時推進活模擬的熱狀態**：只寫 DB 的話畫面上變了、實際打起來
+         *     還是舊編制。`unit_level` 例外——聚合裁決門檻與武器解析快取都是 runner
+         *     起跑時讀的，故回應會帶 `restart_required: true`。
+         */
+        patch: operations["editUnit"];
+        trace?: never;
+    };
     "/sessions/{id}/units/{uid}/weapons": {
         parameters: {
             query?: never;
@@ -2029,6 +2056,53 @@ export interface components {
              * @default true
              */
             fuel_sufficient: boolean;
+        };
+        /**
+         * @description 單位屬性編輯（PATCH 語義：只送要改的欄位）。
+         *
+         *     `faction` 與 `health_status` 不開放：前者改了會讓既有敵情/關係矩陣/迷霧投影
+         *     全部對不上；後者是由戰力比導出的顯示值，裁決層每次命中都會覆寫它——
+         *     送了會回 422 而非靜默忽略。
+         */
+        UnitEdit: {
+            /** @description 單位番號 */
+            designation?: string;
+            /** @description 兵科（決定地圖符號的 2525C function ID） */
+            branch?: string;
+            /** @description 編制級別。改它需重啟該局 runner 才會影響聚合裁決（見 restart_required） */
+            unit_level?: string;
+            /** @description 現員人數（未明示 attributes.platform_count 時即為建制數） */
+            personnel_current?: number;
+            /** @description 滿編戰力（戰力比的分母） */
+            authorized_strength?: number;
+            /** @description 當前戰力（裁決的權威量；改它會連帶重算作戰效能） */
+            current_strength?: number;
+            /** @description 自由欄位（platform_count 寫在此處會覆蓋人數導出） */
+            attributes?: Record<string, never>;
+            /** @description **不可編輯**（導出量）。送此欄一律 422。 */
+            health_status?: number;
+        };
+        UnitEditView: {
+            id: string;
+            designation: string;
+            branch: string;
+            faction: string;
+            unit_level: string;
+            /** @description 作戰效能%（由戰力比導出） */
+            health: number;
+            /** @description 當前戰力 */
+            strength: number;
+            /** @description 滿編戰力 */
+            authorized_strength: number;
+            personnel_current?: number | null;
+            /** @description 實際生效的建制數（明示 attributes → 人數 → 依級別導出） */
+            platform_count: number;
+            attributes: Record<string, never>;
+            /**
+             * @description 本次編輯是否有需重啟 runner 才生效的項目（unit_level）
+             * @default false
+             */
+            restart_required: boolean;
         };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
@@ -3586,6 +3660,60 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editUnit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                uid: components["parameters"]["UnitId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnitEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnitEditView"];
+                };
+            };
+            /** @description No orbat-edit permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Derived field not editable */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
