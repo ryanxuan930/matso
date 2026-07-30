@@ -26,6 +26,7 @@ from app.orders.schemas import (
     FireMissionPayload,
     OrderRequest,
     OrderResponse,
+    OrderType,
     PrecheckResult,
 )
 from app.orders.state_machine import is_user_cancellable, next_status
@@ -49,12 +50,24 @@ class OrderService:
         # WP-A3：限制射擊區 override 的留痕出口（LedgerWriter）。None＝不落帳（測試/舊呼叫端）。
         self._event_sink = event_sink
 
-    def submit(self, session_id: str, req: OrderRequest, issuer_id: str) -> OrderResponse:
-        """驗證 + 預檢 + 落庫。不可行 → 持久化 REJECTED 後拋 PrecheckFailedError（API 轉 422）。"""
+    def submit(
+        self,
+        session_id: str,
+        req: OrderRequest,
+        issuer_id: str,
+        *,
+        parent_order_id: str | None = None,
+    ) -> OrderResponse:
+        """驗證 + 預檢 + 落庫。不可行 → 持久化 REJECTED 後拋 PrecheckFailedError（API 轉 422）。
+
+        `parent_order_id`（WP-A2）＝這道令是哪一道 MISSION 分解出來的。
+        **子令走的是與人工下令完全相同的這條路**——一樣過驗證、預檢、禁射區、ROE、席位。
+        分解器不繞過任何閘門；讓子令走側門正是護欄鏈會出現漏洞的方式（紅線 3 的精神）。
+        """
         validated = validate_order(self._db, session_id, req, issuer_id)
         # 去重（補充 2d）：多機同時查看/操作時，同單位 + 同型別 + 同 payload 的未終結指令若已存在，
         # 採先到先處理、忽略後到重複——回既有指令（idempotent），不重複落庫。驗證在前確保授權無誤。
-        dup = self._find_active_duplicate(session_id, req)
+        dup = self._find_active_duplicate(session_id, req, parent_order_id)
         if dup is not None:
             return _to_response(dup, _precheck_of(dup))
         precheck = run_precheck(
@@ -85,6 +98,7 @@ class OrderService:
             status=OrderStatus.PENDING,
             precheck=precheck.model_dump(),
             issued_at_tick=self._tick_source(),
+            parent_order_id=parent_order_id,
         )
         target = OrderStatus.VALIDATED if precheck.feasible else OrderStatus.REJECTED
         order.status = next_status(order.status, target)  # PENDING → VALIDATED / REJECTED
@@ -120,8 +134,18 @@ class OrderService:
             )
         return _to_response(order, precheck)
 
-    def _find_active_duplicate(self, session_id: str, req: OrderRequest) -> Order | None:
-        """尋找同單位 + 同型別 + 同 payload 的未終結（PENDING/VALIDATED/EXECUTING）指令。"""
+    def _find_active_duplicate(
+        self, session_id: str, req: OrderRequest, parent_order_id: str | None = None
+    ) -> Order | None:
+        """尋找同單位 + 同型別 + 同 payload + **同母令**的未終結指令。
+
+        `parent_order_id` 進去重鍵是刻意的（WP-A2）：兩道不同的任務可能對同一個單位分解出
+        座標完全相同的 MOVE（例如兩張任務都要它先到同一個集結點）。不分母令的話，
+        後一道任務會拿到前一道的子令當成自己的，於是**取消前一道任務會連帶取消後一道的子令**。
+
+        反過來，同一道任務**重複分解出同一道子令則應該被去重**——分解器每 tick 都會跑，
+        而它在「還在路上」時就是會重覆算出同一個目標點。
+        """
         active = (OrderStatus.PENDING, OrderStatus.VALIDATED, OrderStatus.EXECUTING)
         existing = (
             self._db.execute(
@@ -130,6 +154,7 @@ class OrderService:
                     Order.unit_id == req.unit_id,
                     Order.order_type == req.order_type.value,
                     Order.status.in_(active),
+                    Order.parent_order_id == parent_order_id,
                 )
             )
             .scalars()
@@ -174,8 +199,31 @@ class OrderService:
                 details={"status": order.status.value},
             )
         order.status = next_status(order.status, OrderStatus.CANCELLED)
+        self._cancel_children(order.id)
         self._db.commit()
         return _to_response(order, _precheck_of(order))
+
+    def _cancel_children(self, parent_id: str) -> int:
+        """取消母任務令 → 連帶取消**尚未終結**的子令（WP-A2）。回取消數。
+
+        「取消任務」若只取消母令，單位會繼續執行已經送出去的 MOVE/ENGAGE——
+        操作員按了取消卻看見部隊照樣前進，那比不給取消更糟。
+
+        **已終結的子令不追溯**：那些是既成事實（已經走過的路、已經開過的火），
+        AAR 要看得到。CANCELLED 對執行中的移動令語義是「原地凍結」（見 state_machine 說明），
+        所以取消 EXECUTING 的子令是對的——不是把單位傳送回起點。
+        """
+        active = (OrderStatus.PENDING, OrderStatus.VALIDATED, OrderStatus.EXECUTING)
+        children = (
+            self._db.execute(
+                select(Order).where(Order.parent_order_id == parent_id, Order.status.in_(active))
+            )
+            .scalars()
+            .all()
+        )
+        for child in children:
+            child.status = next_status(child.status, OrderStatus.CANCELLED)
+        return len(children)
 
 
 def _precheck_of(order: Order) -> PrecheckResult | None:
@@ -196,4 +244,10 @@ def _to_response(order: Order, precheck: PrecheckResult | None) -> OrderResponse
         resolved_at_tick=order.resolved_at_tick,
         target_unit_id=tgt if isinstance(tgt, str) else None,
         target_h3=to_h3 if isinstance(to_h3, str) else None,
+        parent_order_id=order.parent_order_id,
+        mission_type=(
+            str(payload["mission_type"])
+            if order.order_type == OrderType.MISSION.value and payload.get("mission_type")
+            else None
+        ),
     )

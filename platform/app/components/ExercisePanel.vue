@@ -115,7 +115,7 @@ await refresh()
   <p v-if="message" class="ex-msg" data-testid="exercise-message">{{ message }}</p>
   <p v-if="loading" data-testid="exercise-loading">載入中…</p>
   <p v-else-if="!exercises.length" data-testid="exercise-empty">
-    尚無演習專案。一場演習可以裝下多次預推、正式局與檢討——散局不掛演習也照常運作。
+    尚無演習專案。一場演習可以裝下多次預推、正式局與檢討。
   </p>
 
   <ul v-else class="ex-list" data-testid="exercise-list">
@@ -259,6 +259,33 @@ await refresh()
   gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
+/* 表單控制項：整組宣告照抄 lobby.vue 的 `.create input` 與 `button`（就是隔壁分頁
+   「新推演名稱／建立推演」那一對）。**必須重寫一份**——scoped CSS 只會把 scope 屬性
+   加在子元件的根節點上，lobby 的規則穿不進 ExercisePanel 的內層元素。 */
+.create input {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+button {
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+/* lobby 的主按鈕沒有 disabled 樣式（它只在送出的那一瞬間 disabled，看不出差別）；
+   這裡的「建立演習」在名稱空白時就是 disabled，不變灰會像是壞掉的按鈕，
+   故沿用 accounts.vue `.create button:disabled` 與 lobby `.edit-btn:disabled` 的同一組值。
+   一條 `button:disabled` 同時蓋掉主按鈕與 .edit-btn（後者特異度較低）。 */
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .ex-msg {
   color: #fca5a5;
   font-size: 0.85rem;
@@ -357,6 +384,24 @@ await refresh()
   gap: 0.4rem;
   margin-top: 0.35rem;
 }
+/* 掛入列＝lobby 名冊的 `.roster-add`（下拉＋下拉＋按鈕）同款，故照抄 `.r-sel`
+   與 `.roster-add .r-sel` / `.roster-add button`。底色取 #0a1626 而非 .sc-select 的
+   #0f172a：lobby 的慣例是「控制項比所在面板再深一階」——.sc-select 貼在頁面底色
+   (#0a1626) 上，而這裡貼在 .ex-card (#0f172a) 上，跟 .modal input / .r-sel 同情境。 */
+.ex-attach select {
+  flex: 1 1 auto;
+  min-width: 6rem;
+  max-width: 9.5rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  background: #0a1626;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+}
+.ex-attach button {
+  flex: 0 0 auto;
+}
 .ex-seal {
   display: flex;
   align-items: center;
@@ -380,6 +425,8 @@ await refresh()
   color: #7dd3fc;
   font-size: 0.85rem;
 }
+/* 與 lobby.vue 的 `.edit-btn` 同一份，只少了它的 `margin-left: 0.5rem`——
+   那是 lobby `.session` 列的排版補償，這裡的 .ex-seal / .ex-actions 已自帶 gap。 */
 .edit-btn {
   padding: 0.15rem 0.4rem;
   border: 1px solid #334155;

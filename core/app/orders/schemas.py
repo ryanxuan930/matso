@@ -108,3 +108,6 @@ class OrderResponse(BaseModel):
     resolved_at_tick: int | None = None
     target_unit_id: str | None = None  # ENGAGE 目標單位（供指令列顯示對象）
     target_h3: str | None = None  # MOVE 目的地 hex（供指令列顯示對象）
+    # WP-A2：分解自哪一道 MISSION 令。None＝直接下的令。
+    parent_order_id: str | None = None
+    mission_type: str | None = None  # 僅 MISSION 令有值

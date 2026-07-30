@@ -332,6 +332,9 @@ class Order(Base):
     precheck: Mapped[dict | None] = mapped_column("precheck", JSON)  # type: ignore[type-arg]
     issued_at_tick: Mapped[int] = mapped_column("issuedAtTick", Integer)
     resolved_at_tick: Mapped[int | None] = mapped_column("resolvedAtTick", Integer)
+    # WP-A2：分解自哪一道 MISSION 令。NULL＝直接下的令（既有令零遷移）。
+    # 刻意無 FK——母令被硬刪時子令不該連坐消失，那些子令是既成事實。
+    parent_order_id: Mapped[str | None] = mapped_column("parentOrderId", String(191))
 
 
 class IntelContact(Base):

@@ -373,8 +373,13 @@ model Order {
   precheck       Json? // 物理預檢結果快照
   issuedAtTick   Int
   resolvedAtTick Int?
+  /// 分解自哪一道 MISSION 令（WP-A2）。**NULL＝直接下的令**（既有令零遷移）。
+  /// 刻意不設 FK：母令被硬刪時子令不該連坐消失——那些子令是既成事實，AAR 要看得到。
+  /// 取消母令會連帶取消**尚未終結**的子令，那是應用層的事（見 `OrderService.cancel`）。
+  parentOrderId  String?
 
   @@index([sessionId, status])
+  @@index([parentOrderId])
 }
 
 enum IntelFidelity {
