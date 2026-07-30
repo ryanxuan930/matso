@@ -78,7 +78,8 @@ def test_a_mission_order_actually_produces_sub_orders(session_factory) -> None: 
 
     subs = _sub_orders(db, world)
     assert subs, "任務令跑了一個 tick 卻沒有產生任何子令——planner 又沒接上"
-    assert subs[0].order_type == "MOVE"
+    # 行軍第一步是「展開縱隊 + 前往第 1 航路點」兩道令（WP-A2 的 spacing_km 接線）。
+    assert {s.order_type for s in subs} == {"FORMATION", "MOVE"}
     db.close()
 
 
@@ -184,7 +185,9 @@ def test_a_rejected_sub_order_leaves_a_trace_instead_of_vanishing(session_factor
     assert [e.event_type for e in events if e.event_type == "MISSION_SUBORDER_REJECTED"]
     # `OrderService.submit` 打回時**仍會落一列 REJECTED**（既有語義），故指令列也看得到
     # ——兩條痕跡都要在：帳本供 AAR 追究，令列供操作員當場看見。
-    assert all(s.status.value == "REJECTED" for s in _sub_orders(db, world))
+    # **只有需要過物理閘門的令會被打回**：FORMATION 是狀態宣告，不查可達性。
+    moves = [s for s in _sub_orders(db, world) if s.order_type == "MOVE"]
+    assert moves and all(s.status.value == "REJECTED" for s in moves)
     db.close()
 
 

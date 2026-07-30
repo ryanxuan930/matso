@@ -211,11 +211,14 @@ def test_march_walks_every_waypoint_then_completes() -> None:
     route = [{"lat": 24.0, "lng": 121.0}, {"lat": 24.1, "lng": 121.0}]
     m = _mission(MissionType.MOVE_MARCH, route=route)
     s0 = _run(m, _unit(23.9, 121.0), _wv(), MissionState())
-    assert s0.orders[0].payload["to_lat"] == pytest.approx(24.0)
+    # 第一步除了 MOVE 還有一道「展開縱隊」（spacing_km 的接線；見 `_formation_column`）。
+    move0 = next(o for o in s0.orders if o.order_type == "MOVE")
+    assert move0.payload["to_lat"] == pytest.approx(24.0)
 
     at1 = _run(m, _unit(24.0, 121.0), _wv(), s0.state)
     assert at1.state.waypoint_index == 1
-    assert at1.orders[0].payload["to_lat"] == pytest.approx(24.1)
+    move1 = next(o for o in at1.orders if o.order_type == "MOVE")
+    assert move1.payload["to_lat"] == pytest.approx(24.1)
 
     at2 = _run(m, _unit(24.1, 121.0), _wv(), at1.state)
     assert at2.state.phase is MissionPhase.COMPLETE
@@ -259,3 +262,111 @@ def test_arrival_tolerance_is_honoured() -> None:
     # 容差外（約 555 m）
     assert _run(m, _unit(24.005, 121.0), _wv(), moving).state.phase is MissionPhase.MOVING
     assert ARRIVAL_TOLERANCE_M < 555.0
+
+
+# ---- WP-A2 三個「收得下卻沒被讀過」的參數 ----
+
+
+def test_a_defence_only_engages_within_its_frontal_arc() -> None:
+    """`orientation_deg` **過去收得下、一次都沒被讀過**——設「面向東方防守」照樣 360 度接戰。
+
+    防禦陣地的射界本來就有正面：背後來的敵人打不到。
+    """
+    m = _mission(
+        MissionType.DEFEND,
+        area={"lat": 24.0, "lng": 121.0},
+        area_radius_m=5000.0,
+        orientation_deg=90.0,  # 面向正東
+    )
+    holding = MissionState(MissionPhase.HOLDING)
+    unit = _unit(24.0, 121.0)
+
+    east = _run(m, unit, _wv(enemies=[{"unit_id": "e1", "lat": 24.0, "lng": 121.02}]), holding)
+    west = _run(m, unit, _wv(enemies=[{"unit_id": "e2", "lat": 24.0, "lng": 120.98}]), holding)
+
+    assert [o.order_type for o in east.orders] == ["ENGAGE"]
+    assert west.orders == [], "背後的敵人不該進入防禦射界"
+
+
+def test_an_unoriented_defence_still_engages_all_round() -> None:
+    """未宣告方位 → 全向（既有行為位元不變）。守門不可過寬。"""
+    m = _mission(MissionType.DEFEND, area={"lat": 24.0, "lng": 121.0}, area_radius_m=5000.0)
+    out = _run(
+        m,
+        _unit(24.0, 121.0),
+        _wv(enemies=[{"unit_id": "e2", "lat": 24.0, "lng": 120.98}]),
+        MissionState(MissionPhase.HOLDING),
+    )
+
+    assert [o.order_type for o in out.orders] == ["ENGAGE"]
+
+
+def test_march_spacing_reaches_the_footprint() -> None:
+    """`spacing_km` 過去 2 與 0.1 走出來一模一樣，整營疊在同一格上。
+
+    行軍間隔換的是被動防護，在本系統裡對應的量就是 `footprint_m`。
+    """
+    tight = _run(
+        _mission(MissionType.MOVE_MARCH, route=[{"lat": 24.0, "lng": 121.0}], spacing_km=0.1),
+        _unit(23.9, 121.0),
+        _wv(),
+        MissionState(),
+    )
+    loose = _run(
+        _mission(MissionType.MOVE_MARCH, route=[{"lat": 24.0, "lng": 121.0}], spacing_km=2.0),
+        _unit(23.9, 121.0),
+        _wv(),
+        MissionState(),
+    )
+
+    def spacing(step: object) -> float:
+        order = next(o for o in step.orders if o.order_type == "FORMATION")  # type: ignore[attr-defined]
+        return float(order.payload["column_spacing_km"])
+
+    assert spacing(tight) == 0.1
+    assert spacing(loose) == 2.0
+
+
+def test_a_screen_under_pressure_falls_back() -> None:
+    """契約與 payload 說明從一開始就寫著「受壓後退」，實作只有一句註解——
+    掩護幕部隊被壓到死也站在原地。"""
+    from app.orders.mission import distance_m
+
+    m = _mission(MissionType.SCREEN, line=[{"lat": 24.0, "lng": 121.0}])
+    unit = {**_unit(24.0, 121.0), "suppression": 0.8}
+    enemy = [{"unit_id": "e1", "lat": 23.95, "lng": 121.0}]  # 南方
+
+    out = _run(m, unit, _wv(enemies=enemy), MissionState(MissionPhase.HOLDING, 0, 0))
+
+    move = next(o for o in out.orders if o.order_type == "MOVE")
+    # 背離敵人 → 往北退。
+    assert move.payload["to_lat"] > 24.0
+    assert distance_m(24.0, 121.0, move.payload["to_lat"], move.payload["to_lng"]) > 1000.0
+
+
+def test_a_calm_screen_stays_put() -> None:
+    """守門不可過寬：沒被壓制就不該擅離掩護幕位置。"""
+    m = _mission(MissionType.SCREEN, line=[{"lat": 24.0, "lng": 121.0}])
+    out = _run(
+        m,
+        {**_unit(24.0, 121.0), "suppression": 0.1},
+        _wv(enemies=[{"unit_id": "e1", "lat": 23.95, "lng": 121.0}]),
+        MissionState(MissionPhase.HOLDING, 0, 0),
+    )
+
+    assert out.orders == []
+
+
+def test_screen_withdrawal_is_throttled() -> None:
+    """沒有節流，被持續壓制的單位每個 tick 都會多下一道 MOVE，指令列被洗版
+    而且後面那些令的目的地全部作廢。"""
+    m = _mission(MissionType.SCREEN, line=[{"lat": 24.0, "lng": 121.0}])
+    unit = {**_unit(24.0, 121.0), "suppression": 0.9}
+    wv = _wv(enemies=[{"unit_id": "e1", "lat": 23.95, "lng": 121.0}])
+
+    first = _run(m, unit, wv, MissionState(MissionPhase.HOLDING, 0, 0))
+    assert first.orders  # 從未退過 → 第一次立刻退
+    # 冷卻期內（withdrew_at_tick=1，tick=3 距上次未滿 10）不再下令。
+    again = _run(m, unit, wv, first.state, tick=3)
+
+    assert again.orders == []

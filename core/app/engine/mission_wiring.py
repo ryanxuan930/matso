@@ -315,6 +315,11 @@ def _hydrate(order_type: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {**payload, "to_h3": h3.latlng_to_cell(float(lat), float(lng), _HEX_RES)}
 
 
+def _opt_int(raw: object) -> int | None:
+    """可選整數欄位。**None 與 0 是不同的意思**，故不能用 `or 0` 那一套。"""
+    return int(raw) if isinstance(raw, (int, float)) else None
+
+
 def _state_from(raw: dict[str, Any]) -> MissionState:
     """令上的進度 → `MissionState`。認不得的階段回 PLANNED（重跑好過崩潰）。"""
     try:
@@ -325,6 +330,7 @@ def _state_from(raw: dict[str, Any]) -> MissionState:
         phase=phase,
         waypoint_index=int(raw.get("waypoint_index") or 0),
         since_tick=int(raw.get("since_tick") or 0),
+        withdrew_at_tick=_opt_int(raw.get("withdrew_at_tick")),
     )
 
 

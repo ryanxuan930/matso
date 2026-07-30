@@ -107,11 +107,14 @@ class FormationPayload(BaseModel):
 
     formation: str | None = Field(default=None, pattern="^(COLUMN|LINE|WEDGE|VEE|HERRINGBONE)$")
     mounted: bool | None = None
+    # 行軍間隔（km）。**間隔換的是被動防護**：縱隊拉長 → 一發砲彈罩得到的平台變少。
+    # None＝不動該欄（同上面兩欄的紀律）。
+    column_spacing_km: float | None = Field(default=None, gt=0, le=50)
 
     @model_validator(mode="after")
     def _at_least_one(self) -> FormationPayload:
-        if self.formation is None and self.mounted is None:
-            raise ValueError("formation 與 mounted 至少要指定一項")
+        if self.formation is None and self.mounted is None and self.column_spacing_km is None:
+            raise ValueError("formation / mounted / column_spacing_km 至少要指定一項")
         return self
 
 

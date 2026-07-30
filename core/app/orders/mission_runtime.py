@@ -78,10 +78,16 @@ class MissionMemory:
                     phase=MissionPhase(str(blob.get("phase") or MissionPhase.PLANNED)),
                     waypoint_index=int(blob.get("waypoint_index") or 0),
                     since_tick=int(blob.get("since_tick") or 0),
+                    withdrew_at_tick=_opt_int(blob.get("withdrew_at_tick")),
                 )
             except (ValueError, TypeError):
                 continue  # 認不得的階段字串 → 略過該道任務，不讓整份記憶還原不了
         return MissionMemory(states=states)
+
+
+def _opt_int(raw: object) -> int | None:
+    """可選整數欄位。**None 與 0 是不同的意思**，故不能用 `or 0` 那一套。"""
+    return int(raw) if isinstance(raw, (int, float)) else None
 
 
 @dataclass(frozen=True, slots=True)

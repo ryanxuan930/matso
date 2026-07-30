@@ -273,3 +273,25 @@ def test_order_with_neither_field_is_rejected_at_submit(session_factory) -> None
 def test_unit_hot_state_keys_are_the_documented_ones() -> None:
     """熱狀態鍵名散在裁決/接線/廣播三處讀，寫錯一處就靜靜讀到預設值。"""
     assert (FORMATION_KEY, MOUNTED_KEY) == ("formation", "mounted")
+
+
+# ---- 行軍縱隊的受彈面（WP-A2 的 spacing_km 接線） ----
+
+
+def test_a_wider_march_interval_spreads_the_column() -> None:
+    """行軍間隔換的是被動防護：縱隊拉長 → 一發砲彈罩得到的平台變少。"""
+    from app.adjudication.formation import column_footprint_m
+
+    tight = column_footprint_m(0.1, 30)
+    loose = column_footprint_m(2.0, 30)
+
+    assert loose > tight
+    assert loose == pytest.approx(2.0 * 1000.0 * 29 / 2)
+
+
+def test_a_single_platform_has_no_column_depth() -> None:
+    """單一平台沒有縱深——間隔宣告得再大也一樣。"""
+    from app.adjudication.formation import MIN_COLUMN_FOOTPRINT_M, column_footprint_m
+
+    assert column_footprint_m(5.0, 1) == MIN_COLUMN_FOOTPRINT_M
+    assert column_footprint_m(0.0, 30) == MIN_COLUMN_FOOTPRINT_M

@@ -21,11 +21,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.adjudication.formation import Formation, formation_of
+from app.adjudication.formation import Formation, column_footprint_m, formation_of
 from app.state.hot_state import HotStateStore
 
 MOUNTED_KEY = "mounted"
 FORMATION_KEY = "formation"
+# 受彈面（面射擊讀它）。**與 `seed_combat_state` 寫的是同一個鍵**——
+# 行軍間隔改寫它，就是「拉開縱隊換被動防護」這件事在模型裡的樣子。
+FOOTPRINT_KEY = "footprint_m"
+COLUMN_SPACING_KEY = "column_spacing_km"
 
 
 def read_formation(state: dict[str, Any]) -> tuple[Formation, bool | None]:
@@ -46,13 +50,25 @@ def set_formation(
     *,
     formation: Formation | None = None,
     mounted: bool | None = None,
+    column_spacing_km: float | None = None,
 ) -> None:
-    """套用宣告。**None 代表不動該欄**——只想下車的令不該把隊形一起重設。"""
+    """套用宣告。**None 代表不動該欄**——只想下車的令不該把隊形一起重設。
+
+    `column_spacing_km` 改寫 `footprint_m`（面射擊讀的受彈面）：行軍間隔換的就是
+    「一發砲彈能罩到幾個平台」。**平台數取熱狀態的 `platform_count`**——那是
+    `seed_combat_state` 由編制導出的權威值，這裡不自己再導一次（兩份會漂）。
+    """
     patch: dict[str, Any] = {}
     if formation is not None:
         patch[FORMATION_KEY] = formation.value
     if mounted is not None:
         patch[MOUNTED_KEY] = mounted
+    if column_spacing_km is not None:
+        state = hot.get_unit(unit_id) or {}
+        raw = state.get("platform_count")
+        platforms = int(raw) if isinstance(raw, (int, float)) and raw >= 1 else 1
+        patch[FOOTPRINT_KEY] = round(column_footprint_m(column_spacing_km, platforms), 1)
+        patch[COLUMN_SPACING_KEY] = float(column_spacing_km)
     if patch:
         hot.update_unit(unit_id, patch)
 
@@ -93,10 +109,22 @@ def drain_formation_orders(db: Any, session_id: str, hot: HotStateStore, tick: i
                 order.status = next_status(order.status, OrderStatus.REJECTED)
                 continue
         mounted = bool(raw_mounted) if raw_mounted is not None else None
-        if formation is None and mounted is None:
+        raw_spacing = payload.get("column_spacing_km")
+        spacing = (
+            float(raw_spacing)
+            if isinstance(raw_spacing, (int, float)) and raw_spacing > 0
+            else None
+        )
+        if formation is None and mounted is None and spacing is None:
             order.status = next_status(order.status, OrderStatus.REJECTED)
             continue
-        set_formation(hot, order.unit_id, formation=formation, mounted=mounted)
+        set_formation(
+            hot,
+            order.unit_id,
+            formation=formation,
+            mounted=mounted,
+            column_spacing_km=spacing,
+        )
         order.status = next_status(order.status, OrderStatus.COMPLETED)
         order.resolved_at_tick = tick
         applied += 1
@@ -105,6 +133,8 @@ def drain_formation_orders(db: Any, session_id: str, hot: HotStateStore, tick: i
 
 
 __all__ = [
+    "COLUMN_SPACING_KEY",
+    "FOOTPRINT_KEY",
     "FORMATION_KEY",
     "MOUNTED_KEY",
     "drain_formation_orders",

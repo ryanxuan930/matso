@@ -131,6 +131,9 @@ class MissionState:
     phase: MissionPhase = MissionPhase.PLANNED
     waypoint_index: int = 0
     since_tick: int = 0
+    # SCREEN 上次「受壓後退」的 tick。**None ＝從未後退**——不用 0 當哨兵，
+    # tick 0 是合法的推演時間，用 0 會讓「開局就退過」與「沒退過」分不開。
+    withdrew_at_tick: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +158,33 @@ def distance_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
     return 2 * _EARTH_R_M * math.asin(math.sqrt(h))
 
 
+def bearing_deg(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
+    """a → b 的方位角（度，正北 0、順時針）。純函數。"""
+    p1, p2 = math.radians(a_lat), math.radians(b_lat)
+    dl = math.radians(b_lng - a_lng)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return math.degrees(math.atan2(y, x)) % 360.0
+
+
+def angle_delta_deg(a: float, b: float) -> float:
+    """兩個方位角的最小夾角（0–180）。"""
+    d = abs((a - b) % 360.0)
+    return min(d, 360.0 - d)
+
+
+def offset_latlng(lat: float, lng: float, bearing: float, distance_m: float) -> tuple[float, float]:
+    """自 (lat,lng) 沿方位角推進 distance_m 的新座標（球面近似）。純函數。"""
+    ang = distance_m / _EARTH_R_M
+    br = math.radians(bearing)
+    p1, l1 = math.radians(lat), math.radians(lng)
+    p2 = math.asin(math.sin(p1) * math.cos(ang) + math.cos(p1) * math.sin(ang) * math.cos(br))
+    l2 = l1 + math.atan2(
+        math.sin(br) * math.sin(ang) * math.cos(p1), math.cos(ang) - math.sin(p1) * math.sin(p2)
+    )
+    return math.degrees(p2), (math.degrees(l2) + 540.0) % 360.0 - 180.0
+
+
 __all__ = [
     "DefendParams",
     "LatLng",
@@ -167,5 +197,8 @@ __all__ = [
     "ScreenParams",
     "SeizeParams",
     "SubOrder",
+    "angle_delta_deg",
+    "bearing_deg",
     "distance_m",
+    "offset_latlng",
 ]

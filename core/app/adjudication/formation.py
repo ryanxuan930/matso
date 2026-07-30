@@ -127,6 +127,29 @@ def shooter_frontage_modifier(formation: Formation, mounted: bool | None) -> flo
     return base * MOUNTED_FIRE_PENALTY if mounted else base
 
 
+# 行軍縱深的下限（公尺）。間隔宣告得再小，一支部隊也不會擠成一個點。
+MIN_COLUMN_FOOTPRINT_M = 25.0
+
+
+def column_footprint_m(spacing_km: float, platform_count: int) -> float:
+    """行軍縱隊拉出來的受彈面半徑（公尺）。
+
+    ## 為什麼要有這個
+
+    `MarchParams.spacing_km` 一直收得下、**分解器一次都沒讀過**：
+    `spacing_km: 2` 與 `0.1` 走出來的行軍一模一樣，整營疊在同一格上。
+    而行軍間隔正是準則上最重要的被動防護——它換的就是「一發砲彈能罩到幾個平台」，
+    這件事在本系統裡有現成的量：`area_fire` 的 `footprint_radius_m`。
+
+    縱隊長度＝間隔 ×（平台數 − 1）；受彈面取其半徑（長度的一半）。
+    單一平台（`platform_count <= 1`）沒有縱深 → 回下限。
+    """
+    if spacing_km <= 0 or platform_count <= 1:
+        return MIN_COLUMN_FOOTPRINT_M
+    length_m = spacing_km * 1000.0 * (platform_count - 1)
+    return max(MIN_COLUMN_FOOTPRINT_M, length_m / 2.0)
+
+
 def crew_casualties(vehicle_loss: float, fraction: float = CREW_CASUALTY_FRACTION) -> float:
     """載具毀損 → 乘員傷亡（[JTLS-F p.1058]）。"""
     return max(0.0, vehicle_loss) * max(0.0, fraction)
@@ -136,6 +159,7 @@ __all__ = [
     "CREW_CASUALTY_FRACTION",
     "DISMOUNTED_EXPOSURE",
     "FORMATION_COEFFS",
+    "MIN_COLUMN_FOOTPRINT_M",
     "MOUNTED_EXPOSURE",
     "MOUNTED_FIRE_PENALTY",
     "UNDECLARED_EXPOSURE",
@@ -143,6 +167,7 @@ __all__ = [
     "FormationCoeffs",
     "area_exposure_modifier",
     "coeffs_of",
+    "column_footprint_m",
     "crew_casualties",
     "direct_fire_target_modifier",
     "formation_of",

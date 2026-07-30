@@ -45,7 +45,10 @@ from app.orders.mission import (
     ScreenParams,
     SeizeParams,
     SubOrder,
+    angle_delta_deg,
+    bearing_deg,
     distance_m,
+    offset_latlng,
 )
 
 # 判定「已抵達」的容差。移動系統走的是逐 tick 推進，落點不會與目標完全重合。
@@ -84,6 +87,15 @@ def _engage(target_unit_id: str, reason: str) -> SubOrder:
 
 def _posture(value: str, reason: str) -> SubOrder:
     return SubOrder(order_type="POSTURE", payload={"posture": value}, reason=reason)
+
+
+def _formation_column(spacing_km: float, reason: str) -> SubOrder:
+    """行軍縱隊 + 間隔。間隔由 `formation_wiring.set_formation` 換算成受彈面。"""
+    return SubOrder(
+        order_type="FORMATION",
+        payload={"formation": "COLUMN", "column_spacing_km": spacing_km},
+        reason=reason,
+    )
 
 
 def _emplace(lat: float, lng: float, obstacle: str, reason: str) -> SubOrder:
@@ -134,7 +146,11 @@ def _fail(state: MissionState, tick: int, note: str) -> MissionStep:
 
 def _advance(state: MissionState, phase: MissionPhase, tick: int, **kw: int) -> MissionState:
     return MissionState(
-        phase=phase, waypoint_index=kw.get("waypoint_index", state.waypoint_index), since_tick=tick
+        phase=phase,
+        waypoint_index=kw.get("waypoint_index", state.waypoint_index),
+        since_tick=tick,
+        # 階段轉移**不清掉**後退時間戳：那是節流用的，清掉就等於每次階段轉移都放行一次後退。
+        withdrew_at_tick=state.withdrew_at_tick,
     )
 
 
@@ -166,7 +182,7 @@ def step(
     if isinstance(params, DefendParams):
         return _defend(params, state, unit, world_view, tick)
     if isinstance(params, ScreenParams):
-        return _screen(params, state, unit, tick)
+        return _screen(params, state, unit, world_view, tick)
     if isinstance(params, MarchParams):
         return _march(params, state, unit, tick)
     return _fail(state, tick, f"未支援的任務型：{mission.mission_type}")
@@ -283,18 +299,54 @@ def _defend(
         return MissionStep(state=state)
     if state.phase is MissionPhase.HOLDING:
         contacts = _enemies_within(wv, p.area.lat, p.area.lng, p.area_radius_m)
+        # WP-A2：`orientation_deg` **過去收得下、一次都沒被讀過**——設「面向東方防守」
+        # 照樣 360 度接戰。防禦陣地的射界本來就是有正面的：背後來的敵人打不到。
+        # 未宣告 → 不篩（既有行為位元不變）。
+        contacts = _in_arc(contacts, p.area.lat, p.area.lng, p.orientation_deg)
         if contacts:
             return MissionStep(
-                state=state, orders=[_engage(str(contacts[0]["unit_id"]), "敵進入防區")]
+                state=state, orders=[_engage(str(contacts[0]["unit_id"]), "敵進入防區射界")]
             )
         return MissionStep(state=state)
     return MissionStep(state=state)
 
 
-# ---- SCREEN：佔位 → 監視（不接戰）----
+# 防禦正面的半張角（度）。180 ＝ 全向（等於沒宣告）；90 ＝ 前方 180 度。
+DEFENSE_ARC_HALF_DEG = 90.0
 
 
-def _screen(p: ScreenParams, state: MissionState, unit: dict[str, Any], tick: int) -> MissionStep:
+def _in_arc(
+    contacts: list[dict[str, Any]], lat: float, lng: float, orientation_deg: float | None
+) -> list[dict[str, Any]]:
+    """篩出落在防禦正面扇區內的敵。`orientation_deg` 為 None → 原樣回傳（全向）。"""
+    if orientation_deg is None:
+        return contacts
+    out: list[dict[str, Any]] = []
+    for c in contacts:
+        pos = _pos(c)
+        if pos is None:
+            continue
+        if angle_delta_deg(bearing_deg(lat, lng, pos[0], pos[1]), orientation_deg) <= (
+            DEFENSE_ARC_HALF_DEG
+        ):
+            out.append(c)
+    return out
+
+
+# ---- SCREEN：佔位 → 監視（不接戰）→ 受壓後退 ----
+
+
+# 受壓後退的門檻與距離。壓制值域見 `adjudication/suppression.MAX_SUPPRESSION`。
+SCREEN_WITHDRAW_SUPPRESSION = 0.5
+SCREEN_WITHDRAW_M = 1200.0
+# 兩次後退令之間的最少 tick 數。沒有這個節流，被持續壓制的單位每個 tick 都會多下一道
+# MOVE，指令列會被洗版而且後面那些令的目的地全部作廢。
+SCREEN_WITHDRAW_COOLDOWN_TICKS = 10
+
+
+def _screen(
+    p: ScreenParams, state: MissionState, unit: dict[str, Any], wv: dict[str, Any], tick: int
+) -> MissionStep:
     target = p.line[min(state.waypoint_index, len(p.line) - 1)]
     if state.phase is MissionPhase.PLANNED:
         return MissionStep(
@@ -305,9 +357,69 @@ def _screen(p: ScreenParams, state: MissionState, unit: dict[str, Any], tick: in
         if not _arrived(unit, target.lat, target.lng):
             return MissionStep(state=state)
         return MissionStep(state=_advance(state, MissionPhase.HOLDING, tick), note="掩護幕就位")
+    if state.phase is MissionPhase.HOLDING:
+        # WP-A2：**受壓後退**。契約與 payload 說明從一開始就寫著這一條，
+        # 但這裡過去只有一句「刻意不下 ENGAGE」的註解——掩護幕部隊被壓到死也站在原地。
+        # 掩護幕的任務是「看見、回報、活著退回來」，不是釘在原位挨打。
+        withdraw = _screen_withdraw(p, state, unit, wv, tick)
+        if withdraw is not None:
+            return withdraw
     # HOLDING：**刻意不下任何 ENGAGE**——掩護幕的任務是偵測回報，不是接戰。
     # 敵情本身經偵測子系統進 contact，不需要分解器做任何事。
     return MissionStep(state=state)
+
+
+def _screen_withdraw(
+    p: ScreenParams, state: MissionState, unit: dict[str, Any], wv: dict[str, Any], tick: int
+) -> MissionStep | None:
+    """被壓制到門檻以上 → 背離最近的敵後退一段。不需要後退回 None。
+
+    後退方向取「最近的已知敵 → 本單位」的方位角**再往外推**——不是退回掩護幕線上的
+    某個點：那條線是**橫向**的部署線，沿線移動不會脫離火力。
+    """
+    raw = unit.get("suppression")
+    if not isinstance(raw, (int, float)) or raw < SCREEN_WITHDRAW_SUPPRESSION:
+        return None
+    last = state.withdrew_at_tick
+    if last is not None and tick - last < SCREEN_WITHDRAW_COOLDOWN_TICKS:
+        return None  # 節流：見 SCREEN_WITHDRAW_COOLDOWN_TICKS
+    here = _pos(unit)
+    if here is None:
+        return None  # 位置未知（通聯凍結）→ 算不出方向，寧可不動
+    threat = _nearest_enemy(wv, here[0], here[1])
+    if threat is None:
+        # 被壓制但看不見來源（間瞄）→ 退往掩護幕線的第一點，那是預劃的後方位置。
+        away = bearing_deg(p.line[0].lat, p.line[0].lng, here[0], here[1])
+    else:
+        away = bearing_deg(threat[0], threat[1], here[0], here[1])
+    lat, lng = offset_latlng(here[0], here[1], away, SCREEN_WITHDRAW_M)
+    return MissionStep(
+        # 仍留在 HOLDING（掩護幕還在執行，只是換了位置）；`since_tick` **不動**
+        # ——那是「這個階段從何時開始」，被後退改掉的話「掩護幕撐了多久」就記不對了。
+        state=MissionState(
+            phase=MissionPhase.HOLDING,
+            waypoint_index=state.waypoint_index,
+            since_tick=state.since_tick,
+            withdrew_at_tick=tick,
+        ),
+        orders=[_move(lat, lng, f"受壓後退（壓制 {float(raw):.2f}）")],
+        note="受壓後退",
+    )
+
+
+def _nearest_enemy(
+    world_view: dict[str, Any], lat: float, lng: float
+) -> tuple[float, float] | None:
+    """最近的已知敵座標。**依 (距離, unit_id) 排序**——同距離時的決定性。"""
+    best: tuple[float, str, tuple[float, float]] | None = None
+    for e in world_view.get("known_enemies") or []:
+        pos = _pos(e)
+        if pos is None:
+            continue
+        key = (distance_m(lat, lng, pos[0], pos[1]), str(e.get("unit_id") or ""), pos)
+        if best is None or key[:2] < best[:2]:
+            best = key
+    return best[2] if best is not None else None
 
 
 # ---- MOVE_MARCH：按序通過航路點 ----
@@ -318,7 +430,14 @@ def _march(p: MarchParams, state: MissionState, unit: dict[str, Any], tick: int)
         first = p.route[0]
         return MissionStep(
             state=_advance(state, MissionPhase.MOVING, tick, waypoint_index=0),
-            orders=[_move(first.lat, first.lng, "行軍：第 1 航路點")],
+            # WP-A2：`spacing_km` **過去收得下、一次都沒被讀過**——`2` 與 `0.1` 走出來
+            # 一模一樣，整營疊在同一格上。行軍間隔換的是被動防護（一發砲彈能罩到幾個
+            # 平台），在本系統裡對應的量就是 `footprint_m`；故以 FORMATION 令表達
+            # ——「本單位要以什麼狀態行動」本來就是那道令的語義。
+            orders=[
+                _formation_column(p.spacing_km, "行軍縱隊展開"),
+                _move(first.lat, first.lng, "行軍：第 1 航路點"),
+            ],
         )
     if state.phase is MissionPhase.MOVING:
         cur = p.route[min(state.waypoint_index, len(p.route) - 1)]
