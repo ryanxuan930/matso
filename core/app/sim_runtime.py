@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import metrics
 from app.adjudication.adjudicator import (
     EngageCommand,
     EngagementAdjudicator,
@@ -371,6 +372,7 @@ class SimManager:
             return
         self._seal_refused.discard(session_id)  # 參數改回來了 → 下次違規要再記一次
         self._tasks[session_id] = asyncio.create_task(self._run_session(session_id))
+        metrics.active_sessions(len(self._tasks))  # WP-E4
 
     def _start_victory_monitor(
         self, session_id: str, hot: RedisHotState, client: object, autonomy_raw: str | bytes

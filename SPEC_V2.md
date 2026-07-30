@@ -1020,7 +1020,22 @@ ws_protocol 的 RESYNC_REQUIRED 契約補全：`GET /sessions/{id}/state?as_fact
 （units＋contacts＋map features＋sim time＋最後 event seq，後端迷霧過濾）；前端 `sessionStream`
 收 RESYNC 後以快照原子重建（去掉「週期重抓兜底」的 race）。契約先行：core_api.yaml 定義 StateSnapshotView。
 
-#### WP-E4 監控落地　★★
+#### WP-E4 監控落地　★★　✅ 2026-07-30（**使用者裁示：不加容器**）
+
+> **已完成**（worklog: `docs/worklog/monitoring.md`）。
+> 1. **使用者裁示（2026-07-30）：不加 prometheus/grafana 容器**——Grafana 預設埠 3000
+>    已被前端占用，且 air-gapped 每多一個映像就多一件要打包的事。改為 `/metrics` 端點 +
+>    儀表板/告警規則留成 `ops/monitoring/` 的檔案，由既有監控接手。
+> 2. **行程內註冊表**：`SimManager` 與 FastAPI 同一個行程，不需要 Redis 載體。
+>    ⚠ 那是**前提不是巧合**——runner 若被拆出去，tick 指標會安靜地全部歸零。
+> 3. **指標不帶 session/單位標籤**：基數爆炸 + `/metrics` 通常不驗證身分
+>    （放 session id 等於公開「有哪些推演正在跑」）。**指標回答「系統健康嗎」，
+>    不回答「誰在打誰」**——有測試掃全輸出斷言唯一標籤是 `le`。
+> 4. **自己寫 exposition 而不是 `prometheus_client`**（少一個 air-gapped 相依）。
+>    ⚠ 代價真的付了：**直方圖累積做了兩次**，桶數超過 `_count`，分位數是錯的
+>    ——曲線仍單調遞增所以看起來很合理，是印樣張逐行看才發現的。
+> 5. **未竟**：`matso_io_latency_ms` / `matso_ai_workers` **定義了但沒有寫入端**
+>    （正是本 session 抓過三次的「元件對、沒人接」，故明寫）；儀表板未在真 Grafana 開過。
 
 prometheus/grafana 空殼補實：core 暴露 `/metrics`（tick 時長分布、overrun 率、WS 扇出量、
 LLM 心跳延遲、guardrail 攔截計數、DB/Redis 延遲）；compose 增 prometheus+grafana 服務與預置
@@ -1218,7 +1233,7 @@ C4 ✅ 環境演進三卡全數完成（2026-07-30）：C4a 晝夜 + C4b 天氣 
 C7 ✅ 後勤體系三卡全數完成（2026-07-30）：C7.1 補給類別 + C7.2 補給線 + C7.3 修復整補
 F3 ✅ RoleManager/稽核接線；F1 ✅ INGEST 最小切片（2026-07-30）
 G3 E2E 補齊（隨各卡）＋ G4 白軍控制台
-E2 ✅ 認證強化（2026-07-30）；E4 監控落地
+E2 ✅ 認證強化；E4 ✅ 監控落地（2026-07-30）
 ```
 
 ### V2.2「分析系統與規模」

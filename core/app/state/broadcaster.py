@@ -16,6 +16,7 @@ from typing import Any
 
 import redis
 
+from app import metrics
 from app.comms import REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY, project_position
 from app.fires.survivability import MISSION_COUNT_KEY
 from app.state.hot_state import SessionDiff, UnitDiff, session_tick_key
@@ -289,6 +290,7 @@ class RedisBroadcaster:
         """把裁決事件推到 WS 事件流（戰況 feed）。與 STATE_DIFF 共用 seq/ring/channel（原子）。"""
         feed = [e for e in events if e.event_type not in _FEED_EXCLUDE]
         if feed:
+            metrics.ws_fanout(len(feed))  # WP-E4：扇出量（不帶 session 標籤，見 metrics 模組說明）
             await asyncio.to_thread(self._publish_events_sync, feed)
 
     def _publish_events_sync(self, events: list[LedgerEvent]) -> None:

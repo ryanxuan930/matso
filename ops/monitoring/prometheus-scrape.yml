@@ -1,0 +1,15 @@
+# MATSO 抓取設定片段（WP-E4）。
+#
+# 使用者裁示（2026-07-30）：**不加 prometheus/grafana 容器**——把設定與儀表板留成檔案，
+# 由既有的監控系統接手。理由：Grafana 預設埠 3000 已被前端占用，且 air-gapped 部署
+# 每多一個映像就多一件要打包的事。
+#
+# 用法：把 job 併進你既有的 prometheus.yml 的 `scrape_configs:` 之下。
+scrape_configs:
+  - job_name: matso-core
+    metrics_path: /metrics
+    # 抓取間隔 15s：tick 預設 0.5s/tick，15s 足以看出趨勢又不會把 core 壓垮。
+    scrape_interval: 15s
+    static_configs:
+      # compose 內部名稱；從 compose 網路外抓請改成宿主埠（預設 8000）。
+      - targets: ["core:8000"]

@@ -136,6 +136,15 @@ class RoleManager:
         response = self._client.complete(messages, model=self._model, adapter=cfg.adapter)
         latency_ms = int((self._clock() - start) * 1000)
 
+        # WP-E4：LLM 延遲。**ai 套件不硬相依 core**——取不到就算了，
+        # 指標缺一項不該讓推論失敗。
+        try:
+            from app import metrics as _core_metrics
+
+            _core_metrics.llm_latency(latency_ms)
+        except Exception:  # pragma: no cover - core 不在 path 的情境
+            pass
+
         log_id: str | None = None
         if self._log is not None:
             log_id = self._log.record(

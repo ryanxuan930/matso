@@ -7,10 +7,10 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import __version__
+from app import __version__, metrics
 from app.api import (
     aar_router,
     auth_router,
@@ -125,3 +125,26 @@ app.include_router(ws_router)
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
+
+
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics() -> Response:
+    """Prometheus 抓取端點（WP-E4）。
+
+    **不驗證身分**——Prometheus 是機器對機器抓取，塞 bearer token 只會讓部署變複雜。
+    安全性靠兩件事而不是靠認證：
+    1. 指標**不帶 session/單位標籤**（見 `app/metrics.py` 的模組說明），
+       所以抓走它學不到「誰在打誰」。
+    2. 正式部署應在反向代理層限制來源網段。
+
+    `include_in_schema=False`：這不是給前端用的 API，不該出現在 OpenAPI 契約裡。
+
+    ⚠ **永遠不拋**。一個壞掉的指標不該讓抓取整個失敗——那會讓監控在最需要它的時候
+    （系統有問題時）先掛掉。
+    """
+    try:
+        body = metrics.REGISTRY.render()
+    except Exception:  # pragma: no cover - 防禦性
+        logging.getLogger(__name__).exception("指標輸出失敗")
+        body = "# 指標輸出失敗\n"
+    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")

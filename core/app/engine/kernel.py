@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
+from app import metrics
 from app.engine.clock import SimClock
 from app.engine.subsystems import (
     Adjudicator,
@@ -132,8 +133,13 @@ class Kernel:
         # 效能量測涵蓋整個計算階段；Ledger 寫入與廣播不計入（避免把 I/O 誤判為運算超時）。
         duration_ns = self._wall_clock.now_ns() - start_ns
         overran = duration_ns > self._tick_budget_ms * _NS_PER_MS
+        # WP-E4：量測不寫帳本、不入雜湊鏈——它是**牆鐘**的觀測，不是模擬事實。
+        # 放進 Ledger 會讓同一份想定在不同機器上算出不同的 hash。
+        metrics.tick_duration(duration_ns / _NS_PER_MS)
+        metrics.tick_completed()
         if overran:
             self._overrun_count += 1
+            metrics.tick_overrun()
             events.append(self._build_overrun_event(now.tick, duration_ns))
 
         # 同步 driver（SQLAlchemy/redis-py）以 to_thread 執行，避免阻塞 event loop

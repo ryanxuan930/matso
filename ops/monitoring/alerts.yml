@@ -1,0 +1,47 @@
+# MATSO 告警規則（WP-E4）。併進既有 Prometheus 的 `rule_files:` 指向的目錄。
+#
+# 三條規則對應規格點名的三件事：tick p99 超限、AI 全滅、Redis 斷線。
+# **門檻寫得保守**——會叫的告警才有人看，一直叫的告警會被靜音。
+groups:
+  - name: matso
+    rules:
+      # tick 健康：p99 超過預算（預設 200ms）持續 5 分鐘。
+      # 用 p99 而不是平均：偶爾一個慢 tick 不是問題，穩定地慢才是。
+      - alert: MatsoTickP99OverBudget
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(rate(matso_tick_duration_ms_bucket[5m])) by (le)
+          ) > 200
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Kernel tick p99 超出預算（200ms）"
+          description: "引擎跟不上節奏；檢查單位數、地形 RPC 延遲、DB 壓力。"
+
+      # 超時率：即使 p99 沒破，持續有 tick 超時也代表容量已經到邊界。
+      - alert: MatsoTickOverrunRateHigh
+        expr: rate(matso_tick_overrun_total[5m]) / rate(matso_tick_total[5m]) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "超過 5% 的 tick 超出預算"
+
+      # AI 全滅：有推演在跑但一個 AI worker 都沒有。
+      # **兩個條件都要**——沒有推演時 worker 為 0 是正常的，單看 worker 數會一直誤報。
+      - alert: MatsoAiWorkersAllDown
+        expr: matso_ai_workers == 0 and matso_active_sessions > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "有推演進行中但沒有任何 AI worker"
+          description: "自主陣營將完全不下令；檢查 LLM 後端可達性與 ai_config。"
+
+      # Redis 斷線：core 抓不到就是抓不到（up 由 Prometheus 自己產生）。
+      - alert: MatsoCoreDown
+        expr: up{job="matso-core"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "MATSO core 無法抓取"
+          description: "core 掛了或網路不通；Redis/DB 斷線通常也會表現成這條。"

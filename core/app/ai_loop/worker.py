@@ -23,6 +23,7 @@ from typing import Any, Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import metrics
 from app.ai_loop.context import UnitMeta, build_faction_context
 from app.ai_loop.opfor import AiTurnResult, OpforDecider, run_faction_turn
 from app.ai_loop.orders_bridge import (
@@ -212,6 +213,7 @@ def run_decision_cycle(
     if event_sink is not None:
         events_out = intervention_events(turn.findings, tick, initiator_id=None)
         if events_out:
+            metrics.guardrail_blocked(len(events_out))  # WP-E4
             event_sink.append(session_id, events_out)
 
     bridge = BridgeResult()
