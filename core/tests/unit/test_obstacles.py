@@ -470,3 +470,32 @@ def test_a_deleted_target_aborts_the_work_instead_of_reporting_success(session_f
     assert [e.event_type for e in events] == ["ENGINEER_WORK_ABORTED"]
     assert db.get(Order, resp.id).status.value == "CANCELLED"
     db.close()
+
+
+def test_road_is_cut_only_for_an_unbreached_bridge_demo() -> None:
+    """`road_is_cut` 是 `blocks_road` 的**消費者**——它在本卡之前完全沒有呼叫端。
+
+    斷橋刻意不是「減速倍率」：炸斷的橋不會讓你走得慢，它讓你**不能再沿路走**，
+    得繞路或涉水。所以它的效果只能接在 movement 的道路加速分支，
+    不在障礙通過倍率那一段——這正是它寫好卻一直沒接上的原因。
+    """
+    from app.engine.obstacle_wiring import road_is_cut
+    from app.movement.attrition import Obstacle
+
+    def ob(kind: str, breached: bool = False) -> Obstacle:
+        return Obstacle(
+            feature_id="f",
+            kind="OBSTACLE",
+            geometry_type="LINE",
+            coords=((121.0, 24.0), (121.001, 24.0)),
+            obstacle_type=kind,
+            breached=breached,
+        )
+
+    assert road_is_cut([ob("BRIDGE_DEMO")]) is True
+    # 工兵架好便橋 → 道路恢復
+    assert road_is_cut([ob("BRIDGE_DEMO", breached=True)]) is False
+    # 其他障礙**不**阻斷道路（它們走 speed_multiplier 那條路）
+    assert road_is_cut([ob("MINEFIELD"), ob("WIRE"), ob("TANK_DITCH")]) is False
+    # 沒有障礙 / 未宣告型別 → 中性
+    assert road_is_cut([]) is False

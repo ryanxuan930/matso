@@ -33,6 +33,7 @@ from app.engine.formation_wiring import FORMATION_KEY
 from app.engine.obstacle_wiring import (
     apply_mine_suppression,
     is_engineer,
+    road_is_cut,
     roll_mine_strike,
     transit_speed_multiplier,
     typed,
@@ -335,6 +336,10 @@ class UnitMovementSystem:
         cur_lat, cur_lng = float(unit.current_lat or 0.0), float(unit.current_lng or 0.0)
         # #81 Phase B：以目前所在格地形類別+坡度調速；不可通行→停在此 + MOVE_BLOCKED。
         step_km *= self._weather_mobility
+        # WP-C2：先算出腳下有哪些障礙——**道路分支要用到它**（斷橋讓道路加速失效）。
+        here = typed(obstacles or [])
+        if here:
+            here = obstacles_at((cur_lng, cur_lat), here)
         if self._terrain_sampler is not None:
             prof = payload.get("_mobility_profile")
             prof = prof if isinstance(prof, str) and prof else "FOOT"
@@ -344,6 +349,11 @@ class UnitMovementSystem:
             # （路面已鋪整；林中公路不該按森林算）。
             road_cls = klass.split("|", 1)[1] if "|" in klass else ""
             factor = self._mobility.road_speed_factor(prof, road_cls) if road_cls else None
+            # WP-C2 斷橋：橋斷了就**不能再沿路走**——道路加速失效，退回地形成本。
+            # 斷橋刻意不是「減速倍率」（炸斷的橋不會讓你走得慢，它讓你得繞路或涉水），
+            # 所以它的效果只能接在這裡，不在下面的障礙倍率那一段。
+            if factor is not None and road_is_cut(here):
+                factor = None
             if factor is not None:
                 raw_road = payload.get("_road_step_km")
                 if isinstance(raw_road, (int, float)) and raw_road > 0:
@@ -355,9 +365,6 @@ class UnitMovementSystem:
                 step_km /= cost  # 成本↑＝越難走＝步距縮短
         # WP-C2：站在障礙裡 → 速度倍率（鐵絲網/戰車壕 ×0.1）。**在道路加速之後**乘：
         # 障礙就是拿來卡住道路的，讓道路基準把它蓋掉等於障礙對主要接近路線無效。
-        here = typed(obstacles or [])
-        if here:
-            here = obstacles_at((cur_lng, cur_lat), here)
         if here:
             engineer = is_engineer(unit.attributes)
             step_km *= transit_speed_multiplier(here, engineer=engineer)

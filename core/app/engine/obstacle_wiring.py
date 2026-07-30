@@ -26,6 +26,7 @@ from typing import Any
 from app.adjudication.obstacles import (
     MINE_STRIKE_SUPPRESSION,
     ObstacleType,
+    blocks_road,
     mine_strike_probability,
     obstacle_type_of,
     speed_multiplier,
@@ -71,6 +72,19 @@ def transit_speed_multiplier(here: list[Obstacle], *, engineer: bool) -> float:
         )
         for o in here
     )
+
+
+def road_is_cut(here: list[Obstacle]) -> bool:
+    """這些障礙裡有沒有未修復的斷橋——有的話**道路加速失效**。
+
+    斷橋不「減速」（`speed_multiplier` 對它是中性 1.0）：炸斷的橋不會讓你走得慢，
+    它讓你**不能再沿著路走**，得繞路或涉水。那是路徑層的效果，不是通過倍率。
+    這也是為什麼 `blocks_road()` 早就寫好卻一直沒有消費者——它要接的地方在
+    `movement` 的道路加速分支，不在障礙倍率那一段。
+
+    已破障（工兵架好便橋）→ 不再阻斷。
+    """
+    return any(blocks_road(obstacle_type_of(o.obstacle_type), breached=o.breached) for o in here)
 
 
 def roll_mine_strike(
@@ -240,6 +254,7 @@ __all__ = [
     "apply_mine_suppression",
     "drain_engineer_orders",
     "is_engineer",
+    "road_is_cut",
     "roll_mine_strike",
     "transit_speed_multiplier",
     "typed",
