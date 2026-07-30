@@ -21,9 +21,9 @@ def _relations() -> FactionRelations:
 
 def _meta() -> dict[str, UnitMeta]:
     return {
-        "b1": UnitMeta(faction="BLUFOR", designation="藍1", unit_type="INFANTRY_SQUAD"),
-        "b2": UnitMeta(faction="BLUFOR", designation="藍2", unit_type="TANK_PLATOON"),
-        "r1": UnitMeta(faction="OPFOR", designation="紅1", unit_type="ARMOR"),
+        "b1": UnitMeta(faction="BLUFOR", designation="藍1", echelon="INFANTRY_SQUAD"),
+        "b2": UnitMeta(faction="BLUFOR", designation="藍2", echelon="TANK_PLATOON"),
+        "r1": UnitMeta(faction="OPFOR", designation="紅1", echelon="ARMOR"),
     }
 
 
@@ -58,7 +58,7 @@ def test_own_vs_enemy_split_by_faction() -> None:
 def test_fixed_unit_marked_in_view_and_prompt() -> None:
     # 固定單位（指揮部）：己方視圖帶 fixed=True，渲染出【固定·勿調動】讓 LLM 勿派其機動。
     meta = _meta()
-    meta["b1"] = UnitMeta(faction="BLUFOR", designation="旅部", unit_type="HQ", is_fixed=True)
+    meta["b1"] = UnitMeta(faction="BLUFOR", designation="旅部", echelon="HQ", is_fixed=True)
     ctx = build_faction_context(
         faction="BLUFOR",
         tick=5,

@@ -21,8 +21,8 @@ from app.state.hot_state import InMemoryHotState
 
 def _meta() -> dict[str, UnitMeta]:
     return {
-        "b1": UnitMeta(faction="BLUE", designation="B1", unit_type="PLATOON"),
-        "r1": UnitMeta(faction="RED", designation="R1", unit_type="PLATOON"),
+        "b1": UnitMeta(faction="BLUE", designation="B1", echelon="PLATOON"),
+        "r1": UnitMeta(faction="RED", designation="R1", echelon="PLATOON"),
     }
 
 

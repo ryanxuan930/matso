@@ -197,7 +197,7 @@ def test_ai_context_shows_remaining_range() -> None:
     meta = UnitMeta(
         faction="BLUE",
         designation="M1",
-        unit_type="PLATOON",
+        echelon="PLATOON",
         mobility_profile="TRACKED",
         speed_kmh=45.0,
         range_km=34.0,
@@ -211,9 +211,7 @@ def test_ai_context_omits_range_for_foot() -> None:
     """徒步單位無油料限制 → 不顯示剩餘行程（避免誤導 LLM）。"""
     from app.ai_loop.context import UnitMeta, _fmt_own, _own_unit_view
 
-    meta = UnitMeta(
-        faction="BLUE", designation="F1", unit_type="SQUAD", speed_kmh=5.0, range_km=None
-    )
+    meta = UnitMeta(faction="BLUE", designation="F1", echelon="SQUAD", speed_kmh=5.0, range_km=None)
     view = _own_unit_view("u2", {"lat": 23.75, "lng": 121.2}, meta)
     assert "range_km" not in view
     assert "剩餘行程" not in _fmt_own(view)

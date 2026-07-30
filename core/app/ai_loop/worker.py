@@ -95,7 +95,8 @@ def load_unit_meta(db: Session, session_id: str) -> dict[str, UnitMeta]:
         u.id: UnitMeta(
             faction=u.faction,
             designation=u.designation,
-            unit_type=u.unit_level.value,
+            echelon=u.unit_level.value,
+            branch=u.branch.value,
             is_fixed=u.is_fixed,
             mobility_profile=mob[u.id].profile,
             speed_kmh=mob[u.id].xc_kmh,

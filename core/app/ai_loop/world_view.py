@@ -165,7 +165,8 @@ def allied_units(
             "unit_id": u.id,
             "faction": u.faction,
             "designation": u.designation,
-            "unit_type": u.unit_level.value,
+            "echelon": u.unit_level.value,
+            "branch": u.branch.value,
         }
         hot = snapshot.get(u.id) if snapshot is not None else None
         lat, lng = (

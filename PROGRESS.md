@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（九）：同一個誤命名的第三、四例 + DEFEND 派生工兵設障**。`ContactView.unit_type` 裝的是階層這件事，在 `world_view.allied_units`（`"unit_type": u.unit_level.value`）與 `UnitMeta.unit_type`（`worker.py:98`）**又各出現一次**——全 repo 共四處把「階層」叫成「兵種」。四處一起改名 `echelon` 並補上真正的 `branch`。**這同時解掉一張卡了很久的 Backlog**：「SEIZE/DEFEND 可以派生 ENGINEER 子令但沒有做」，卡點原文是「分解器看得到的 `world_view` 沒有 `unit_kind`，所以它分不出誰是工兵——對非工兵派 EMPLACE 會每個 tick 被預檢打回一次」。`branch` 上線後這個問題問得出來了：DEFEND 抵達防區時，工兵多派一道 `EMPLACE WIRE`（防區前緣設障），非工兵與**沒有 branch 的既有想定**都只轉姿態、行為不變。兩個方向的突變驗過會紅（全部單位都派／工兵也不派）。**驗收**：pytest 1971（+1）、mypy 266、ruff 綠。
+
 - 2026-07-30：**Backlog 清倉（八）：補齊 `UnitLevel` 缺的四級 + 釘住「宣告順序＝編制大小」**。符號卡做階層符號時發現 2525C 的 `C/G/K/L` 四個字母永遠用不到——因為 enum 缺 SECTION/REGIMENT/ARMY/ARMY_GROUP，且 CORPS 之上直接跳 THEATER。補的過程挖出一件**沒有被寫下來、卻有兩處在依賴的事**：`aggregate.py:25` 與 `engine/comms.py:39` 都用 `enumerate(UnitLevel)` 當編制大小的秩，再以 `rank <= _SIZE_RANK[BATTALION]` 判「營級以上＝指揮節點」——**enum 的宣告順序直接決定模擬行為**。在尾端追加新層級（最自然的做法）會讓它變成比 INDIVIDUAL 還小，不拋錯、不紅燈，只會讓聚合門檻與通信指揮節點判定悄悄跑掉。已把四級**插進正確的大小位置**，並加 `test_unit_level_order.py` 三條測試釘住（清單、語義比較、指揮節點門檻）——實測「追加到尾端」這個突變會讓三條全紅。同步 prisma migration（MySQL ENUM 值是字串，既有列不受影響）、契約 enum、前端型別/標籤/下拉/echelon 對照（`SECTION→C`、`REGIMENT→G`、`ARMY→K`、`ARMY_GROUP→L`）。**驗收**：pytest 1970（+3）、mypy 266、schema sync 233 欄、eslint/vue-tsc 綠。
 
 - 2026-07-30：**Backlog 清倉（七）：`rounds_per_mission` 與 `emplace_ticks` 接上消費者**。兩欄都在契約與種子裡宣告、軍械庫也編得動，但 `WeaponProfile.from_base_stats` 是**白名單式逐欄建構**的，兩者根本沒被解析進 dataclass——「契約有、種子有、UI 編得動」完全不代表引擎讀得到。①`rounds_per_mission` → `WeaponView` → **COP 火力任務發數的預設值**（取該單位曲射武器宣告過的最大值；都沒宣告就沿用面板原本的 4）。選擇接上而非刪除的理由：一個編得動卻什麼都不影響的欄位比沒有這個欄位更糟。②`emplace_ticks` → 面射擊的 `NOT_EMPLACED` 閘門（打完就跑之後不該能立刻再開火）。**它卡了很久的真正原因是程式裡沒有任何「單位停下來了」的時間戳**：`interrupt_posture` 對已在 MOVING 的單位不寫入、抵達後沒有東西重設姿態、`UNIT_ARRIVED` 只是帳本事件不進熱狀態、MOVE 令的 `resolved_at_tick` 在活執行期根本沒被寫。故新增 `arrived_at_tick` 熱狀態鍵（寫在 movement 的 UNIT_ARRIVED 分支），並列入 broadcaster 的 `_INTERNAL_FIELDS`——「這支部隊什麼時候到位」對敵方等於一份免費的機動情報。**最關鍵的中性預設**：缺 `arrived_at_tick` ＝**視為早已就位**（不是「剛抵達」）——從未移動過的單位與這張卡之前的所有 session 都走這條，否則既有想定的砲兵會全部突然打不出去。**驗收**：pytest 1967（+2）、mypy 266、ruff/eslint/vue-tsc 綠。突變測試逐一驗過會紅——⚠ 頭兩次的突變是**無效的**（正則的 `[^)]*` 匹配不到含括號的 `stats.get(...)`；而 `wait<=0` 改 `wait<0` 是等價突變），重做後才真的紅，另補一個會爆的 dict 才測得出「未宣告時連熱狀態都不讀」。
@@ -235,11 +237,9 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   早就有 `_cancel_children`（WP-A2 卡 2，commit `7b0226e`），且有測試
   （`test_mission_child_orders.py`）。同一段 UI 文字裡**真正假的是另一句**：它宣稱任務會
   展開成「構工」，而分解器只產 MOVE/ENGAGE/POSTURE——已改掉措辭。
-- **SEIZE/DEFEND 可以派生 ENGINEER 子令但沒有做**（WP-A2 × WP-C2）：C2 之後 `ENGINEER`
-  是真的令型了，防禦就位時構築障礙是對的準則。卡點：分解器看得到的 `world_view` 沒有
-  `unit_kind`（那在 DB 的 `attributes`，不在熱狀態），所以它分不出誰是工兵——
-  對非工兵派 EMPLACE 會每 tick 被預檢打回一次。要嘛把 `unit_kind` 投影進 world_view，
-  要嘛在接線層過濾。
+- ~~SEIZE/DEFEND 派生 ENGINEER 子令~~ —— **DEFEND 已做**（2026-07-30）：`branch` 上線後
+  分解器問得出「誰是工兵」，工兵抵達防區即派 EMPLACE 設障，非工兵只轉姿態。
+  SEIZE 尚未派（佔領後構工的準則位置待定）。
 - **取消單一子令等於沒取消**（WP-A2）：去重鍵要求有「進行中的同款令」才算重複
   （`service.py:149-158`），所以被取消的子令下一個 tick 就會被分解器原樣重建。
   COP 若要對子令提供逐列取消，得先決定語義（隱藏該按鈕、或連帶暫停母任務）。

@@ -115,3 +115,34 @@ def test_every_enum_value_is_declared_in_the_contract() -> None:
     schema = json.loads(_ORBAT_SCHEMA.read_text(encoding="utf-8"))
     declared = set(schema["properties"]["units"]["items"]["properties"]["branch"]["enum"])
     assert declared == {b.value for b in UnitBranch}
+
+
+def test_defend_gives_engineers_an_emplace_order_but_not_infantry() -> None:
+    """工兵抵達防區→構築障礙；非工兵只轉姿態。
+
+    這條在 `branch` 存在之前**寫不出來**：分解器看得到的 `world_view` 只有階層
+    （而且那一欄還被誤名為 `unit_type`），問不出「誰是工兵」。對步兵派 EMPLACE
+    的下場是每個 tick 被預檢打回一次——所以這段功能一直掛在 Backlog 上。
+    """
+    from app.orders.decomposer import step
+    from app.orders.mission import MissionPayload, MissionPhase, MissionState
+
+    mission = MissionPayload(
+        mission_type="DEFEND",
+        params={"area": {"lat": 24.0, "lng": 121.0}, "area_radius_m": 500.0},
+    )
+    state = MissionState(phase=MissionPhase.MOVING, since_tick=0)
+    at_area = {"unit_id": "u1", "lat": 24.0, "lng": 121.0, "posture": "MOVING"}
+
+    engineer = step(mission, state, {**at_area, "branch": "ENGINEER"}, {}, tick=5)
+    kinds = [o.order_type for o in engineer.orders]
+    assert "POSTURE" in kinds and "ENGINEER" in kinds, kinds
+    emplace = next(o for o in engineer.orders if o.order_type == "ENGINEER")
+    assert emplace.payload["action"] == "EMPLACE"
+    assert emplace.payload["obstacle_type"] == "WIRE"
+
+    infantry = step(mission, state, {**at_area, "branch": "INFANTRY"}, {}, tick=5)
+    assert [o.order_type for o in infantry.orders] == ["POSTURE"]
+    # 沒有 branch（既有想定）→ 與步兵相同，行為不變
+    unknown = step(mission, state, at_area, {}, tick=5)
+    assert [o.order_type for o in unknown.orders] == ["POSTURE"]

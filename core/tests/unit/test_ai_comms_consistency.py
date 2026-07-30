@@ -29,7 +29,7 @@ _TRUTH = {"lat": 24.900, "lng": 121.900}
 
 
 def _meta(faction: str) -> UnitMeta:
-    return UnitMeta(faction=faction, designation="B1", unit_type="PLATOON")
+    return UnitMeta(faction=faction, designation="B1", echelon="PLATOON")
 
 
 # --- 位置凍結 ---

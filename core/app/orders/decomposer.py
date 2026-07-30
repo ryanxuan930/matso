@@ -86,6 +86,25 @@ def _posture(value: str, reason: str) -> SubOrder:
     return SubOrder(order_type="POSTURE", payload={"posture": value}, reason=reason)
 
 
+def _emplace(lat: float, lng: float, obstacle: str, reason: str) -> SubOrder:
+    """設障子令（WP-C2）。**只有工兵派得動**——見 `_is_engineer`。"""
+    return SubOrder(
+        order_type="ENGINEER",
+        payload={"action": "EMPLACE", "obstacle_type": obstacle, "lat": lat, "lng": lng},
+        reason=reason,
+    )
+
+
+def _is_engineer(unit: dict[str, Any]) -> bool:
+    """這支部隊是不是工兵。
+
+    在 `branch` 存在之前這件事**根本問不出來**：分解器看得到的 `world_view` 只有
+    「階層」（而且那一欄還被誤名為 `unit_type`），沒有兵科。對非工兵派 EMPLACE
+    的下場是每個 tick 被預檢打回一次——所以這段一直沒做。
+    """
+    return str(unit.get("branch") or "") == "ENGINEER"
+
+
 def _enemies_within(
     world_view: dict[str, Any], lat: float, lng: float, radius_m: float
 ) -> list[dict[str, Any]]:
@@ -247,9 +266,14 @@ def _defend(
     if state.phase is MissionPhase.MOVING:
         if not _within(unit, p.area.lat, p.area.lng, p.area_radius_m):
             return MissionStep(state=state)
+        # 工兵抵達防區＝構築障礙，那是防禦準則的一部分（WP-A2 × WP-C2）。
+        # 非工兵只轉姿態——對步兵派 EMPLACE 會每個 tick 被預檢打回一次。
+        orders = [_posture("DEFENSE", "就位構工")]
+        if _is_engineer(unit):
+            orders.append(_emplace(p.area.lat, p.area.lng, "WIRE", "防區前緣設障"))
         return MissionStep(
             state=_advance(state, MissionPhase.CONSOLIDATING, tick),
-            orders=[_posture("DEFENSE", "就位構工")],
+            orders=orders,
             note="抵達防區",
         )
     if state.phase is MissionPhase.CONSOLIDATING:

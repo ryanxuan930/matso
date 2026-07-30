@@ -31,7 +31,11 @@ class UnitMeta:
 
     faction: str
     designation: str
-    unit_type: str
+    # ⚠ 這一欄過去叫 `unit_type`，但裝的是 **unit_level（階層）**。
+    # 同一個誤命名在本 repo 出現過**四次**（ContactView / allied_units / 這裡 / 前端查表），
+    # 後果一致：拿它去查兵科表永遠 miss，而照欄位名接階層又會把編成情報畫上圖。
+    echelon: str
+    branch: str = "UNKNOWN"  # 兵科（工兵/砲兵/…）——分解器據此挑得動工兵
     is_fixed: bool = False  # 固定單位（指揮部等）：不可移動，AI 不應派其機動/交戰。
     mobility_profile: str = "FOOT"  # #80：由編裝導出（FOOT/WHEELED/TRACKED）。
     speed_kmh: float | None = None  # #80：越野速度（km/h）；供 AI 判斷單回合可達距離。
@@ -58,7 +62,8 @@ def _own_unit_view(unit_id: str, state: UnitState, meta: UnitMeta) -> dict[str, 
     view: dict[str, Any] = {
         "unit_id": unit_id,
         "designation": meta.designation,
-        "type": meta.unit_type,
+        "echelon": meta.echelon,
+        "branch": meta.branch,
         "status": unit_status(state),
     }
     if meta.is_fixed:
