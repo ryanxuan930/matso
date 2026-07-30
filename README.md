@@ -269,7 +269,7 @@ cd ops/compose && docker compose up -d --build frontend   # 單獨 build 不會�
 # 全部品質閘門
 uv run pytest ; uv run ruff check . ; uv run mypy
 npx @bufbuild/buf lint ; uv run python ops/tools/schema_sync_check.py
-cd platform && npm run lint && npm run typecheck
+cd platform && npm run lint && npm run typecheck && npm test
 ```
 
 連接埠：core **8000**、前端 **3000**、MariaDB **3307**、Redis 6379、Qdrant 6333、tileserver-gl **8081**（`--profile tiles`）。乾淨 checkout 後先 `uv run python ops/tools/gen_proto.py`（ADR 005 離線 codegen）。
@@ -1690,7 +1690,7 @@ SensorSweepSystem（每 N tick，k-ring 掃描；關係矩陣：盟軍不互偵�
 | Lint / 型別 | `uv run ruff check .`、`uv run mypy` | mypy 嚴格模式，200+ 檔 |
 | 契約 | `npx @bufbuild/buf lint`（+ breaking FILE 級） | proto 契約 |
 | Schema 同步 | `uv run python ops/tools/schema_sync_check.py` | Prisma schema ↔ SQLAlchemy models 漂移偵測（141 欄） |
-| 前端 | `cd platform && npm run lint && npm run typecheck` | eslint + vue-tsc |
+| 前端 | `cd platform && npm run lint && npm run typecheck && npm test` | eslint + vue-tsc + `node:test` 接線測試 |
 | E2E | `cd platform && npm run test:e2e` | Playwright（登入/lobby/COP 基本流；覆蓋缺口見 §14） |
 | AI evals | `ai/evals/run.py`（CI 條件式） | schema/IHL/捏造引用門檻；語料入庫前為降級模式 |
 

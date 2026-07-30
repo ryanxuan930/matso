@@ -33,4 +33,4 @@ AI 輔助兵棋推演系統。Neuro-Symbolic 架構：確定性物理引擎（Py
   `cd ops/compose && docker compose up -d --build frontend`（**必須 `up`——單獨 `build` 不會換掉執行中的容器**）。
   兩條路徑並行過去反覆出事：dev server 的底圖設定靠 `platform/.env`、container 靠 compose 注入，
   忘了哪個在跑就會「底圖突然不見」。`npm run lint/typecheck` 仍在本機跑（那不需要跑服務）。
-- 全部關卡：`uv run pytest`、`uv run ruff check .`、`uv run mypy`、`npx @bufbuild/buf lint`、`uv run python ops/tools/schema_sync_check.py`、`cd platform && npm run lint && npm run typecheck`。
+- 全部關卡：`uv run pytest`、`uv run ruff check .`、`uv run mypy`、`npx @bufbuild/buf lint`、`uv run python ops/tools/schema_sync_check.py`、`cd platform && npm run lint && npm run typecheck && npm test`。
