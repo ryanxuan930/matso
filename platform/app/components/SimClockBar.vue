@@ -36,7 +36,7 @@ const realClock = computed(() =>
 
 <template>
   <div class="clockbar" data-testid="sim-clock">
-    <span class="seg" title="系統牆鐘（sim tick）"><i>牆鐘</i>{{ tickText }}</span>
+    <span class="seg" title="推演時間（模擬 tick）"><i>推演</i>{{ tickText }}</span>
     <span class="seg" title="開局以來執行時間"><i>執行</i>{{ elapsed }}</span>
     <span class="seg" title="目前真實時間"><i>現在</i>{{ realClock }}</span>
   </div>

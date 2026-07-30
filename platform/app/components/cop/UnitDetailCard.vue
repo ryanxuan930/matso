@@ -133,7 +133,7 @@ const showOrbat = defineModel<boolean>('showOrbat', { required: true })
       <dt>油料</dt>
       <dd :class="{ lowfuel: (liveFuel(unitId) ?? 0) <= 0 }">
         {{ (liveFuel(unitId) ?? 0).toFixed(0) }}
-        <span v-if="(liveFuel(unitId) ?? 0) <= 0" class="dim">· 拋錨（需補給）</span>
+        <span v-if="(liveFuel(unitId) ?? 0) <= 0" class="dim">· 油料耗盡（待補給）</span>
       </dd>
     </div>
   </dl>

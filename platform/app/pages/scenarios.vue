@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 劇本管理列表（#5）——列出已存想定，可進編輯器載入或刪除。限統裁/管理（後端 RBAC 亦把關）。
+import { UNKNOWN_REASON } from '~/composables/useLabels'
 import { apiFetch } from '~/composables/useApi'
 import type { ApiError } from '~/composables/useApi'
 
@@ -16,7 +17,7 @@ async function refresh() {
   try {
     scenarios.value = await apiFetch<ScenarioItem[]>('/scenarios')
   } catch (e) {
-    errorMsg.value = `載入失敗：${(e as ApiError).code ?? 'UNKNOWN'}`
+    errorMsg.value = `載入失敗：${(e as ApiError).code ?? UNKNOWN_REASON}`
   } finally {
     loading.value = false
   }
@@ -34,7 +35,7 @@ async function remove(s: ScenarioItem) {
     await apiFetch(`/scenarios/${encodeURIComponent(s.id)}`, { method: 'DELETE' })
     await refresh()
   } catch (e) {
-    errorMsg.value = `刪除失敗：${(e as ApiError).code ?? 'UNKNOWN'}`
+    errorMsg.value = `刪除失敗：${(e as ApiError).code ?? UNKNOWN_REASON}`
   } finally {
     busyId.value = ''
   }

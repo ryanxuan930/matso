@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 白軍控制台（O7.4，SPEC §12）——視角切換 / 時間控制 / 事件注入 / 事件流。限統裁角色。
+import { UNKNOWN_REASON, streamStatusLabel } from '~/composables/useLabels'
 import { useSessionStreamStore } from '~/stores/sessionStream'
 import type { UnitView } from '~/composables/useOrders'
 import { apiFetch } from '~/composables/useApi'
@@ -104,7 +105,7 @@ async function saveUnit() {
   try {
     body.attributes = JSON.parse(editAttrs.value)
   } catch {
-    status.value = 'attributes 需為合法 JSON'
+    status.value = '「屬性」欄須為合法 JSON 格式'
     return
   }
   try {
@@ -165,7 +166,7 @@ async function mselAct(entryId: string, action: 'fire' | 'skip') {
     status.value = action === 'fire' ? `已排入扣發：${entryId}` : `已排入跳過：${entryId}`
     setTimeout(loadMsel, 1500) // runner 下一 tick 才會更新清單
   } catch (e) {
-    status.value = `MSEL 操作失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    status.value = `MSEL 操作失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   } finally {
     mselBusy.value = ''
   }
@@ -185,7 +186,7 @@ watch(viewpoint, loadUnits)
 <template>
   <div class="wc" data-testid="white-cell-console">
     <header class="wc-bar">
-      <button data-testid="wc-back-cop" @click="navigateTo(`/session/${sessionId}/cop`)">← 圖台</button>
+      <button data-testid="wc-back-cop" @click="navigateTo(`/session/${sessionId}/cop`)">← 返回圖台</button>
       <h1>白軍控制台 · {{ sessionId }}</h1>
     </header>
     <p v-if="status" class="status" data-testid="wc-status">{{ status }}</p>
@@ -194,7 +195,7 @@ watch(viewpoint, loadUnits)
       <div>
         <h2>視角</h2>
         <select v-model="viewpoint" data-testid="viewpoint">
-          <option value="">總覽</option>
+          <option value="">全局視角（全知）</option>
           <option v-for="f in factions" :key="f" :value="f">{{ f }} 視角</option>
         </select>
         <span data-testid="unit-count">{{ units.length }} 單位</span>
@@ -204,7 +205,7 @@ watch(viewpoint, loadUnits)
         <button data-testid="pause" @click="control('PAUSE')">⏸ 暫停</button>
         <button data-testid="resume" @click="control('RESUME')">▶ 續行</button>
         <label class="rollback-pick">
-          回放至
+          回溯至
           <select v-model.number="rollbackTick" data-testid="rollback-tick">
             <option v-if="!checkpoints.length" :value="null">（尚無快照點）</option>
             <option v-for="c in checkpoints" :key="c.tick" :value="c.tick">
@@ -216,7 +217,7 @@ watch(viewpoint, loadUnits)
           data-testid="rollback"
           :disabled="!checkpoints.length"
           @click="control('ROLLBACK')"
-        >回放</button>
+        >回溯至存錄點</button>
       </div>
       <div class="inject-box">
         <h2>注入事件</h2>
@@ -226,7 +227,7 @@ watch(viewpoint, loadUnits)
     </section>
 
     <section>
-      <h2>編裝編輯（#6）— 各軍自編權限</h2>
+      <h2>編裝編輯 · 各軍自編權限</h2>
       <div class="perms">
         <label v-for="f in factions" :key="f">
           <input
@@ -242,7 +243,7 @@ watch(viewpoint, loadUnits)
     </section>
 
     <section>
-      <h2>單位（{{ viewpoint || '總覽' }}）— 點選編輯</h2>
+      <h2>單位（{{ viewpoint || '全局視角' }}）— 點選編輯</h2>
       <ul data-testid="wc-unit-list" class="units">
         <li
           v-for="u in units"
@@ -251,13 +252,17 @@ watch(viewpoint, loadUnits)
           data-testid="wc-unit-item"
           @click="pickUnit(u)"
         >
-          {{ u.designation }} · {{ u.faction }} · {{ Math.round(u.health) }}%
+          {{ u.designation }} · {{ u.faction }} · 效能 {{ Math.round(u.health) }}%
         </li>
       </ul>
       <div v-if="editUnitId" class="edit" data-testid="unit-edit">
         <label>番號 <input v-model="editDesignation" data-testid="edit-designation"></label>
-        <label>戰力% <input v-model.number="editHealth" type="number" min="0" max="100" data-testid="edit-health"></label>
-        <label>屬性(JSON) <input v-model="editAttrs" data-testid="edit-attrs"></label>
+        <label
+          title="0–100。這是**作戰效能**（由戰力比導出的百分比），不是戰力點。改它只改顯示用的效能欄。"
+        >作戰效能%
+          <input v-model.number="editHealth" type="number" min="0" max="100" data-testid="edit-health">
+        </label>
+        <label>屬性（JSON） <input v-model="editAttrs" data-testid="edit-attrs"></label>
         <button data-testid="save-unit" @click="saveUnit">儲存單位參數</button>
       </div>
       <div v-if="editUnitId" class="orbat-box" data-testid="wc-orbat">
@@ -270,8 +275,8 @@ watch(viewpoint, loadUnits)
     <section>
       <h2>待命注入（MSEL）</h2>
       <p class="wc-hint">
-        `manual` 型狀況只有在這裡扣板機才會發生。跳過會**記在帳本上**——
-        AAR 要看得出「原定 vs 實際」。
+        <code>manual</code> 型狀況須於此扣發才會發生。跳過將<b>記入事件帳本</b>——
+        行動後檢討要看得出「原定」與「實際」的差異。
       </p>
       <ul data-testid="wc-msel-pending">
         <li v-for="id in mselPending" :key="id" class="wc-msel">
@@ -288,7 +293,7 @@ watch(viewpoint, loadUnits)
     </section>
 
     <section>
-      <h2>戰況事件流（WS：{{ stream.status }}）</h2>
+      <h2>戰況事件流（{{ streamStatusLabel(stream.status) }}）</h2>
       <ul data-testid="wc-event-list">
         <li v-for="(e, i) in stream.events.slice(-20)" :key="i">
           #{{ e.seq }} {{ e.type }} {{ JSON.stringify(e.payload) }}

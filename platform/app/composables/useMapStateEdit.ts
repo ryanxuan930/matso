@@ -38,7 +38,7 @@ export function useMapStateEdit(opts: {
       toasts.push({
         severity: 'info',
         title: '地圖狀態編輯：已暫停推演',
-        detail: '拖曳單位調整位置、用地圖編輯繪製障礙/建築，完成後按「開始兵推」。',
+        detail: '拖曳單位調整位置、用地圖編輯繪製障礙/建築，完成後按「開始推演」。',
         timeoutMs: 6000,
       })
     } catch {
@@ -58,7 +58,7 @@ export function useMapStateEdit(opts: {
     } finally {
       mapEditMode.value = false
     }
-    toasts.push({ severity: 'success', title: '開始兵推', timeoutMs: 2500 })
+    toasts.push({ severity: 'success', title: '開始推演', timeoutMs: 2500 })
   }
   async function onUnitMove(e: { id: string; lng: number; lat: number }) {
     try {

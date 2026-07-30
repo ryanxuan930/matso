@@ -76,18 +76,18 @@ defineEmits<{
     <template v-else-if="isMine">
       <div class="ctx-title">{{ unitName }}</div>
       <button data-testid="ctx-move" @click="$emit('ctxArmMove')"><i class="pi pi-arrow-right" /> 移動</button>
-      <button data-testid="ctx-attack" @click="$emit('ctxArmAttack')"><i class="pi pi-bullseye" /> 攻擊</button>
+      <button data-testid="ctx-attack" @click="$emit('ctxArmAttack')"><i class="pi pi-bullseye" /> 交戰</button>
     </template>
     <template v-else-if="isEnemy && hasSelection">
       <div class="ctx-title">目標：{{ unitName }}</div>
       <button data-testid="ctx-lock-target" @click="$emit('ctxLockTarget')">
-        <i class="pi pi-bullseye" /> 以「{{ selectedName }}」攻擊
+        <i class="pi pi-bullseye" /> 以「{{ selectedName }}」交戰
       </button>
     </template>
     <template v-else-if="hasSelection">
       <div class="ctx-title">{{ selectedName }}</div>
       <button data-testid="ctx-move-here" @click="$emit('ctxMoveHere')"><i class="pi pi-arrow-right" /> 移動至此</button>
-      <button data-testid="ctx-attack" @click="$emit('ctxArmAttack')"><i class="pi pi-bullseye" /> 攻擊…</button>
+      <button data-testid="ctx-attack" @click="$emit('ctxArmAttack')"><i class="pi pi-bullseye" /> 交戰…</button>
     </template>
     <template v-else>
       <div class="ctx-empty">先選取我方單位</div>

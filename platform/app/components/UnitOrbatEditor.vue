@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 單位編裝編輯器（stage ①）——列出/增/刪裝備、設定彈藥。COP（本軍）+ 白軍（任一）共用。
 // canEdit=false 時純唯讀（顯示 loadout）。
+import { categoryLabel } from '~/composables/useWeaponVocab'
 import {
   addUnitEquipment,
   editUnitEquipment,
@@ -105,7 +106,7 @@ async function saveQty(inst: EquipmentInstance, ev: Event) {
     <ul class="eq-list">
       <li v-for="inst in items" :key="inst.id" data-testid="eq-item">
         <span class="eq-name">{{ inst.name }}</span>
-        <span class="eq-cat">{{ inst.category }}</span>
+        <span class="eq-cat">{{ categoryLabel(inst.category) }}</span>
         <span v-if="rangeKm(inst.base_stats)" class="eq-dim">{{ rangeKm(inst.base_stats) }} km</span>
         <label class="eq-qty" title="建制數量（班內同型武器件數，驅動 squad 齊射火力）">
           ×
@@ -150,7 +151,7 @@ async function saveQty(inst: EquipmentInstance, ev: Event) {
     <div v-if="canEdit" class="eq-add">
       <select v-model="addId" data-testid="eq-add-select">
         <option value="">＋ 配發裝備…</option>
-        <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}（{{ t.category }}）</option>
+        <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}（{{ categoryLabel(t.category) }}）</option>
       </select>
       <button data-testid="eq-add" :disabled="!addId || busy" @click="add">加入</button>
     </div>

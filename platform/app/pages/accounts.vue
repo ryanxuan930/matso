@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 帳號管理（#32）——白軍/統裁/管理建立帳號、設定角色（權限）、重設密碼、刪除。
+import { UNKNOWN_REASON } from '~/composables/useLabels'
 import type { components } from '~/types/api'
 import { apiFetch } from '~/composables/useApi'
 
@@ -52,7 +53,7 @@ async function refresh() {
   try {
     users.value = await apiFetch<UserView[]>('/users')
   } catch (e) {
-    err.value = `載入失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    err.value = `載入失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   } finally {
     loading.value = false
   }
@@ -72,7 +73,7 @@ async function createUser() {
     newRole.value = 'OBSERVER'
     await refresh()
   } catch (e) {
-    err.value = `建立失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    err.value = `建立失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   } finally {
     creating.value = false
   }
@@ -85,7 +86,7 @@ async function changeRole(u: UserView, role: UserRole) {
     await apiFetch<UserView>(`/users/${u.id}`, { method: 'PATCH', body: { role } })
     await refresh()
   } catch (e) {
-    err.value = `更新失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    err.value = `更新失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
     await refresh()
   } finally {
     busyId.value = null
@@ -102,7 +103,7 @@ async function doResetPw() {
     resetting.value = null
     resetPw.value = ''
   } catch (e) {
-    err.value = `重設失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    err.value = `重設失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   } finally {
     busyId.value = null
   }
@@ -118,7 +119,7 @@ async function doDelete() {
     confirmDelete.value = null
     await refresh()
   } catch (e) {
-    err.value = `刪除失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    err.value = `刪除失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   } finally {
     busyId.value = null
   }
@@ -135,7 +136,7 @@ onMounted(async () => {
   <main class="accounts">
     <header>
       <h1>帳號管理</h1>
-      <a class="back" href="/lobby" data-testid="nav-lobby">← 返回首頁</a>
+      <a class="back" href="/lobby" data-testid="nav-lobby">← 系統首頁</a>
     </header>
 
     <p v-if="!canManage" class="forbidden" data-testid="accounts-forbidden">

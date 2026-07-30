@@ -7,6 +7,7 @@
  */
 import { computed } from 'vue'
 import { useCopFeed } from '~/composables/useCopFeed'
+import { streamStatusLabel } from '~/composables/useLabels'
 import type { UnitView } from '~/composables/useOrders'
 
 const props = defineProps<{
@@ -23,7 +24,7 @@ const rows = computed(() => props.events.map((e) => formatEvent(e.payload ?? {})
 </script>
 
 <template>
-<div class="wsec-hd">戰況事件 <span class="ws">· {{ status }}</span></div>
+<div class="wsec-hd">戰況事件 <span class="ws">· {{ streamStatusLabel(status) }}</span></div>
 <ul class="events" data-testid="event-list">
   <li v-for="(text, i) in rows" :key="i" data-testid="event-row">
     {{ text }}

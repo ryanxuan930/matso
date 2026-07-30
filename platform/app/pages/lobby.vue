@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  UNKNOWN_REASON,
+  sessionModeLabel,
+  sessionStatusLabel,
+  userRoleLabel,
+} from '~/composables/useLabels'
 import type { components } from '~/types/api'
 import { apiFetch } from '~/composables/useApi'
 import {
@@ -67,7 +73,7 @@ async function createFromScenario() {
   try {
     await apiFetch<SessionSummary>('/sessions', {
       method: 'POST',
-      body: { name: '劇本局', scenario_id: selectedScenarioId.value },
+      body: { name: '想定局', scenario_id: selectedScenarioId.value },
     })
     selectedScenarioId.value = ''
     await refresh()
@@ -99,7 +105,7 @@ async function saveEdit() {
     editing.value = null
     await refresh()
   } catch (e) {
-    editErr.value = `儲存失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    editErr.value = `儲存失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   }
 }
 
@@ -187,7 +193,7 @@ async function openRoster(s: SessionSummary) {
     allUsers.value = us
     addFaction.value = r.factions[0] ?? ''
   } catch (e) {
-    rosterErr.value = `載入名冊失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    rosterErr.value = `載入名冊失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   }
 }
 async function doAssign() {
@@ -199,7 +205,7 @@ async function doAssign() {
     roster.value = await fetchRoster(rosterFor.value.id)
     addUserId.value = ''
   } catch (e) {
-    rosterErr.value = `指派失敗：${(e as { code?: string; message?: string }).message ?? (e as { code?: string }).code ?? 'UNKNOWN'}`
+    rosterErr.value = `指派失敗：${(e as { code?: string; message?: string }).message ?? (e as { code?: string }).code ?? UNKNOWN_REASON}`
   } finally {
     rosterBusy.value = false
   }
@@ -218,7 +224,7 @@ async function doReassign(
     await assignParticipant(rosterFor.value.id, userId, faction, role, unitScope, seatRole)
     roster.value = await fetchRoster(rosterFor.value.id)
   } catch (e) {
-    rosterErr.value = `更新失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    rosterErr.value = `更新失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   } finally {
     rosterBusy.value = false
   }
@@ -255,7 +261,7 @@ async function doRemoveParticipant(userId: string) {
     await removeParticipant(rosterFor.value.id, userId)
     roster.value = await fetchRoster(rosterFor.value.id)
   } catch (e) {
-    rosterErr.value = `移除失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    rosterErr.value = `移除失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   } finally {
     rosterBusy.value = false
   }
@@ -285,13 +291,13 @@ onMounted(async () => {
           class="help"
           href="/scenarios"
           data-testid="nav-scenarios"
-        >劇本管理</a>
+        >想定管理</a>
         <a
           v-if="canEditScenario"
           class="help"
           href="/armory"
           data-testid="nav-armory"
-        >武器庫</a>
+        >裝備範本庫</a>
         <a
           v-if="canEditScenario"
           class="help"
@@ -304,7 +310,7 @@ onMounted(async () => {
           href="/system-settings"
           data-testid="nav-system-settings"
         >系統設定</a>
-        <span v-if="auth.user" data-testid="current-user">{{ auth.user.username }}（{{ auth.user.role }}）</span>
+        <span v-if="auth.user" data-testid="current-user">{{ auth.user.username }}（{{ userRoleLabel(auth.user.role) }}）</span>
         <button data-testid="logout" @click="onLogout">登出</button>
       </div>
     </header>
@@ -335,7 +341,7 @@ onMounted(async () => {
 
     <section v-if="canEditScenario && scenarios.length" class="create" data-testid="scenario-create">
       <select v-model="selectedScenarioId" data-testid="scenario-select" class="sc-select">
-        <option value="">選劇本開局…</option>
+        <option value="">選想定開局…</option>
         <option v-for="s in scenarios" :key="s.id" :value="s.id">{{ s.name }} · v{{ s.version }}</option>
       </select>
       <button
@@ -349,7 +355,7 @@ onMounted(async () => {
 
     <section>
       <p v-if="loading" data-testid="lobby-loading">載入中…</p>
-      <p v-else-if="activeSessions.length === 0" data-testid="lobby-empty">目前沒有進行中的推演，建立一個開始。</p>
+      <p v-else-if="activeSessions.length === 0" data-testid="lobby-empty">目前無進行中的推演，請建立新推演。</p>
       <ul v-else data-testid="session-list">
         <li
           v-for="s in activeSessions"
@@ -359,7 +365,7 @@ onMounted(async () => {
           @click="navigateTo(`/session/${s.id}/cop`)"
         >
           <span class="name">{{ s.name }}</span>
-          <span class="meta">{{ s.mode }} · {{ s.status }}</span>
+          <span class="meta">{{ sessionModeLabel(s.mode) }} · {{ sessionStatusLabel(s.status) }}</span>
           <span v-if="s.my_faction" class="faction">{{ s.my_faction }}</span>
           <button
             v-if="canEditScenario"
@@ -510,7 +516,7 @@ onMounted(async () => {
         <div v-if="roster" class="roster-add" data-testid="roster-add">
           <select v-model="addUserId" class="r-sel" data-testid="roster-add-user">
             <option value="">＋ 選帳號…</option>
-            <option v-for="u in assignableUsers" :key="u.id" :value="u.id">{{ u.username }}（{{ u.role }}）</option>
+            <option v-for="u in assignableUsers" :key="u.id" :value="u.id">{{ u.username }}（{{ userRoleLabel(u.role) }}）</option>
           </select>
           <select v-model="addFaction" class="r-sel" data-testid="roster-add-faction">
             <option v-for="f in roster.factions" :key="f" :value="f">{{ f }}</option>
@@ -551,7 +557,7 @@ onMounted(async () => {
         <p class="modal-hint">
           沿用「<b>{{ cloning.name }}</b>」目前的單位部署、編裝、地圖標註、參與者名冊與 AI 指派，
           另開一局並給新的隨機種子。<br>
-          提示：於<b>開打前</b>複製即為純淨初始局；若已交戰，將沿用當下的座標與戰力。
+          提示：於<b>推演開始前</b>複製即為未接戰之初始局；若已交戰，將沿用當下座標與戰力。
         </p>
         <label>新局名稱 <input v-model="cloneName" data-testid="clone-name" @keyup.enter="doClone"></label>
         <div class="modal-btns">

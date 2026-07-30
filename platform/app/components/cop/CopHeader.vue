@@ -7,6 +7,7 @@
  * 視角與工具視窗開關則是雙向（`v-model:viewpoint` / `widgets` 狀態束）。
  */
 import { commsLabel } from '~/composables/useUnits'
+import { intelFidelityLabel, streamStatusLabel } from '~/composables/useLabels'
 import { WIDGET_DEFS, type WidgetId, type WStat } from '~/composables/useCopWidgets'
 
 defineProps<{
@@ -47,7 +48,7 @@ const widgetMenuOpen = defineModel<boolean>('widgetMenuOpen', { required: true }
 <template>
 <header class="cop-bar">
   <button data-testid="back-lobby" @click="$emit('back')">← 系統首頁</button>
-  <span class="sid" data-testid="cop-session">Session {{ sessionId }}</span>
+  <span class="sid" data-testid="cop-session">推演 {{ sessionId }}</span>
   <span class="count" data-testid="unit-count">單位 {{ unitCount }}</span>
   <!-- WP-C5：本軍通聯不良 → 敵情圖已在**後端**粗化（位置跳到 3km 格心、只剩 DETECTED）。
        不標的話操作者只會覺得「敵情圖怎麼突然變爛了」而不知道原因。 -->
@@ -57,8 +58,8 @@ const widgetMenuOpen = defineModel<boolean>('widgetMenuOpen', { required: true }
     data-testid="comms-posture"
     :title="
       commsPosture === 'OFFLINE'
-        ? '本軍通聯全斷：敵情圖停止更新並已粗化到約 3km 格'
-        : '本軍通聯不良：敵情位置已粗化到約 3km 格、情報等級降為 DETECTED'
+        ? '本軍通聯全斷：敵情圖停止更新，位置已粗化至約 3 公里方格'
+        : `本軍通聯不良：敵情位置已粗化至約 3 公里方格，情報等級降為「${intelFidelityLabel('DETECTED')}」`
     "
   >
     <i class="pi pi-wifi" /> 敵情粗化（{{ commsLabel(commsPosture) }}）
@@ -74,7 +75,7 @@ const widgetMenuOpen = defineModel<boolean>('widgetMenuOpen', { required: true }
     "
   >
     <i class="pi" :class="streamStatus === 'live' ? 'pi-circle-fill' : 'pi-circle'" />
-    {{ streamStatus }}
+    {{ streamStatusLabel(streamStatus) }}
   </span>
   <ClientOnly><SimClockBar :tick="tick" :start-time="startTime" /></ClientOnly>
   <nav class="cop-nav">
@@ -173,8 +174,8 @@ const widgetMenuOpen = defineModel<boolean>('widgetMenuOpen', { required: true }
       class="icon-btn"
       data-testid="nav-aar"
       data-tip="AAR"
-      data-tip2="戰後檢討報告"
-      aria-label="AAR 戰後檢討"
+      data-tip2="行動後檢討報告"
+      aria-label="行動後檢討"
       @click="navigateTo(`/session/${sessionId}/aar`)"
     >
       <i class="pi pi-chart-bar" />

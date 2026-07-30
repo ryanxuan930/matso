@@ -379,7 +379,7 @@ export function buildUnitFeatures(
     // APP-6A Field H「Additional Information」——僅失聯時填（DEGRADED 已用透明度表達）。
     // 時長**分桶**，不可直接烤 tick 差值（見 staleBucket）。
     if (isGhost(u) && withText) {
-      options.additionalInformation = `OFFLINE +${staleBucket(currentTick - u.lastReportedTick)}t`
+      options.additionalInformation = `失聯 +${staleBucket(currentTick - u.lastReportedTick)}t`
     }
     // APP-6A Field T「Unique Designation」。己方單位**過去完全沒帶這個選項**——
     // 只有 IDENTIFIED 的敵情 contact 有，所以自己的部隊在地圖上是一排無名方塊。

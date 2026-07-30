@@ -579,7 +579,7 @@ async function doDeleteTemplate() {
   <main class="armory">
     <header>
       <button class="back" data-testid="armory-back" @click="navigateTo('/lobby')">← 系統首頁</button>
-      <h1>武器庫</h1>
+      <h1>裝備範本庫</h1>
     </header>
 
     <div class="body">
@@ -594,7 +594,7 @@ async function doDeleteTemplate() {
             @click="pick(t)"
           >
             <span class="t-name">{{ t.name }}</span>
-            <span class="t-cat">{{ t.category }}</span>
+            <span class="t-cat">{{ categoryLabel(t.category) }}</span>
             <button
               class="t-del"
               data-testid="armory-delete"
@@ -629,8 +629,8 @@ async function doDeleteTemplate() {
 
         <template v-if="isKineticLike && editMode === 'form'">
           <div class="row">
-            <label>最大射程 (m) <input v-model.number="maxRange" type="number" data-testid="armory-maxrange"></label>
-            <label>最小射程 (m) <input v-model.number="minRange" type="number"></label>
+            <label>最大射程（m） <input v-model.number="maxRange" type="number" data-testid="armory-maxrange"></label>
+            <label>最小射程（m） <input v-model.number="minRange" type="number"></label>
             <label>射速/tick <input v-model.number="ratePerTick" type="number" step="0.1"></label>
             <label class="chk"><input v-model="indirectFire" type="checkbox"> 間接射擊</label>
           </div>
@@ -667,7 +667,7 @@ async function doDeleteTemplate() {
             多項式插值需 ≥3 個控制點才有意義（少於 3 點時等同線性）。
           </p>
 
-          <div class="sub">傷害（依裝甲級別：armor_class → 扣血點）</div>
+          <div class="sub">單發傷害（依目標裝甲級別 → 戰力扣減點數）</div>
           <div v-for="(r, i) in dmgRows" :key="`dmg${i}`" class="pair">
             <select v-model="r.ac" class="ac-sel" data-testid="armory-armor-class">
               <option v-for="ac in ARMOR_CLASSES" :key="ac" :value="ac">
@@ -701,8 +701,8 @@ async function doDeleteTemplate() {
           <template v-if="category === 'ARTILLERY'">
             <div class="sub">火砲諸元（間瞄）</div>
             <div class="row">
-              <label>散布 CEP (m) <input v-model.number="dispersionCep" type="number"></label>
-              <label>致命半徑 (m) <input v-model.number="lethalRadius" type="number"></label>
+              <label>散布 CEP（m） <input v-model.number="dispersionCep" type="number"></label>
+              <label>致命半徑（m） <input v-model.number="lethalRadius" type="number"></label>
               <label>每次射擊發數 <input v-model.number="roundsPerMission" type="number"></label>
             </div>
           </template>
@@ -715,8 +715,8 @@ async function doDeleteTemplate() {
                   <option v-for="m in MOBILITY_CLASSES" :key="m" :value="m">{{ MOBILITY_CLASS_LABELS[m] }}</option>
                 </select>
               </label>
-              <label>道路速度 (km/h) <input v-model.number="roadSpeed" type="number" :disabled="!canSelfMove"></label>
-              <label>越野速度 (km/h) <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
+              <label>道路速度（km/h） <input v-model.number="roadSpeed" type="number" :disabled="!canSelfMove"></label>
+              <label>越野速度（km/h） <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
             </div>
           </div>
 
@@ -747,8 +747,8 @@ async function doDeleteTemplate() {
               </label>
             </div>
             <div class="row">
-              <label>飛行速度 (m/s) <input v-model.number="flightSpeed" type="number"></label>
-              <label>最小接戰距離 (m) <input v-model.number="minEngageRange" type="number"></label>
+              <label>飛行速度（m/s） <input v-model.number="flightSpeed" type="number"></label>
+              <label>最小接戰距離（m） <input v-model.number="minEngageRange" type="number"></label>
               <label>抗反制 0–1 <input v-model.number="cmResistance" type="number" step="0.05" min="0" max="1"></label>
               <label class="chk"><input v-model="topAttack" type="checkbox"> 頂攻模式</label>
             </div>
@@ -793,8 +793,8 @@ async function doDeleteTemplate() {
                   <option v-for="m in MOBILITY_CLASSES" :key="m" :value="m">{{ MOBILITY_CLASS_LABELS[m] }}</option>
                 </select>
               </label>
-              <label>道路速度 (km/h) <input v-model.number="roadSpeed" type="number" :disabled="!canSelfMove"></label>
-              <label>越野速度 (km/h) <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
+              <label>道路速度（km/h） <input v-model.number="roadSpeed" type="number" :disabled="!canSelfMove"></label>
+              <label>越野速度（km/h） <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
             </div>
           </div>
         </template>
@@ -807,13 +807,13 @@ async function doDeleteTemplate() {
                 <option v-for="k in SENSOR_KINDS" :key="k" :value="k">{{ SENSOR_KIND_LABELS[k] }}</option>
               </select>
             </label>
-            <label>最大偵測 (m) <input v-model.number="sensorMaxRange" type="number"></label>
-            <label>可辨識距離 (m) <input v-model.number="identifyRange" type="number"></label>
+            <label>最大偵測（m） <input v-model.number="sensorMaxRange" type="number"></label>
+            <label>可辨識距離（m） <input v-model.number="identifyRange" type="number"></label>
           </div>
           <div class="row">
-            <label>視野/掃描扇角 (°) <input v-model.number="fovDeg" type="number" min="0" max="360"></label>
-            <label>掃描週期 (tick) <input v-model.number="scanPeriod" type="number" min="0"></label>
-            <label>最小可測 RCS (m²) <input v-model.number="minRcs" type="number" step="0.1"></label>
+            <label>視野/掃描扇角（°） <input v-model.number="fovDeg" type="number" min="0" max="360"></label>
+            <label>掃描週期（tick） <input v-model.number="scanPeriod" type="number" min="0"></label>
+            <label>最小可測 RCS（m²） <input v-model.number="minRcs" type="number" step="0.1"></label>
             <label class="chk"><input v-model="sensorPassive" type="checkbox"> 被動（不發射）</label>
             <label class="chk" title="熱像/雷達/聲學不靠可見光，入夜不減效；日間光學會吃夜間懲罰"><input v-model="sensorNightCapable" type="checkbox" data-testid="armory-sensor-night"> 夜視能力</label>
           </div>
@@ -834,13 +834,13 @@ async function doDeleteTemplate() {
                 <option v-for="b in COMMS_BANDS" :key="b" :value="b">{{ COMMS_BAND_LABELS[b] }}</option>
               </select>
             </label>
-            <label>頻率 (MHz) <input v-model.number="freqMhz" type="number"></label>
-            <label>資料速率 (kbps) <input v-model.number="dataRate" type="number" step="0.1"></label>
+            <label>頻率（MHz） <input v-model.number="freqMhz" type="number"></label>
+            <label>資料速率（kbps） <input v-model.number="dataRate" type="number" step="0.1"></label>
           </div>
           <div class="row">
-            <label>發射功率 (dBm) <input v-model.number="txPower" type="number"></label>
-            <label>接收靈敏度 (dBm) <input v-model.number="rxSens" type="number"></label>
-            <label>天線增益 (dBi) <input v-model.number="antGain" type="number" step="0.5"></label>
+            <label>發射功率（dBm） <input v-model.number="txPower" type="number"></label>
+            <label>接收靈敏度（dBm） <input v-model.number="rxSens" type="number"></label>
+            <label>天線增益（dBi） <input v-model.number="antGain" type="number" step="0.5"></label>
           </div>
           <div class="row">
             <label class="chk"><input v-model="meshCapable" type="checkbox"> 網狀中繼</label>
@@ -867,7 +867,7 @@ async function doDeleteTemplate() {
           <div class="row">
             <label>載員 <input v-model.number="troopCap" type="number" min="0"></label>
             <label>載具槽位 <input v-model.number="vehicleSlots" type="number" min="0"></label>
-            <label>裝卸 (tick) <input v-model.number="loadUnloadTicks" type="number" min="0"></label>
+            <label>裝卸（tick） <input v-model.number="loadUnloadTicks" type="number" min="0"></label>
             <label class="chk"><input v-model="canTow" type="checkbox"> 可拖曳</label>
           </div>
           <div class="row">
@@ -883,8 +883,8 @@ async function doDeleteTemplate() {
                   <option v-for="m in MOBILITY_CLASSES" :key="m" :value="m">{{ MOBILITY_CLASS_LABELS[m] }}</option>
                 </select>
               </label>
-              <label>道路速度 (km/h) <input v-model.number="roadSpeed" type="number" :disabled="!canSelfMove"></label>
-              <label>越野速度 (km/h) <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
+              <label>道路速度（km/h） <input v-model.number="roadSpeed" type="number" :disabled="!canSelfMove"></label>
+              <label>越野速度（km/h） <input v-model.number="ccSpeed" type="number" :disabled="!canSelfMove"></label>
             </div>
           </div>
         </template>
@@ -905,25 +905,25 @@ async function doDeleteTemplate() {
             <label class="chk"><input v-model="isExpendable" type="checkbox"> 消耗性（遊蕩彈藥）</label>
           </div>
           <div class="row">
-            <label>續航 (tick) <input v-model.number="enduranceTicks" type="number"></label>
-            <label>巡航 (m/s) <input v-model.number="cruiseSpeed" type="number"></label>
-            <label>升限 (m) <input v-model.number="serviceCeiling" type="number"></label>
+            <label>續航（tick） <input v-model.number="enduranceTicks" type="number"></label>
+            <label>巡航（m/s） <input v-model.number="cruiseSpeed" type="number"></label>
+            <label>升限（m） <input v-model.number="serviceCeiling" type="number"></label>
           </div>
           <div class="row">
-            <label>資料鏈距離 (m) <input v-model.number="dataLinkRange" type="number"></label>
-            <label>酬載 (kg) <input v-model.number="payloadKg" type="number" step="0.1"></label>
+            <label>資料鏈距離（m） <input v-model.number="dataLinkRange" type="number"></label>
+            <label>酬載（kg） <input v-model.number="payloadKg" type="number" step="0.1"></label>
           </div>
           <div class="sub">氣象限制</div>
           <div class="row">
-            <label>最大風速 (m/s) <input v-model.number="maxWind" type="number"></label>
-            <label>最低能見度 (m) <input v-model.number="minVis" type="number"></label>
+            <label>最大風速（m/s） <input v-model.number="maxWind" type="number"></label>
+            <label>最低能見度（m） <input v-model.number="minVis" type="number"></label>
           </div>
         </template>
 
         <!-- JSON 檢視/編修（任何類別皆可，如「火力 直射動能」的 JSON 鈕） -->
         <template v-else>
           <label class="wide">
-            屬性 JSON（依 weaponeering.schema.json 之 {{ category.toLowerCase() }} 規格）
+            屬性 JSON（依「{{ categoryLabel(category) }}」類別之欄位規格）
             <textarea v-model="jsonText" rows="14" data-testid="armory-json" spellcheck="false" />
           </label>
         </template>

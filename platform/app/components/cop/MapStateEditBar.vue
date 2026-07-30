@@ -14,7 +14,7 @@ defineEmits<{ (e: 'start'): void }>()
     <strong>地圖狀態編輯（推演已暫停）</strong>——拖曳單位調整位置；<b>Shift＋點單位</b>可多選、<b>Shift＋空白處拖曳</b>可框選，再拖曳任一選取單位即整組移動；用「地圖編輯」工具繪障礙/建築。
   </span>
   <button class="meb-start" data-testid="start-wargame" @click="$emit('start')">
-    ▶ 開始兵推
+    ▶ 開始推演
   </button>
 </div>
 </template>

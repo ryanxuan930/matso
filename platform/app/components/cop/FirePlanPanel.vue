@@ -9,6 +9,7 @@
  * 可見性由後端決定（紅線 3）；`FIRED` 標籤寫「已下令」而非「已命中」，
  * 因為裁決失敗的令也會是 FIRED——打中沒有要看戰況事件。
  */
+import { UNKNOWN_REASON } from '~/composables/useLabels'
 import { computed, onMounted, ref } from 'vue'
 import {
   SCHEDULE_LABELS,
@@ -55,7 +56,7 @@ async function reload() {
   try {
     plans.value = await fetchFirePlans(props.sessionId)
   } catch (e) {
-    err.value = `載入失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    err.value = `載入失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   }
 }
 onMounted(reload)
@@ -90,7 +91,7 @@ async function doCreate() {
     draftTargets.value = []
     await reload()
   } catch (e) {
-    err.value = `建立失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    err.value = `建立失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   } finally {
     busy.value = false
   }
@@ -104,7 +105,7 @@ async function doFire(planId: string, targetId: string) {
     if (out.status === 'FAILED') err.value = `未能執行：${out.failure_reason ?? ''}`
     await reload()
   } catch (e) {
-    err.value = `呼叫失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    err.value = `呼叫失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   } finally {
     busy.value = false
   }
@@ -116,7 +117,7 @@ async function doDelete(planId: string) {
     await deleteFirePlan(props.sessionId, planId)
     await reload()
   } catch (e) {
-    err.value = `刪除失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    err.value = `刪除失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   } finally {
     busy.value = false
   }
@@ -189,7 +190,7 @@ function unitName(id: string): string {
     <div class="fp-row">
       <select v-model="draftSchedule" data-testid="fireplan-schedule">
         <option value="ON_CALL">待命（FSO 呼叫）</option>
-        <option value="AT_TICK">定時（到 tick 自動打）</option>
+        <option value="AT_TICK">定時（屆時自動射擊）</option>
       </select>
       <input
         v-if="draftSchedule === 'AT_TICK'"

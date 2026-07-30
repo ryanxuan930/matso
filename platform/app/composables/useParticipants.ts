@@ -30,7 +30,7 @@ export const ASSIGNABLE_ROLES = [
  */
 export const SEAT_ROLE_LABELS: Record<string, string> = {
   COMMANDER: '指揮官（可下全部令）',
-  S3_OPS: '作戰官 S3（機動/任務/姿態/隊形/工兵/偵蒐）',
+  S3_OPS: '作戰官 S3（機動/任務/姿態/隊形/工兵/偵搜）',
   FSO_FIRES: '火力支援協調官 FSO（交戰/火力任務）',
   S2_INTEL: '情報官 S2（不可下令）',
   S4_LOG: '後勤官 S4（補給撥交）',

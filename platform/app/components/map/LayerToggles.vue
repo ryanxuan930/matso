@@ -70,7 +70,7 @@ function move(key: string, dir: -1 | 1) {
 
 <template>
   <div class="toggles">
-    <div class="title">單位符號（APP-6A）</div>
+    <div class="title">單位符號</div>
     <label class="symdet">詳細度
       <select v-model="symbolDetail" data-testid="symbol-detail">
         <option
@@ -113,7 +113,8 @@ function move(key: string, dir: -1 | 1) {
       <label>最細解析度
         <input v-model.number="hexMaxRes" type="number" min="3" max="9" data-testid="hex-max-res">
       </label>
-      <label>交戰範圍(km)
+      <label title="僅計算視野中心此半徑內的六角格，用以降低運算量；0 ＝不限。與部隊的交戰距離無關。">
+        網格繪製半徑（km）
         <input v-model.number="hexLimitKm" type="number" min="0" step="5" data-testid="hex-limit-km">
       </label>
       <label>線寬 {{ hexLineWidth.toFixed(1) }}

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { UNKNOWN_REASON, mobilityProfileLabel } from '~/composables/useLabels'
 import type { components } from '~/types/api'
 // 系統設定（#54）——全系統通用參數。AI 模式 + LLM 後端可編輯（存 DB）；ENV/容器層參數唯讀檢視。
 // 限統裁/白軍/管理（後端 RBAC 亦把關）。
@@ -98,7 +99,7 @@ async function load() {
   try {
     applyConfig(await apiFetch<SysConfig>('/system/config'))
   } catch (e) {
-    err.value = `載入失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    err.value = `載入失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   } finally {
     loading.value = false
   }
@@ -120,7 +121,7 @@ async function save() {
     applyConfig(await apiFetch<SysConfig>('/system/config', { method: 'PUT', body }))
     saveMsg.value = '已儲存'
   } catch (e) {
-    err.value = `儲存失敗：${(e as { code?: string }).code ?? 'UNKNOWN'}`
+    err.value = `儲存失敗：${(e as { code?: string }).code ?? UNKNOWN_REASON}`
   } finally {
     saving.value = false
   }
@@ -139,7 +140,7 @@ async function testConnection() {
     testMsg.value = `${r.detail}${r.latency_ms != null ? `（${r.latency_ms} ms）` : ''}`
   } catch (e) {
     testOk.value = false
-    testMsg.value = `測試失敗：${(e as { message?: string }).message ?? 'UNKNOWN'}`
+    testMsg.value = `測試失敗：${(e as { message?: string }).message ?? UNKNOWN_REASON}`
   } finally {
     testing.value = false
   }
@@ -304,7 +305,7 @@ onMounted(async () => {
           </div>
           <h3 class="sim-h3">節奏與自主推演</h3>
           <div class="grid2">
-            <label>Tick 長度（ms 模擬時間）
+            <label>tick 長度（毫秒模擬時間）
               <input v-model.number="sim.tick_rate_ms" type="number" min="1000" step="1000">
               <small>60000 ＝ 1 tick 為 1 分鐘</small>
             </label>
@@ -319,9 +320,9 @@ onMounted(async () => {
               <input v-model.number="sim.ai_heartbeat_s" type="number" min="1" step="5">
               <small>該局自主推演設定若有指定則優先</small>
             </label>
-            <label>AI 落單上限（單一 worker）
+            <label>AI 單週期指令上限
               <input v-model.number="sim.ai_max_orders" type="number" min="1" step="50">
-              <small>runaway 守衛：超過即停該 worker</small>
+              <small>失控保護：超過即停止該陣營之 AI 決策</small>
             </label>
             <label>狀態快照間隔（tick）
               <input v-model.number="sim.checkpoint_interval_ticks" type="number" min="1" step="50">
@@ -389,7 +390,7 @@ onMounted(async () => {
           <h3 class="sim-h3">行軍耗損（戰力點 / 公里）</h3>
           <div class="grid2">
             <label v-for="(_v, profile) in sim.march_attrition" :key="profile">
-              {{ profile }}
+              {{ mobilityProfileLabel(profile) }}
               <input v-model.number="sim.march_attrition[profile]" type="number" min="0" step="0.01">
             </label>
           </div>
