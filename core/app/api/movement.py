@@ -25,6 +25,7 @@ from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.errors import OrderValidationError, SessionNotFoundError
 from app.factions import WHITE_CELL
+from app.factions.session_store import load_session_relations
 from app.models import MapFeature, TacticalUnit, WargameSession
 from app.movement.attrition import estimate_route, haversine_m, obstacle_from_feature
 from app.movement.fuel import load_unit_fuel
@@ -91,6 +92,20 @@ def _dest_lnglat(body: MovementPreviewRequest) -> tuple[float, float] | None:
     return None
 
 
+def _may_preview(db: Session, user: CurrentUser, session_id: str, faction: str) -> bool:
+    """呼叫者能不能預覽這個陣營的單位：全知 → 都可以；否則須為自己或盟軍。
+
+    盟軍算得過是刻意的——#91 的共享視圖本來就讓盟軍互相看得到位置與機動能力。
+    """
+    if is_omniscient(user.role):
+        return True
+    participant = require_participant(db, user, session_id)
+    observer = str(participant.faction)
+    if observer == WHITE_CELL or faction == observer:
+        return True
+    return bool(load_session_relations(db, session_id).is_allied(observer, faction))
+
+
 @router.post("/{session_id}/movement/preview", response_model=MovementPreviewView)
 def preview_movement(
     session_id: str,
@@ -105,6 +120,14 @@ def preview_movement(
 
     unit = db.get(TacticalUnit, body.unit_id)
     if unit is None or unit.session_id != session_id:
+        raise OrderValidationError("查無此單位", error_code="MOVE_PREVIEW_NO_UNIT")
+    # 紅線 3：**只能預覽自己（含盟軍）的單位**。過去這裡完全沒有陣營檢查——
+    # `require_participant` 只在下面為了「阻礙可見性」而呼叫，單位本身沒閘門。
+    # 後果是任一參與者拿別人的 unit_id 打這支 API，就能得到該單位的**即時座標**、
+    # 機動能力與剩餘油料——一個沒有上鎖的敵情窗口，而且完全不留痕跡。
+    # 回「查無此單位」而不是「無權限」：**不可以讓錯誤訊息本身變成偵察工具**
+    # （能分辨「不存在」與「存在但不是你的」就等於確認了敵軍編成）。
+    if not _may_preview(db, user, session_id, unit.faction):
         raise OrderValidationError("查無此單位", error_code="MOVE_PREVIEW_NO_UNIT")
     if unit.current_lat is None or unit.current_lng is None:
         raise OrderValidationError("單位尚無座標", error_code="MOVE_PREVIEW_NO_POS")

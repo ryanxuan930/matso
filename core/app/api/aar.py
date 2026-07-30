@@ -26,6 +26,23 @@ from app.stream.faction_filter import is_omniscient
 router = APIRouter(prefix="/api/v1/sessions", tags=["aar"])
 
 
+def _aar_visible_factions(db: Session, session_id: str, observer: str) -> list[str]:
+    """觀看者在 AAR 裡看得到的陣營＝**自己 + 盟軍**（與 `/units` 的共享視圖同一條規則）。
+
+    盟軍算得過是刻意的：#91 的共享視圖本來就讓盟軍互相看得到編成。
+    """
+    from app.factions import WHITE_CELL
+    from app.factions.session_store import load_session_relations
+
+    factions = db.scalars(
+        select(TacticalUnit.faction).where(TacticalUnit.session_id == session_id).distinct()
+    ).all()
+    if observer == WHITE_CELL:
+        return list(factions)
+    relations = load_session_relations(db, session_id)
+    return [f for f in factions if f == observer or relations.is_allied(observer, f)]
+
+
 def require_aar_access(db: Session, user: CurrentUser, session_id: str) -> str | None:
     """AAR 存取：全知 / ANALYST / 本 session 參與者。其餘 → 403。
 
@@ -121,6 +138,14 @@ def get_replay_states(
         .tuples()
         .all()
     )
+    # 紅線 3：**名冊也要投影**。`_visible_events` 早就把事件霧化了，但這份 rows 沒有
+    # ——於是任一參與者 poll 這支 API 就拿到**全陣營的番號、編制與 tick 0 即時座標**。
+    # docstring 自己都寫了「參與者在演習進行中就能 poll AAR，不投影的話等於一個
+    # 沒有上鎖的敵情窗口」，事件做到了，名冊漏了。
+    # `viewer is None` ＝全知/ANALYST → 不過濾（他們本來就有權看全部）。
+    if viewer is not None:
+        allowed = set(_aar_visible_factions(db, session_id, viewer))
+        rows = [r for r in rows if r[2] in allowed]
     authorized = {r[0]: float(r[5]) for r in rows if r[5] is not None}
     frames = state_frames(events, authorized)
 
