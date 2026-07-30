@@ -432,7 +432,7 @@ class AreaFireAdjudicator:
     ) -> ObserverVerdict:
         """射擊陣營對落點有沒有觀測（WP-C10.4）。
 
-        候選＝**同陣營、還活著、在觀測距離內**的單位，依距落點遠近排序後最多探 8 次 LOS，
+        候選＝**友軍（含盟軍）、還活著、在觀測距離內**的單位，依距落點遠近排序後最多探 8 次 LOS，
         看到一個就回。上限是必要的：tick 預算 200ms，而每次 LOS 是一趟 gRPC。
 
         **判不出來時回 `UNKNOWN` 而不是 `UNOBSERVED`**——見 `ObserverVerdict` 的說明。
@@ -443,10 +443,13 @@ class AreaFireAdjudicator:
         has_los = getattr(self._gateway, "has_los", None)
         if has_los is None or not shooter_faction:
             return ObserverVerdict.UNKNOWN
+        # ⚠ **原本是 `t.faction == shooter_faction`**——盟軍的前觀不算，於是聯軍作戰時
+        # 明明有友軍看著落點，散布卻照樣加倍。與 C9 的 `friendly_losses` 同一個 bug 家族。
+        friendly = self._friendly_test(shooter_faction)
         candidates = [
             t
             for t in targets
-            if t.faction == shooter_faction
+            if (friendly(t.faction) if friendly else t.faction == shooter_faction)
             and (t.current_strength is None or t.current_strength > 0)
             and _haversine_m(t.lat, t.lng, *aim) <= _MAX_SPOT_RANGE_M
         ]

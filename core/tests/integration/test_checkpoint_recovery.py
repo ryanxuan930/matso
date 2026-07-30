@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 
 import pytest
 import redis
@@ -34,7 +35,19 @@ pytestmark = pytest.mark.integration
 def session_id(session_factory: sessionmaker[Session], redis_client: redis.Redis) -> Iterator[str]:
     with session_factory() as db:
         ws = WargameSession(
-            name=f"itest-ckpt-{uuid.uuid4().hex[:8]}", master_seed=7, current_weather={}
+            name=f"itest-ckpt-{uuid.uuid4().hex[:8]}",
+            master_seed=7,
+            current_weather={},
+            # ⚠ **一定要標成已封存**。這些測試自己建 Kernel 手動推 tick，從不需要活執行期；
+            # 而開發機上跑著的 core 容器裡有一個 `SimManager`，它每 3 秒掃一次
+            # `WargameSession WHERE archivedAt IS NULL` 並**認養任何新出現的局**
+            # （`sim_runtime._session_ids`）。被認養之後，那個 runner 會對同一批 Redis 鍵與
+            # DB 列寫入，而這些測試正在斷言它們——於是整包跑（測試較慢）時偶發紅、
+            # 單檔跑（1.6 秒內結束，來不及被認養）必綠。
+            #
+            # 我原本把它記成「跨測試的 Redis 殘留狀態」，那是錯的診斷：
+            # 殘留狀態不會只在整包跑時出現。真正的機制是**與活 runner 的競態**。
+            archived_at=datetime.now(UTC).replace(tzinfo=None),
         )
         db.add(ws)
         db.commit()

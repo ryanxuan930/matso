@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, update
@@ -20,7 +21,14 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def session_id(session_factory: sessionmaker[Session]) -> Iterator[str]:
     with session_factory() as db:
-        ws = WargameSession(name="itest-ledger", master_seed=7, current_weather={})
+        ws = WargameSession(
+            name="itest-ledger",
+            master_seed=7,
+            current_weather={},
+            # 標成已封存：開發機的 core 容器每 3 秒認養任何 `archivedAt IS NULL` 的局，
+            # 會與本測試搶同一批 Redis 鍵/DB 列（見 `test_checkpoint_recovery` 的長註解）。
+            archived_at=datetime.now(UTC).replace(tzinfo=None),
+        )
         db.add(ws)
         db.commit()
         sid = ws.id

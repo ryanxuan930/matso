@@ -162,6 +162,22 @@ def expend_request(db: Session, request_id: str) -> Request | None:
     return req
 
 
+def _observer_factions(db: Any, session_id: str, faction: str, relations: Any) -> list[str]:
+    """算得上「友軍觀測者」的陣營集（自己 + 盟軍），依名稱排序＝確定性。
+
+    `relations` 為 None → 只回自己（既有行為，既有呼叫端不受影響）。
+    """
+    if relations is None:
+        return [faction]
+    from app.adjudication.fratricide import is_friendly
+    from app.models.tables import TacticalUnit
+
+    declared = db.scalars(
+        select(TacticalUnit.faction).where(TacticalUnit.session_id == session_id).distinct()
+    ).all()
+    return sorted({f for f in declared if f and is_friendly(relations, faction, f)} | {faction})
+
+
 def has_observer_on(
     db: Session,
     session_id: str,
@@ -169,8 +185,13 @@ def has_observer_on(
     target: tuple[float, float],
     gateway: object,
     live_state: Mapping[str, Mapping[str, Any]] | None = None,
+    relations: Any = None,
 ) -> bool:
-    """該陣營是否有任一**存活**單位對目標點有視線（WP-C10.1）。
+    """該陣營**或其盟軍**是否有任一存活單位對目標點有視線（WP-C10.1）。
+
+    ⚠ **原本只認自己陣營**（`TacticalUnit.faction == faction`），而 SPEC 寫的是
+    「任一友軍」、關係矩陣也讓盟軍互相可見——於是聯軍作戰時，盟軍的前觀看得到目標，
+    本軍卻叫不動火力。`relations` 未注入時退回只認自己陣營（既有行為）。
 
     **LOS 一律走與交戰預檢同一個 `PhysicsGateway`**，不另寫一套——兩份 LOS 實作
     就是兩份會漂移的物理，這個 repo 已經有 fog of war 因此出事的前例（WP-C5）。
@@ -196,10 +217,12 @@ def has_observer_on(
     has_los = getattr(gateway, "has_los", None)
     if has_los is None:
         return True
+    # 盟軍也算觀測者（見 docstring）。未注入 relations → 只認自己陣營。
+    factions = _observer_factions(db, session_id, faction, relations)
     units = db.scalars(
         select(TacticalUnit).where(
             TacticalUnit.session_id == session_id,
-            TacticalUnit.faction == faction,
+            TacticalUnit.faction.in_(factions),
         )
     ).all()
     tlat, tlng = target

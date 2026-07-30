@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import h3
 import pytest
@@ -99,7 +100,14 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 def _seed(db: Session) -> tuple[str, str, str, str]:
     """建 session + 藍/紅 PLATOON + 藍方 COMMANDER。回 (session, blue, red, blue_issuer)。"""
-    session = WargameSession(name="battle", master_seed=7, current_weather={})
+    session = WargameSession(
+        name="battle",
+        master_seed=7,
+        current_weather={},
+        # 標成已封存：開發機的 core 容器每 3 秒認養任何 `archivedAt IS NULL` 的局，
+        # 會與本測試搶同一批 Redis 鍵/DB 列（見 `test_checkpoint_recovery` 的長註解）。
+        archived_at=datetime.now(UTC).replace(tzinfo=None),
+    )
     db.add(session)
     db.flush()
     blue = TacticalUnit(

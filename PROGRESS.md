@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（三）：盟軍觀測者 + integration 測試與活 runner 的競態**。①**盟軍不算觀測者**（兩處一起修）：SPEC 寫「任一**友軍**」、關係矩陣也讓盟軍互相可見，但 `c2/service.has_observer_on`（臨機火力的觀測條件）與 `fire_wiring.observer_verdict`（散布修正）**都只認自己陣營**——於是聯軍作戰時，盟軍的前觀明明看得到目標，本軍卻**叫不動火力**、或者**散布照樣加倍**。與 C9 的 `friendly_losses` 用 `==` 是同一個 bug 家族：**敵我判斷不可以用字串相等**。兩處都改走關係矩陣，未注入 `relations` 時退回只認自己陣營（既有呼叫端不受影響）；觀測者陣營集**依名稱排序**（會進 SQL 的 IN）。②**我把那個偶發紅的診斷記錯了**：原本記成「跨測試的 Redis 殘留狀態」，但殘留狀態不會只在整包跑時出現。實際機制是**與活 runner 的競態**——integration fixture 建的是 `archivedAt IS NULL` 的真局，而開發機上跑著的 core 容器裡的 `SimManager` 每 3 秒掃一次那個條件並**認養任何新出現的局**（`_session_ids`），認養後就對同一批 Redis 鍵與 DB 列寫入，而測試正在斷言它們；單檔跑 1.6 秒內結束來不及被認養故必綠，整包跑較慢就偶發紅。**實測驗證**：單檔連跑 12 次 0 失敗；查活 DB 確認 runner 目前確實認養了三個局。修法是把 integration 的 session 標成 `archived_at`（這些測試自己建 Kernel 手動推 tick，從不需要活執行期，標封存也順便表達了那個意圖），**三個 integration 檔案都有同樣的暴露**，一起修。整包連跑 6 次全綠。**驗收**：pytest 1946（+8）、mypy 265、ruff 綠。
+
 - 2026-07-30：**Backlog 清倉（二）：COP 終於下得了 ENGINEER 與 FORMATION 令**。C2 與 C3 的後端、預檢、契約、生成型別全通了，但 `useCopOrdering.ts` 的 `orderType` union 一直是五個令型——**使用者點不到**，而破障是 V2.1 exit 的 armor-breakthrough CPX 的必要動作。補上：令型下拉兩個新選項、FORMATION 面板（隊形 + 乘駐車各一個「（不變更）」選項，對應後端「只送有宣告的欄位」的語義——送 null 會被 pattern 擋、送空字串意思不明）、ENGINEER 面板（設障選型別 + 點地圖標作業點；破障填標的 id）、`canSubmit` 兩條前置驗證、地圖點擊路由到 `engineerPoint`。面板明寫「須工兵單位且距作業點 500 m 內」與「破障/設障各有工時，**完工才會改變地圖**」——那兩件事使用者不知道就會覺得令下了沒反應。**另核對掉一條過期的 Backlog**：`CALL_FOR_FIRE` 前端其實早就補好了（標籤、`KINDS_NEEDING_TARGET`、`target_lat/lng` 都在），該條目是舊的。**驗收**：前端 lint/typecheck 綠。
 
 - 2026-07-30：**Backlog 清倉（一）：兩條資料遺失路徑**。①**`clone_session` 掉九個想定衍生欄**（原記七個，加上本 session 新增的 `allow_fratricide`/`day_night`）：`msel`/`roe`/`mobilityOverrides`/`noStrikeZones`/`requestQuotas`/`indirectFireRequiresApproval`/`survivabilityMove` 全都沒被複製——**副本會沒有 MSEL、沒有 ROE、沒有禁射區地跑**，看起來一切正常直到你發現腳本事件永遠不觸發、被禁的武器可以隨便用（B1 當初就是因此不敢建在 clone 上）。測試改成**掃 `WargameSession` 的欄位表**而不是逐欄列舉：逐欄的測試會跟著程式一起漏（新增欄位時兩邊都忘記，測試照樣綠），現在任何新欄位都必須明確歸類為「該複製」或「刻意不複製（列豁免表並寫理由）」，沒有第三條路。②**前端想定編輯器的 `exportScenario` 是第三份手寫白名單**，正在漏 `roe`/`request_quotas`/`indirect_fire_requires_approval`/`survivability_move`（加上本 session 的兩個共六個）——用編輯器存一次想定，那些設定就沒了。**這次改成結構性的修法**：`ScenarioModel.passthrough` 在 import 時收走所有未建模的鍵、export 時先攤開再讓明確欄位覆蓋，**任何未來的想定設定都會自動存活**，不需要有人記得回來改。同一個手寫白名單的 bug 已經咬過三次（後端 dump、後端 clone、前端編輯器），前兩次的修法都是「再列一個欄位」，於是下一個新設定又被下一個人忘記。以 `npx tsx` 實跑 roundtrip 驗證六個設定全數存活，並確認拿掉 `passthrough` 後真的會遺失。**另誠實記一筆**：`_copy_json` 的別名保護**端到端測不出來**（讀回來的是 DB 反序列化的新物件，JSON round-trip 本身就打斷了別名），所以那一條直接測 helper 而不是假裝端到端驗得到。**驗收**：pytest 1938（+4）、mypy 265、ruff、前端兩閘門綠。
@@ -194,9 +196,6 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   機器有負載時（例如同時 `docker compose build`）本來就會紅——marker 的說明自己寫著
   「絕對時間依硬體而定，共享 CI runner 不穩，故 CI 排除」。**那不是回歸**。
   正確數字：`1840 passed, 8 skipped, 4 deselected`。
-- **`test_checkpoint_recovery::test_rollback_unknown_tick_raises` 偶發紅**（本 session 遇到兩次）：
-  單獨跑必綠、整包跑偶爾紅 → 是**跨測試的 Redis 殘留狀態**，不是邏輯錯。
-  修法是給該檔一個乾淨的 Redis namespace 或 per-test flush，尚未做。
 - **WP-C9 的三個未竟口**：①前端 COP 仍把盟軍濾出 ENGAGE 下拉、且拒絕點擊友軍為目標
   （`cop.vue`）——`allow_fratricide` 開了後端放行，**操作員還是點不到**；需要 affordance +
   確認對話框。②AI 結構上不可能誤傷（`worker.py` 在 LLM 看到敵情前就用 `is_hostile` 濾過，
@@ -219,8 +218,6 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - **面射擊的絕對殺傷量偏低**（WP-C1 驗收時量到，屬 WP-C10.2 的校準）：20 發 155mm 對露天
   步兵連只造成 1.28 戰力損失，直覺上太少。`area_fire._loss_for` 自己標了「v0 佔位」——
   相對關係（掘壕≈露天一半、壓制遠大於殺傷）是對的，絕對值要一次真的校準。
-- **盟軍不算觀測者**：SPEC 寫「任一友軍」、關係矩陣也讓盟軍互相可見，但 C10.1 與 C10.4a
-  都只認自己陣營。兩處要一起改才有意義。
 - **e2e 的 `platform/.env` 干擾**：`NUXT_PUBLIC_TILE_URL` 會讓 `map.spec` 的離線那條前提不成立
   （現在會**明確 skip 並說明原因**，不再是無聲紅燈）。`NUXT_PUBLIC_API_BASE` 的干擾範圍待再確認——
   目前整套 e2e 在本機是綠的。

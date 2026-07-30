@@ -32,6 +32,7 @@ from app.c2.service import (
 from app.cache import make_redis
 from app.config import Settings
 from app.errors import AuthForbiddenError, RequestNoObserverError, SessionNotFoundError
+from app.factions.session_store import load_session_relations
 from app.models import SessionParticipant, User, WargameSession
 from app.models.enums import MessageKind, RequestKind, SeatRole
 from app.models.tables import Message, Request
@@ -346,6 +347,8 @@ def post_request(
             (float(lat), float(lng)),
             gateway,
             live_state=_live_units(settings, db, session_id, part.faction),
+            # WP-C10.1 修正：盟軍的前觀也算——SPEC 寫「任一友軍」。
+            relations=load_session_relations(db, session_id),
         ):
             raise RequestNoObserverError(
                 "本陣營無任何單位對該目標有視線——沒有觀測就叫不動火力",
