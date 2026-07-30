@@ -28,6 +28,7 @@ from app.adjudication.armor import resolve_units_armor_class
 from app.adjudication.combined import CombinedWeapon
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
+from app.adjudication.establishment import platform_count_for
 from app.adjudication.formation import (
     direct_fire_target_modifier,
     shooter_frontage_modifier,
@@ -249,17 +250,14 @@ def _ammo_of(inst: EquipmentInstance) -> int:
 
 
 def _platform_count_of(unit: TacticalUnit) -> int:
-    """單位的平台/建制數：attributes.platform_count 優先，否則 personnel_current，皆無則 1（單體）。
+    """單位的平台/建制數——見 `adjudication/establishment.py`。
 
-    決定「每平台戰力」＝authorized/platform_count——大部隊每次命中僅損一個平台份量（漸進消耗），
-    單體則整個承受（易毀）。legacy 未設者退回 1（如同單體），待 orbat 補 platform_count。
+    ⚠ 這裡的預設**曾經是寫死的 1**（「待 orbat 補 platform_count」），
+    但 orbat 契約從來沒有這個欄位、也沒有任何寫入端，於是每個從想定載入的單位
+    都是「單體」：一發步槍命中滿編步兵連扣掉 70 戰力，兩發全連覆滅。
+    現改為由編制導出，明示（attributes / personnel_current）仍優先。
     """
-    pc = unit.attributes.get("platform_count") if isinstance(unit.attributes, dict) else None
-    if isinstance(pc, (int, float)) and pc >= 1:
-        return int(pc)
-    if isinstance(unit.personnel_current, int) and unit.personnel_current >= 1:
-        return unit.personnel_current
-    return 1
+    return platform_count_for(unit.unit_level.value, unit.attributes, unit.personnel_current)
 
 
 def seed_combat_state(

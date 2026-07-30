@@ -213,9 +213,12 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 每一項再由獨立 agent 設法推翻。**24 項通過查證**（掃描提示已排除當日已修項目）。
 ⚠ 這一批不是猜測——多數附有實測重現路徑。
 
-- 🔴 **[CRITICAL] platform_count / personnel_current 全系統沒有任何寫入端 → 每個單位都是「單體」，一次命中扣掉全編制戰力**
-  - 形狀：有值卻被靜默忽略（引擎讀的欄位沒有寫入端）
-  - 影響：任何從想定載入（或 COP 建立）的單位，熱狀態 `platform_count` 恆為 1 → `cp_per_platform = authorized_strength / 1 = 100`。以出貨種子 RIFLE_556（`pk_by_armor_class.INFANTRY = 0.70`，seed_weapons.py:22）為例：一發步槍命中滿編步兵連（authorized 100）扣 `0.70 × 100 = 70` 戰力，兩發即全連覆滅；走齊射路徑（班內 7 支步槍 × rate_per_tic
+- ✅ ~~[CRITICAL] platform_count 沒有寫入端~~ —— **已修**（2026-07-30）：新增
+  `adjudication/establishment.py` 由編制導出（明示 `attributes`/`personnel_current` 仍優先），
+  `engage_wiring` 與 `api/units` 兩處重複實作合流。使用者截圖佐證修前症狀：
+  伍級單位顯示「戰力 100/100 · **1 平台**」。⚠ `PERSONNEL_BY_LEVEL` 是通用編制常識
+  非量測值；正解是讓 ORBAT 直接宣告人數。**既有 session 的熱狀態不回填**
+  （`seed_combat_state` 只補缺鍵），需重開局或清熱狀態才生效。
 - 🔴 **[CRITICAL] GET /aar/replay/states 把**全陣營單位名冊與即時座標**發給任一參與者（事件有霧化、名冊沒有）**
   - 形狀：有值卻被靜默忽略（半套閘門）
   - 影響：演習進行中，任何一個作戰方指揮官打一支 GET 就拿到敵方完整 ORBAT（unit id／番號／陣營／編制層級／滿編戰力／是否固定）與每個敵軍單位的**即時經緯度**。偵測、fidelity 分級、位置凍結、敵情粗化整條鏈路在這一個端點旁邊被繞過；且因為事件霧化把敵方移動事件濾掉，反而保證了 fallback 一定走「回傳 DB 現值」這條路——霧化做得越對，這裡漏得越準。

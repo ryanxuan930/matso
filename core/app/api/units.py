@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication import WeaponProfile
+from app.adjudication.establishment import platform_count_for
 from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
@@ -137,12 +138,12 @@ def _comms_value(u: TacticalUnit, hot: Mapping[str, Any] | None) -> str:
 
 
 def _platform_count(u: TacticalUnit) -> int:
-    pc = u.attributes.get("platform_count") if isinstance(u.attributes, dict) else None
-    if isinstance(pc, (int, float)) and pc >= 1:
-        return int(pc)
-    if isinstance(u.personnel_current, int) and u.personnel_current >= 1:
-        return u.personnel_current
-    return 1
+    """與裁決層共用同一條導出（見 `adjudication/establishment.py`）。
+
+    ⚠ 兩邊各寫一份是這個 bug 能活這麼久的一半原因：改了一邊、另一邊還是舊值，
+    COP 顯示的建制數與引擎實際用的就對不起來。
+    """
+    return platform_count_for(u.unit_level.value, u.attributes, u.personnel_current)
 
 
 def _visible_factions(db: Session, session_id: str, observer: str) -> list[str]:
