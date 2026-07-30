@@ -131,3 +131,46 @@ runner 崩潰後被 `SimManager` 每 3 秒重建一次，形成無限重啟迴�
 
 教訓寫在這裡給下一個人：**mutation test 之後要清 `__pycache__`**，
 尤其當突變前後的字面值長度相同時。長度相同的字面值替換是這個陷阱最容易觸發的形式。
+
+### 卡 3 完成（LLM 詞彙表 + 三道護欄關）
+
+三件事全部都是 **fail-silent** 的——任何一道沒接好，症狀都是「LLM 好像不肯用任務令」
+或更糟的「任務令穿過了護欄」，而不是任何一則錯誤訊息。
+
+**G1（schema）**：`contracts/ai_output.schema.json` 的 `order_type` enum 加 MISSION +
+`mission_type` + `params`。⚠ **沒加的話 G1 會擋掉整個決策，不只那一道令**——
+`gateway.evaluate` 在 schema 失敗時直接早退，OPFOR 重試兩次後 fallback 成零令。
+症狀是那個陣營整個不動。
+
+**G3（橋接）**：`tactical_order_to_request` 原本 `else: return None`
+→ 每道 MISSION 回 None → `is_feasible` False → **G3 靜靜剔除 100% 的 MISSION 令**。
+而且同一個函式**也是 submit 路徑**：只補 G3 那一半的話，令會通過護欄然後落進
+`BridgeResult.skipped`，變成完全沒有痕跡的 no-op。
+
+**G4（禁射區）——這是本卡補掉的實質護欄洞：**
+
+1. `_STRIKE_ORDER_TYPES` 原本 **只有 `ENGAGE`**。`FIRE_MISSION` 與 `MISSION` 都會造成毀傷
+   卻不受禁射區約束：同一座標 ENGAGE 打不了、面射擊卻可以——那不是保護，是繞道。
+   BL-1 已在**預檢**端修過同一個洞，但 **AI 側的 G4 沒有跟上**。而 SEIZE 會分解出對
+   目標區內敵的 ENGAGE，母令不擋等於整條禁射區在任務級下令面前失效。
+2. `UnitTargetLocator.locate` 的**註解宣稱支援「未來的 MISSION objective」，實際不支援**
+   ——它只讀頂層 `target_lat/lng`，MISSION 一律回 None，而 G4 對 `locate` 回 None 的政策是
+   **不擋**。等於一道打進禁射區的 SEIZE 直接穿過 G4。
+   註解與行為不一致是最難查的那種錯，故連同註解一起改。
+   SCREEN/MOVE_MARCH **刻意不參與**禁射區判定（掩護幕明確不接戰、行軍只是移動）——
+   與「MOVE 不擋」是同一條規則。
+
+**系統提示的既有矛盾一併修掉**：`ai/prompts/FACTION_COMMANDER.md` 第 3 條寫
+`MOVE→target_h3`，而 `decider.py` 的使用者訊息寫 `target_lat/target_lng`——
+**系統訊息是模型先讀到的那一份**。加 MISSION 而不動它，等於留下兩份互相矛盾的指示。
+
+（一併記下：我第一版把「本條原本寫 target_h3」這句改動說明寫進了提示檔本身。
+那是給人看的變更紀錄，不是給模型的指示，會佔 prompt 篇幅又可能誤導——已移到這裡。）
+
+**測試**：`test_mission_llm_bridge.py`（14），三道關各自釘住。
+
+### 未做（卡 4）
+
+COP 下令 UI（右鍵「下達任務…」→ 選任務型 → 地圖畫 objective/axis）+ AAR 任務時間軸。
+另：SPEC 要求記錄「LLM 平均每決策心跳產生令數」的前後對比——那需要跑一場真實自主推演，
+屬卡 4 之後的實測，尚未做。

@@ -50,6 +50,27 @@ def _num(v: Any) -> float | None:
 _VALID_TEMPO = ("NORMAL", "FORCED_MARCH")
 
 
+def _mission_objective_latlng(order: dict[str, Any]) -> tuple[float | None, float | None]:
+    """MISSION 令的主目標座標（供 G4 禁射區判定）。
+
+    SEIZE 取 objective、DEFEND 取 area。SCREEN/MOVE_MARCH 是多點任務且**不接戰**
+    （掩護幕明確不下 ENGAGE、行軍只是移動），故不參與禁射區判定——
+    那與「MOVE 不擋」是同一條規則：開進去不違規，打進去才是。
+    """
+    if str(order.get("order_type") or "") != OrderType.MISSION.value:
+        return None, None
+    params = order.get("params")
+    if not isinstance(params, dict):
+        return None, None
+    for key in ("objective", "area"):
+        point = params.get(key)
+        if isinstance(point, dict):
+            lat, lng = _num(point.get("lat")), _num(point.get("lng"))
+            if lat is not None and lng is not None:
+                return lat, lng
+    return None, None
+
+
 def tactical_order_to_request(
     order: dict[str, Any],
     *,
@@ -102,6 +123,17 @@ def tactical_order_to_request(
         weapon_id = order.get("weapon_template_id") or order.get("weapon_id")
         if isinstance(weapon_id, str) and weapon_id:
             payload["weapon_id"] = weapon_id
+    elif otype is OrderType.MISSION:
+        # WP-A2 任務級下令。**payload 的形狀由 `MissionPayload` 在 submit 時驗**——
+        # 這裡只做最低限度的存在性檢查，形狀錯誤要走正規的 422 而不是靜靜被丟掉。
+        mission_type = order.get("mission_type")
+        params = order.get("params")
+        if not isinstance(mission_type, str) or not mission_type:
+            return None
+        payload = {
+            "mission_type": mission_type,
+            "params": params if isinstance(params, dict) else {},
+        }
     elif otype is OrderType.RESUPPLY:
         # #85：補給令（補給車對同陣營單位加油）；子系統 ResupplySystem 執行。
         target_unit_id = order.get("target_unit_id")
@@ -255,8 +287,15 @@ class UnitTargetLocator:
             pos = self._unit_latlng(target_id)
             if pos is not None:
                 return str(h3.latlng_to_cell(pos[0], pos[1], NO_STRIKE_H3_RES))
-        # 直接給座標的令（未來的 MISSION objective / 面射擊）也支援。
+        # 直接給座標的令（面射擊）也支援。
         lat, lng = _num(order.get("target_lat")), _num(order.get("target_lng"))
+        if lat is None or lng is None:
+            # WP-A2：MISSION 的目標藏在 `params` 底下。
+            # ⚠ 這裡原本的註解宣稱「未來的 MISSION objective 也支援」——**它不支援**：
+            # 只讀頂層 target_lat/lng，MISSION 一律回 None，而 G4 對 locate 回 None 的政策是
+            # **不擋**。等於一道打進禁射區的 SEIZE 會直接穿過 G4。註解與行為不一致
+            # 是最難查的那種錯，故連同註解一起修。
+            lat, lng = _mission_objective_latlng(order)
         if lat is not None and lng is not None:
             return str(h3.latlng_to_cell(lat, lng, NO_STRIKE_H3_RES))
         return None

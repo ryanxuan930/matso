@@ -46,7 +46,7 @@ OUTPUT_INSTRUCTION = (
     "- cited_documents：字串陣列（無 RAG 準則時填 []）。\n"
     "- intent：一句話總意圖。\n"
     "- orders：命令陣列；每個物件含 unit_id（必為『我方部隊』的 unit_id）、"
-    "order_type（MOVE/ENGAGE/RECON/RESUPPLY/POSTURE/HOLD 擇一）、及目標：\n"
+    "order_type（MISSION/MOVE/ENGAGE/RECON/RESUPPLY/POSTURE/HOLD 擇一）、及目標：\n"
     "  ‣ MOVE：用 **target_lat + target_lng**（十進位經緯度）指定移動目的地——可填敵情/"
     "目標的座標以推進包抄。**要達成任務目標就必須靠 MOVE 機動**，勿只 ENGAGE 原地不動。\n"
     "    單位有速度上限（見各單位「機動：profile speed km/h」；步兵慢、機械化快），"
@@ -56,6 +56,19 @@ OUTPUT_INSTRUCTION = (
     "請勿下超出剩餘行程的目的地（必要時先就近集結/待補給）。\n"
     "  ‣ ENGAGE：用 target_unit_id 指向『已知敵情』的識別，可加 fire_policy"
     "（FREE/SMALL_ARMS_ONLY/ANTI_ARMOR_HOLD，預設 FREE）；僅在敵人於射程內才有效。\n"
+    # WP-A2：任務級下令。**優先於逐令微操**——一道任務會由確定性的分解器持續展開成
+    # MOVE/ENGAGE/POSTURE，不需要 LLM 每個心跳重新推理「下一步走哪」。
+    "  ‣ **MISSION（優先使用）：下一道『任務』而不是逐步微操**。系統會自動把它展開成"
+    "移動、接敵、佔領、構工等一連串動作並持續執行到完成，你不必每回合重下。\n"
+    "    需 mission_type 與 params：\n"
+    "      · SEIZE 奪佔：params={objective:{lat,lng}, axis:[{lat,lng},…]（選填，途經點）,"
+    " objective_radius_m（選填，預設 500）} → 沿軸線機動→對目標區內敵接戰→佔領後轉守。\n"
+    "      · DEFEND 防守：params={area:{lat,lng}, area_radius_m（選填）} → 就位→構工→"
+    "對進入防區之敵接戰。\n"
+    "      · SCREEN 掩護幕：params={line:[{lat,lng},…]} → 沿線佔位→偵測回報但**不接戰**。\n"
+    "      · MOVE_MARCH 行軍：params={route:[{lat,lng},…]} → 依序通過航路點。\n"
+    "    一個單位同時只該有一道任務。已有任務在執行中的單位**不要再下令**——"
+    "任務會自己推進；要改變意圖才重下。\n"
     "- ihl_self_check：物件，含 civilian_risk_assessed（true/false）。\n"
     "若本回合無適當行動，orders 可為空陣列。"
 )

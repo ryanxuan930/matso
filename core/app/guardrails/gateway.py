@@ -45,7 +45,12 @@ class TargetLocator(Protocol):
 
 # 會造成毀傷的令型——只有這些受禁射區約束。
 # 規格明訂 **MOVE 不擋**：開進禁射區不是違規，打進去才是。
-_STRIKE_ORDER_TYPES = frozenset({"ENGAGE"})
+#
+# ⚠ 這裡原本只有 ENGAGE。**`FIRE_MISSION` 與 `MISSION` 都會造成毀傷卻不受約束**：
+# 同一個座標 ENGAGE 打不了、面射擊卻可以——那不是保護，是繞道（BL-1 已在**預檢**端
+# 修過同一個洞，但 AI 側的 G4 沒有跟上）；而 SEIZE 任務會分解出對目標區內敵的 ENGAGE，
+# 母令不擋等於整條禁射區在任務級下令面前失效。WP-A3 的規格早就寫的是「ENGAGE/MISSION」。
+_STRIKE_ORDER_TYPES = frozenset({"ENGAGE", "FIRE_MISSION", "MISSION"})
 # 禁射級別字面值。**刻意不 import app.orders.no_strike 的 ZoneClass**——那個模組會讀 DB，
 # 而本套件的既有紀律是零 DB 零 I/O（外部能力一律 Protocol 注入）。兩處值必須一致，
 # 已由 test_no_strike_zones.py 的一條測試釘住。

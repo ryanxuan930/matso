@@ -22,10 +22,18 @@
       "required": ["unit_id", "order_type"],
       "properties": {
         "unit_id": { "type": "string" },
-        "order_type": { "enum": ["MOVE", "ENGAGE", "RECON", "RESUPPLY", "POSTURE", "HOLD"] },
+        "order_type": { "enum": ["MOVE", "ENGAGE", "RECON", "RESUPPLY", "POSTURE", "HOLD", "MISSION"] },
         "target_h3": { "type": "string" },
         "target_unit_id": { "type": "string" },
         "posture": { "type": "string" },
+        "mission_type": {
+          "description": "任務型（WP-A2；order_type=MISSION 時必填）。下的是任務，展開成低階令的是確定性的符號層分解器——LLM 只選任務與參數。",
+          "enum": ["SEIZE", "DEFEND", "SCREEN", "MOVE_MARCH"]
+        },
+        "params": {
+          "description": "任務參數（WP-A2；形狀依 mission_type）。SEIZE={objective:{lat,lng}, axis?}；DEFEND={area:{lat,lng}, area_radius_m?}；SCREEN={line:[{lat,lng}]}；MOVE_MARCH={route:[{lat,lng}]}。",
+          "type": "object"
+        },
         "fire_policy": {
           "description": "聯合兵種火力政策（SPEC_EXTEND P3；ENGAGE 選填，未指定＝FREE）。僅戰術意圖，物理由引擎裁決。",
           "enum": ["FREE", "SMALL_ARMS_ONLY", "ANTI_ARMOR_HOLD"]
