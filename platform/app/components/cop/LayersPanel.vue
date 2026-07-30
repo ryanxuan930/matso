@@ -41,6 +41,7 @@ defineProps<{ prefs: UnwrapNestedRefs<ReturnType<typeof useCopPrefs>> }>()
   v-model:grid-color="prefs.gridColor"
   v-model:grid-width="prefs.gridWidth"
   v-model:mgrs-color="prefs.mgrsColor"
+  v-model:symbol-detail="prefs.symbolDetail"
   :hillshade-enabled="prefs.hasTiles"
   :contour-enabled="prefs.hasTiles"
   :basemaps="prefs.basemapSources"

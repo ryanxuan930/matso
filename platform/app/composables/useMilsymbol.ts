@@ -5,6 +5,30 @@ import type { SymbolOpts } from '~/composables/useUnits'
 // milsymbol → ImageData 快取（MapLibre addImage 直接吃 ImageData）。key = iconKey（SIDC + 選項）。
 const cache = new Map<string, ImageData>()
 
+/**
+ * 每張符號的 **icon-offset 補償量**（key → [dx, dy]，單位 px）。
+ *
+ * ## 為什麼需要這個
+ *
+ * milsymbol 的**錨點不在圖片中心**：APP-6A 的語義是「符號框的中心才是真實位置」，
+ * 而加了左右兩欄的文字修飾之後，圖片會往有文字的那一側長出去，錨點因此偏離圖片中心。
+ * MapLibre 的 `icon-anchor` 預設是 `center`，於是**圖片中心被畫在真實座標上、
+ * 符號本體卻偏開了**。
+ *
+ * 實測（milsymbol 3.0.4，size 24）：裸符號 dx=0；`OFFLINE +12t` **dx=+37.9**；
+ * 6 字中文番號 dx=-16.1；10 字番號 dx=-48.0。也就是說**現況的離線虛影已經畫錯位置**
+ * ——z12 下約 1.4 km——而高亮環/血條都畫在真點上，符號會滑出自己的環外。
+ *
+ * 補償量 = 圖片中心 − 錨點。units 層沒有設 `icon-size`（預設 1）、`addImage` 也沒給
+ * pixelRatio（預設 1），所以這個值可以直接當 `icon-offset` 用。
+ */
+const anchorOffsets = new Map<string, [number, number]>()
+
+/** 某張符號的 icon-offset 補償量；沒生成過就回 [0,0]（不補償勝過亂補償）。 */
+export function symbolOffset(key: string): [number, number] {
+  return anchorOffsets.get(key) ?? [0, 0]
+}
+
 const ICON_SIZE = 24
 
 /**
@@ -19,6 +43,10 @@ export function symbolImage(key: string, sidc: string, options: SymbolOpts): Ima
   const ctx = canvas.getContext('2d')
   if (!ctx || canvas.width === 0 || canvas.height === 0) return null
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  // 錨點補償（見 `anchorOffsets` 說明）。getAnchor() 給的是「真實位置」在圖片內的座標，
+  // 我們要把圖片推到讓那一點落在地理座標上，所以補償量是「圖片中心 − 錨點」。
+  const anchor = sym.getAnchor()
+  anchorOffsets.set(key, [canvas.width / 2 - anchor.x, canvas.height / 2 - anchor.y])
   cache.set(key, img)
   return img
 }

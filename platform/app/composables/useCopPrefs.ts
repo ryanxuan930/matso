@@ -40,6 +40,8 @@ export function useCopPrefs(widgets: Ref<Record<WidgetId, WStat>>) {
   const gridColor = ref('#5b7fa6')
   const gridWidth = ref(0.5)
   const mgrsColor = ref('#facc15')
+  // APP-6A 符號詳細度（§506.1）——**純操作員偏好**，絕不下放成後端欄位。
+  const symbolDetail = ref('STD')
   // 精確移動預設「開」：跳過六角格心吸附，單位精確走到點擊處。六角格心吸附在 <1km 近距作戰
   // （校園/大樓）會把落點吸回格心（≈原位）造成「下令後跑回原位」的錯覺（#2/#15）；預設關閉吸附
   // 消除此問題。需大範圍推演的粗略化/省算時，可取消勾選改回六角吸附。
@@ -111,6 +113,8 @@ export function useCopPrefs(widgets: Ref<Record<WidgetId, WStat>>) {
       if (typeof p.gridColor === 'string') gridColor.value = p.gridColor
       if (typeof p.gridWidth === 'number') gridWidth.value = p.gridWidth
       if (typeof p.mgrsColor === 'string') mgrsColor.value = p.mgrsColor
+      if (p.symbolDetail === 'MIN' || p.symbolDetail === 'STD' || p.symbolDetail === 'FULL')
+        symbolDetail.value = p.symbolDetail
     } catch {
       /* 壞資料忽略，用預設 */
     }
@@ -141,6 +145,7 @@ export function useCopPrefs(widgets: Ref<Record<WidgetId, WStat>>) {
       contourColor,
       gridColor,
       gridWidth,
+      symbolDetail,
       mgrsColor,
       widgets,
     ],
@@ -175,6 +180,7 @@ export function useCopPrefs(widgets: Ref<Record<WidgetId, WStat>>) {
             gridColor: gridColor.value,
             gridWidth: gridWidth.value,
             mgrsColor: mgrsColor.value,
+            symbolDetail: symbolDetail.value,
           }),
         )
       } catch {
@@ -207,6 +213,7 @@ export function useCopPrefs(widgets: Ref<Record<WidgetId, WStat>>) {
     gridColor,
     gridWidth,
     mgrsColor,
+    symbolDetail,
     preciseMove,
     basemapSources,
     basemap,

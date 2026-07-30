@@ -51,6 +51,8 @@ export interface OwnUnit {
   /** APP-6A Field T「Unique Designation」——番號。**沒有它地圖上的單位就是無名的方塊**。 */
   designation?: string
   unitType?: string
+  /** 編制層級（APP-6A Field B 階層符號的來源；後端 `UnitView.unit_level` 已供應）。 */
+  unitLevel?: string
   comms: CommsState
   lastReportedTick: number
   health?: number // 0–100 HP（僅我方；供地圖血量環 + 資訊卡 #5）。fog of war：contact 無血量。
@@ -117,14 +119,59 @@ function functionId(type?: string): string {
   return (type && FUNCTION_ID[type]) || 'U-----'
 }
 
-/** 組 15 字元 2525C SIDC：S{affiliation}GP{functionId}…（padEnd 到 15）。 */
-export function buildSidc(affiliation: string, type?: string): string {
-  return `S${affiliation}GP${functionId(type)}`.padEnd(15, '-').slice(0, 15)
+/**
+ * 編制層級 → 2525C SIDC 第 12 位（APP-6A Field B「Size Indicator」/ Table IV）。
+ *
+ * ⚠ `INDIVIDUAL` 對應 `'-'`（不畫階層符號）：**APP-6A Table IV 最小的一級是 Team/Crew**，
+ * 標準裡沒有「個人」這一級，硬塞 `'A'` 是造假。
+ *
+ * 未用到的字母是**編制模型的洞**不是填錯：`UnitLevel` 沒有 SECTION(`C`)、
+ * REGIMENT(`G`)、ARMY(`K`)、ARMY_GROUP(`L`)、COMMAND(`N`)——CORPS 之上直接跳 THEATER。
+ * 那要另開一張卡補 enum，不在符號這張卡的範圍內。
+ */
+export const ECHELON_BY_LEVEL: Record<string, string> = {
+  INDIVIDUAL: '-', // Table IV 沒有這一級
+  FIRETEAM: 'A', // Team/Crew
+  SQUAD: 'B',
+  PLATOON: 'D',
+  COMPANY: 'E',
+  BATTALION: 'F',
+  BRIGADE: 'H',
+  DIVISION: 'I',
+  CORPS: 'J',
+  THEATER: 'M', // Region
+}
+
+export function echelonFor(unitLevel?: string): string {
+  return (unitLevel && ECHELON_BY_LEVEL[unitLevel]) || '-'
+}
+
+/**
+ * 組 15 字元 2525C SIDC。**明確排到 15 位，不再靠 padEnd**。
+ *
+ * `S` + affiliation + `G`(ground) + `P`(present) + functionId(6) + mod1(1) + echelon(1) + `---`
+ *
+ * 過去是 `\`S${aff}GP${fn}\`.padEnd(15,'-')`，於是第 11–12 位**永遠是 `--`**
+ * ——地圖上沒有任何階層標記（連/營/旅的橫槓一條都沒有）。
+ *
+ * `mod1`（第 11 位，修飾指示）目前恆為 `'-'`：HQ(`A`)/TF(`B,D,E,G`)/
+ * Feint-Dummy(`C,D,F,G`) 三者本系統都還沒有資料來源。
+ * ⚠ **不可以拿 `is_fixed` 去頂替 HQ 或 Installation**——`is_fixed` 的定義是
+ * 「不接受 MOVE 令」，涵蓋指揮部/後勤點/固定陣地三種完全不同的東西，
+ * 映成設施會把彈藥堆積所畫成師部。鎖頭徽章維持既有做法（非 APP-6A，本系統 UI 擴充）。
+ */
+export function buildSidc(
+  affiliation: string,
+  type?: string,
+  echelon = '-',
+  mod1 = '-',
+): string {
+  return `S${affiliation}GP${functionId(type)}${mod1}${echelon}---`
 }
 
 /** 己方單位一律以友軍（F）符號呈現（不論觀測者陣營）。 */
 export function sidcForOwnUnit(u: OwnUnit): string {
-  return buildSidc('F', u.unitType)
+  return buildSidc('F', u.unitType, echelonFor(u.unitLevel))
 }
 
 /**
@@ -185,6 +232,8 @@ export interface UnitFeature {
     id: string
     faction: string
     icon: string
+    /** 錨點補償（見 useMilsymbol 的 anchorOffsets）；由 MapCanvas 在圖標生成後回填。 */
+    iconOffset?: [number, number]
     opacity: number
     kind: 'own' | 'contact'
     health?: number
@@ -203,11 +252,41 @@ export interface UnitRender {
  * OFFLINE 己方＝虛影（additionalInformation 烤「OFFLINE +Nt」+ 淡化）；IDENTIFIED contact 揭露番號；
  * contact 透明度依情報時效遞減。
  */
+/**
+ * 符號詳細度（APP-6A §506.1 明文授權：「C4I 系統對顯示資訊量的需求不同，本標準允許彈性；
+ * 指揮官可以選擇對友軍只顯示極少資訊、對威脅顯示最多」）。**預設少顯示是行使標準給的選項，
+ * 不是實作偷懶。**
+ *
+ * 這同時是**演算法複雜度的開關**，不只是視覺潔癖：`iconKey()` 以 SIDC + options JSON 為鍵，
+ * 每個相異組合就是一張 rasterize 後 addImage 的點陣圖。
+ * - `MIN`：純 SIDC + 陣營色 → 圖檔數是 **O(詞彙量)**（affiliation × 兵種 × 階層 × 陣營色，
+ *   實務約 30–150 張），與單位數無關。
+ * - `STD`：加番號（Field T）→ 每個單位的番號都不同，圖檔數立刻變成 **O(單位數)**。
+ *   500 單位就是 500 張圖。這是為了看得到名字必須付的代價。
+ */
+export type SymbolDetail = 'MIN' | 'STD' | 'FULL'
+
+/** 超過這個可視符號數就強制降級到 MIN（否則 500 張圖 + 字牆）。 */
+export const AUTO_DEMOTE_ABOVE = 300
+
+/**
+ * 失聯時長分桶（**5 tick 一桶**）。
+ *
+ * ⚠ 這裡曾經直接烤 `OFFLINE +${currentTick - lastReportedTick}t`——那個字串**每 tick 都變**，
+ * 於是每個失聯單位每 tick 都產生一張新圖標。`useMilsymbol` 的 cache 是無上限 Map、
+ * `map.addImage` 也從不 removeImage，長局 CPX 會慢慢吃光顯存，
+ * 而圖集撐爆的症狀是**圖標無聲消失**、不報錯、極難歸因。分桶與 #94 的 `hpBucket` 同紀律。
+ */
+export function staleBucket(ageTicks: number): number {
+  return Math.max(0, Math.floor(ageTicks / 5) * 5)
+}
+
 export function buildUnitFeatures(
   own: OwnUnit[],
   contacts: Contact[],
   currentTick: number,
   palette: Record<string, string> = {},
+  detail: SymbolDetail = 'STD',
 ): UnitRender {
   const features: UnitFeature[] = []
   const iconMap = new Map<string, IconSpec>()
@@ -239,19 +318,29 @@ export function buildUnitFeatures(
     })
   }
 
+  // MIN 級只留 SIDC + 陣營色 → 圖檔數與單位數無關（見 SymbolDetail 說明）。
+  const withText = detail !== 'MIN'
   for (const u of own) {
-    const options: SymbolOpts = isGhost(u)
-      ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
-      : {}
+    const options: SymbolOpts = {}
+    // APP-6A Field H「Additional Information」——僅失聯時填（DEGRADED 已用透明度表達）。
+    // 時長**分桶**，不可直接烤 tick 差值（見 staleBucket）。
+    if (isGhost(u) && withText) {
+      options.additionalInformation = `OFFLINE +${staleBucket(currentTick - u.lastReportedTick)}t`
+    }
     // APP-6A Field T「Unique Designation」。己方單位**過去完全沒帶這個選項**——
     // 只有 IDENTIFIED 的敵情 contact 有，所以自己的部隊在地圖上是一排無名方塊。
-    if (u.designation) options.uniqueDesignation = u.designation
+    if (u.designation && withText) options.uniqueDesignation = u.designation
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
     push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health, u.isFixed)
   }
   for (const c of contacts) {
+    // ⚠ `fidelity==='IDENTIFIED' && designation` 這個雙重判斷是**刻意的縱深防禦**。
+    // 後端 `intel/service.py` 已經閘在 IDENTIFIED 才給 designation，但不要因為
+    // 「後端已經擋了」就把前端這層拿掉。
     const options: SymbolOpts =
-      c.fidelity === 'IDENTIFIED' && c.designation ? { uniqueDesignation: c.designation } : {}
+      c.fidelity === 'IDENTIFIED' && c.designation && withText
+        ? { uniqueDesignation: c.designation }
+        : {}
     // IDENTIFIED 且已知陣營 → 以該陣營顏色渲染（三方混戰時區分不同敵對陣營）。
     if (c.faction) options.fillColor = factionColor(c.faction, palette)
     const opacity = stalenessOpacity(Math.max(0, currentTick - c.lastSeenTick))

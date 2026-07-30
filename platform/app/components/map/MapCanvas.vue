@@ -19,6 +19,8 @@ import {
   HP_BAR_STEP,
   type Contact,
   type OwnUnit,
+  type SymbolDetail,
+  AUTO_DEMOTE_ABOVE,
   buildUnitFeatures,
 } from '~/composables/useUnits'
 import {
@@ -28,6 +30,7 @@ import {
   hpBarImage,
   lockBadgeImage,
   symbolImage,
+  symbolOffset,
 } from '~/composables/useMilsymbol'
 import { insertVertex, midpoints, moveVertex, openRing, translateRing } from '~/composables/useMapFeatures'
 
@@ -36,6 +39,9 @@ const emit = defineEmits<{
   unitClick: [{ id: string; faction: string; kind: string }]
   featureClick: [{ id: string }] // 點到地圖標註/工事（stage ③b）
   basemapError: [{ id: string }] // 底圖瓦片載入失敗（供上層回退離線）
+  // 符號因數量過多被強制降級到 MIN（APP-6A §506.1）——頁面要顯示小標籤，
+  // 否則操作員會以為番號又不見了。
+  'symbol-demoted': [boolean]
   // 右鍵選單（#3，ATAK 式移動/攻擊）：螢幕座標 + 經緯 + 游標下的單位（若有）。
   contextMenu: [
     {
@@ -76,6 +82,8 @@ const props = withDefaults(
     ownUnits?: OwnUnit[]
     contacts?: Contact[]
     currentTick?: number
+    /** 符號詳細度（APP-6A §506.1）。超過 AUTO_DEMOTE_ABOVE 個可視符號會強制降級。 */
+    symbolDetail?: SymbolDetail
     selectedId?: string | null // 選取的我方單位（藍色高亮環）
     targetId?: string | null // ENGAGE 鎖定的目標（紅色高亮環）
     basemapId?: string // 當前底圖來源 id（offline / street / satellite / 軍用…）
@@ -134,6 +142,7 @@ const props = withDefaults(
     ownUnits: () => [],
     contacts: () => [],
     currentTick: 0,
+    symbolDetail: 'STD',
     selectedId: null,
     targetId: null,
     basemapId: 'offline',
@@ -690,16 +699,36 @@ function syncUnits(posOverride?: Map<string, { lng: number; lat: number }>) {
         return o ? { ...c, lng: o.lng, lat: o.lat } : c
       })
     : props.contacts
-  const { collection, icons } = buildUnitFeatures(own, contacts, props.currentTick)
+  // 自動降級（APP-6A §506.1 授權的顯示選項）：符號一多，逐單位番號會讓圖檔數變成 O(N)、
+  // 畫面也會糊成字牆。超過門檻就無視使用者設定走 MIN——**並且要讓使用者看得到**
+  // （`symbolDemoted` 回拋給頁面顯示小標籤），否則操作員會以為名字又不見了。
+  const total = own.length + contacts.length
+  const demoted = total > AUTO_DEMOTE_ABOVE && props.symbolDetail !== 'MIN'
+  emit('symbol-demoted', demoted)
+  const { collection, icons } = buildUnitFeatures(
+    own,
+    contacts,
+    props.currentTick,
+    {},
+    demoted ? 'MIN' : props.symbolDetail,
+  )
   for (const spec of icons) {
-    if (map.hasImage(spec.key)) continue
+    // ⚠ 即使 map 已有這張圖，也要確保 `symbolImage` 跑過一次——
+    // 錨點補償量是在生成時記下來的，跳過會讓 iconOffset 恆為 [0,0]。
+    // （`symbolImage` 自己有快取，重複呼叫不會重畫。）
     const img = symbolImage(spec.key, spec.sidc, spec.options)
+    if (map.hasImage(spec.key)) continue
     if (!img) continue
     try {
       map.addImage(spec.key, img) // 單一壞 icon 不應中斷整批（symbol 層會略過缺圖特徵）
     } catch {
       /* skip */
     }
+  }
+  // 錨點補償寫進特徵（見 useMilsymbol 的 `anchorOffsets`）。必須在**所有圖標生成之後**，
+  // 否則剛出現的單位這一輪拿到的會是 [0,0]。
+  for (const f of collection.features) {
+    f.properties.iconOffset = symbolOffset(f.properties.icon)
   }
   const src = map.getSource(UNITS_SRC) as GeoJSONSource | undefined
   src?.setData(collection)
@@ -1192,6 +1221,10 @@ onMounted(async () => {
       source: UNITS_SRC,
       layout: {
         'icon-image': ['get', 'icon'],
+        // 錨點補償：milsymbol 的錨點不在圖片中心，加了文字修飾後圖片會往一側長出去。
+        // 不補的話符號會偏離真實座標（實測離線虛影偏 37.9px ≈ z12 的 1.4km），
+        // 而高亮環/血條都畫在真點上 → 符號滑出自己的環外。
+        'icon-offset': ['array', 'number', 2, ['get', 'iconOffset']],
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },
@@ -1723,7 +1756,7 @@ watch(
       map.setFilter('unit-target-ring', ['==', ['get', 'id'], v ?? NONE])
   },
 )
-watch([() => props.ownUnits, () => props.contacts, () => props.currentTick], () => syncUnits(), {
+watch([() => props.ownUnits, () => props.contacts, () => props.currentTick, () => props.symbolDetail], () => syncUnits(), {
   deep: true,
 })
 </script>

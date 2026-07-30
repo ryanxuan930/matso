@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OwnUnit } from '~/composables/useUnits'
+import type { OwnUnit, SymbolDetail } from '~/composables/useUnits'
 import { healthColor } from '~/composables/useUnits'
 import type { UnitView, OrderResponse } from '~/composables/useOrders'
 import type { StateSnapshot } from '~/stores/sessionStream'
@@ -69,6 +69,7 @@ const {
   gridColor,
   gridWidth,
   mgrsColor,
+  symbolDetail,
   preciseMove,
   basemap,
   hasTiles,
@@ -124,6 +125,9 @@ const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間�
 const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
 // WP-C9：本局是否允許誤傷裁決。**預設 false**——關著的時候 COP 的行為與這張卡之前完全相同。
 const allowFratricide = ref(false)
+// 符號因數量過多被自動降級（APP-6A §506.1）——要讓操作員看得到，
+// 否則會以為番號又不見了。
+const symbolDemoted = ref(false)
 const mySeatRole = ref<string | null>(null) // 席位（WP-B5.2）；null＝未指派（沿用角色權限）
 const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個陣營）；範圍外單位不可下令
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
@@ -731,6 +735,7 @@ onBeforeUnmount(() => {
             :grid-color="gridColor"
             :grid-width="gridWidth"
             :mgrs-color="mgrsColor"
+            :symbol-detail="symbolDetail as SymbolDetail"
             :feature-fc="featureFc"
             :feat-symbol-fc="featSymbol.fc"
             :feat-symbol-icons="featSymbol.icons"
@@ -750,6 +755,7 @@ onBeforeUnmount(() => {
             :time-of-day="timeOfDay"
             :targeting="targeting"
             :edit-units="mapEditMode"
+            @symbol-demoted="symbolDemoted = $event"
             @units-move="onUnitsMove"
             @units-selected="onUnitsSelected"
             @map-click="onMapClick"
@@ -770,6 +776,10 @@ onBeforeUnmount(() => {
         <ClientOnly>
         <CopWidget id="layers" :ui="copUiView" :open="widgets.layers.open">
           <LayersPanel :prefs="prefsView" />
+          <!-- 自動降級提示：不說明的話操作員會以為番號自己不見了（APP-6A §506.1）。 -->
+          <div v-if="symbolDemoted" class="symdemote" data-testid="symbol-demoted">
+            符號簡化中（單位數過多，暫以「極簡」呈現；縮小範圍或篩選後即恢復番號）
+          </div>
         </CopWidget>
         </ClientOnly>
         <div v-if="!hasTiles" class="map-notice" data-testid="map-notice">
@@ -1039,5 +1049,14 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   color: #64748b;
+}
+.symdemote {
+  margin-top: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--p-amber-600);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--p-amber-500) 12%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
 }
 </style>

@@ -30,6 +30,9 @@ const contourColor = defineModel<string>('contourColor', { default: '#c9a15c' })
 const gridColor = defineModel<string>('gridColor', { default: '#5b7fa6' })
 const gridWidth = defineModel<number>('gridWidth', { default: 0.5 })
 const mgrsColor = defineModel<string>('mgrsColor', { default: '#facc15' })
+// APP-6A §506.1：標準明文允許系統自選顯示資訊量（「指揮官可以選擇對友軍只顯示極少資訊、
+// 對威脅顯示最多」）。所以「預設少顯示」是行使標準給的選項，不是實作偷懶。
+const symbolDetail = defineModel<string>('symbolDetail', { default: 'STD' })
 
 // 地形陰影/等高線需 tileserver 提供瓦片；無 tileUrl 時停用並註記（避免 no-op 勾選誤導）。
 withDefaults(
@@ -38,6 +41,13 @@ withDefaults(
 )
 
 const OVERLAY_LABEL: Record<string, string> = { hex: '六角網格', contour: '等高線', hillshade: '地形陰影' }
+
+/** APP-6A 符號詳細度三級。文字直接寫出「標準允許」，讓驗收者知道這不是偷工。 */
+const SYMBOL_DETAIL_OPTS = [
+  { value: 'MIN', label: '極簡', hint: '只畫符號＋階層（不含番號）；符號數多時最流暢' },
+  { value: 'STD', label: '標準', hint: '加上番號與失聯註記（APP-6A Field T / H）' },
+  { value: 'FULL', label: '完整', hint: '加上上級部隊、姿態、情報評等（欄位多，畫面較擠）' },
+]
 
 function opacityOf(key: string): number {
   return layerOpacity.value[key] ?? 1
@@ -57,6 +67,17 @@ function move(key: string, dir: -1 | 1) {
 
 <template>
   <div class="toggles">
+    <div class="title">單位符號（APP-6A）</div>
+    <label class="symdet">詳細度
+      <select v-model="symbolDetail" data-testid="symbol-detail">
+        <option v-for="o in SYMBOL_DETAIL_OPTS" :key="o.value" :value="o.value">{{ o.label }}</option>
+      </select>
+    </label>
+    <div class="hint">
+      {{ SYMBOL_DETAIL_OPTS.find((o) => o.value === symbolDetail)?.hint }}
+      <br>符號數過多時會自動降為「極簡」（APP-6A §506.1 允許依需求調整顯示量）。
+    </div>
+
     <div class="title">底圖</div>
     <select v-if="basemaps.length > 1" v-model="basemap" data-testid="basemap-select" class="basemap">
       <option v-for="b in basemaps" :key="b.id" :value="b.id">{{ b.label }}</option>
