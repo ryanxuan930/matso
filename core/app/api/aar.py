@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.aar import read_events
 from app.aar.export import export_csv, export_json
 from app.aar.fog import project_events
+from app.aar.missions import build_timelines
 from app.aar.narrative import generate_narrative, verify_citations
 from app.aar.replay import replay_summary, state_frames
 from app.aar.stats import compute_metrics
@@ -190,6 +191,22 @@ def get_stats(
         "damage_by_faction": m.damage_by_faction,
         "event_counts": m.event_counts,
     }
+
+
+@router.get("/{session_id}/aar/missions")
+def get_mission_timelines(
+    session_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:  # type: ignore[type-arg]
+    """任務時間軸（WP-A2）：每道任務走過哪些階段、各花了多久。
+
+    走 `_visible_events` ——**與其他 AAR 端點同一條迷霧路徑**。
+    在這裡另做投影會是第二套規則，而兩套規則必然漂移。
+    """
+    viewer = require_aar_access(db, user, session_id)
+    timelines = build_timelines(_visible_events(db, session_id, viewer))
+    return [t.to_dict() for t in timelines]
 
 
 @router.get("/{session_id}/aar/report")

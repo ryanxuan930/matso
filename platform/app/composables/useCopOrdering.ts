@@ -66,7 +66,7 @@ export function useCopOrdering(opts: {
 }) {
   const { sessionId, selectedId, selectedUnit, selectedUnitFixed, refresh, toasts } = opts
 
-  const orderType = ref<'MOVE' | 'ENGAGE' | 'FIRE_MISSION' | 'POSTURE'>('MOVE')
+  const orderType = ref<'MOVE' | 'ENGAGE' | 'FIRE_MISSION' | 'POSTURE' | 'MISSION'>('MOVE')
   const destH3 = ref<string | null>(null)
   const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
   const targeting = ref(false)
@@ -238,6 +238,33 @@ export function useCopOrdering(opts: {
     if (t === 'FIRE_MISSION') void loadFireRequests()
   })
 
+  // ---- WP-A2 任務級下令 ----
+  //
+  // **下的是任務，不是動作**：分解器會把它持續展開成 MOVE/ENGAGE/POSTURE 並執行到完成。
+  // 前端只負責收「任務型 + 幾何」，不試圖預覽分解結果——那是符號層每 tick 依當下敵情
+  // 重新決定的事，前端畫出來的任何「預計路線」都會在第一次接敵時就失真。
+  const missionType = ref<'SEIZE' | 'DEFEND' | 'SCREEN' | 'MOVE_MARCH'>('SEIZE')
+  /** 主目標（SEIZE 的 objective / DEFEND 的 area）。 */
+  const missionPoint = ref<{ lng: number; lat: number } | null>(null)
+  /** 多點幾何（SEIZE 的 axis 途經點 / SCREEN 的 line / MOVE_MARCH 的 route）。 */
+  const missionPath = ref<number[][]>([])
+  /** 目標圈/防區半徑（公尺）。 */
+  const missionRadiusM = ref(500)
+
+  /** 各任務型要收哪一種幾何——UI 與 payload 共用同一份定義，避免兩邊各寫一次而漂移。 */
+  const missionNeedsPoint = computed(() => missionType.value === 'SEIZE' || missionType.value === 'DEFEND')
+  const missionNeedsPath = computed(
+    () => missionType.value === 'SCREEN' || missionType.value === 'MOVE_MARCH' || missionType.value === 'SEIZE',
+  )
+
+  function clearMission() {
+    missionPoint.value = null
+    missionPath.value = []
+  }
+  // 換任務型 → 清幾何。SEIZE 的 objective 與 SCREEN 的 line 語義完全不同，
+  // 留著上一個任務型的點只會送出一道意思相反的令。
+  watch(missionType, clearMission)
+
   // ---- WP-C1 姿態令 ----
   // 預設 DEFENSE 而不是 MOVING：下姿態令的人不會是為了叫單位站起來走（那是 MOVE 令的事）。
   const posture = ref<'MOVING' | 'HASTY' | 'DEFENSE' | 'DUG_IN'>('DEFENSE')
@@ -256,6 +283,19 @@ export function useCopOrdering(opts: {
       }
     }
     if (orderType.value === 'POSTURE') return { posture: posture.value }
+    if (orderType.value === 'MISSION') {
+      const point = missionPoint.value ? { lat: missionPoint.value.lat, lng: missionPoint.value.lng } : null
+      const path = missionPath.value.map(([lng, lat]) => ({ lat: lat as number, lng: lng as number }))
+      const params: Record<string, unknown> =
+        missionType.value === 'SEIZE'
+          ? { objective: point, axis: path, objective_radius_m: missionRadiusM.value }
+          : missionType.value === 'DEFEND'
+            ? { area: point, area_radius_m: missionRadiusM.value }
+            : missionType.value === 'SCREEN'
+              ? { line: path }
+              : { route: path }
+      return { mission_type: missionType.value, params }
+    }
     if (orderType.value === 'FIRE_MISSION') {
       return {
         target_lat: firePoint.value?.lat,
@@ -302,6 +342,7 @@ export function useCopOrdering(opts: {
         timeoutMs: 4000,
       })
       if (orderType.value === 'MOVE') clearMovePath() // #28 送出後清路徑預覽
+      if (orderType.value === 'MISSION') clearMission()
       if (orderType.value === 'FIRE_MISSION') {
         // 核准單在令被收下時就兌現掉了（B5.3）——不重抓的話，下拉裡還留著那張已用掉的單。
         firePoint.value = null
@@ -355,6 +396,13 @@ export function useCopOrdering(opts: {
     firePoint,
     fireRounds,
     posture,
+    missionType,
+    missionPoint,
+    missionPath,
+    missionRadiusM,
+    missionNeedsPoint,
+    missionNeedsPath,
+    clearMission,
     fireRequestId,
     approvedFireRequests,
     loadFireRequests,

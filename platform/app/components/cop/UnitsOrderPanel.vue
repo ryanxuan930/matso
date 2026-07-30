@@ -38,7 +38,19 @@ const SUBMIT_LABELS: Record<string, string> = {
   ENGAGE: '送出交戰',
   FIRE_MISSION: '送出火力任務',
   POSTURE: '送出姿態令',
+  MISSION: '下達任務',
 }
+
+/**
+ * WP-A2 任務型。**下的是任務不是動作**——系統的分解器會把它持續展開成移動、接敵、
+ * 佔領、構工並執行到完成，指揮官不必每回合重下。
+ */
+const MISSION_OPTS = [
+  { value: 'SEIZE', label: '奪佔', hint: '沿軸線機動 → 對目標區內敵接戰 → 佔領後轉守' },
+  { value: 'DEFEND', label: '防守', hint: '進入防區 → 構工 → 對進入之敵接戰' },
+  { value: 'SCREEN', label: '掩護幕', hint: '沿線佔位 → 偵測回報，不接戰' },
+  { value: 'MOVE_MARCH', label: '行軍', hint: '依序通過航路點' },
+] as const
 
 /** WP-C1 姿態選項。順序＝防護由弱到強，也剛好是耗時由短到長。 */
 const POSTURE_OPTS = ['MOVING', 'HASTY', 'DEFENSE', 'DUG_IN'] as const
@@ -49,6 +61,10 @@ const canSubmit = computed(() => {
   if (o.orderType === 'MOVE') return !!o.destH3
   if (o.orderType === 'FIRE_MISSION') return !!o.firePoint && o.fireRounds >= 1
   if (o.orderType === 'POSTURE') return !!o.posture
+  if (o.orderType === 'MISSION') {
+    // 幾何收齊了才送得出去。SEIZE/DEFEND 要主目標；SCREEN/MOVE_MARCH 要至少一個點。
+    return o.missionNeedsPoint ? !!o.missionPoint : o.missionPath.length > 0
+  }
   return !!o.targetUnitId
 })
 </script>
@@ -113,6 +129,7 @@ const canSubmit = computed(() => {
     <option value="ENGAGE">交戰</option>
     <option value="FIRE_MISSION">火力任務（打座標）</option>
     <option value="POSTURE">姿態（掘壕/防禦）</option>
+    <option value="MISSION">任務（奪佔/防守/掩護/行軍）</option>
   </select>
   <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
     🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
@@ -257,6 +274,60 @@ const canSubmit = computed(() => {
       ⚠ 落彈半徑內<b>敵我皆受損</b>——砲彈不會挑人。落點附近有友軍時請先確認。
     </p>
   </template>
+  <!-- WP-A2 任務級下令：下一道任務，由分解器持續展開成低階令並執行到完成。 -->
+  <template v-else-if="ordering.orderType === 'MISSION'">
+    <select v-model="ordering.missionType" data-testid="mission-type">
+      <option v-for="m in MISSION_OPTS" :key="m.value" :value="m.value">
+        {{ m.label }} · {{ m.hint }}
+      </option>
+    </select>
+    <div class="hint">
+      下的是「任務」而非單一動作——系統會自動展開成移動、接敵、佔領、構工並執行到完成，
+      不必每回合重下。取消任務會連帶取消它派生的所有未完成子令。
+    </div>
+    <div class="movebtns">
+      <button
+        data-testid="pick-mission-geometry"
+        :class="{ armed: ordering.targeting }"
+        @click="ordering.waypointMode = false; ordering.targeting = !ordering.targeting"
+      >
+        {{ ordering.targeting ? '點地圖標定…' : (ordering.missionNeedsPoint ? '標定目標' : '標定路線') }}
+      </button>
+      <button
+        v-if="ordering.missionPoint || ordering.missionPath.length"
+        data-testid="clear-mission-geometry"
+        title="清除任務幾何"
+        @click="ordering.clearMission()"
+      >
+        <i class="pi pi-times" /> 清除
+      </button>
+    </div>
+    <div class="dest" data-testid="mission-geometry">
+      <template v-if="ordering.missionPoint">
+        🎯 {{ ordering.missionPoint.lat.toFixed(5) }}, {{ ordering.missionPoint.lng.toFixed(5) }}
+      </template>
+      <template v-else-if="!ordering.missionNeedsPoint && ordering.missionPath.length">
+        路線 {{ ordering.missionPath.length }} 點
+      </template>
+      <template v-else>未標定</template>
+      <span v-if="ordering.missionNeedsPoint && ordering.missionPath.length" class="snaphint">
+        · 軸線 {{ ordering.missionPath.length }} 點
+      </span>
+    </div>
+    <label v-if="ordering.missionNeedsPoint" class="rounds">
+      半徑
+      <input
+        v-model.number="ordering.missionRadiusM"
+        type="number"
+        min="50"
+        max="50000"
+        step="50"
+        data-testid="mission-radius"
+      >
+      <span class="dim">公尺 · 目標圈/防區範圍</span>
+    </label>
+  </template>
+
   <!-- WP-C1 姿態令：宣告要進入的姿態。**轉換要時間**，這裡只是下令開始做。 -->
   <template v-else-if="ordering.orderType === 'POSTURE'">
     <div class="hint">構工要時間——下令當下不會立刻生效，期間仍以前一級計算。移動會讓進度作廢。</div>

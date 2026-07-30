@@ -163,6 +163,10 @@ const {
   moveCrossPoints,
   weapons,
   firePoint,
+  missionType,
+  missionPoint,
+  missionPath,
+  missionNeedsPath,
   resetOrderForm,
   loadWeapons,
   schedulePreview,
@@ -370,6 +374,20 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
   if (orderType.value === 'FIRE_MISSION' && targeting.value) {
     firePoint.value = { lng: e.lng, lat: e.lat }
     targeting.value = false
+    return
+  }
+  // WP-A2 任務級下令：點地圖＝畫任務幾何。
+  // **多點模式不結束瞄準**（軸線/掩護線/航路都要連點），單點模式點完即結束——
+  // 與 MOVE 的自訂路徑 vs 單點目的地是同一個手感。
+  if (orderType.value === 'MISSION' && targeting.value) {
+    // SEIZE 同時要 objective（單點）與 axis（多點）：先收目標點，之後的點才是軸線。
+    // 這個順序與「先定目標、再定怎麼去」的下令習慣一致。
+    if (missionNeedsPath.value && (missionPoint.value !== null || missionType.value !== 'SEIZE')) {
+      missionPath.value = [...missionPath.value, [e.lng, e.lat]]
+    } else {
+      missionPoint.value = { lng: e.lng, lat: e.lat }
+      targeting.value = false
+    }
     return
   }
   // ENGAGE 瞄準中點到空白（未命中敵方單位）→ 取消瞄準但保留選取（避免誤點就丟失單位，#3）。
