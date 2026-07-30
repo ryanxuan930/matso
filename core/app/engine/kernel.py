@@ -144,7 +144,12 @@ class Kernel:
 
         # 同步 driver（SQLAlchemy/redis-py）以 to_thread 執行，避免阻塞 event loop
         # （HOW_TO §3.1；O1.7/R9）。逐一 await → 順序不變 → 決定性不受影響。
+        io_start_ns = self._wall_clock.now_ns()
         written = await asyncio.to_thread(self._event_sink.append, self._session_id, events)
+        # WP-E4：帳本寫入的牆鐘。**刻意與 `tick_duration` 分開**——上面那段量的是運算，
+        # 這段量的是 DB。合在一起的話「tick 超時」永遠分不出是算太久還是 DB 慢，
+        # 而這兩者的處置完全不同（減負載 vs 修連線池）。
+        metrics.io_latency((self._wall_clock.now_ns() - io_start_ns) / _NS_PER_MS)
         # 推裁決事件到 WS 戰況 feed（過濾吵雜/診斷型別；玩家即時看到交戰結果）。
         await self._broadcaster.publish_events(events)
         # 廣播本 tick 的熱狀態增量（只含變動欄位）。子系統的狀態寫入路徑於 O3.4 接上，

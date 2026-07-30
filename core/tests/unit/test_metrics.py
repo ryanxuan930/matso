@@ -157,3 +157,93 @@ def test_the_metrics_endpoint_is_not_in_the_openapi_schema() -> None:
     from app.main import app
 
     assert "/metrics" not in app.openapi()["paths"]
+
+
+def test_every_declared_metric_has_a_writer() -> None:
+    """**宣告了就要有人寫**——沒有寫入端的指標比沒有指標更糟。
+
+    儀表板上一條永遠是 0 的線會被讀成「這件事沒發生」，而真相是「這件事沒被量」。
+    `matso_io_latency_ms` 與 `matso_ai_workers` 就這樣躺了一陣子（已記 Backlog 並補上）。
+
+    掃 `core/app/` **與 `ai/`** 兩棵樹——`llm_latency` 的唯一寫入端在
+    `matso_ai/inference/role_manager.py`，只掃 `app/` 會把它誤報成沒接線。
+    這條在**新增指標卻忘了接線**時轉紅。
+    """
+    import ast
+    import pathlib
+
+    import app.metrics as m
+
+    app_dir = pathlib.Path(m.__file__).parent
+    ai_dir = app_dir.parents[1] / "ai"
+    assert ai_dir.is_dir(), f"找不到 ai/ 樹（{ai_dir}）——路徑推導壞了，這條會變成假綠"
+    helpers = {
+        name
+        for name in m.__all__
+        if callable(getattr(m, name)) and not name[0].isupper() and name != "MetricsRegistry"
+    }
+    called: set[str] = set()
+    for path in [*app_dir.rglob("*.py"), *ai_dir.rglob("*.py")]:
+        if path.name == "metrics.py":
+            continue  # 定義處不算呼叫端
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if isinstance(fn, ast.Attribute):
+                    called.add(fn.attr)
+                elif isinstance(fn, ast.Name):
+                    called.add(fn.id)
+    unwired = helpers - called
+    assert not unwired, f"這些指標宣告了卻沒有寫入端：{sorted(unwired)}"
+
+
+def test_the_ledger_write_is_timed_separately_from_the_tick() -> None:
+    """`io_latency` 要量**帳本寫入**，不能併進 `tick_duration`。
+
+    合在一起的話「tick 超時」永遠分不出是算太久還是 DB 慢，而這兩者的處置完全不同
+    （減負載 vs 修連線池）。所以 kernel 裡 `metrics.io_latency` 必須出現在
+    `event_sink.append` 之後、且不在 `tick_duration` 的量測區間內。
+    """
+    import pathlib
+
+    from app.engine import kernel as k
+
+    src = pathlib.Path(k.__file__).read_text(encoding="utf-8")
+    tick_at = src.index("metrics.tick_duration(")
+    append_at = src.index("self._event_sink.append")
+    io_at = src.index("metrics.io_latency(")
+    assert tick_at < append_at < io_at, "io_latency 必須在帳本寫入之後量，且不含在 tick 量測內"
+
+
+def test_gauges_are_registered_at_zero_before_anything_happens() -> None:
+    """gauge 要在 SimManager 一啟動就存在，即使值是 0。
+
+    指標是**第一次寫入時才出現**的。Prometheus 裡「沒有這條序列」不等於「值是 0」：
+    沒有 AI 指派的局會讓 `matso_ai_workers` 整條消失，儀表板呈現的是斷線而不是
+    「沒有 AI 在跑」，`ops/monitoring/alerts.yml` 的規則也跟著失效。
+    """
+    import asyncio
+
+    from app import metrics as m
+    from app.sim_runtime import SimManager
+
+    m.REGISTRY.reset()
+    mgr = SimManager.__new__(SimManager)  # 不碰 Redis/DB：只驗 run() 開頭的登記行為
+    mgr._stop = asyncio.Event()  # type: ignore[attr-defined]
+    mgr._tasks = {}  # type: ignore[attr-defined]
+    mgr._ai_workers = {}  # type: ignore[attr-defined]
+    mgr._scan_interval = 0.0  # type: ignore[attr-defined]
+
+    def _stop_after_first_scan() -> list[str]:
+        # ⚠ 不能事先 `_stop.set()`——`run()` 的**第一行就是 `_stop.clear()`**，
+        # 預先設好的旗標會被清掉，迴圈永遠不結束（我第一版就是這樣掛住的）。
+        mgr._stop.set()  # type: ignore[attr-defined]
+        return []
+
+    mgr._session_ids = _stop_after_first_scan  # type: ignore[attr-defined]
+    asyncio.run(mgr.run())
+
+    out = m.REGISTRY.render()
+    assert "matso_ai_workers 0" in out, "沒有 AI 指派時 matso_ai_workers 必須是 0 而不是缺席"
+    assert "matso_active_sessions 0" in out

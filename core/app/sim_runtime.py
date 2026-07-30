@@ -326,10 +326,18 @@ class SimManager:
         # WP-B4：已因簽證不符拒起過的 session。掃描每 3 秒重來一次，
         # 每輪印一行會淹掉所有其他訊息——只在狀態改變時記。
         self._seal_refused: set[str] = set()
+        # WP-E4：每局在跑的 AI 決策 worker 數。指標不帶 session 標籤（見 `app/metrics.py`
+        # 的模組說明），所以要在這裡分局記著，才加得出全域總數。
+        self._ai_workers: dict[str, int] = {}
 
     async def run(self) -> None:
         """掃描迴圈：直到 stop() 前，定期為每個 session 確保有 runner。"""
         self._stop.clear()
+        # WP-E4：兩個 gauge 先歸零登記。指標是**第一次寫入時才出現**的，而 Prometheus 裡
+        # 「沒有這條序列」不等於「值是 0」——沒有 AI 指派的局會讓 `matso_ai_workers` 整條
+        # 消失，儀表板上呈現的是斷線而不是「沒有 AI 在跑」，告警規則也就跟著失效。
+        metrics.active_sessions(len(self._tasks))
+        metrics.ai_workers(sum(self._ai_workers.values()))
         _LOG.info("SimManager 啟動（sim tick=%dms）", _TICK_RATE_MS)
         while not self._stop.is_set():
             try:
@@ -800,6 +808,10 @@ class SimManager:
                 )
                 # 勝負監視器（O11.5）：週期評估物理狀態（非 LLM）→ 有勝方 → SESSION_CONCLUDED
                 # + 設收場旗標（runner 停、不再重啟）。條件取自指派的 victory，否則最後存活預設。
+                # WP-E4：**只算決策 worker**。勝負監視器下一行才加進 ai_tasks，
+                # 它不是 AI 決策 worker（不呼叫 LLM），算進去會讓「AI 在跑幾條」永遠多一。
+                self._ai_workers[session_id] = len(ai_tasks)
+                metrics.ai_workers(sum(self._ai_workers.values()))
                 ai_tasks.append(self._start_victory_monitor(session_id, hot, client, autonomy_raw))
 
             concluded_key = session_concluded_key(session_id)
@@ -821,6 +833,10 @@ class SimManager:
                     pre_tick=_apply_live_edits,
                 )
             finally:
+                # 先歸零再取消：這一局的 worker 已經確定不再決策了。放在 await 之後的話，
+                # 取消期間 gauge 還會報著已經停掉的 worker。
+                self._ai_workers.pop(session_id, None)
+                metrics.ai_workers(sum(self._ai_workers.values()))
                 for t in ai_tasks:
                     t.cancel()
                 for t in ai_tasks:
@@ -851,3 +867,6 @@ class SimManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._tasks.clear()
+        self._ai_workers.clear()
+        metrics.active_sessions(0)
+        metrics.ai_workers(0)
