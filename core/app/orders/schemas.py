@@ -82,6 +82,10 @@ class FireMissionPayload(BaseModel):
     ammo_type: str | None = None
     # 與 EngagePayload 同名同義：本局要求火協時，須掛已核准的 FIRE_SUPPORT 申請單。
     fire_request_id: str | None = None
+    # WP-C10.3 時效：發令後幾個 tick 內仍有意義。**省略/0＝永不過期**（既有行為）。
+    # 射手斷聯時通信閘門會把令留在 VALIDATED；沒有時效的話，恢復通聯後會把彈打到
+    # 幾十個 tick 前的戰場。真實作業裡這種任務是**作廢**、由火協重新指派。
+    ttl_ticks: int | None = Field(default=None, ge=1, le=100_000)
 
 
 class PosturePayload(BaseModel):

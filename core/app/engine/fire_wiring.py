@@ -43,6 +43,7 @@ from app.models.enums import OrderStatus
 from app.models.tables import EquipmentInstance, Order, TacticalUnit
 from app.orders.schemas import OrderType
 from app.orders.state_machine import next_status
+from app.orders.ttl import expired, ttl_of
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
 
@@ -108,6 +109,10 @@ class FireMissionCommand:
     weapon_template_id: str | None = None
     # WP-C4c："SMOKE" → 發煙任務（生成煙幕、不產生傷亡）。
     ammo_type: str | None = None
+    # WP-C10.3 時效：發令 tick 與有效 tick 數。**0＝永不過期**（中性預設）。
+    # 判定放在裁決層而不是 drain：那裡有 `_reject()`，被擋下的火力任務本來就走那條路落帳。
+    issued_at_tick: int = 0
+    ttl_ticks: int = 0
 
 
 class FireMissionOrderSource:
@@ -165,6 +170,8 @@ class FireMissionOrderSource:
                 FireMissionCommand(
                     order_id=order.id,
                     shooter_id=order.unit_id,
+                    issued_at_tick=int(order.issued_at_tick or 0),
+                    ttl_ticks=ttl_of(payload),
                     target_lat=lat,
                     target_lng=lng,
                     rounds=max(1, rounds),
@@ -217,6 +224,15 @@ class AreaFireAdjudicator:
         if shooter is None:
             self._complete(order.order_id, now.tick)
             return []
+
+        # WP-C10.3 逾時作廢。**在挑武器之前判**——過期的任務連挑砲都不必。
+        # 這條存在的理由：射手斷聯時通信閘門會把令留在 VALIDATED，恢復通聯後才執行；
+        # 對時效性火力而言，那等於把彈打到幾十個 tick 前的戰場。
+        if expired({"ttl_ticks": order.ttl_ticks}, order.issued_at_tick, now.tick):
+            late = now.tick - order.issued_at_tick
+            return self._reject(
+                order, now, "EXPIRED", f"逾時作廢（時效 {order.ttl_ticks} tick，已過 {late} tick）"
+            )
 
         entry = self._pick_weapon(order)
         if entry is None:
