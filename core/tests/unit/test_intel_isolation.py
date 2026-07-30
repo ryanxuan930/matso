@@ -53,7 +53,8 @@ def test_red_query_never_returns_blue_ground_truth(
         assert "target_unit_id" not in view.model_dump()
         # DETECTED → 真實番號/型號/陣營全被去識別化
         assert view.designation is None
-        assert view.unit_type is None
+        assert view.echelon is None
+        assert view.branch is None
         assert view.faction is None
         assert view.fidelity is IntelFidelity.DETECTED
 
@@ -73,7 +74,7 @@ def test_identified_reveals_designation(session_factory: sessionmaker[Session]) 
         view = IntelService(db).visible_contacts(world.session_id, "RED")[0]
         # IDENTIFIED → 揭露番號/型號/陣營（但仍非 target_unit_id）
         assert view.designation == "B1"
-        assert view.unit_type is not None
+        assert view.echelon is not None
         assert view.faction == "BLUE"
 
 
@@ -84,7 +85,8 @@ def test_classified_reveals_type_not_designation(
     with session_factory() as db:
         _red_sees_blue(db, world.session_id, world.blue_unit_id, IntelFidelity.CLASSIFIED)
         view = IntelService(db).visible_contacts(world.session_id, "RED")[0]
-        assert view.unit_type is not None  # 型號揭露
+        assert view.echelon is not None  # 階層揭露（CLASSIFIED+）
+        assert view.branch is not None  # 兵科揭露（CLASSIFIED+）
         assert view.designation is None  # 番號仍隱藏
         assert view.faction is None
 

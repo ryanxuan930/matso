@@ -14,6 +14,8 @@ const props = defineProps<{
   status: string
   events: { payload?: Record<string, unknown> }[]
   units: UnitView[]
+  /** 首次載入尚未完成——顯示載入中而不是空狀態（空狀態要留給「真的沒有」）。 */
+  loading?: boolean
 }>()
 
 const { formatEvent } = useCopFeed(() => props.units)
@@ -26,7 +28,8 @@ const rows = computed(() => props.events.map((e) => formatEvent(e.payload ?? {})
   <li v-for="(text, i) in rows" :key="i" data-testid="event-row">
     {{ text }}
   </li>
-  <li v-if="!rows.length" class="empty">（尚無事件）</li>
+  <li v-if="loading"><PanelLoading /></li>
+  <li v-else-if="!rows.length" class="empty">（尚無事件）</li>
 </ul>
 </template>
 

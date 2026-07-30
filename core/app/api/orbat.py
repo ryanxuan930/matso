@@ -1,6 +1,6 @@
 """編裝（ORBAT）編輯 REST（#6）——White Cell 編輯單位參數 + 設定各軍自編權限。
 
-PATCH /api/v1/sessions/{id}/units/{uid}         編輯單位（designation / health / attributes）
+PATCH /api/v1/sessions/{id}/units/{uid}         編輯單位（番號 / 戰力 / 兵科 / attributes）
 GET   /api/v1/sessions/{id}/orbat-permissions   取自編權限（限白軍）
 PUT   /api/v1/sessions/{id}/orbat-permissions   設自編權限（限白軍）
 
@@ -20,7 +20,7 @@ from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.errors import AuthForbiddenError, SessionNotFoundError
 from app.factions import validate_faction_id
-from app.models import TacticalUnit, WargameSession
+from app.models import TacticalUnit, UnitBranch, WargameSession
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["orbat"])
@@ -29,12 +29,14 @@ router = APIRouter(prefix="/api/v1/sessions", tags=["orbat"])
 class UnitEdit(BaseModel):
     designation: str | None = None
     health_status: float | None = Field(None, ge=0, le=100)
+    branch: UnitBranch | None = None  # 兵科（地圖符號的圖示）
     attributes: dict[str, Any] | None = None
 
 
 class UnitEditView(BaseModel):
     id: str
     designation: str
+    branch: str
     faction: str
     health: float
     attributes: dict[str, Any]
@@ -73,12 +75,15 @@ def edit_unit(
         unit.designation = edit.designation
     if edit.health_status is not None:
         unit.health_status = edit.health_status
+    if edit.branch is not None:
+        unit.branch = edit.branch
     if edit.attributes is not None:
         unit.attributes = {**(unit.attributes or {}), **edit.attributes}
     db.commit()
     return UnitEditView(
         id=unit.id,
         designation=unit.designation,
+        branch=unit.branch.value,
         faction=unit.faction,
         health=unit.health_status,
         attributes=unit.attributes or {},

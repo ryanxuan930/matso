@@ -98,6 +98,8 @@ export interface Contact {
   lng: number
   errorRadiusM: number
   unitType?: string
+  /** 編制層級（CLASSIFIED+ 揭露）。後端過去把它塞在 `unit_type` 裡，已改名分家。 */
+  echelon?: string
   designation?: string
   lastSeenTick: number
   faction?: string // IDENTIFIED 才揭露（後端去識別化）——用於顏色與 affiliation
@@ -105,15 +107,53 @@ export interface Contact {
   health?: number // 敵情血量（活模擬 STATE_DIFF ground truth）——供地圖血量環/摧毀顯示
 }
 
-// 少數 2525C function ID（SPEC 未細列，取常見兵種；DETECTED 未知 → 通用）。
+/**
+ * 兵科 → 2525C function ID（SIDC 第 5–10 位）。
+ *
+ * 每一個代碼都**實測過** milsymbol 3.0.4 會畫出獨特的圖示——不是只驗 `isValid()`：
+ * 有些代碼合法卻與通用框畫得一模一樣，那種等於沒設定。
+ *
+ * `UNKNOWN`／查不到 → `U-----` 通用框。這是**中性預設**，沒指定兵科的單位外觀不變。
+ */
 const FUNCTION_ID: Record<string, string> = {
   INFANTRY: 'UCI---',
   ARMOR: 'UCA---',
-  ARTILLERY: 'UCF---',
   RECON: 'UCR---',
+  ARTILLERY: 'UCF---',
+  AIR_DEFENSE: 'UCD---',
+  ENGINEER: 'UCE---',
+  MISSILE: 'UCM---',
+  AVIATION: 'UCV---',
+  SIGNAL: 'UUS---',
+  INTEL: 'UUM---',
+  SUPPLY: 'USS---',
+  MEDICAL: 'USM---',
+  MAINTENANCE: 'USX---',
+  TRANSPORT: 'UST---',
   HQ: 'UH----',
-  AIR: 'MFA---',
+  AIR: 'MFA---', // 既有值，保留相容
 }
+
+/** 兵科 → 中文（ORBAT 編輯器與資訊卡共用）。 */
+export const BRANCH_LABELS: Record<string, string> = {
+  UNKNOWN: '未指定',
+  INFANTRY: '步兵',
+  ARMOR: '裝甲',
+  RECON: '偵搜',
+  ARTILLERY: '砲兵',
+  AIR_DEFENSE: '防空',
+  ENGINEER: '工兵',
+  MISSILE: '飛彈',
+  AVIATION: '航空',
+  SIGNAL: '通信',
+  INTEL: '情報',
+  SUPPLY: '補給',
+  MEDICAL: '衛勤',
+  MAINTENANCE: '保養',
+  TRANSPORT: '運輸',
+  HQ: '指揮部',
+}
+export const BRANCH_OPTIONS = Object.keys(BRANCH_LABELS)
 
 function functionId(type?: string): string {
   return (type && FUNCTION_ID[type]) || 'U-----'
@@ -182,9 +222,12 @@ export function sidcForOwnUnit(u: OwnUnit): string {
  */
 export function sidcForContact(c: Contact): string {
   if (c.fidelity === 'DETECTED') return buildSidc('U')
-  if (c.fidelity === 'CLASSIFIED') return buildSidc('S', c.unitType)
+  // 階層（Field B）與兵科（Field A）都閘在 CLASSIFIED+（後端 `intel/service.py`）。
+  // 前端這裡再判一次是**刻意的縱深防禦**：未達等級時後端就不給值，這裡也不畫。
+  const echelon = echelonFor(c.echelon)
+  if (c.fidelity === 'CLASSIFIED') return buildSidc('S', c.unitType, echelon)
   const affiliation = c.relation ? affiliationForRelation(c.relation) : 'H'
-  return buildSidc(affiliation, c.unitType)
+  return buildSidc(affiliation, c.unitType, echelon)
 }
 
 /** 情報時效透明度：愈舊愈淡（下限 0.25）。 */

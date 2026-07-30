@@ -12,6 +12,8 @@ import type { OrderResponse, UnitView } from '~/composables/useOrders'
 const props = defineProps<{
   orders: OrderResponse[]
   units: UnitView[]
+  /** 首次載入尚未完成——顯示載入中而不是空狀態（空狀態要留給「真的沒有」）。 */
+  loading?: boolean
 }>()
 
 defineEmits<{ (e: 'cancel', orderId: string): void }>()
@@ -46,7 +48,8 @@ const sortedOrders = computed(() =>
       </button>
     </div>
   </li>
-  <li v-if="!orders.length" class="empty">（無指令）</li>
+  <li v-if="loading"><PanelLoading /></li>
+  <li v-else-if="!orders.length" class="empty">（無指令）</li>
 </ul>
 </template>
 

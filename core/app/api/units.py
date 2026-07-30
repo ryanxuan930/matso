@@ -44,6 +44,7 @@ class UnitView(BaseModel):
     id: str
     designation: str
     unit_level: str
+    branch: str  # 兵科（地圖符號的 2525C function ID 來源）
     faction: str
     lat: float | None
     lng: float | None
@@ -98,6 +99,7 @@ def _view(
         id=u.id,
         designation=u.designation,
         unit_level=u.unit_level.value,
+        branch=u.branch.value,
         faction=u.faction,
         lat=lat,
         lng=lng,

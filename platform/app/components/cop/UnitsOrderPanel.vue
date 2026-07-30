@@ -28,6 +28,8 @@ const props = defineProps<{
   isFriendly: (faction?: string | null) => boolean
   /** 該單位是否在本帳號的指揮範圍內（roster 的 unit_scope）。 */
   inScope: (u: UnitView) => boolean
+  /** 首次載入尚未完成——顯示載入中而不是空狀態（空狀態要留給「真的沒有」）。 */
+  loading?: boolean
   /** 活血量（STATE_DIFF 優先）。 */
   liveHealth: (u: UnitView) => number | undefined
 }>()
@@ -139,7 +141,8 @@ const fratricideTarget = computed(
       </li>
     </ul>
   </div>
-  <div v-if="!unitCount" class="empty">（此 session 無可下令單位）</div>
+  <PanelLoading v-if="loading" />
+  <div v-else-if="!unitCount" class="empty">（此 session 無可下令單位）</div>
 </div>
 
 <div v-if="selectedId" class="order" data-testid="order-panel">

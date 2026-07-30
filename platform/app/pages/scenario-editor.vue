@@ -13,6 +13,7 @@ import {
   type UnitLevel,
 } from '~/composables/useScenarioEditor'
 import { emptyCondition } from '~/composables/useConditionDsl'
+import { BRANCH_LABELS, BRANCH_OPTIONS } from '~/composables/useUnits'
 
 const LEVELS: UnitLevel[] = [
   'THEATER', 'CORPS', 'DIVISION', 'BRIGADE', 'BATTALION',
@@ -63,7 +64,7 @@ function addFaction() {
 }
 function addUnit() {
   const f = model.value.factions[0]?.id ?? 'BLUE'
-  model.value.units.push({ faction: f, designation: 'U', unitLevel: 'PLATOON' })
+  model.value.units.push({ faction: f, designation: 'U', unitLevel: 'PLATOON', branch: 'UNKNOWN' })
 }
 // MSEL 事件（GOAL#7）——陣營清單供 trigger/inject 的下拉；空預設 BLUE。
 const factionIds = computed(() => model.value.factions.map((f) => f.id))
@@ -231,7 +232,7 @@ watch(
   { immediate: true, deep: true },
 )
 function addUnitTo(fid: string) {
-  model.value.units.push({ faction: fid, designation: 'U', unitLevel: 'PLATOON' })
+  model.value.units.push({ faction: fid, designation: 'U', unitLevel: 'PLATOON', branch: 'UNKNOWN' })
 }
 function removeUnit(u: EditorUnit) {
   const i = model.value.units.indexOf(u)
@@ -407,6 +408,18 @@ async function saveToServer() {
                 option-value="value"
                 size="small"
                 placeholder="上級"
+              />
+            </template>
+          </Column>
+          <Column header="兵科">
+            <template #body="{ node }">
+              <Select
+                v-model="node.data.branch"
+                :options="BRANCH_OPTIONS"
+                :option-label="(b: string) => BRANCH_LABELS[b] ?? b"
+                size="small"
+                data-testid="unit-branch"
+                placeholder="兵科"
               />
             </template>
           </Column>

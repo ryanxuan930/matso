@@ -16,6 +16,7 @@ export interface EditorUnit {
   lng?: number
   parent?: string
   fixed?: boolean // 固定單位（指揮部等）：不接受 MOVE 令、不會被派去移動或機動交戰
+  branch?: string // 兵科：決定地圖符號的圖示（步兵斜線/裝甲橢圓/砲兵圓點…）。UNKNOWN＝通用框
 }
 export interface EditorRelation { a: string; b: string; relation: RelationValue }
 export interface EditorMsel { id: string; once: boolean; trigger: Condition; inject: InjectAction }
@@ -128,6 +129,8 @@ export function exportScenario(m: ScenarioModel): {
             ...(u.lng !== undefined ? { lng: u.lng } : {}),
             ...(u.parent ? { parent: u.parent } : {}),
             ...(u.fixed ? { fixed: true } : {}),
+            // 兵科：UNKNOWN 是預設，省略即等價（維持既有想定的 diff 乾淨）。
+            ...(u.branch && u.branch !== 'UNKNOWN' ? { branch: u.branch } : {}),
           })),
       },
     ]),
@@ -156,6 +159,7 @@ export function importScenario(bundle: {
         lng: u.lng as number | undefined,
         parent: u.parent as string | undefined,
         fixed: u.fixed as boolean | undefined,
+        branch: (u.branch as string | undefined) ?? 'UNKNOWN',
       })
     }
   }

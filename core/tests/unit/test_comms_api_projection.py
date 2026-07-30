@@ -199,7 +199,12 @@ def test_intel_is_coarsened_when_the_faction_network_degrades(
     coarse = _get(client, world, "intel", _cmdr(world))[0]
     assert coarse["fidelity"] == "DETECTED"
     # 身分欄位必須跟著收回——只粗化座標卻留著番號，等於 fidelity 欄位與內容不符。
-    assert (coarse["designation"], coarse["unit_type"], coarse["faction"]) == (None, None, None)
+    assert (coarse["designation"], coarse["echelon"], coarse["branch"], coarse["faction"]) == (
+        None,
+        None,
+        None,
+        None,
+    )
     assert (coarse["lat"], coarse["lng"]) == h3.cell_to_latlng(
         h3.latlng_to_cell(sharp["lat"], sharp["lng"], COARSE_H3_RES)
     )

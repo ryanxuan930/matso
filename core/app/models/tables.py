@@ -42,6 +42,7 @@ from app.models.enums import (
     SeatRole,
     SessionMode,
     SessionRole,
+    UnitBranch,
     UnitLevel,
     UserRole,
 )
@@ -135,6 +136,11 @@ class TacticalUnit(Base):
     )
     designation: Mapped[str] = mapped_column("designation", String(191))
     unit_level: Mapped[UnitLevel] = mapped_column("unitLevel", SAEnum(UnitLevel))
+    # 兵科：地圖符號的 2525C function ID 來源。DB 為 NOT NULL DEFAULT 'UNKNOWN'，
+    # 既有列全部拿到 UNKNOWN → 對應通用框，符號外觀不變。
+    branch: Mapped[UnitBranch] = mapped_column(
+        "branch", SAEnum(UnitBranch), default=UnitBranch.UNKNOWN, server_default="UNKNOWN"
+    )
     # faction＝想定定義字串 id（SPEC §12.1/ADR 006）；驗證於 app.factions
     faction: Mapped[str] = mapped_column("faction", String(191))
     parent_id: Mapped[str | None] = mapped_column(

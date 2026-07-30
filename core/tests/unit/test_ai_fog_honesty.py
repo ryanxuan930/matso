@@ -92,7 +92,8 @@ def test_detected_fidelity_hides_identity_but_identified_reveals_it(
         _see(db, world.session_id, "BLUE", world.red_unit_id, IntelFidelity.DETECTED)
         detected = contacts_from_intel(db, world.session_id, "BLUE", _HOSTILE)[0]
     assert "designation" not in detected
-    assert "unit_type" not in detected
+    assert "echelon" not in detected
+    assert "branch" not in detected
     assert "faction" not in detected
     # prompt 也不得洩漏——render 出來的文字裡不能出現真實番號。
     prompt = render_context_prompt({"known_enemies": [detected], "faction": "BLUE"})
@@ -103,7 +104,7 @@ def test_detected_fidelity_hides_identity_but_identified_reveals_it(
         identified = contacts_from_intel(db, world.session_id, "BLUE", _HOSTILE)[0]
     assert identified["designation"] == "R1"
     assert identified["faction"] == "RED"
-    assert identified["unit_type"] == UnitLevel.PLATOON.value
+    assert identified["echelon"] == UnitLevel.PLATOON.value
 
 
 def test_contact_persists_after_target_moves_or_dies(

@@ -99,6 +99,10 @@ def _orbat_dict(loaded: LoadedScenario, faction: str) -> dict[str, Any]:
         # 省略即等價）——與前端編輯器 `...(u.fixed ? { fixed: true } : {})` 同一慣例。
         if u.fixed:
             unit["fixed"] = True
+        # 兵科同理——只在非 UNKNOWN 時輸出（UNKNOWN 是預設，省略即等價）。
+        # 漏掉這一行的症狀與 `fixed` 當年一樣：匯出再匯入，所有單位的兵科圖示就消失了。
+        if u.branch and u.branch != "UNKNOWN":
+            unit["branch"] = u.branch
         if u.equipment:
             unit["equipment"] = [
                 {"template": name, "quantity": qty, **({"ammo": ammo} if ammo is not None else {})}

@@ -42,11 +42,14 @@ withDefaults(
 
 const OVERLAY_LABEL: Record<string, string> = { hex: '六角網格', contour: '等高線', hillshade: '地形陰影' }
 
-/** APP-6A 符號詳細度三級。文字直接寫出「標準允許」，讓驗收者知道這不是偷工。 */
+/**
+ * 符號詳細度三級。`hint` 只走 title（滑鼠停留才顯示）——面板上常駐的說明文字愈少愈好，
+ * 而且**不要寫規格條號**（APP-6A Field T/H 之類）：那對操作員沒有意義。
+ */
 const SYMBOL_DETAIL_OPTS = [
-  { value: 'MIN', label: '極簡', hint: '只畫符號＋階層（不含番號）；符號數多時最流暢' },
-  { value: 'STD', label: '標準', hint: '加上番號與失聯註記（APP-6A Field T / H）' },
-  { value: 'FULL', label: '完整', hint: '加上上級部隊、姿態、情報評等（欄位多，畫面較擠）' },
+  { value: 'MIN', label: '極簡', hint: '只畫符號與階層，不含番號；符號數多時最流暢' },
+  { value: 'STD', label: '標準', hint: '加上番號與失聯註記' },
+  { value: 'FULL', label: '完整', hint: '加上上級部隊、姿態、情報評等；欄位多，畫面較擠' },
 ]
 
 function opacityOf(key: string): number {
@@ -70,12 +73,16 @@ function move(key: string, dir: -1 | 1) {
     <div class="title">單位符號（APP-6A）</div>
     <label class="symdet">詳細度
       <select v-model="symbolDetail" data-testid="symbol-detail">
-        <option v-for="o in SYMBOL_DETAIL_OPTS" :key="o.value" :value="o.value">{{ o.label }}</option>
+        <option
+          v-for="o in SYMBOL_DETAIL_OPTS"
+          :key="o.value"
+          :value="o.value"
+          :title="o.hint"
+        >{{ o.label }}</option>
       </select>
     </label>
-    <div class="hint">
-      {{ SYMBOL_DETAIL_OPTS.find((o) => o.value === symbolDetail)?.hint }}
-      <br>符號數過多時會自動降為「極簡」（APP-6A §506.1 允許依需求調整顯示量）。
+    <div class="hint" :title="SYMBOL_DETAIL_OPTS.find((o) => o.value === symbolDetail)?.hint">
+      符號數過多時會自動降為「極簡」。
     </div>
 
     <div class="title">底圖</div>

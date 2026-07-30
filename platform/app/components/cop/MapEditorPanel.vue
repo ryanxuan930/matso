@@ -25,6 +25,8 @@ defineProps<{
   canControl: boolean
   /** 歸屬下拉的選項。 */
   sessionFactions: string[]
+  /** 首次載入尚未完成——顯示載入中而不是空狀態（空狀態要留給「真的沒有」）。 */
+  loading?: boolean
   /** session-local 隱藏的標註 id（顯隱切換由頁面持有，不是編輯器狀態）。 */
   hiddenFeatureIds: string[]
 }>()
@@ -135,7 +137,8 @@ defineEmits<{ (e: 'toggle-hidden', id: string): void }>()
       >{{ hiddenFeatureIds.includes(f.id) ? '🚫' : '👁' }}</button>
       <button class="frm" data-testid="feature-delete" @click.stop="editor.removeFeature(f.id)"><i class="pi pi-times" /></button>
     </li>
-    <li v-if="!editor.mapFeatures.length" class="empty">（尚無標註）</li>
+    <li v-if="loading"><PanelLoading /></li>
+    <li v-else-if="!editor.mapFeatures.length" class="empty">（尚無標註）</li>
   </ul>
 </div>
 <!-- 選取特徵的屬性編輯（#11）：名稱/顏色/備註/高度 → PATCH。 -->

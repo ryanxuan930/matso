@@ -19,6 +19,11 @@ class ContactView(BaseModel):
     lng: float
     error_radius_m: float
     # 以下依 fidelity 逐級揭露；未達等級為 None
-    unit_type: str | None = None  # CLASSIFIED+ 揭露（unit_level）
+    # ⚠ 這一欄過去叫 `unit_type`，但裝的是 **unit_level（階層）**。
+    # 名實不符的後果不是無害的誤會：前端 `functionId()` 查的是兵科表（INFANTRY/ARMOR…），
+    # 拿 'PLATOON' 去查永遠 miss（白做）；而若有人**照欄位名**把它接到階層符號上，
+    # 敵方編成就會在 CLASSIFIED 這一級直接畫上圖，且因為欄位叫 unit_type，review 看不出來。
+    echelon: str | None = None  # CLASSIFIED+ 揭露（編制層級）
+    branch: str | None = None  # CLASSIFIED+ 揭露（兵科）
     designation: str | None = None  # IDENTIFIED 才揭露
     faction: str | None = None  # IDENTIFIED 才揭露敵我

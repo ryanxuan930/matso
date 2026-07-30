@@ -121,9 +121,13 @@ def contacts_from_intel(
         unit_id = unit_by_contact.get(v.contact_id)
         if unit_id:
             enemy["unit_id"] = unit_id
-        # 以下三欄由 fidelity 決定有無（IntelService 已閘門化）——None 就不放，讓 prompt 誠實留白。
-        if v.unit_type:
-            enemy["unit_type"] = v.unit_type
+        # 以下數欄由 fidelity 決定有無（IntelService 已閘門化）——None 就不放，讓 prompt 誠實留白。
+        # ⚠ `echelon` 過去叫 `unit_type` 但裝的是階層；改名後這裡也要用對的字給 LLM，
+        # 否則 prompt 裡會出現 `unit_type: PLATOON` 這種讓模型誤判兵種的鍵。
+        if v.echelon:
+            enemy["echelon"] = v.echelon
+        if v.branch:
+            enemy["branch"] = v.branch
         if v.designation:
             enemy["designation"] = v.designation
         if v.faction:

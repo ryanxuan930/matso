@@ -15,6 +15,7 @@ from app.models.enums import (
     SeatRole,
     SessionMode,
     SessionRole,
+    UnitBranch,
     UnitLevel,
     UserRole,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "SystemConfiguration",
     "TacticalEventLog",
     "TacticalUnit",
+    "UnitBranch",
     "UnitLevel",
     "User",
     "UserRole",

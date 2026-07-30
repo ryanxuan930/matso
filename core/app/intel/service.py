@@ -90,7 +90,8 @@ class IntelService:
         if reveal_all or rank >= _RANK[IntelFidelity.CLASSIFIED]:
             target = self._db.get(TacticalUnit, contact.target_unit_id)
             if target is not None:
-                view.unit_type = target.unit_level.value
+                view.echelon = target.unit_level.value
+                view.branch = target.branch.value
                 if reveal_all or rank >= _RANK[IntelFidelity.IDENTIFIED]:
                     view.designation = target.designation
                     view.faction = target.faction

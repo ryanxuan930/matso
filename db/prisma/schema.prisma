@@ -120,6 +120,28 @@ enum UnitLevel {
   INDIVIDUAL
 }
 
+/// 兵科（APP-6A/2525C 的 function ID 來源）。每一個都實測過 milsymbol 會畫出**獨特**的圖示，
+/// 不是只是 isValid()＝true 而已（有些代碼合法但畫出來與通用框一模一樣）。
+/// UNKNOWN＝未指定：符號畫成通用框（既有想定不指定時的中性預設）。
+enum UnitBranch {
+  UNKNOWN
+  INFANTRY
+  ARMOR
+  RECON
+  ARTILLERY
+  AIR_DEFENSE
+  ENGINEER
+  MISSILE
+  AVIATION
+  SIGNAL
+  INTEL
+  SUPPLY
+  MEDICAL
+  MAINTENANCE
+  TRANSPORT
+  HQ
+}
+
 enum CommsState {
   ONLINE
   DEGRADED
@@ -133,6 +155,9 @@ model TacticalUnit {
 
   designation String
   unitLevel   UnitLevel
+  /// 兵科：決定地圖符號的 2525C function ID（步兵斜線、裝甲橢圓、砲兵圓點…）。
+  /// 預設 UNKNOWN＝通用框——既有想定不指定時行為與過去相同。
+  branch      UnitBranch @default(UNKNOWN)
   faction     String // 想定定義字串 id（§12.1/ADR 006）
 
   // Fractal Hierarchy (Self-Referential)

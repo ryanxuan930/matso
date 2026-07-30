@@ -1428,6 +1428,8 @@ export interface components {
             id: string;
             designation: string;
             unit_level: string;
+            /** @description 兵科（地圖符號的 2525C function ID 來源；UNKNOWN＝通用框） */
+            branch?: string;
             faction: string;
             lat?: number | null;
             lng?: number | null;
@@ -1795,7 +1797,7 @@ export interface components {
             /** @description 本局所有陣營 id（供 UI 列舉；不含 WHITE_CELL） */
             factions: string[];
         };
-        /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 **敵情粗化**（WP-C5，SPEC_FULL §6.2）：觀測陣營整體通聯非 ONLINE 時，`lat`/`lng` 量化到 h3 res-6 格心（約 3km）、`error_radius_m` 放大到該格尺度、`fidelity` 上限 DETECTED（連帶 unit_type/designation/faction 回到 null）。資料本身不動，只是投影降級。 */
+        /** @description 敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id， 不是目標的 ground-truth unit id；designation/echelon/branch/faction 依 fidelity 逐級揭露， 未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。 **敵情粗化**（WP-C5，SPEC_FULL §6.2）：觀測陣營整體通聯非 ONLINE 時，`lat`/`lng` 量化到 h3 res-6 格心（約 3km）、`error_radius_m` 放大到該格尺度、`fidelity` 上限 DETECTED（連帶 echelon/branch/designation/faction 回到 null）。資料本身不動，只是投影降級。 */
         ContactView: {
             /** @description 觀測方的 IntelContact id（非目標 unit id） */
             contact_id: string;
@@ -1812,8 +1814,10 @@ export interface components {
             lng: number;
             /** @description 定位誤差半徑（m）；等級愈高愈小 */
             error_radius_m: number;
-            /** @description CLASSIFIED 以上才揭露（unit_level） */
-            unit_type?: string | null;
+            /** @description CLASSIFIED 以上才揭露的編制層級。**過去這欄叫 unit_type 但裝的是階層**——名實不符會讓「照欄位名接兵種」永遠 miss、「照欄位名接階層」把敵方編成在 CLASSIFIED 就畫上圖。 */
+            echelon?: string | null;
+            /** @description CLASSIFIED 以上才揭露的兵科（地圖符號的 function ID 來源） */
+            branch?: string | null;
             /** @description IDENTIFIED 才揭露 */
             designation?: string | null;
             /** @description IDENTIFIED 才揭露敵我 */

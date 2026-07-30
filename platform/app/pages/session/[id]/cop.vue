@@ -128,6 +128,10 @@ const allowFratricide = ref(false)
 // 符號因數量過多被自動降級（APP-6A §506.1）——要讓操作員看得到，
 // 否則會以為番號又不見了。
 const symbolDemoted = ref(false)
+// 首次載入是否還沒完成。`onMounted` 刻意不 await `refresh()`（要讓地圖先畫出來），
+// 所以首屏一定有一段「資料還沒到」的空窗——那段時間各面板要顯示載入中，
+// 不能顯示「此 session 無可下令單位」，否則使用者會以為這局是空的。
+const loading = ref(true)
 const mySeatRole = ref<string | null>(null) // 席位（WP-B5.2）；null＝未指派（沿用角色權限）
 const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個陣營）；範圍外單位不可下令
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
@@ -321,6 +325,14 @@ watch(
 )
 
 async function refresh() {
+  try {
+    await refreshInner()
+  } finally {
+    loading.value = false // 成功或失敗都要收掉載入中——卡在轉圈比顯示空狀態更糟
+  }
+}
+
+async function refreshInner() {
   if (!(await stream.pullSnapshot())) return // 快照失敗就整批不動，不要留下半套狀態
   orders.value = await fetchOrders(sessionId.value).catch(() => [])
   // 我方陣營（決定友/敵渲染與目標可選集）+ 開局時間（#4 執行時間）——由 session 摘要取得。
@@ -672,6 +684,7 @@ onBeforeUnmount(() => {
       <CopWidget id="units" :ui="copUiView" :open="widgets.units.open">
         <UnitsOrderPanel
           v-model:precise-move="preciseMove"
+          :loading="loading"
           :ordering="orderingView"
           :units-by-faction="unitsByFaction"
           :unit-count="realUnits.length"
@@ -691,11 +704,11 @@ onBeforeUnmount(() => {
       </CopWidget>
 
       <CopWidget id="events" :ui="copUiView" :open="widgets.events.open">
-        <EventsPanel :status="stream.status" :events="streamEvents" :units="realUnits" />
+        <EventsPanel :status="stream.status" :events="streamEvents" :units="realUnits" :loading="loading" />
       </CopWidget>
 
       <CopWidget id="orders" :ui="copUiView" :open="widgets.orders.open">
-        <OrdersPanel :orders="orders" :units="realUnits" @cancel="cancel" />
+        <OrdersPanel :orders="orders" :units="realUnits" :loading="loading" @cancel="cancel" />
       </CopWidget>
       </ClientOnly>
 
@@ -816,6 +829,7 @@ onBeforeUnmount(() => {
         <ClientOnly>
         <CopWidget id="mapedit" :ui="copUiView" :open="mapEditorOpen && canDraw">
           <MapEditorPanel
+            :loading="loading"
             :editor="mapEditorView"
             :can-control="canControl"
             :session-factions="sessionFactions"

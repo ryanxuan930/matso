@@ -48,7 +48,10 @@ export function toContact(
     lng: view.lng,
     errorRadiusM: view.error_radius_m,
     lastSeenTick: view.last_seen_tick,
-    ...(view.unit_type ? { unitType: view.unit_type } : {}),
+    // 兵科 → 符號的 function ID。⚠ 這一欄後端過去叫 `unit_type` 但裝的是**階層**，
+    // 拿去查兵科表永遠 miss（所以敵情 contact 一直也沒有兵種圖示）。現已改名分家。
+    ...(view.branch ? { unitType: view.branch } : {}),
+    ...(view.echelon ? { echelon: view.echelon } : {}),
     ...(view.designation ? { designation: view.designation } : {}),
     ...(view.faction ? { faction: view.faction } : {}),
     ...(relationFor ? { relation: relationFor(view.faction) } : {}),

@@ -22,6 +22,34 @@ class UnitLevel(enum.StrEnum):
     INDIVIDUAL = "INDIVIDUAL"
 
 
+class UnitBranch(enum.StrEnum):
+    """兵科——APP-6A/2525C function ID 的來源（決定符號畫成步兵斜線/裝甲橢圓/砲兵圓點…）。
+
+    每一個值都實測過 milsymbol 會畫出**獨特**的圖示，不是只是 `isValid()` 為真而已
+    （有些代碼合法但畫出來與通用框一模一樣）。
+
+    `UNKNOWN` 是**中性預設**：對應通用框 `U-----`，也就是不指定兵科的單位外觀完全不變。
+    既有想定因此零影響。
+    """
+
+    UNKNOWN = "UNKNOWN"
+    INFANTRY = "INFANTRY"
+    ARMOR = "ARMOR"
+    RECON = "RECON"
+    ARTILLERY = "ARTILLERY"
+    AIR_DEFENSE = "AIR_DEFENSE"
+    ENGINEER = "ENGINEER"
+    MISSILE = "MISSILE"
+    AVIATION = "AVIATION"
+    SIGNAL = "SIGNAL"
+    INTEL = "INTEL"
+    SUPPLY = "SUPPLY"
+    MEDICAL = "MEDICAL"
+    MAINTENANCE = "MAINTENANCE"
+    TRANSPORT = "TRANSPORT"
+    HQ = "HQ"
+
+
 class CommsState(enum.StrEnum):
     ONLINE = "ONLINE"
     DEGRADED = "DEGRADED"

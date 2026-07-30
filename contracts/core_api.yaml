@@ -392,6 +392,7 @@ components:
         id: { type: string }
         designation: { type: string }
         unit_level: { type: string }
+        branch: { type: string, description: 兵科（地圖符號的 2525C function ID 來源；UNKNOWN＝通用框） }
         faction: { type: string }
         lat: { type: [number, "null"] }
         lng: { type: [number, "null"] }
@@ -843,11 +844,11 @@ components:
       type: object
       description: >-
         敵情接觸（fog of war 投影）。**已去識別化**：contact_id 是觀測方自己的紀錄 id，
-        不是目標的 ground-truth unit id；designation/unit_type/faction 依 fidelity 逐級揭露，
+        不是目標的 ground-truth unit id；designation/echelon/branch/faction 依 fidelity 逐級揭露，
         未達等級為 null。位置為「最後已知」，誤差半徑隨 fidelity 縮小。
         **敵情粗化**（WP-C5，SPEC_FULL §6.2）：觀測陣營整體通聯非 ONLINE 時，`lat`/`lng`
         量化到 h3 res-6 格心（約 3km）、`error_radius_m` 放大到該格尺度、`fidelity` 上限
-        DETECTED（連帶 unit_type/designation/faction 回到 null）。資料本身不動，只是投影降級。
+        DETECTED（連帶 echelon/branch/designation/faction 回到 null）。資料本身不動，只是投影降級。
       required: [contact_id, fidelity, last_seen_tick, lat, lng, error_radius_m]
       properties:
         contact_id: { type: string, description: 觀測方的 IntelContact id（非目標 unit id） }
@@ -856,7 +857,8 @@ components:
         lat: { type: number, description: 最後已知緯度 }
         lng: { type: number, description: 最後已知經度 }
         error_radius_m: { type: number, description: 定位誤差半徑（m）；等級愈高愈小 }
-        unit_type: { type: [string, "null"], description: CLASSIFIED 以上才揭露（unit_level） }
+        echelon: { type: [string, "null"], description: "CLASSIFIED 以上才揭露的編制層級。**過去這欄叫 unit_type 但裝的是階層**——名實不符會讓「照欄位名接兵種」永遠 miss、「照欄位名接階層」把敵方編成在 CLASSIFIED 就畫上圖。" }
+        branch: { type: [string, "null"], description: CLASSIFIED 以上才揭露的兵科（地圖符號的 function ID 來源） }
         designation: { type: [string, "null"], description: IDENTIFIED 才揭露 }
         faction: { type: [string, "null"], description: IDENTIFIED 才揭露敵我 }
     MapFeatureView:

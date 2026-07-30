@@ -19,7 +19,7 @@ from jsonschema import Draft202012Validator
 from sqlalchemy.orm import Session
 
 from app.factions import WHITE_CELL, FactionRelations, Relation, validate_faction_id
-from app.models.enums import UnitLevel
+from app.models.enums import UnitBranch, UnitLevel
 from app.orders.no_strike import zones_to_cells
 from app.scenario.triggers import MselEntry, TriggerError, validate_condition
 
@@ -39,6 +39,9 @@ class ScenarioUnit:
     lng: float | None
     parent: str | None
     fixed: bool = False  # 固定單位（指揮部等）：不接受 MOVE 令、不被派去移動（§11.1）。
+    # 兵科：地圖符號的 2525C function ID 來源。**UNKNOWN 是中性預設**——
+    # 既有想定不寫這欄時畫出來的仍是通用框，與過去逐字相同。
+    branch: str = "UNKNOWN"
     # WP-B6 編裝：((template_name, quantity, ammo|None), …)。空＝沿用開局的預設配發。
     # 用 tuple 而非 list：ScenarioUnit 是 frozen 值物件，list 會讓它不可雜湊也可被就地改。
     equipment: tuple[tuple[str, int, int | None], ...] = ()
@@ -207,10 +210,22 @@ def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> lis
                     lng=u.get("lng"),
                     parent=parent,
                     fixed=bool(u.get("fixed", False)),
+                    branch=str(u.get("branch") or "UNKNOWN"),
                     equipment=_equipment_of(u),
                 )
             )
     return units
+
+
+def _branch_of(raw: str) -> UnitBranch:
+    """想定字串 → `UnitBranch`。**認不得就回 UNKNOWN**，不要讓一個打錯的兵科擋掉整份想定載入。
+
+    畫成通用框（看得出來沒設定）遠比整局開不起來好。
+    """
+    try:
+        return UnitBranch(raw.strip().upper())
+    except ValueError:
+        return UnitBranch.UNKNOWN
 
 
 def _equipment_of(unit: dict[str, Any]) -> tuple[tuple[str, int, int | None], ...]:
@@ -427,6 +442,7 @@ def create_session_from_scenario(
             current_lat=u.lat,
             current_lng=u.lng,
             is_fixed=u.fixed,
+            branch=_branch_of(u.branch),
         )
         db.add(unit)
         by_designation[(u.faction, u.designation)] = unit
@@ -586,6 +602,7 @@ def _load_orbats(
                     lng=u.get("lng"),
                     parent=parent,
                     fixed=bool(u.get("fixed", False)),
+                    branch=str(u.get("branch") or "UNKNOWN"),
                     equipment=_equipment_of(u),
                 )
             )
