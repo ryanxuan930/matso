@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（四）：契約/實作漂移閘門（全端點）**。CI 只跑 `openapi_spec_validator`——它驗的是**規格語法**，不驗路由有沒有實作，於是兩個方向的漂移都沒有閘門：契約有實作沒有＝**規格殘骸**（前端照契約生型別、寫呼叫，然後在執行期吃 404）；實作有契約沒有＝**前端拿不到型別**（只能手刻 any 或猜欄位名）。**關鍵是路徑參數名要正規化**：契約寫 `/sessions/{id}`、實作寫 `/sessions/{session_id}`——那不是漂移是命名不同，不正規化會冒出 **111 筆假陽性**把真正的 21 筆淹掉；比較的是**結構**不是參數名。**既有 21 筆列成允許清單而不是把閘門關掉**：7 筆規格殘骸（`/sessions/{id}/ledger` 躺了很久從沒實作、`/admin/plugins*`、`/ai/consult`、`/injects`（實作是單數）…）+ 14 筆無契約端點（`/aar/*` 五條、`/autonomy` 三條、`/orbat-permissions` 兩條…）。這樣做有兩個好處：**新的漂移立刻會紅**（閘門的目的），而既有的 21 筆變成**看得見的欠帳**而不是沒人知道的事實。另加一條「**清單只能變短**」的測試——修好一條卻忘了從清單刪掉時會轉紅，逼人維護它，否則閘門會慢慢失效。`/healthz` 與 `/metrics` 明確豁免（不屬版本化 API）。三個方向的突變逐一驗過會紅：新增無契約端點、契約新增沒實作的路徑、清單留了已修好的項目。**驗收**：pytest 1950（+4）、mypy 265、ruff 綠。
+
 - 2026-07-30：**Backlog 清倉（三）：盟軍觀測者 + integration 測試與活 runner 的競態**。①**盟軍不算觀測者**（兩處一起修）：SPEC 寫「任一**友軍**」、關係矩陣也讓盟軍互相可見，但 `c2/service.has_observer_on`（臨機火力的觀測條件）與 `fire_wiring.observer_verdict`（散布修正）**都只認自己陣營**——於是聯軍作戰時，盟軍的前觀明明看得到目標，本軍卻**叫不動火力**、或者**散布照樣加倍**。與 C9 的 `friendly_losses` 用 `==` 是同一個 bug 家族：**敵我判斷不可以用字串相等**。兩處都改走關係矩陣，未注入 `relations` 時退回只認自己陣營（既有呼叫端不受影響）；觀測者陣營集**依名稱排序**（會進 SQL 的 IN）。②**我把那個偶發紅的診斷記錯了**：原本記成「跨測試的 Redis 殘留狀態」，但殘留狀態不會只在整包跑時出現。實際機制是**與活 runner 的競態**——integration fixture 建的是 `archivedAt IS NULL` 的真局，而開發機上跑著的 core 容器裡的 `SimManager` 每 3 秒掃一次那個條件並**認養任何新出現的局**（`_session_ids`），認養後就對同一批 Redis 鍵與 DB 列寫入，而測試正在斷言它們；單檔跑 1.6 秒內結束來不及被認養故必綠，整包跑較慢就偶發紅。**實測驗證**：單檔連跑 12 次 0 失敗；查活 DB 確認 runner 目前確實認養了三個局。修法是把 integration 的 session 標成 `archived_at`（這些測試自己建 Kernel 手動推 tick，從不需要活執行期，標封存也順便表達了那個意圖），**三個 integration 檔案都有同樣的暴露**，一起修。整包連跑 6 次全綠。**驗收**：pytest 1946（+8）、mypy 265、ruff 綠。
 
 - 2026-07-30：**Backlog 清倉（二）：COP 終於下得了 ENGINEER 與 FORMATION 令**。C2 與 C3 的後端、預檢、契約、生成型別全通了，但 `useCopOrdering.ts` 的 `orderType` union 一直是五個令型——**使用者點不到**，而破障是 V2.1 exit 的 armor-breakthrough CPX 的必要動作。補上：令型下拉兩個新選項、FORMATION 面板（隊形 + 乘駐車各一個「（不變更）」選項，對應後端「只送有宣告的欄位」的語義——送 null 會被 pattern 擋、送空字串意思不明）、ENGINEER 面板（設障選型別 + 點地圖標作業點；破障填標的 id）、`canSubmit` 兩條前置驗證、地圖點擊路由到 `engineerPoint`。面板明寫「須工兵單位且距作業點 500 m 內」與「破障/設障各有工時，**完工才會改變地圖**」——那兩件事使用者不知道就會覺得令下了沒反應。**另核對掉一條過期的 Backlog**：`CALL_FOR_FIRE` 前端其實早就補好了（標籤、`KINDS_NEEDING_TARGET`、`target_lat/lng` 都在），該條目是舊的。**驗收**：前端 lint/typecheck 綠。
@@ -211,9 +213,10 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   VALIDATED 直到通聯恢復——準備射擊可能遲到數十個 tick 才落地。逾時作廢與「換一門砲重試」都未做。
 - **`emplace_ticks` 沒有消費者**（WP-C10.5 明列未做）：進入陣地後的待命時間——
   打完就跑之後不該能立刻再開火。需新增 `WeaponProfile` 欄位 + `fire_wiring` 一條「就位了沒」的分支。
-- **契約與實作的漂移沒有閘門**：CI 只跑 `openapi_spec_validator`（驗語法，不驗路由）。
-  已知漂移：`/sessions/{id}/ledger` 有契約無實作；`/aar/stats`、`/aar/report`、`/aar/export`
-  有實作無契約。B1 已為 `/exercises*` 加一致性測試，擴到全端點屬另一張卡。
+- **既有的 21 筆契約/實作漂移**（閘門已裝，見 `test_contract_conformance.py` 的允許清單）：
+  7 筆規格殘骸（`/sessions/{id}/ledger`、`/admin/plugins*`、`/ai/consult`…）+
+  14 筆無契約端點（`/aar/*`、`/autonomy`、`/orbat-permissions`…）。
+  **新的漂移現在會立刻轉紅**；這 21 筆是看得見的欠帳，清單只能變短。
 - **`rounds_per_mission` 沒有消費者**：不是門檻、也對不上火力路徑計的東西（C10.5 計的是任務次數）。
 - **面射擊的絕對殺傷量偏低**（WP-C1 驗收時量到，屬 WP-C10.2 的校準）：20 發 155mm 對露天
   步兵連只造成 1.28 戰力損失，直覺上太少。`area_fire._loss_for` 自己標了「v0 佔位」——
