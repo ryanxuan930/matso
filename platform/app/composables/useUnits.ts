@@ -48,6 +48,8 @@ export interface OwnUnit {
   faction: Faction
   lat: number
   lng: number
+  /** APP-6A Field T「Unique Designation」——番號。**沒有它地圖上的單位就是無名的方塊**。 */
+  designation?: string
   unitType?: string
   comms: CommsState
   lastReportedTick: number
@@ -241,6 +243,9 @@ export function buildUnitFeatures(
     const options: SymbolOpts = isGhost(u)
       ? { additionalInformation: `OFFLINE +${Math.max(0, currentTick - u.lastReportedTick)}t` }
       : {}
+    // APP-6A Field T「Unique Designation」。己方單位**過去完全沒帶這個選項**——
+    // 只有 IDENTIFIED 的敵情 contact 有，所以自己的部隊在地圖上是一排無名方塊。
+    if (u.designation) options.uniqueDesignation = u.designation
     options.fillColor = factionColor(u.faction, palette) // 多陣營顏色區分（§12.1）
     push(u.id, u.faction, sidcForOwnUnit(u), options, u.lng, u.lat, destroyedFade(u.health, ownUnitOpacity(u.comms)), 'own', u.health, u.isFixed)
   }

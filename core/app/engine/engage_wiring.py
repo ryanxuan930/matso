@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adjudication.adjudicator import EngageCommand
+from app.adjudication.armor import resolve_units_armor_class
 from app.adjudication.combined import CombinedWeapon
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.engagement import EnvSnapshot
@@ -269,6 +270,10 @@ def seed_combat_state(
     交戰進度（Redis 內已扣的血量/彈藥）重置回 DB 初值。
     """
     units = db.scalars(select(TacticalUnit).where(TacticalUnit.session_id == session_id)).all()
+    # 裝甲級別**由編裝導出**（見 `adjudication/armor.py`）。批次查一次避免 N+1。
+    # 過去只讀 `unit.attributes["armor_class"]`，但沒有任何想定 schema 定義那個欄位、
+    # loader 也從不寫 attributes ——於是「缺鍵 → INFANTRY」變成唯一路徑，主戰車被步槍打死。
+    armor_by_unit = resolve_units_armor_class(db, [u.id for u in units])
     for unit in units:
         existing = hot.get_unit(unit.id) or {}
         patch: dict[str, object] = {}
@@ -286,8 +291,9 @@ def seed_combat_state(
             # health＝由當前戰力比導出的效能%（與 strength 一致，不再是獨立 HP）。
             patch["health"] = effectiveness_pct(float(unit.current_strength) / authorized)
         if "armor_class" not in existing:
+            # 明示優先於導出：想定作者明確寫了 attributes 就照他寫的算。
             ac = unit.attributes.get("armor_class") if isinstance(unit.attributes, dict) else None
-            patch["armor_class"] = str(ac) if ac else "INFANTRY"
+            patch["armor_class"] = str(ac) if ac else armor_by_unit.get(unit.id, "INFANTRY")
         if "ammo" not in existing:
             patch["ammo"] = resolver.primary_ammo(unit.id)
         # SPEC_EXTEND P1：per-weapon 活彈藥（聯合兵種逐武器扣減用）。僅在鍵不存在時 seed——

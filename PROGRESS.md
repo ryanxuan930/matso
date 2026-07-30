@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**修掉四個「有值卻被靜默忽略」的欄位**（使用者指示優先處理）。這一類比死欄位嚴重：**schema 綠、roundtrip 綠、測試全綠，但模擬結果是錯的**。①`armor_class`——資料一直都在裝備範本上（`SEED_VEHICLES["MBT"]` 就是 `"ARMOR"`），引擎卻讀 `TacticalUnit.attributes`，而**沒有任何想定 schema 定義那個欄位、loader 也從不寫 attributes**，於是「缺鍵→INFANTRY」變成唯一路徑，主戰車被步槍以 pk=0.70 打死（活 DB 44 個單位只有 5 個帶鍵）。新增 `adjudication/armor.py` 由編裝導出、取最強的那件、明示仍優先。②`logistics.mobility` 錯層——`base_stats` **就是** `$defs.logistics` 本身（全 repo 一致約定），種子卻多包一層；後果不只是補給車被判徒步不燒油，**更嚴重的是軍械庫 UI 寫的是頂層（照契約）**，所以經 UI 建立的後勤裝備 capacity 根本讀不到、完全不補給。③`antenna_gain_dbi` 差一個 `i`——UI 照契約寫 `_dbi`、引擎讀 `_db`，**經 UI 建的每一組通信裝備天線增益都吃預設值**。④`night_capable`——`SensorProfile` 讀它但契約/種子/前端全沒供應，等於全系統沒有夜視；已補契約 + 四筆種子（依物理指派）+ 軍械庫勾選框。**根因**：`SEED_LOGISTICS` 是唯一沒有 schema 驗證測試的種子集，已補上，另加行為級測試（補給車要自走且燒油、主戰車要是 ARMOR、天線增益要讀得到、夜視要合物理），四個方向的突變逐一驗過會紅。**驗收**：pytest 1960（+6）、mypy 266、ruff/eslint/vue-tsc 綠，16 條 golden/replay 全綠（決定性未受影響）。
+
 - 2026-07-30 **中斷點（使用者重啟電腦 / 搬 OrbStack）**：工作樹乾淨，HEAD `ac610c5`，`origin/main` **落後 7 個 commit（尚未 push）**。Backlog 清倉進行中，已清六項；**下一步接著清 `rounds_per_mission` 與 `emplace_ticks` 兩個沒有消費者的欄位**（已勘查過：`emplace_ticks` 要在 `fire_wiring` 加一條「就位了沒」的分支，但 C10.5 的陣地變換排程器不在 `fire_wiring` 裡——`MISSION_COUNT_KEY` 只在 `_count_mission` 被寫，排程器在 `run_paced` 的 pre_tick host，要先找到它；`rounds_per_mission` 的合理消費者是 FIRE_MISSION 未填 `rounds` 時的預設值，前端 `armory.vue` 已在編輯它）。清完 Backlog 後才進行使用者指定的**全系統測試 → `TEST_V2_1.md`**。⚠ 重啟後 OrbStack 搬完位置要先 `cd ops/compose && docker compose up -d --wait` 再驗任何東西（MariaDB 對外 **3307**）。
 
 - 2026-07-30：**Backlog 清倉（六）：把沒有寫入端的指標接上**。`matso_io_latency_ms` 與 `matso_ai_workers` 宣告了卻沒有人寫——**這比沒有指標更糟**：儀表板上一條永遠是 0 的線會被讀成「這件事沒發生」，而真相是「這件事沒被量」。`io_latency` 接在**帳本寫入**上，那正是 `tick_duration` 刻意排除的那段 I/O；兩者分開量才分得出「tick 超時」是算太久還是 DB 慢——處置完全不同（減負載 vs 修連線池）。`ai_workers` 只算**決策 worker**，勝負監視器不算（它不呼叫 LLM，算進去會讓「AI 在跑幾條」永遠多一）；每局的數字記在 manager 上，因為指標不帶 session 標籤，要在那裡才加得出全域總數。另補一個**更隱蔽的問題**：指標是第一次寫入時才出現的，而 Prometheus 裡「沒有這條序列」不等於「值是 0」——沒有 AI 指派的局會讓 `matso_ai_workers` 整條消失，儀表板呈現的是斷線而不是「沒有 AI 在跑」，`alerts.yml` 的規則也跟著失效；改成 SimManager 啟動時先歸零登記。加一條 **AST 掃描**釘住「宣告了就要有人寫」（掃 `core/app/` 與 `ai/` 兩棵樹——`llm_latency` 的唯一寫入端在 `matso_ai/inference/role_manager.py`，只掃一棵會誤報）。**活系統實測**：`/metrics` 現在有 `matso_io_latency_ms_count 26`（26 個 tick 共 1.93ms，每次帳本寫入約 0.09ms）與 `matso_ai_workers 0`（先前整條缺席）。**驗收**：pytest 1954（+3）、mypy 265、ruff 綠。
@@ -182,6 +184,41 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 2026-07-20：契約 fuzz 用 schemathesis **v4**（v3 不支援 FastAPI 產生的 OpenAPI 3.1）；order 端點只斷言「不 5xx」。ruff B008 放行 FastAPI `Depends()` 慣例。
 
 ## Backlog / 發現的問題
+
+### ✅ 契約/實作欄位漂移掃描（2026-07-30）——**四個靜默錯誤已修**
+掃了 `weaponeering.schema.json`（全 $defs）、`scenario.schema.json`、`seed_weapons.py`
+共 **99 個欄位名**，逐一 grep `core/ ai/ platform/app/ modules/ db/ scenarios/` 並讀程式確認。
+找到 40+ 個沒有讀取端的欄位，其中 6 個是「**有值卻被靜默忽略**」——那比死欄位嚴重，
+因為它產生**錯誤的模擬結果**而不是沒有結果。**已修四個**（commit 見當日）：
+
+- ~~🔴 `armor_class` 從想定進來的單位一律 INFANTRY~~ → **已修**：資料一直都在
+  （`SEED_VEHICLES["MBT"]["armor_class"] == "ARMOR"`，掛在**裝備範本**上），缺的只是
+  「單位 → 編裝 → 裝甲級別」這一步。新增 `adjudication/armor.py` 由編裝導出（取最強的那件），
+  `attributes` 明示仍優先。**修之前**：活 DB 44 個單位只有 5 個帶這個鍵，其餘（含主戰車）
+  都以步兵被裁決，被步槍以 pk=0.70 打死。
+- ~~🔴 `logistics.mobility` 位置錯層~~ → **已修**：`base_stats` **就是** `$defs.logistics`
+  本身（全 repo 一致的約定），種子卻多包一層 `"logistics"`。後果有兩個：補給車的 mobility
+  讀不到（被判徒步、**不燒油**），以及**與軍械庫 UI 寫入的形狀不一致**——經 UI 建立的後勤
+  裝備 `capacity` 讀不到、`load_supply_cargo` 回空、**完全不補給**。已拉平並在 `fuel.py`
+  保留舊形狀退路。
+- ~~🟠 `antenna_gain_dbi` vs `antenna_gain_db`~~ → **已修**：差一個 `i`，而軍械庫 UI 是照
+  契約寫 `_dbi` 的 → **經 UI 建立的每一組通信裝備天線增益都被靜默忽略、永遠吃預設值**。
+  引擎改為契約名優先、舊名為退路。
+- ~~🟠 `night_capable` 反向缺口~~ → **已修**：`SensorProfile` 讀它，但契約/種子/前端全都
+  沒供應 → 全系統沒有夜視感測器。已加進 sensor $def + 四筆種子（依物理：熱像/雷達/聲學為
+  true，日間光學為 false）+ 軍械庫勾選框。
+- **🟡 仍未做**：`aggregate_adjudication_level` 與 `hex_resolution` 只做 loader→dump
+  roundtrip 卻沒有消費端；整個 `drone` $def（10 欄）與 `logistics.transport`（5 欄）
+  後端連一行程式都沒有。
+
+> **`SEED_LOGISTICS` 是唯一沒有 schema 驗證測試的種子集**——正是它能漂移這麼久的原因。
+> 已補上該測試（`test_equipment_field_wiring.py`），並加了行為級測試（補給車要能自走且燒油、
+> 主戰車要是 ARMOR、天線增益要讀得到、夜視要合物理）。四個方向的突變逐一驗過會紅。
+>
+> ⚠ 教訓與「契約/實作漂移閘門」同形狀但**更深一層**：路徑層級的閘門只看端點在不在，
+> 看不到**欄位有沒有消費者**。上面四個都是 schema 綠、roundtrip 綠、測試全綠，模擬結果卻是錯的。
+
+
 
 > **2026-07-31 清倉**：火力鏈三個安全洞、想定/軍械庫資料遺失、`has_observer_on` 三缺陷、
 > 回滾座標不同步、e2e 五條紅燈與死 CSS 全部已修（見該日 commit）。以下是**還沒動**的。

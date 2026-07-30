@@ -162,20 +162,24 @@ SEED_VEHICLES: dict[str, dict[str, Any]] = {
 
 
 # 後勤車輛種子（#85 補給）——category=LOGISTICS。capacity.FUEL＝載運油量（撥交給受補單位）。
+# ⚠ `base_stats` **就是** `$defs.logistics` 物件本身，不要再包一層 `"logistics"` 鍵。
+# 這是全 repo 一致的約定（SEED_WEAPONS→kinetic、SEED_SENSORS→sensor、SEED_VEHICLES→vehicle
+# 都是如此，各有一條 schema 驗證測試釘住）。這裡曾經多包一層，後果是兩個靜默錯誤：
+#   1. `mobility_from_stats` 讀的是頂層 `base_stats["mobility"]` → 補給車被判為徒步、**不燒油**。
+#   2. 軍械庫 UI 寫的是頂層（照契約），與這裡的包法不一致 → 兩邊只有一邊會被讀到。
+# 而 SEED_LOGISTICS 是唯一沒有 schema 驗證測試的種子集，正是它能漂移這麼久的原因。
 SEED_LOGISTICS: dict[str, dict[str, Any]] = {
     "FUEL_TRUCK": {
-        "logistics": {
-            "capacity": {"FUEL": 10000, "AMMO": 5000},  # 約可加滿 5 輛 MBT + 補彈
-            "resupply_rate_per_tick": 400,  # 每分鐘撥交 400（滿油 MBT 約需 5 分鐘）
-            "crew": 2,
-            "mobility": {
-                "can_self_move": True,
-                "mobility_class": "WHEELED",
-                "max_road_speed_kmh": 80,
-                "max_cross_country_speed_kmh": 30,
-                "fuel_capacity": 300,  # 自身油箱（載運油料另計）
-                "fuel_burn_per_km": 0.5,
-            },
-        }
+        "capacity": {"FUEL": 10000, "AMMO": 5000},  # 約可加滿 5 輛 MBT + 補彈
+        "resupply_rate_per_tick": 400,  # 每分鐘撥交 400（滿油 MBT 約需 5 分鐘）
+        "crew": 2,
+        "mobility": {
+            "can_self_move": True,
+            "mobility_class": "WHEELED",
+            "max_road_speed_kmh": 80,
+            "max_cross_country_speed_kmh": 30,
+            "fuel_capacity": 300,  # 自身油箱（載運油料另計）
+            "fuel_burn_per_km": 0.5,
+        },
     },
 }

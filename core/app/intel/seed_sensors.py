@@ -12,20 +12,24 @@ SEED_SENSORS: dict[str, dict[str, Any]] = {
         "sensor_kind": "OPTICAL",
         "max_range_m": 4000,
         "detect_curve": [[500, 0.95], [2000, 0.75], [4000, 0.40]],
+        "night_capable": False,  # 顧名思義：入夜就吃 WP-C4 的晝夜懲罰
     },
     "IR_THERMAL": {  # 熱像
         "sensor_kind": "IR",
         "max_range_m": 3000,
         "detect_curve": [[500, 0.90], [1500, 0.70], [3000, 0.45]],
+        "night_capable": True,  # 熱像看的是溫差，不是可見光
     },
     "GROUND_RADAR": {  # 對地雷達
         "sensor_kind": "RADAR",
         "max_range_m": 8000,
         "detect_curve": [[1000, 0.85], [4000, 0.65], [8000, 0.35]],
+        "night_capable": True,  # 電波不分晝夜
     },
     "ACOUSTIC_ARRAY": {  # 聲學陣列（不需 LOS）
         "sensor_kind": "ACOUSTIC",
         "max_range_m": 1500,
         "detect_curve": [[300, 0.70], [800, 0.45], [1500, 0.20]],
+        "night_capable": True,  # 聽聲音不用光
     },
 }

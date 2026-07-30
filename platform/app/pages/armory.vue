@@ -99,6 +99,9 @@ const identifyRange = ref(2500)
 const fovDeg = ref(60)
 const scanPeriod = ref(1)
 const sensorPassive = ref(true)
+// WP-C4 夜視：true → 晝夜係數不罰。掛在**感測器**上而非單位上——
+// 一個連只要配一支夜視鏡就整連免罰是不對的。
+const sensorNightCapable = ref(false)
 const minRcs = ref(1)
 // COMMS 專屬
 const commsBand = ref('VHF')
@@ -196,6 +199,7 @@ function resetForm() {
   fovDeg.value = 60
   scanPeriod.value = 1
   sensorPassive.value = true
+  sensorNightCapable.value = false
   minRcs.value = 1
   commsBand.value = 'VHF'
   txPower.value = 37
@@ -295,6 +299,7 @@ function populateForm(bs: Record<string, unknown>): void {
     fovDeg.value = Number(bs.fov_deg ?? 60)
     scanPeriod.value = Number(bs.scan_period_ticks ?? 1)
     sensorPassive.value = bs.passive !== false
+    sensorNightCapable.value = bs.night_capable === true
     minRcs.value = Number(bs.min_target_rcs_m2 ?? 1)
   } else if (category.value === 'COMMS') {
     commsBand.value = String(bs.band ?? 'VHF')
@@ -438,6 +443,7 @@ function formToBaseStats(): Record<string, unknown> {
       fov_deg: fovDeg.value,
       scan_period_ticks: scanPeriod.value,
       passive: sensorPassive.value,
+      night_capable: sensorNightCapable.value,
       min_target_rcs_m2: minRcs.value,
     }
   }
@@ -809,6 +815,7 @@ async function doDeleteTemplate() {
             <label>掃描週期 (tick) <input v-model.number="scanPeriod" type="number" min="0"></label>
             <label>最小可測 RCS (m²) <input v-model.number="minRcs" type="number" step="0.1"></label>
             <label class="chk"><input v-model="sensorPassive" type="checkbox"> 被動（不發射）</label>
+            <label class="chk" title="熱像/雷達/聲學不靠可見光，入夜不減效；日間光學會吃夜間懲罰"><input v-model="sensorNightCapable" type="checkbox" data-testid="armory-sensor-night"> 夜視能力</label>
           </div>
           <div class="sub">偵測機率曲線（依距離：range_max_m → p_detect 0–1）</div>
           <div v-for="(d, i) in detectCurve" :key="`dc${i}`" class="pair">

@@ -45,10 +45,23 @@ def _profile_from_stats(stats: dict) -> CommsProfile:  # type: ignore[type-arg]
         v = stats.get(key)
         return float(v) if isinstance(v, (int, float)) else default
 
+    def gain(default: float) -> float:
+        """天線增益：**契約寫 `antenna_gain_dbi`**（dBi 才是天線增益的正確單位）。
+
+        這裡過去只讀 `antenna_gain_db`——差一個 `i`，而軍械庫 UI 是照契約寫
+        `antenna_gain_dbi` 的（`armory.vue`）。結果是**經 UI 建立的每一組通信裝備，
+        天線增益都被靜默忽略、永遠吃預設值**。契約名優先，舊名保留為退路。
+        """
+        for key in ("antenna_gain_dbi", "antenna_gain_db"):
+            v = stats.get(key)
+            if isinstance(v, (int, float)):
+                return float(v)
+        return default
+
     d = CommsProfile()
     return CommsProfile(
         tx_power_dbm=f("tx_power_dbm", d.tx_power_dbm),
-        antenna_gain_db=f("antenna_gain_db", d.antenna_gain_db),
+        antenna_gain_db=gain(d.antenna_gain_db),
         freq_mhz=f("freq_mhz", d.freq_mhz),
         rx_sensitivity_dbm=f("rx_sensitivity_dbm", d.rx_sensitivity_dbm),
     )

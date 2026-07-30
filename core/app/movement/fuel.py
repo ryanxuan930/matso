@@ -202,9 +202,12 @@ def load_supply_cargo(db: Session, unit_id: str, supply_class: str = "FUEL") -> 
     out: list[tuple[EquipmentInstance, float]] = []
     rate = 0.0
     for inst, base_stats in rows:
-        log = base_stats.get("logistics") if isinstance(base_stats, dict) else None
-        if not isinstance(log, dict):
+        if not isinstance(base_stats, dict):
             continue
+        # `base_stats` **就是** `$defs.logistics` 物件（軍械庫 UI 與契約都是這個形狀）。
+        # 舊種子曾多包一層 `"logistics"`，故保留一條退路讓手寫/既存資料仍讀得到。
+        nested = base_stats.get("logistics")
+        log = nested if isinstance(nested, dict) else base_stats
         cap_block = log.get("capacity")
         cap = _num(cap_block.get(supply_class)) if isinstance(cap_block, dict) else 0.0
         if cap <= 0:

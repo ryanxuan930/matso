@@ -90,6 +90,7 @@ export function useCopUnits(opts: {
       .map((u) => ({
         id: u.id,
         faction: (u.faction as OwnUnit['faction']) ?? 'BLUE',
+        designation: u.designation, // APP-6A Field T——地圖符號的番號
         ...live.livePos(u),
         // WP-C5：通聯狀態與「最後回報 tick」都取活值——寫死的 lastReportedTick 讓地圖上的
         // 「OFFLINE +Nt」一直是拿假數字算的（見 liveStaleTick / currentTick）。
