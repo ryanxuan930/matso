@@ -207,6 +207,85 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 
 ## Backlog / 發現的問題
 
+### 🔬 累積未竟事項系統性盤點（2026-07-30，30-agent 六路掃描 + 逐項敵意查證）
+
+六個角度平行掃描（沒接線／靜默忽略／迷霧紅線／決定性／前端債／規格落差），
+每一項再由獨立 agent 設法推翻。**24 項通過查證**（掃描提示已排除當日已修項目）。
+⚠ 這一批不是猜測——多數附有實測重現路徑。
+
+- 🔴 **[CRITICAL] platform_count / personnel_current 全系統沒有任何寫入端 → 每個單位都是「單體」，一次命中扣掉全編制戰力**
+  - 形狀：有值卻被靜默忽略（引擎讀的欄位沒有寫入端）
+  - 影響：任何從想定載入（或 COP 建立）的單位，熱狀態 `platform_count` 恆為 1 → `cp_per_platform = authorized_strength / 1 = 100`。以出貨種子 RIFLE_556（`pk_by_armor_class.INFANTRY = 0.70`，seed_weapons.py:22）為例：一發步槍命中滿編步兵連（authorized 100）扣 `0.70 × 100 = 70` 戰力，兩發即全連覆滅；走齊射路徑（班內 7 支步槍 × rate_per_tic
+- 🔴 **[CRITICAL] GET /aar/replay/states 把**全陣營單位名冊與即時座標**發給任一參與者（事件有霧化、名冊沒有）**
+  - 形狀：有值卻被靜默忽略（半套閘門）
+  - 影響：演習進行中，任何一個作戰方指揮官打一支 GET 就拿到敵方完整 ORBAT（unit id／番號／陣營／編制層級／滿編戰力／是否固定）與每個敵軍單位的**即時經緯度**。偵測、fidelity 分級、位置凍結、敵情粗化整條鏈路在這一個端點旁邊被繞過；且因為事件霧化把敵方移動事件濾掉，反而保證了 fallback 一定走「回傳 DB 現值」這條路——霧化做得越對，這裡漏得越準。
+- 🔴 **[CRITICAL] POST /movement/preview 不檢查目標單位陣營 —— 任一參與者可查任一單位的即時座標／機動能力／剩餘油料**
+  - 形狀：「做好了但沒接線」（fog 只套在障礙物上，沒套在單位上）
+  - 影響：配上前一條（`/aar/replay/states` 給出全部敵方 unit id），任一玩家可以寫一個每 5 秒輪詢的腳本，得到敵軍**逐單位即時位置追蹤器**，外加對方是徒步/輪型/履帶、有效速度、剩餘油量能走多遠、以及某條路線對他們可不可行。整個偵測與情報系統對這個玩家形同不存在。
+- 🟠 **[HIGH] 天氣完全不影響機動：`UnitMovementSystem(weather_mobility=)` 全 repo 零呼叫端**
+  - 形狀：做好了但沒接線
+  - 影響：暴雨/積雪/泥濘的 `mobility_modifier`（weather 插件實際會算出 <1.0）永遠被丟棄。同一支機械化部隊在颱風天與晴天以完全相同的 km/tick 前進；想定作者調天氣腳本對行軍時程零影響，而測試全綠（沒有任何測試傳過這個參數）。附帶結構問題：它是**建構期純量**而非 `weather_for` 回呼，就算補傳也只會凍結在 runner 啟動那一刻的天氣，與 WP-C4b 的逐 tick 刷新紀律不一致。
+- 🟠 **[HIGH] 通信鏈路預算永遠只算距離：地形遮蔽 / 天氣 RF 衰減 / 干擾三個參數從無呼叫端傳入**
+  - 形狀：做好了但沒接線
+  - 影響：稜線後方、山谷裡、暴雨中的單位與平地晴天完全同一條鏈路餘裕——`comms_state` 只是距離的函數。25 dB 的 NLOS 懲罰是整個通信模型裡最大的一項，永遠不生效。連帶讓所有下游後果失真：指令延遲/拒收（`comms/consequences.order_admissible`）、位置回報凍結（WP-C5 STATE_DIFF 投影）、敵情粗化（`faction_link_state`）——這些機制本身都接好了，只是餵給它們的鏈路狀態是錯的。這是**會產生錯誤模擬結果而測試全綠**的那一類：`core/
+- 🟠 **[HIGH] `SESSION_CONCLUDED` 只寫 Ledger、從不進 WS stream → 前端勝負橫幅永遠不出現**
+  - 形狀：做好了但沒接線
+  - 影響：O11.5/O11.7 的自動收場：勝負一旦底定，runner 停、Redis 收場旗標設好、Ledger 有事件（AAR 讀得到），但**畫面上什麼都不會發生**——玩家看到的是模擬突然靜止、tick 不再前進，沒有任何勝負提示。要知道結果只能離開 COP 去看 AAR。`broadcaster.py:94` 那個 `winners` allowlist 是死程式碼（永遠沒有 SESSION_CONCLUDED 走到 `build_event_envelope`）。
+- 🟠 **[HIGH] 想定的 tick_rate_ms / hex_resolution 載得進、dump 得出，卻從未持久化到 WargameSession，執行期一律用寫死的 60000ms**
+  - 形狀：有值卻被靜默忽略（載入→dump roundtrip 綠，但沒有持久化路徑）
+  - 影響：想定作者宣告 `tick_rate_ms: 1000`（1 秒/tick，即 schema 預設值）開局，實際跑 60000（1 分/tick）——模擬時間尺度差 60 倍，而 MSEL/勝負的 `time` 觸發用的是 `at_tick`（`core/app/scenario/triggers.py:64` `ctx.tick >= int(cond[\"at_tick\"])`，與 tick_rate 無關）。於是以 1 秒/tick 換算寫出來的「D+2 增援於 tick 2880 進場」實際會在模擬世界的
+- 🟠 **[HIGH] MSEL SPAWN_UNITS 的 put_unit 與正規 seed_combat_state 鍵集不一致：增援的 armor_class 退回硬編 INFANTRY，且沒有 ammo/footprint_m**
+  - 形狀：有值卻被靜默忽略（同一份熱狀態有兩條寫入路徑，其中一條沒跟上修正）
+  - 影響：(1) MSEL 生成的裝甲增援（配 MBT）在熱狀態被記為 `armor_class=INFANTRY`，被步槍以 pk=0.70 打死——armor.py 已修好、卻在第二條路徑復發。(2) 單一武器的增援：`core/app/adjudication/adjudicator.py:231` `ammo_count=int(shooter_state.get(\"ammo\", 0))` 取到 0 → `engagement.py:291-292` 回 `NO_AMMO` REJECTED，但 precheck
+- 🟠 **[HIGH] 「是不是工兵」在 repo 裡有兩個互不相通的鍵：ORBAT 寫 branch=ENGINEER，precheck/引擎讀 attributes.unit_kind**
+  - 形狀：名實不符（同一概念的寫入端與讀取端用了不同鍵名）
+  - 影響：想定用 ORBAT 唯一能表達工兵的方式（`branch: ENGINEER`）編一個工兵連，下 ENGINEER 令（BREACH/EMPLACE）一律被 precheck 以 `engineer_qualified` 失敗 REJECTED——WP-C2 整套障礙/工兵子系統對任何從想定載入的局都不可用。自動路徑更明顯：`decomposer.py:272` 用讀取端 A（branch）挑到工兵單位並產生 EMPLACE 子令，子令送進 OrderService 後被讀取端 B（attributes.unit_
+- 🟠 **[HIGH] STATE_DIFF 每陣營投影對「SensorResolver 不認得的單位」fail-open —— MSEL 增援單位的即時位置廣播給所有陣營**
+  - 形狀：fail-open 預設（空字串被當成「沒有陣營」而放行）
+  - 影響：想定用 MSEL 腳本投入增援（WP-B2 的主要用途，例如 D+2 的紅軍第二梯隊）時，那批單位從落地的第一個 tick 起，就把 lat/lng/strength 每 tick 推播給**每一個**連線的作戰方 client；它們打出去的每一筆交戰事件也是全域廣播。玩家看不到本來的敵軍，卻看得到增援——而且看得最清楚。若某陣營是「只以增援方式登場」，它連 `observers`／`visible_for` 表都不在（sim_runtime.py:673-674 同樣取自開局時的 `sensor_resolver
+- 🟠 **[HIGH] 移動子系統的 MOVE 令 drain 沒有 ORDER BY——RNG stream \"movement\" 的抽樣順序隨 DB 掃描順序漂**
+  - 形狀：other（紅線 1：決定性；同時是「隱含契約沒被寫下來」——全 repo 其他 drain 都排序，只有這一條漏）
+  - 影響：同一 tick 內有 ≥2 個單位觸發 movement stream 抽樣（例：兩支部隊同時踩進雷區，或同一 tick 兩道 MOVE 被 admit 而路徑都穿越障礙）時，誰先抽到哪個亂數由 MariaDB 的掃描順序決定。具體：A 連與 B 連同 tick 進入同一片雷區，第一次 rng.random() 若 <p 則觸雷者停止移動並扣戰力，另一個毫髮無傷——誰被炸完全取決於 DB 回傳順序。以相同 master_seed + 相同想定重開一局（Order.id 是新的 uuid4）→ 觸雷的換成另一支部隊
+- 🟠 **[HIGH] rollback 只回捲熱狀態／Order／TacticalUnit 四欄——EquipmentInstance（油料/彈藥/載運量）、MapFeature（破障/補給點存量/摧毀）、FirePlanTarget 全部留在被棄世代**
+  - 形狀：other（checkpoint/rollback 漏存＝回滾後行為改變）
+  - 影響：白軍把局回滾到 tick T：單位位置/戰力/令狀態都回到 T，但一個裝甲營在 T+400 tick 已把油燒乾——DB 的 EquipmentInstance.currentState.fuel 仍是 0，於是回滾後第一個 tick 就 `load_unit_fuel(...).remaining <= 0` → 立刻發 MOVE_HALTED_FUEL、令直接 COMPLETED，那個營在「油箱是滿的」的時間點動彈不得。同理：T+N 被工兵破掉的雷區回滾後仍 `breached=True`（部隊照樣穿過去）、T
+- 🟡 **[MEDIUM] comms gRPC 插件建置並部署，但 core 從不呼叫；`Settings` 連 `comms_grpc_target` 都沒有**
+  - 形狀：做好了但沒接線
+  - 影響：`modules/comms/` 這個服務每次 compose up 都被建置、佔一個容器與埠，但沒有任何流量。文件（README/模組 docstring）宣稱的分工「comms 模組算物理鏈路狀態」是假的——真正在算的是 core 內的 `comms/link_budget.py`。兩份實作會漂移，而只有其中一份被跑。`app.comms.consequences.CommsState` 這個類別（`consequences.py:53`）同樣只服務於死的 CommsClient，全 repo 沒有生產建構點。
+- 🟡 **[MEDIUM] `Settings.ai_adapter_quantized` 無任何讀取端 → 護欄 G6 無法由環境變數啟用**
+  - 形狀：有值卻被靜默忽略
+  - 影響：`gateway.py:264-272 _g6_quantized` 永遠走第一行 `if not self._profile.adapter_quantized: return GuardrailFinding(\"G6\", False, \"非量化部署，不加嚴\")`。部署量化模型時，運維設 env 以為已開啟「ENGAGE 令改白軍逐條確認」，實際上完全沒開——唯一能開啟的方式是改容器映像裡的 yaml。這條在紅線 3（護欄不可加 bypass）的鄰域：不是加了 bypass，而是加嚴開關接不上。
+- 🟡 **[MEDIUM] AI 令橋接仍不支援 FIRE_MISSION / POSTURE / FORMATION / ENGINEER，理由註解已過時**
+  - 形狀：做好了但沒接線
+  - 影響：AI 陣營**沒有砲兵**：面目標射擊/攻擊準備射擊這整條鏈（AreaFireAdjudicator、散布、觀測、BDA、發煙）在人類玩家手上是活的，AI 一發都叫不出來，AI vs AI 的推演火力型態因此系統性偏移。同理 AI 永遠不會掘壕（POSTURE）、不會下車/變隊形（FORMATION）、不會破障設障（ENGINEER）——即使模型輸出了這些令，`is_feasible`（`:180-181`）會回「指令無法轉為可執行令」把它當幻想令剔除，日誌上看起來像模型不會用，實際是橋沒接。
+- 🟡 **[MEDIUM] pre_tick 產出的事件全部繞過 `broadcaster.publish_events`，永不進 COP 即時戰況 feed**
+  - 形狀：做好了但沒接線
+  - 影響：補給到貨、整補進度/受阻、工兵開始破障/作業中止、砲兵陣地變換、護欄攔截——**九種事件在戰況 feed 上完全不存在**。AAR 事後看得到（讀 DB Ledger），即時指揮卻看不到，於是「我的工兵有沒有在做事」「補給到了沒」在 COP 上無從得知。`_FEED_EXCLUDE`（`state/broadcaster.py:31`）只排除 UNIT_MOVED/TICK_OVERRUN，設計意圖顯然是「其餘皆推」，實際被排除的遠不止這兩種。
+- 🟡 **[MEDIUM] 席位權限表 `SEAT_ORDER_TYPES` 未隨新令型更新：後勤官不能下補給令，作戰官只能下 MOVE**
+  - 形狀：隱含契約沒有被寫下來
+  - 影響：這張表的隱含契約是「新增 OrderType 必須同步更新它」，但沒寫下來也沒有測試釘住——結果每加一個令型，它就自動變成 COMMANDER 專屬。實務後果：指派為 S4_LOG（後勤官）的參與者是**完全唯讀**的（空集合＝不能下任何令），連他職掌內唯一的 RESUPPLY 都下不了；S3_OPS（作戰官）不能下 MISSION/POSTURE/FORMATION/ENGINEER——這四個全是作戰官的業務。因為 `seat_role` 為 NULL 時完全放行（`:147` 的 `seat is not No
+- 🟡 **[MEDIUM] `app/movement/` 有一整套死的平行移動子系統（MovementSystem + DbOrderStore + TerrainClientPlanner）**
+  - 形狀：做好了但沒接線
+  - 影響：M3 的驗收測試驗的是一條**生產不走的**移動路徑：它組 `Kernel(movement=MovementSystem(...))`，而真正跑的是 `UnitMovementSystem`。任何在真實移動路徑上的迴歸（地形調速、A* 繞路、油料、壓制/隊形/夜間修正、障礙）這條 DoD 都抓不到，卻掛著「里程碑完成」的名義。兩份移動實作的油料語義也已經漂移（死的那份是 `fuel_per_hex` 每格扣；活的那份是 `movement/fuel.py` 依公里燒）。
+- 🟡 **[MEDIUM] 白軍 ORBAT 編輯的「戰力」只寫 health_status（顯示用衍生量），權威量 current_strength / 熱狀態 strength 完全沒動**
+  - 形狀：有值卻被靜默忽略（寫入端寫到非權威欄位）
+  - 影響：白軍把某單位戰力調成 30%：DB 的 `healthStatus` 變 30、`currentStrength` 仍 100，熱狀態 `strength` 沒被通知（`seed_combat_state` 只在 runner 啟動時補**缺**鍵，不覆蓋既有值）。`GET /units` 回 `health=30, strength=100`（UI 顯示殘破）而引擎仍以滿編效能裁決該單位的射擊與承受；重啟 runner 時 seed 又會用 `current_strength=100` 重算 health 把 3
+- 🟡 **[MEDIUM] ENGAGE 指令的 ammo_type：UI 讓選、precheck 逐項驗證並回「彈種 X 可用」，裁決層從頭到尾不讀它**
+  - 形狀：有值卻被靜默忽略（payload 欄位有寫入端與驗證端，無消費端）
+  - 影響：操作員用 MBT ENGAGE 時選 `AMMO_120_APFSDS`（穿甲）或 `AMMO_120_HEAT`（破甲），precheck 明確回「彈種 AMMO_120_APFSDS 可用（MBT_120）」給人已生效的確認，但兩者對同一目標算出完全相同的命中率與毀傷；選錯彈種打裝甲目標沒有懲罰、選對沒有好處。反過來選一個該武器不支援的彈種會讓整道令被 REJECTED——這個欄位唯一的實際作用是「可能害你的令被拒」。（註：PROGRESS 2026-07-31 WP-C10.3 已就火力計畫實體記過「ammo
+- 🟡 **[MEDIUM] 白軍切視角沒有送到後端：`/state` 永遠以 god view 取回，敵情由前端用全知資料合成**
+  - 形狀：「做好了但沒接線」＋ 過濾掉到前端
+  - 影響：統裁點「以 BLUE 視角觀戰」時看到的是：BLUE 單位的**真實座標**（位置凍結完全沒套用，因為後端以為是 god view）＋ **全部陣營**的 contacts（含紅軍偵察到什麼）被當成 BLUE 的敵情圖畫上去，還因為 god view 的 relations 為空而一律標成 HOSTILE。白軍用來判斷「這一軍到底看得到什麼」的工具給出的是假答案；同時 fog 的最後一段過濾實際發生在前端（紅線 3 的精神）。這條也讓 TASKS #95（G4 白軍控制台）的驗收無法成立。
+- 🟡 **[MEDIUM] AI briefing 渲染器欄位名沒跟著 `unit_type → echelon` 改名 —— 己方/盟軍階層與敵情的 CLASSIFIED 級情報全部沒進 prompt**
+  - 形狀：名實不符的欄位（第五次）＋ 有值卻被靜默忽略
+  - 影響：LLM 指揮官的態勢簡報裡，己方與盟軍的編制層級恆為「?」（兵科根本沒渲染），敵情則只剩座標與 fidelity 標籤：偵察打到 CLASSIFIED／IDENTIFIED 換來的 `echelon`/`branch`（那是砲兵還是裝甲、是連還是營）**一個字都沒送給模型**。等於情報 fidelity 階梯對 AI 只有 DETECTED 一級，AI 無從分辨該打哪個目標；WP-A2 分解器賴以「挑得動工兵」的 branch 也不在 prompt 裡。測試不會紅——渲染出來的字串仍然合法。
+- 🟡 **[MEDIUM] MSEL 注入類帳本事件沒有 initiator/target → 受眾判定回 None（全域），`/aar/export` 把紅軍增援的陣營與 unit id 交給藍軍**
+  - 形狀：fail-open 預設（audience is None ＝ 全部人可見）
+  - 影響：MSEL 腳本的存在與內容本來是白軍專屬（`/Users/ryanchang/Codes/matso/core/app/api/msel.py:35` 明訂「MSEL 腳本限白軍/統裁存取：任何一方看得到就等於知道接下來會發生什麼」），但同一份資訊從 AAR 這條路漏出去：藍軍在演習中就知道紅軍第幾 tick 有增援、有幾個單位、它們的 id 是什麼——再把那些 id 餵給 `/movement/preview`（見上）就得到座標。
+- 🟡 **[MEDIUM] _load_obstacles 的 MapFeature 查詢沒有 ORDER BY——觸雷擲骰順序與強穿耗損的並列順序隨 DB 漂**
+  - 形狀：other（紅線 1：決定性排序）
+  - 影響：一支部隊同一 tick 站在兩片重疊雷區裡：兩片密度不同（p 不同），先擲哪一片決定是否觸雷、以及後續整條 movement stream 的位移。強穿路徑：一條路徑在同一線段上同時穿過一棟建築與一道障礙時，先抽 BUILDING(0.06–0.16) 還是先抽 OBSTACLE(0.03–0.10) 會給出不同的戰力損失，且因為 `remaining -= loss` 是遞減複利，總損失也不同。重開同一想定（新 MapFeature uuid）→ 結果不同。
+
 ### ✅ 契約/實作欄位漂移掃描（2026-07-30）——**四個靜默錯誤已修**
 掃了 `weaponeering.schema.json`（全 $defs）、`scenario.schema.json`、`seed_weapons.py`
 共 **99 個欄位名**，逐一 grep `core/ ai/ platform/app/ modules/ db/ scenarios/` 並讀程式確認。
