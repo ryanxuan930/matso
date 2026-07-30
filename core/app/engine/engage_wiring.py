@@ -30,6 +30,7 @@ from app.adjudication.formation import (
     direct_fire_target_modifier,
     shooter_frontage_modifier,
 )
+from app.adjudication.obscurants import SmokeCloud, blocks_los
 from app.adjudication.suppression import Posture, fire_modifier, posture_modifier
 from app.adjudication.weapon import WeaponProfile
 from app.engine.formation_wiring import read_formation
@@ -330,7 +331,11 @@ def _posture_of(state: dict[str, Any]) -> Posture:
 
 
 def make_engage_env(  # type: ignore[no-untyped-def]
-    hot: HotStateStore, gateway: object | None = None, weather: WeatherState | None = None
+    hot: HotStateStore,
+    gateway: object | None = None,
+    weather: WeatherState | None = None,
+    smoke_for: Callable[[], list[SmokeCloud]] | None = None,
+    tick_for: Callable[[], int] | None = None,
 ):
     """回傳 env_for(shooter, target, indirect_fire) → EnvSnapshot（射程+地形LOS+天氣，Phase3）。
 
@@ -341,6 +346,9 @@ def make_engage_env(  # type: ignore[no-untyped-def]
       無天氣或查無 cell → CLEAR（1.0）。給定座標/快照具決定性 → replay 安全。
     - terrain_cover_modifier（STEP3）：由視線最小餘隙導出——掠地射擊＝目標半遮蔽 → 命中降低（直瞄）；
       間瞄不受地形遮蔽。無 gateway/餘隙 → 1.0。
+    - **煙幕（WP-C4c）**：地形 LOS **之後**再疊——煙擋得住的視線，地形通不通都不重要。
+      間瞄不受影響（它本來就不靠視線）。無煙 → 回呼為 None 或回空 list → 一次幾何都不做。
+      ⚠ 煙是**雙面的**：放煙的一方同樣看不穿自己的煙（`blocks_los` 不看陣營）。
     - shooter_suppression_modifier / target_posture_modifier（WP-C1）：由熱狀態的
       `suppression` 與 `posture` 導出。**兩者從交戰真實化時代就恆為 1.0**——掛點早就留好，
       系統一直缺席。無壓制、MOVING 姿態 → 剛好 1.0，既有局位元不變。
@@ -358,6 +366,14 @@ def make_engage_env(  # type: ignore[no-untyped-def]
             return EnvSnapshot(range_m=float("inf"), los_clear=True)
         los_clear = True
         cover_mod = 1.0
+        if smoke_for is not None and not indirect_fire:
+            clouds = smoke_for()
+            if clouds and blocks_los(
+                (s_lat, s_lng), (t_lat, t_lng), clouds, tick_for() if tick_for else 0
+            ):
+                # 煙是**遮蔽**不是模糊：直接判無視線，不做係數折減
+                # （見 `adjudication/obscurants.py` 的模組說明）。
+                return EnvSnapshot(range_m=range_m, los_clear=False)
         if gateway is not None:
             try:
                 outcome = gateway.has_los(  # type: ignore[attr-defined]

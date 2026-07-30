@@ -181,10 +181,14 @@ def point_in_ring(pt: tuple[float, float], ring: Sequence[tuple[float, float]]) 
     return inside
 
 
-def _dist_point_to_segment_m(
+def dist_point_to_segment_m(
     p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
 ) -> float:
-    """點到線段最短距離（公尺，平面近似 + cos-lat 修正）。"""
+    """點到線段最短距離（公尺，平面近似 + cos-lat 修正）。座標序為 **(lng, lat)**。
+
+    公開的原因：WP-C4c 的煙幕遮蔽判定就是「煙心到視線線段的距離 <= 半徑」，
+    與這裡同一份幾何。**不另寫一份**——兩份幾何必然漂移。
+    """
     lat0 = math.radians((a[1] + b[1]) / 2)
     kx = math.cos(lat0) * math.pi / 180 * _EARTH_R_M  # 每經度公尺
     ky = math.pi / 180 * _EARTH_R_M  # 每緯度公尺
@@ -214,7 +218,7 @@ def _segment_hits_obstacle(s0: tuple[float, float], s1: tuple[float, float], obs
             for i in range(len(obs.coords) - 1)
         )
     if obs.geometry_type == "POINT" and obs.radius_m > 0.0:
-        return _dist_point_to_segment_m(obs.coords[0], s0, s1) <= obs.radius_m
+        return dist_point_to_segment_m(obs.coords[0], s0, s1) <= obs.radius_m
     return False
 
 

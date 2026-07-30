@@ -47,6 +47,7 @@ from app.engine.movement import UnitMovementSystem
 from app.engine.obstacle_wiring import drain_engineer_orders
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
+from app.engine.smoke_wiring import SmokeCache
 from app.engine.subsystems import ChainedOrderSource, DispatchingAdjudicator
 from app.engine.suppression_wiring import (
     apply_hit_suppression,
@@ -425,6 +426,9 @@ class SimManager:
             # 底下每個消費端都整段跳過，既有局位元不變。
             _session_row = await asyncio.to_thread(engage_db.get, WargameSession, session_id)
             light_clock = LightClock(read_day_night(_session_row), start_minute(_session_row))
+            # WP-C4c 煙幕：逐 tick 一次 query 的快取（沒有煙 → 空 list → 一次幾何都不做）。
+            # **另開 DB session**：不可借用 engage_db，那條在 tick 之中被 order source commit。
+            smoke_cache = SmokeCache(self._factory, session_id)
             if resumed.start_tick:
                 _LOG.info("session %s 自 tick=%d 續跑", session_id, resumed.start_tick)
             sim_clock = SimClock(  # #93 可調節奏
@@ -447,7 +451,14 @@ class SimManager:
                             hot,
                             rngs["adjudication"],
                             resolver.weapon_for,
-                            make_engage_env(hot, _engage_gateway(), _weather_snapshot()),
+                            make_engage_env(
+                                hot,
+                                _engage_gateway(),
+                                _weather_snapshot(),
+                                # WP-C4c：回呼而非值——`env_for` 在建構時就固定了。
+                                smoke_for=lambda: smoke_cache.at(sim_clock.now().tick),
+                                tick_for=lambda: sim_clock.now().tick,
+                            ),
                             quantity_for=resolver.quantity_for,  # #30 squad 齊射
                             # SPEC_EXTEND P2 聯合兵種：≥2 武器系統 → 武器組合加總（帶活彈藥）。
                             combined_weapons_for=make_combined_weapons_for(resolver, hot),
@@ -473,6 +484,7 @@ class SimManager:
                             bda_rng=rngs["bda"],
                             # WP-C9：友軍傷亡的判準（含盟軍），不是字串相等。
                             relations=relations,
+                            session_id=session_id,  # WP-C4c 發煙任務要把煙落庫
                         ),
                     }
                 ),
@@ -518,6 +530,8 @@ class SimManager:
                             if light_clock.declared
                             else None
                         ),
+                        smoke_for=lambda: smoke_cache.at(sim_clock.now().tick),
+                        tick_for=lambda: sim_clock.now().tick,
                     ),
                     relations=relations,  # #98 盟軍不互相成為 contact
                     interval_ticks=sim_params.sensor_interval_ticks,  # #93 可調掃描頻率

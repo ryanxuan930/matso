@@ -77,6 +77,9 @@ class FireMissionPayload(BaseModel):
     target_lng: float = Field(ge=-180.0, le=180.0)
     rounds: int = Field(default=1, ge=1, le=200)
     weapon_id: str | None = None
+    # WP-C4c 發煙任務：`ammo_type="SMOKE"` → 落點生成煙幕而**不產生傷亡**。
+    # 省略/其他值＝一般殺傷射擊（既有行為）。
+    ammo_type: str | None = None
     # 與 EngagePayload 同名同義：本局要求火協時，須掛已核准的 FIRE_SUPPORT 申請單。
     fire_request_id: str | None = None
 

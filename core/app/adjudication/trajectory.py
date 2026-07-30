@@ -20,7 +20,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from app.movement.attrition import (
-    _dist_point_to_segment_m,
+    dist_point_to_segment_m,
     point_in_ring,
     route_distance_m,
     segments_intersect,
@@ -90,7 +90,7 @@ def _crossing_frac(
     if (
         obs.geometry_type == "POINT"
         and obs.radius_m > 0.0
-        and _dist_point_to_segment_m(obs.coords[0], s, t) <= obs.radius_m
+        and dist_point_to_segment_m(obs.coords[0], s, t) <= obs.radius_m
     ):
         return _project_frac(s, t, obs.coords[0])
     return None

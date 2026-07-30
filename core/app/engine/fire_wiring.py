@@ -105,6 +105,8 @@ class FireMissionCommand:
     rounds: int = 1
     # 下令時指名的武器（payload.weapon_id＝EquipmentInstance.id）；None＝取射程最遠的曲射武器。
     weapon_template_id: str | None = None
+    # WP-C4c："SMOKE" → 發煙任務（生成煙幕、不產生傷亡）。
+    ammo_type: str | None = None
 
 
 class FireMissionOrderSource:
@@ -166,6 +168,7 @@ class FireMissionOrderSource:
                     target_lng=lng,
                     rounds=max(1, rounds),
                     weapon_template_id=str(wid) if wid else None,
+                    ammo_type=(str(payload.get("ammo_type")) if payload.get("ammo_type") else None),
                 )
             )
         self._db.commit()
@@ -189,6 +192,7 @@ class AreaFireAdjudicator:
         gateway: object | None = None,
         bda_rng: DeterministicRNG | None = None,
         relations: FactionRelations | None = None,
+        session_id: str = "",
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -201,6 +205,8 @@ class AreaFireAdjudicator:
         # 「這次有沒有前觀」會決定抽樣次數，於是前觀死不死會改變後續每一發的落點。
         # None → 不發 BDA（既有測試/呼叫端零行為變更）。
         self._bda_rng = bda_rng
+        # WP-C4c 發煙任務要把煙落庫，而煙是 session 範圍的實體。
+        self._session_id = session_id
         # WP-C9：判「誰是友軍」的唯一判準。None → 退回字串相等（既有行為不變），
         # 但那對聯軍是錯的——盟軍傷亡會被算成正常戰果。正式路徑一定要注入。
         self._relations = relations
@@ -228,6 +234,10 @@ class AreaFireAdjudicator:
             return self._reject(order, now, "NO_AMMO", "彈藥不足，無法執行火力任務")
 
         shooter_faction = self._faction_for(order.shooter_id) if self._faction_for else None
+        # WP-C4c 發煙任務：生成煙幕、**不產生任何傷亡**。分流放在扣彈之後——
+        # 發煙一樣要消耗彈藥（那是它的成本），但不走殺傷裁決。
+        if (order.ammo_type or "").upper() == "SMOKE":
+            return self._emplace_smoke(order, aim, fired, shooter_faction, now)
         # 目標清單同時是**觀測者候選池**——落點附近有座標的單位本來就要蒐集一次，
         # 沒必要為了找前觀再查一次 DB（而且熱狀態的戰力才看得出誰還活著）。
         targets = self._gather_targets()
@@ -308,6 +318,42 @@ class AreaFireAdjudicator:
                 },
             )
             for victim in friendly
+        ]
+
+    def _emplace_smoke(
+        self, order: Any, aim: tuple[float, float], fired: int, faction: str | None, now: SimTime
+    ) -> list[LedgerEvent]:
+        """發煙任務（WP-C4c）：落點生成煙幕。
+
+        **不抽落點散布**：煙幕的戰術意義是「這一片看不見」，一團 150 m 的煙本來就涵蓋
+        CEP 等級的誤差；為它抽 Rayleigh 只會多動一次 RNG（擾動後續所有隨機序列）
+        卻不改變任何可觀測結果。
+        """
+        from app.engine.smoke_wiring import emplace_smoke
+
+        cloud = emplace_smoke(
+            self._db,
+            self._session_id,
+            lat=aim[0],
+            lng=aim[1],
+            tick=now.tick,
+            rounds=fired,
+            owner_faction=faction or "",
+        )
+        self._complete(order.order_id, now.tick)
+        return [
+            LedgerEvent(
+                event_type="SMOKE_EMPLACED",
+                tick=now.tick,
+                initiator_id=order.shooter_id,
+                ai_decision={
+                    "aim_lat": aim[0],
+                    "aim_lng": aim[1],
+                    "radius_m": cloud.radius_m,
+                    "expires_at_tick": cloud.expires_at_tick,
+                    "rounds": fired,
+                },
+            )
         ]
 
     def _friendly_test(self, shooter_faction: str | None) -> Callable[[str], bool] | None:

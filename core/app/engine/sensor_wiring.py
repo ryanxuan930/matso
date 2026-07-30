@@ -27,6 +27,7 @@ from app.adjudication.daylight import (
     concealment_modifier,
     optical_range_modifier,
 )
+from app.adjudication.obscurants import SmokeCloud, blocks_los
 from app.intel.seed_sensors import SEED_SENSORS
 from app.intel.sensor import DetectionEnv, SensorProfile
 from app.intel.sweep import SensorUnit, TargetUnit
@@ -95,6 +96,8 @@ def make_detect_env(
     gateway: object | None = None,
     weather: WeatherState | None = None,
     light_for: Callable[[], LightLevel] | None = None,
+    smoke_for: Callable[[], list[SmokeCloud]] | None = None,
+    tick_for: Callable[[], int] | None = None,
 ) -> Callable[[SensorUnit, TargetUnit], DetectionEnv]:
     """回傳 env_for(observer, target) → DetectionEnv（地形 LOS + 天氣），比照 `make_engage_env`。
 
@@ -104,6 +107,8 @@ def make_detect_env(
       紅外看熱對比、雷達/聲學 v0 不受影響）；無天氣快照 → 1.0（晴天）。
     - `light_for`（WP-C4a）：**每次呼叫現讀當前光照**——sweep 跨 tick 重用同一個 env_for，
       快取一個等級會讓整局停在建立時的那一刻。無宣告 → None → 全部 1.0（既有局位元不變）。
+    - **煙幕（WP-C4c）**：地形 LOS 之後再疊，且**只對需要視線的感測器**生效
+      （雷達/聲學/SIGINT 穿得過煙——把它們也擋掉等於把煙幕當成電磁屏障）。
     - 座標與快照給定即確定性 → replay 安全。
     """
     w_res = _weather_res(weather) if weather is not None else 8
@@ -126,6 +131,15 @@ def make_detect_env(
                 weather_mod = detection_weather_modifier(effects, observer.sensor.sensor_kind)
             except Exception:
                 weather_mod = 1.0
+        if los_clear and smoke_for is not None and observer.sensor.needs_los:
+            clouds = smoke_for()
+            if clouds and blocks_los(
+                (observer.lat, observer.lng),
+                (target.lat, target.lng),
+                clouds,
+                tick_for() if tick_for else 0,
+            ):
+                los_clear = False
         light_mod = 1.0
         conceal_mod = 1.0
         if light_for is not None:
