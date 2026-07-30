@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models.enums import SessionMode
+from app.models.enums import SessionMode, UnitLevel
 from app.models.tables import WargameSession
 
 # **刻意不複製**的欄位，每個都要有理由。加新欄位到這裡前先想清楚。
@@ -24,12 +26,14 @@ _INTENTIONALLY_NOT_COPIED = {
     "id",  # 新局要新 id
     "name",  # 由請求指定（或加「（副本）」）
     "master_seed",  # **必須換**——同 seed 等於重跑同一局，不是新的一局
-    "created_at",
     "archived_at",  # 副本是活的
     "exercise_id",  # 演習歸屬由使用者重新決定（B1）
     "session_role",  # 同上
-    "params_sealed",  # 簽證不隨副本走（B4：簽證是對「那一局」的）
-    "current_tick",  # 副本從頭開始
+    "start_time",  # 副本是新的一局，時間戳由 DB 預設
+    "end_time",  # 同上；來源局收場了不代表副本收場了
+    # ⚠ 這裡曾經列了 `created_at` / `current_tick` / `params_sealed` 三個**不存在的欄位名**。
+    # 豁免表寫錯字不會有人發現——那一欄就這樣靜靜掉出守門範圍。
+    # 現在由 `test_the_exemption_list_only_names_real_columns` 釘住。
 }
 
 
@@ -50,7 +54,8 @@ def _seed_rich_session(db: Session) -> WargameSession:
         master_seed=1,
         current_weather={"w": 1},
         mode=SessionMode.REALTIME,
-        world_start_time=None,
+        world_start_time=datetime(2026, 1, 1, 6, 0),
+        scenario_id="scn-1",  # 副本要沿用同一份想定來源（AAR 要追得到出處）
         orbat_edit_factions=["BLUE"],
         faction_relations=[["BLUE", "GREEN", "ALLIED"]],
         msel=[{"id": "m1"}],
@@ -62,17 +67,48 @@ def _seed_rich_session(db: Session) -> WargameSession:
         survivability_move={"missions_before_move": 2},
         allow_fratricide=True,
         day_night={"sunrise_min": 330, "sunset_min": 1080},
+        aggregate_adjudication_level=UnitLevel.BRIGADE,
+        victory_conditions=[{"faction": "BLUE", "condition": {"type": "all", "of": []}}],
+        tick_rate_ms=30_000,
+        faction_colors={"BLUE": "#0055ff"},
+        faction_display_names={"BLUE": "第 21 旅"},
     )
     db.add(row)
     db.commit()
     return row
 
 
-def test_every_column_is_either_copied_or_explicitly_exempt(session_factory) -> None:  # type: ignore[no-untyped-def]
-    """**這條是防呆**：新增 `WargameSession` 欄位時，要嘛下面那條測試會抓到沒複製，
-    要嘛你得明確把它加進豁免表並寫理由。沒有第三條路。"""
-    unclassified = _attribute_names() - _copyable_columns() - _INTENTIONALLY_NOT_COPIED
-    assert not unclassified, f"這些欄位沒有被歸類：{sorted(unclassified)}"
+def test_the_source_session_actually_exercises_every_copyable_column(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """**這條在守下面那條的有效性。**
+
+    下面的比對是 `getattr(clone, n) != getattr(src, n)`——來源局若沒給某一欄值，
+    兩邊都是 None、比對相等、測試綠，而那一欄其實根本沒被複製。
+    **這正是實際發生過的事**：`aggregate_adjudication_level` / `victory_conditions` /
+    `tick_rate_ms` / `faction_colors` / `faction_display_names` 五欄先後被加進模型，
+    每一次都沒進 `clone_session`，而這份測試從頭到尾都是綠的。
+
+    所以先釘住「來源局的每一個該複製的欄位都有可辨識的值」。
+    """
+    db = session_factory()
+    src = _seed_rich_session(db)
+    blank = [n for n in sorted(_copyable_columns()) if getattr(src, n) in (None, "", [], {})]
+    db.close()
+
+    assert not blank, (
+        f"`_seed_rich_session` 沒有給這些欄位值：{blank}。\n"
+        "沒有值 → 下面那條比對會是假綠。加欄位到模型時，這裡也要給一個可辨識的值。"
+    )
+
+
+def test_the_exemption_list_only_names_real_columns() -> None:
+    """豁免表寫錯字（或欄位被改名）會讓那一欄**靜靜掉出守門範圍**。
+
+    ⚠ 原本這裡是 `attrs - (attrs - exempt) - exempt`——那個集合恆為空集，
+    測試永遠綠、什麼都沒證明。恆真的守門比沒有守門更糟，因為它讓人以為有守。
+    """
+    unknown = _INTENTIONALLY_NOT_COPIED - _attribute_names()
+
+    assert not unknown, f"豁免表裡這些名字不是 WargameSession 的欄位：{sorted(unknown)}"
 
 
 def test_cloning_carries_every_scenario_derived_field(session_factory) -> None:  # type: ignore[no-untyped-def]
@@ -140,3 +176,78 @@ def test_copy_json_does_not_alias(session_factory) -> None:  # type: ignore[no-u
     # 純量原樣回傳（沒有別名問題）。
     assert _copy_json(True) is True
     assert _copy_json(None) is None
+
+
+# ---- 單位層：`branch` 就是從這個缺口掉出去的 ----
+
+# **刻意不複製**的單位欄位，每個都要有理由。
+_UNIT_NOT_COPIED = {
+    "id",  # 新單位要新 id
+    "session_id",  # 指向新局
+    "parent_id",  # 第二階段以 old→new 映射重寫（直接複製會指到舊局的單位）
+}
+
+
+def _unit_attribute_names() -> set[str]:
+    from app.models.tables import TacticalUnit
+
+    return {a.key for a in TacticalUnit.__mapper__.column_attrs}
+
+
+def test_the_unit_exemption_list_only_names_real_columns() -> None:
+    assert not (_UNIT_NOT_COPIED - _unit_attribute_names())
+
+
+def test_cloning_carries_every_unit_column(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """**`branch` 就是從這裡掉出去的。**
+
+    session 層有 schema 掃描守門，單位層一條都沒有——於是 `branch`（後來加的欄位）
+    沒進 `clone_session` 也沒人發現。
+
+    後果不只是圖示變成通用框：`branch=ENGINEER` 決定破障/設障令下不下得了、
+    雷區通過機率、障礙通過速度。複製一局，工兵連就失去全部工兵能力，
+    而畫面上只是符號變了——很難聯想到「為什麼破不了障」。
+    """
+    from app.auth.schemas import CurrentUser
+    from app.lobby.schemas import CloneSessionRequest
+    from app.lobby.service import LobbyService
+    from app.models.enums import CommsState, UnitBranch, UnitLevel, UserRole
+    from app.models.tables import TacticalUnit, User
+
+    db = session_factory()
+    src = _seed_rich_session(db)
+    unit = TacticalUnit(
+        session_id=src.id,
+        designation="工兵連",
+        unit_level=UnitLevel.COMPANY,
+        branch=UnitBranch.ENGINEER,  # 這一欄正是漏掉的那個
+        faction="BLUE",
+        is_fixed=True,
+        attributes={"unit_kind": "ENGINEER"},
+        current_lat=23.5,
+        current_lng=121.0,
+        elevation=120.0,
+        authorized_strength=120.0,
+        current_strength=95.0,
+        personnel_authorized=120,
+        personnel_current=95,
+        health_status=79.0,
+        comms_status=CommsState.DEGRADED,
+    )
+    db.add(unit)
+    admin = User(username="boss2", password_hash="x", role=UserRole.ADMIN)
+    db.add(admin)
+    db.commit()
+
+    # 守門的守門：來源單位每一個該複製的欄位都要有可辨識的值。
+    copyable = _unit_attribute_names() - _UNIT_NOT_COPIED
+    blank = [n for n in sorted(copyable) if getattr(unit, n) in (None, "", [], {})]
+    assert not blank, f"來源單位沒有給這些欄位值，比對會是假綠：{blank}"
+
+    actor = CurrentUser(id=admin.id, username="boss2", role=UserRole.ADMIN)
+    summary = LobbyService(db).clone_session(actor, src.id, CloneSessionRequest(name="副本"))
+    clone_unit = db.query(TacticalUnit).filter(TacticalUnit.session_id == summary.id).one()
+
+    missing = [n for n in sorted(copyable) if getattr(clone_unit, n) != getattr(unit, n)]
+    assert not missing, f"複製單位時掉了這些欄位：{missing}"
+    db.close()

@@ -175,6 +175,14 @@ class LobbyService:
             # WP-C9/C4a：本 session 新增的兩個，一併複製（否則同樣會靜靜消失）。
             allow_fratricide=src.allow_fratricide,
             day_night=_copy_json(src.day_night),
+            # ⚠ **上面那句「務必同時改這裡」失敗了五次**——底下這五欄全是後來新增的想定衍生欄，
+            # 每一次都漏掉。註解攔不住這種漏，所以另有一條 AST 守門測試釘住
+            # （`test_clone_covers_every_session_column`）：模型加了欄位而這裡沒接，測試會紅。
+            aggregate_adjudication_level=src.aggregate_adjudication_level,
+            victory_conditions=_copy_json(src.victory_conditions),
+            tick_rate_ms=src.tick_rate_ms,
+            faction_colors=_copy_json(src.faction_colors),
+            faction_display_names=_copy_json(src.faction_display_names),
         )
         self._db.add(new)
         self._db.flush()  # 取得 new.id
@@ -192,6 +200,10 @@ class LobbyService:
                 session_id=new.id,
                 designation=u.designation,
                 unit_level=u.unit_level,
+                # 兵科**不只是圖示**：ENGINEER 決定破障/設障令下不下得了、雷區通過機率、
+                # 障礙通過速度。漏掉它，副本裡的工兵連會退回 UNKNOWN 而失去全部工兵能力
+                # ——而地圖上只是符號從工兵變成通用框，很難聯想到「為什麼破不了障」。
+                branch=u.branch,
                 faction=u.faction,
                 is_fixed=u.is_fixed,
                 attributes=dict(u.attributes or {}),
