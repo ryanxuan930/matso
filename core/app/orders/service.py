@@ -204,26 +204,39 @@ class OrderService:
         return _to_response(order, _precheck_of(order))
 
     def _cancel_children(self, parent_id: str) -> int:
-        """取消母任務令 → 連帶取消**尚未終結**的子令（WP-A2）。回取消數。
+        return cancel_child_orders(self._db, parent_id)
 
-        「取消任務」若只取消母令，單位會繼續執行已經送出去的 MOVE/ENGAGE——
-        操作員按了取消卻看見部隊照樣前進，那比不給取消更糟。
 
-        **已終結的子令不追溯**：那些是既成事實（已經走過的路、已經開過的火），
-        AAR 要看得到。CANCELLED 對執行中的移動令語義是「原地凍結」（見 state_machine 說明），
-        所以取消 EXECUTING 的子令是對的——不是把單位傳送回起點。
-        """
-        active = (OrderStatus.PENDING, OrderStatus.VALIDATED, OrderStatus.EXECUTING)
-        children = (
-            self._db.execute(
-                select(Order).where(Order.parent_order_id == parent_id, Order.status.in_(active))
-            )
-            .scalars()
-            .all()
+def cancel_child_orders(db: Session, parent_id: str) -> int:
+    """母任務令結束 → 連帶取消**尚未終結**的子令（WP-A2）。回取消數。
+
+    母令只要離開「進行中」就該收，**不是只有使用者按取消時才收**：
+
+    - 使用者取消（`OrderService.cancel`）
+    - **任務自然結束/失敗**（`LiveMissionPlanner` 走到 COMPLETE/FAILED）
+
+    第二條在 A2 收尾時漏了：planner 直接把母令寫成 COMPLETED 就結束，
+    於是最後一道 MOVE 子令仍是 EXECUTING——**任務都結束了部隊還在往目標走**，
+    失敗的任務更糟（照著失敗的計畫繼續執行）。故抽成模組函式讓兩條路徑共用。
+
+    **已終結的子令不追溯**：那些是既成事實（已經走過的路、已經開過的火），AAR 要看得到。
+    CANCELLED 對執行中的移動令語義是「原地凍結」（見 state_machine 說明），
+    所以取消 EXECUTING 的子令是對的——不是把單位傳送回起點。
+
+    ⚠ **只收直接子代，不遞迴**。今天分解器只產 MOVE/ENGAGE/POSTURE，樹深恆為 1；
+    真要遞迴得先處理 `parentOrderId` 沒有 FK（可能成環）這件事。
+    """
+    active = (OrderStatus.PENDING, OrderStatus.VALIDATED, OrderStatus.EXECUTING)
+    children = (
+        db.execute(
+            select(Order).where(Order.parent_order_id == parent_id, Order.status.in_(active))
         )
-        for child in children:
-            child.status = next_status(child.status, OrderStatus.CANCELLED)
-        return len(children)
+        .scalars()
+        .all()
+    )
+    for child in children:
+        child.status = next_status(child.status, OrderStatus.CANCELLED)
+    return len(children)
 
 
 def _precheck_of(order: Order) -> PrecheckResult | None:

@@ -68,6 +68,31 @@ ENGINEER 的 `_work_until_tick` 同一套，**checkpoint 與重啟自動涵蓋**
   由 VALIDATED 轉 EXECUTING，並產出 **5 道帶 `parentOrderId` 的 MOVE 子令**
   （1 COMPLETED / 4 EXECUTING）——修正前該 session 一道子令都沒有。
 
+## 追加修正（同日，由 scout 工作流的反駁agent 指出）
+
+**任務終局時子令沒有被收掉——這是我在本卡漏的第三個斷點。**
+
+`_cancel_children` 只掛在 `OrderService.cancel`（使用者按取消）那一條路上，而
+`LiveMissionPlanner` 走到終局時是**直接把母令寫成 COMPLETED**。於是任務完成（或失敗）之後，
+最後一道 MOVE 子令仍是 EXECUTING——**部隊照著一個已經結束的任務繼續走**。失敗的任務更糟：
+照著失敗的計畫繼續執行。
+
+修法：
+1. 把「收未終結子令」抽成 `orders/service.py::cancel_child_orders()`，兩條路徑共用同一份
+   「什麼算未終結」的定義。
+2. `_terminate()`：走 `next_status`（不再直接賦值）+ 收子令 + 發 `MISSION_ENDED` 事件。
+   **每道令各自 try**——`next_status` 對非法轉移會拋，例外若往上冒會被 `plan()` 的外層
+   try 吞掉並回 `[]`，於是**本 tick 每一道任務都停止規劃**。
+3. **終局前 `populate_existing=True` 重讀**。真正的陷阱不是 `next_status` 不夠——是
+   `expire_on_commit=False` + runner 整局共用一條 Session：`db.get` 直接命中 identity map
+   回傳舊狀態，一句 SQL 都不發。於是被 API 行程取消掉的令在 planner 眼裡仍是 EXECUTING，
+   `next_status` 順利通過 → **把 CANCELLED 靜靜覆寫成 COMPLETED**。
+
+⚠ **這一段的測試被突變測試修正過兩次。** 第一版從外面連跑兩次 `plan()`，看起來對，
+但把重讀和 `next_status` 都拿掉照樣全綠——因為第二次的 `_load` WHERE 就把 CANCELLED
+濾掉了，終局那段根本不會執行。競態窗口在**一次 `plan()` 之內**，所以測試改成直接呼叫
+`_terminate()`（白箱，但這個 guard 本身就是白箱問題）。三個突變現在都會紅。
+
 ## 中斷續作指引
 
 - **下一步第一件事**：回到 V2.1 路線圖（C9 誤傷語意）。

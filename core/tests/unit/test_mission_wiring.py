@@ -344,3 +344,86 @@ def test_every_mission_type_survives_the_round_trip_through_the_order_row(  # ty
     )
     assert all(m.status.value != "REJECTED" for m in missions), f"{mission_type} 被判 REJECTED"
     db.close()
+
+
+# ---- 任務終局：子令不可以留在天上飛 ----
+
+
+def test_finishing_a_mission_cancels_its_still_flying_sub_orders(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """**這條抓的是我在 A2 收尾漏掉的一段**。
+
+    `_cancel_children` 只掛在使用者按取消那一條路上；planner 走到終局時是直接把母令寫成
+    COMPLETED 就結束。於是任務完成（或失敗）之後，最後一道 MOVE 子令仍是 EXECUTING
+    ——**部隊照著一個已經結束的任務繼續走**。失敗的任務更糟。
+    """
+    from _order_fakes import seed_world
+
+    from app.models.tables import Order
+
+    world = seed_world(session_factory)
+    db = session_factory()
+    hot = InMemoryHotState()
+    # 一開始就站在唯一的航路點上 → 下一個 tick 就走完並進終局。
+    hot.put_unit(world.blue_unit_id, {"lat": 23.75, "lng": 121.25, "alive": True})
+    resp = _issue_mission(
+        db, world, mission_type="MOVE_MARCH", params={"route": [{"lat": 23.75, "lng": 121.25}]}
+    )
+    _, events = _run(db, world, hot, 6)
+
+    parent = db.get(Order, resp.id)
+    assert parent.status.value == "COMPLETED", "任務沒有走到終局，這條測試沒測到東西"
+    assert "MISSION_ENDED" in [e.event_type for e in events]
+    leftovers = [s for s in _sub_orders(db, world) if s.status.value in ("VALIDATED", "EXECUTING")]
+    assert not leftovers, f"任務結束了還有 {len(leftovers)} 道子令在執行"
+    db.close()
+
+
+def test_a_cancel_landing_inside_the_tick_is_not_overwritten(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """使用者在 API 行程取消任務，planner **不可以**把它靜靜改回 COMPLETED。
+
+    ## 為什麼要直接呼叫 `_terminate`
+
+    這個競態的窗口在**一次 `plan()` 之內**：`_load` 的 SELECT 撈到令（那時還是 EXECUTING），
+    取消在那之後、`_terminate` 之前落庫。從外面連跑兩次 `plan()` 碰不到它——
+    第二次的 `_load` WHERE 就把 CANCELLED 濾掉了，終局那段根本不會執行。
+    **突變測試證明了這件事**：我第一版從外面跑的測試，把重讀和 `next_status` 都拿掉照樣全綠。
+
+    ## 陷阱本身
+
+    不是 `next_status` 不夠——是 `expire_on_commit=False` + runner 整局共用一條 Session：
+    `db.get` 直接命中 identity map 回傳舊狀態，一句 SQL 都不發。於是被別的連線取消掉的令，
+    在 planner 眼裡仍是 EXECUTING，`next_status` 順利通過。故重讀要帶 `populate_existing=True`。
+    """
+    from _order_fakes import seed_world
+
+    from app.models.enums import OrderStatus
+    from app.models.tables import Order
+    from app.orders.mission import MissionPhase, MissionState
+
+    world = seed_world(session_factory)
+    db = session_factory()  # planner 的長生命期 Session
+    hot = InMemoryHotState()
+    hot.put_unit(world.blue_unit_id, {"lat": 23.75, "lng": 121.25, "alive": True})
+    resp = _issue_mission(db, world)
+    planner = _planner(db, world, hot)
+    planner.plan(_now(1))
+    order = db.get(Order, resp.id)  # planner 手上那個物件（狀態 EXECUTING）
+
+    # 另一條連線（＝API 行程）在 tick 之中把它取消掉。
+    other = session_factory()
+    other.get(Order, resp.id).status = OrderStatus.CANCELLED
+    other.commit()
+    other.close()
+    assert order.status is OrderStatus.EXECUTING, (
+        "identity map 應該還握著舊狀態——沒有的話這條測試就沒有在測那個陷阱"
+    )
+
+    assert planner._terminate(order, MissionState(phase=MissionPhase.COMPLETE), _now(2)) == []
+    db.commit()
+
+    check = session_factory()
+    assert check.get(Order, resp.id).status.value == "CANCELLED", (
+        "planner 把使用者的取消覆寫成 COMPLETED 了——identity map 的舊狀態沒有重讀"
+    )
+    check.close()
+    db.close()

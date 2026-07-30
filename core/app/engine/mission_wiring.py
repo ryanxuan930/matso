@@ -85,7 +85,6 @@ class LiveMissionPlanner:
             return []
 
     def _plan(self, now: SimTime) -> list[LedgerEvent]:
-        from app.models.enums import OrderStatus
 
         missions, orders_by_id = self._load(now)
         if not missions:
@@ -107,10 +106,53 @@ class LiveMissionPlanner:
             payload[STATE_KEY] = asdict(state)
             order.payload = payload
             if state.phase in _TERMINAL:
-                order.status = OrderStatus.COMPLETED
-                order.resolved_at_tick = now.tick
+                events.extend(self._terminate(order, state, now))
         self._db.commit()
         return events
+
+    def _terminate(self, order: Any, state: Any, now: SimTime) -> list[LedgerEvent]:
+        """任務走到終局 → 收母令 **並收掉還在飛的子令**。
+
+        ⚠ **這一段在 A2 收尾時漏了**：planner 直接把母令寫成 COMPLETED 就結束，
+        `_cancel_children` 只掛在使用者按取消那條路上。於是任務結束（或失敗）之後，
+        最後一道 MOVE 子令仍是 EXECUTING——**部隊照著一個已經結束的任務繼續走**。
+
+        每道令**各自 try**：`next_status` 對非法轉移會拋（例：使用者剛好在同一個 tick
+        取消了這道令），一個例外若往上冒就會讓**本 tick 所有任務**都停止規劃。
+        """
+        from app.models.enums import OrderStatus
+        from app.orders.service import cancel_child_orders
+        from app.orders.state_machine import next_status
+
+        # ⚠ **一定要 `populate_existing=True` 重讀**。session factory 設了
+        # `expire_on_commit=False`，而 runner 整局共用一條 Session：`db.get` 會直接命中
+        # identity map 回傳**這條 Session 上次讀到的舊狀態**，一句 SQL 都不發。
+        # 於是使用者在 API 行程剛取消的令，在這裡看起來仍是 EXECUTING，
+        # `next_status` 順利通過 → **把 CANCELLED 靜靜覆寫成 COMPLETED**。
+        fresh = self._db.get(type(order), order.id, populate_existing=True)
+        if fresh is None:
+            return []
+        try:
+            fresh.status = next_status(fresh.status, OrderStatus.COMPLETED)
+        except Exception:
+            # 母令已被別條路徑收走（多半是使用者取消）——子令由那條路徑負責，這裡不搶。
+            _LOG.info("任務 %s 已由他處結案，略過終局處理", order.id)
+            return []
+        order = fresh
+        order.resolved_at_tick = now.tick
+        cancelled = cancel_child_orders(self._db, order.id)
+        return [
+            LedgerEvent(
+                event_type="MISSION_ENDED",
+                tick=now.tick,
+                initiator_id=order.unit_id,
+                ai_decision={
+                    "mission_order_id": order.id,
+                    "phase": state.phase.value,
+                    "cancelled_sub_orders": cancelled,
+                },
+            )
+        ]
 
     # ---- 撈令 ----
 
