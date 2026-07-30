@@ -120,6 +120,104 @@ async def test_battalion_uses_aggregate_lanchester(
         assert hot.get_unit(world.red_unit_id)["strength"] < 100.0
         assert hot.get_unit(world.blue_unit_id)["strength"] < 100.0
         assert db.get(Order, oid).status is OrderStatus.COMPLETED  # type: ignore[union-attr]
+        # 打了就要耗彈。**過去這條路徑從不扣**——`_apply` 只掛在平台級上。
+        assert hot.get_unit(world.blue_unit_id)["ammo"] < 999
+
+
+async def _aggregate_engage(
+    session_factory: sessionmaker[Session],
+    shooter_state: dict,  # type: ignore[type-arg]
+    *,
+    suppress: object = None,
+) -> tuple[object, InMemoryHotState, str, str]:
+    """把射手升到營級並打一次聚合交戰。回 (events, hot, shooter_id, target_id)。"""
+    from app.models.enums import UnitLevel
+    from app.models.tables import TacticalUnit
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        blue = db.get(TacticalUnit, world.blue_unit_id)
+        assert blue is not None
+        blue.unit_level = UnitLevel.BATTALION
+        db.commit()
+        _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(world.blue_unit_id, shooter_state)
+        hot.put_unit(
+            world.red_unit_id,
+            {"strength": 100.0, "authorized_strength": 100.0, "armor_class": "INFANTRY"},
+        )
+        adj = _adjudicator(db, hot)
+        if suppress is not None:
+            adj._suppress = suppress  # type: ignore[attr-defined]
+        events = adj.resolve(cmd, SimTime(0, 0))
+    return events, hot, world.blue_unit_id, world.red_unit_id
+
+
+async def test_a_battalion_out_of_ammo_cannot_keep_firing(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """聚合路徑過去用 `Shooter(ammo_count=1)` 這個**捏造的探子**通過合法性檢查。
+
+    於是 NO_AMMO 對營級以上形同虛設：彈藥歸零的旅照樣持續開火造成戰損。
+    """
+    events, hot, _blue, red = await _aggregate_engage(
+        session_factory,
+        {"ammo": 0, "strength": 100.0, "authorized_strength": 100.0},
+    )
+
+    assert events[0].ai_decision["status"] == "REJECTED"  # type: ignore[index]
+    assert events[0].ai_decision["reason"] == "NO_AMMO"  # type: ignore[index]
+    assert hot.get_unit(red)["strength"] == 100.0  # 沒有戰損
+
+
+def _fresh_factory() -> sessionmaker[Session]:
+    """自備一套空 DB——`seed_world` 會建固定 username 的使用者，同一個 DB 跑兩次會撞唯一鍵。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from app.models.base import Base
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+
+async def test_a_cut_off_battalion_fights_worse() -> None:
+    """WP-C7.1 斷補只乘在平台級——切斷一個旅的補給線過去對它的戰鬥力毫無影響。"""
+    supplied, *_ = await _aggregate_engage(
+        _fresh_factory(),
+        {"ammo": 999, "strength": 100.0, "authorized_strength": 100.0},
+    )
+    starving, *_ = await _aggregate_engage(
+        _fresh_factory(),
+        {
+            "ammo": 999,
+            "strength": 100.0,
+            "authorized_strength": 100.0,
+            # 斷糧三天（`supply_effectiveness` 讀 `starved_days`）。
+            "starved_days": 3.0,
+        },
+    )
+
+    assert starving[0].damage_calc < supplied[0].damage_calc  # type: ignore[index]
+
+
+async def test_being_shelled_by_a_battalion_suppresses_you(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """壓制過去只掛在 `_apply`（平台級）——被一整個營砲擊完全不會被壓制。"""
+    calls: list[tuple[str, str]] = []
+    await _aggregate_engage(
+        session_factory,
+        {"ammo": 999, "strength": 100.0, "authorized_strength": 100.0},
+        suppress=lambda uid, cat: calls.append((uid, cat)),
+    )
+
+    assert len(calls) == 1
 
 
 # ── SPEC_EXTEND P2：聯合兵種加總 gating ─────────────────────────────────────

@@ -259,9 +259,19 @@ class EngagementAdjudicator:
         target_state: dict[str, object],
         now: SimTime,
     ) -> list[LedgerEvent]:
-        """營級以上聚合裁決（#33a）：Lanchester 雙方同時消耗，套 should_aggregate 門檻後呼叫。"""
-        # 合法性（射程/LOS/彈道）——以探子 shooter（彈藥視為足）判定；不過即 REJECTED。
-        reason = _legality_reason(weapon, Shooter(order.shooter_id, ammo_count=1), env)
+        """營級以上聚合裁決（#33a）：Lanchester 雙方同時消耗，套 should_aggregate 門檻後呼叫。
+
+        ## 這條路徑過去漏掉平台級有的三件事
+
+        `_apply` 只在平台級被呼叫，而扣彈藥、壓制目標都在那裡；`supply_effectiveness`
+        也只乘在平台級。於是**營級以上的部隊打仗不耗彈、不受斷補影響、不對敵人造成壓制**：
+        彈藥歸零的旅照樣持續開火，切斷它的補給線對它的戰鬥力毫無影響。
+        測試一直綠——聚合測試自己種了 `{"ammo": 999}` 且只斷言事件型別。
+        """
+        # 合法性（射程/LOS/彈道 **與彈藥**）。過去這裡塞的是 `ammo_count=1` 的探子，
+        # 於是 `resolve_engagement` 的 NO_AMMO 檢查對聚合路徑形同虛設。
+        ammo = int(shooter_state.get("ammo", 0) or 0)  # type: ignore[call-overload]
+        reason = _legality_reason(weapon, Shooter(order.shooter_id, ammo_count=ammo), env)
         if reason is not None:
             event = LedgerEvent(
                 event_type="ENGAGEMENT_RESOLVED",
@@ -287,6 +297,9 @@ class EngagementAdjudicator:
         t_armor = str(target_state.get("armor_class", "INFANTRY"))
         # 攻擊係數：射手武器對目標裝甲的 pk × 尺度（下限保底）；目標返火用固定小係數。
         s_leth = max(_AGG_MIN_LETH, weapon.expected_casualties(t_armor) * _AGG_LETH_SCALE)
+        # WP-C7.1 斷補：與平台級同一條規則（乘進射手整體發揮，不是命中率）。
+        # 沒有斷補概念的既有局恆為 1.0，位元不變。
+        s_leth *= supply_effectiveness(shooter_state)
         # WP-C1：壓制/姿態逐方各自帶入（射手的壓制折減其輸出、目標的姿態折減其承受）。
         # 這裡讀的是熱狀態原值——寫入端是 `suppression_wiring`，中性缺鍵讀作 0/MOVING。
         force_a = AggregateForce(
@@ -313,8 +326,28 @@ class EngagementAdjudicator:
         result = resolve_aggregate_tick(force_a, force_b, agg_env, self._rng, now.tick)
         self._apply_agg_force(shooter_unit, result.a_strength_after, s_auth)
         self._apply_agg_force(target_unit, result.b_strength_after, t_auth)
+        self._spend_aggregate_ammo(order.shooter_id, shooter_state, ammo)
+        # WP-C1：被一整個營砲擊當然會被壓制。過去這一步只掛在 `_apply`（平台級）上。
+        if self._suppress is not None and result.b_loss > 0:
+            self._suppress(order.target_id, self._weapon_category(order))
         self._complete(order.order_id, now.tick)
         return result.events
+
+    def _spend_aggregate_ammo(
+        self, shooter_id: str, shooter_state: dict[str, object], ammo: int
+    ) -> None:
+        """聚合交戰一個 tick 的彈藥消耗：**每個平台一發**（同齊射模型的量綱）。
+
+        聚合的「一次裁決」代表整個編成打了一輪，故以編制數為發數；戰力折損的部隊
+        開火的平台也少，所以乘上戰力比。下限 1——打了就一定有消耗，
+        否則「彈藥歸零」這個狀態永遠到不了，NO_AMMO 也就永遠不會發生。
+        """
+        platforms = int(shooter_state.get("platform_count") or 1)  # type: ignore[call-overload]
+        auth = float(shooter_state.get("authorized_strength") or 100.0)  # type: ignore[arg-type]
+        cur = float(shooter_state.get("strength") or auth)  # type: ignore[arg-type]
+        ratio = (cur / auth) if auth > 0 else 1.0
+        spent = max(1, int(platforms * max(0.0, min(1.0, ratio))))
+        self._hot.update_unit(shooter_id, {"ammo": max(0, ammo - spent)})
 
     def _resolve_combined(
         self,
