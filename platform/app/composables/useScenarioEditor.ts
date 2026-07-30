@@ -39,7 +39,27 @@ export interface ScenarioModel {
   // 過去這裡沒有這個欄位 → 用編輯器開一個有保護區的想定再存回去，禁射區整段消失，
   // 而且不會有任何錯誤訊息。安全機制的沉默失效。
   noStrikeZones?: Array<Record<string, unknown>>
+  /**
+   * **編輯器不認得的 scenario 鍵，原樣帶著。**
+   *
+   * ⚠ 同一個 bug 已經咬過三次：後端的 `scenario_to_dict` 手寫白名單、
+   * 後端的 `clone_session` 漏七個欄、以及這裡。每次的修法都是「再列一個欄位」，
+   * 於是下一個新設定又會被下一個人忘記——`request_quotas`、
+   * `indirect_fire_requires_approval`、`survivability_move` 現在就正在被漏掉。
+   *
+   * 所以這次改成**結構性**的：import 時把所有沒被模型吃掉的鍵收進這裡，
+   * export 時先攤開它再覆蓋明確欄位。**任何未來的想定設定都會自動存活**，
+   * 不需要有人記得回來改。
+   */
+  passthrough?: Record<string, unknown>
 }
+
+/** 編輯器**明確建模**的 scenario 鍵。其餘一律走 `passthrough`。 */
+const MODELLED_SCENARIO_KEYS = new Set([
+  'name', 'version', 'description', 'bbox', 'mode', 'tick_rate_ms',
+  'hex_resolution', 'aggregate_adjudication_level', 'factions', 'relations',
+  'victory_conditions', 'no_strike_zones', 'files',
+])
 
 export function emptyScenario(): ScenarioModel {
   return {
@@ -66,6 +86,9 @@ export function exportScenario(m: ScenarioModel): {
 } {
   const factionsWithUnits = [...new Set(m.units.map((u) => u.faction))]
   const scenario: Record<string, unknown> = {
+    // **先攤開 passthrough**——明確欄位在後面覆蓋它，所以編輯器管的欄位仍以模型為準，
+    // 而它不管的（ROE/配額/火協開關/陣地變換/誤傷/晝夜…）原樣存活。
+    ...(m.passthrough ?? {}),
     name: m.name,
     version: m.version,
     ...(m.description !== undefined ? { description: m.description } : {}),
@@ -143,6 +166,10 @@ export function importScenario(bundle: {
     trigger: e.trigger,
     inject: e.inject,
   }))
+  const passthrough: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(s)) {
+    if (!MODELLED_SCENARIO_KEYS.has(key)) passthrough[key] = value
+  }
   return {
     name: s.name as string,
     version: s.version as string,
@@ -166,5 +193,6 @@ export function importScenario(bundle: {
     ...(Array.isArray(s.no_strike_zones) && s.no_strike_zones.length
       ? { noStrikeZones: s.no_strike_zones as Array<Record<string, unknown>> }
       : {}),
+    ...(Object.keys(passthrough).length ? { passthrough } : {}),
   }
 }

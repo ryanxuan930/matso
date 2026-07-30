@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（一）：兩條資料遺失路徑**。①**`clone_session` 掉九個想定衍生欄**（原記七個，加上本 session 新增的 `allow_fratricide`/`day_night`）：`msel`/`roe`/`mobilityOverrides`/`noStrikeZones`/`requestQuotas`/`indirectFireRequiresApproval`/`survivabilityMove` 全都沒被複製——**副本會沒有 MSEL、沒有 ROE、沒有禁射區地跑**，看起來一切正常直到你發現腳本事件永遠不觸發、被禁的武器可以隨便用（B1 當初就是因此不敢建在 clone 上）。測試改成**掃 `WargameSession` 的欄位表**而不是逐欄列舉：逐欄的測試會跟著程式一起漏（新增欄位時兩邊都忘記，測試照樣綠），現在任何新欄位都必須明確歸類為「該複製」或「刻意不複製（列豁免表並寫理由）」，沒有第三條路。②**前端想定編輯器的 `exportScenario` 是第三份手寫白名單**，正在漏 `roe`/`request_quotas`/`indirect_fire_requires_approval`/`survivability_move`（加上本 session 的兩個共六個）——用編輯器存一次想定，那些設定就沒了。**這次改成結構性的修法**：`ScenarioModel.passthrough` 在 import 時收走所有未建模的鍵、export 時先攤開再讓明確欄位覆蓋，**任何未來的想定設定都會自動存活**，不需要有人記得回來改。同一個手寫白名單的 bug 已經咬過三次（後端 dump、後端 clone、前端編輯器），前兩次的修法都是「再列一個欄位」，於是下一個新設定又被下一個人忘記。以 `npx tsx` 實跑 roundtrip 驗證六個設定全數存活，並確認拿掉 `passthrough` 後真的會遺失。**另誠實記一筆**：`_copy_json` 的別名保護**端到端測不出來**（讀回來的是 DB 反序列化的新物件，JSON round-trip 本身就打斷了別名），所以那一條直接測 helper 而不是假裝端到端驗得到。**驗收**：pytest 1938（+4）、mypy 265、ruff、前端兩閘門綠。
+
 - 2026-07-30：**WP-E4 監控落地完成（使用者裁示：不加容器）**。規格寫「compose 增 prometheus+grafana 服務」，動手前先問——那是**部署決定不是程式決定**：Grafana 預設埠 3000 **已被前端占用**，且 air-gapped 部署每多一個映像就多一件要打包的事；使用者選了「metrics only」，`/metrics` 端點 + 儀表板/告警規則留成 `ops/monitoring/` 的檔案由既有監控接手。**兩個關鍵設計**：①**行程內註冊表**——`SimManager` 由 `main.py` 的 lifespan 啟動，與 FastAPI 同一個行程，所以 tick 量測與 `/metrics` 共用記憶體，不需要 Redis 載體；⚠ 那是**前提不是巧合**，runner 若被拆成獨立行程，這個模組會安靜地只回報 API 行程看得到的部分（tick 指標全部歸零），註解寫在模組頂端留給那時候的人。②**指標不帶 session/單位標籤**，兩個獨立理由任一個都足夠：基數爆炸（每開一局多一組時間序列），以及 **`/metrics` 通常不驗證身分**（Prometheus 機器對機器抓取）——把 session id 放進去等於把「有哪些推演正在跑」公開出去；**指標回答「系統健康嗎」，不回答「誰在打誰」**，有一條測試掃過所有輸出斷言唯一合法標籤是直方圖的 `le`。**自己寫 exposition 而不是 `prometheus_client`**（與「不加容器」同一個理由：air-gapped 少一個相依），**代價真的付了**：⚠ **直方圖累積做了兩次**（`observe` 對每個 `value <= upper` 的桶都 +1 已是累積，`render` 又累加一次）→ 桶數超過 `_count`，**Prometheus 算出來的分位數是錯的**；而且錯得看起來很合理（曲線仍單調遞增），**是我印出樣張逐行看才發現的**，不是測試發現的——測試是之後補的，這正是為什麼那一組測試要逐字釘住輸出。**tick 量測不寫帳本**（牆鐘觀測不是模擬事實；放進 Ledger 會讓同一份想定在不同機器上算出不同 hash），故 golden 未重錄。**`/metrics` 永不拋**（一個壞掉的指標不該讓抓取整個失敗——那會讓監控在最需要它的時候先掛掉）。告警門檻**保守**（會叫的告警才有人看），`MatsoAiWorkersAllDown` 特別要求 `active_sessions > 0`——沒有推演時 worker 為 0 是正常的，單看 worker 數會一直誤報。**驗收**：pytest 1934（+13）、mypy 265、ruff 綠；儀表板 JSON 與規則 YAML 皆可 parse。5 個突變全數被抓（含我自己犯過的那個）。**未竟並明寫**：`matso_io_latency_ms` 與 `matso_ai_workers` **定義了但沒有寫入端**——那正是本 session 抓過三次的「元件對、沒人接」，所以明寫在此而不是假裝做完了；儀表板未在真 Grafana 開過；告警規則未跑過 `promtool check rules`。worklog: monitoring.md。
 
 - 2026-07-30：**WP-E2 認證強化完成**。**開工前查證：四項裡有一項已經做完了**——JWT secret 生產強制早就有（`Settings.ensure_production_safe()` 涵蓋預設 secret/STUB_GATEWAY/CORS 萬用字元）**而且真的有被呼叫**（`main.py:47`）；這次不是「寫好沒接」，我特地查過呼叫端才敢說。剩下三項是真的缺。**①登出在此之前是 no-op**：`POST /auth/logout` 的註解自己寫著「無狀態 JWT：伺服器不維護黑名單（Phase 1）；登出即用戶端丟棄 token」——於是**撿到 refresh token 的人照樣能一直換發新的 access**；現在收 refresh token 並寫進 `RevokedToken` 表。**②輪替 + 重用偵測**：換發時撤銷舊的那張；若有人拿已撤銷的 refresh 來換，那代表 token 被複製過（合法持有者早就換掉它了）→ 撤銷該使用者已知的全部並拒絕——**這是 rotation 真正的價值：把「偷到 token」從「可以無限續期」變成「最多用一次，而且會被發現」**。**③帳號鎖定 + 雜湊升級**：5 次失敗鎖 15 分鐘；`needs_rehash` 一直存在但**沒有任何呼叫端**（參數升級後既有密碼永遠停在舊參數），現在在登入成功後升級——那是唯一拿得到明文的時機。**鎖定時回的錯誤與密碼錯誤完全一樣**（分開回會把「這個帳號存在」洩漏出去，那正是防帳號列舉在擋的事），鎖定期間也跑一次 `dummy_verify()` 讓耗時一致；**鎖了就重設計數**，否則解鎖後一次失敗又立刻鎖回去。**沒有 `jti` 的舊 token 略過撤銷但仍有效**——簽發時還沒有那個欄位，強制失效會在部署當下把所有人踢掉。**⚠ 那一條的測試被突變測試修正**：只驗「第一次不拋」殺不掉「把空 jti 也寫進撤銷表」的突變（那會在**第二次**才把所有舊 token 一起擋掉），要斷言撤銷表沒有空 jti 的列並且**再 refresh 一次**才驗得到。`_revoke_all` **只能撤銷撤銷表裡有的**（＝曾被輪替過的）——還在流通、從未被換過的那些沒有紀錄；完整的家族撤銷需要簽發時就登記每一張，**這個限制寫在程式註解裡**不留在只有我知道的地方。前端登出**撤銷失敗仍照清本地**（使用者按了登出就該登出）。**驗收**：pytest 1921（+12）、mypy 264、ruff、schema-sync（24 tables/232 columns）、前端兩閘門綠；活 DB 先備份 77.4 MB 再 migrate:deploy。6 個突變全數被抓。**未竟**：完整 token 家族撤銷、撤銷表無清理排程、鎖定門檻寫死在程式。worklog: auth-hardening.md。
@@ -199,9 +201,6 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   分解器只從那份清單挑目標）。③直射濺射（同格/鄰格友軍距離衰減）是**新能力**不是新係數：
   `Target`/`EnvSnapshot` 沒有 lat/lng，且 `lethal_radius_m` 只在武器契約的 artillery `$def`
   ——KINETIC 範本一律 0.0。要做得先改契約（紅線 4）。
-- **`useScenarioEditor.ts` 的 `exportScenario` 是第二份手寫白名單**，且**已經在漏**
-  `request_quotas` / `indirect_fire_requires_approval` / `survivability_move`——
-  用前端想定編輯器存一次，那三個設定就沒了。後端的 BL-2 修正沒有覆蓋這條路徑。
 - **前端下不了 `ENGINEER` 與 `FORMATION` 令**（WP-C2/C3）：後端、預檢、契約、生成型別全通了，
   但 `useCopOrdering.ts` 的 `orderType` union 仍是 `MOVE|ENGAGE|FIRE_MISSION|POSTURE|MISSION`
   ——**使用者點不到**。破障是 V2.1 exit 的 armor-breakthrough CPX 的必要動作，這是那張卡的前置。
@@ -215,9 +214,6 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   `params: {}` 而後端要求 `target_lat`/`target_lng` → 從 UI 送不出一張合法的臨機火力申請。
 - **`emplace_ticks` 沒有消費者**（WP-C10.5 明列未做）：進入陣地後的待命時間——
   打完就跑之後不該能立刻再開火。需新增 `WeaponProfile` 欄位 + `fire_wiring` 一條「就位了沒」的分支。
-- **`clone_session` 掉七個想定衍生欄**（WP-B1 掃描時發現）：`msel`/`roe`/`mobilityOverrides`/
-  `noStrikeZones`/`requestQuotas`/`indirectFireRequiresApproval`/`survivabilityMove` 全部沒被複製。
-  複製出來的局會**沒有 MSEL、沒有 ROE、沒有禁射區**地跑。B1 因此不建在 clone 上（改掛既有局）。
 - **契約與實作的漂移沒有閘門**：CI 只跑 `openapi_spec_validator`（驗語法，不驗路由）。
   已知漂移：`/sessions/{id}/ledger` 有契約無實作；`/aar/stats`、`/aar/report`、`/aar/export`
   有實作無契約。B1 已為 `/exercises*` 加一致性測試，擴到全端點屬另一張卡。

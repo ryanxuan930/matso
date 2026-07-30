@@ -159,6 +159,22 @@ class LobbyService:
             faction_relations=(
                 list(src.faction_relations) if isinstance(src.faction_relations, list) else None
             ),
+            # ⚠ **以下七個是想定衍生欄，複製時全部漏掉過**（WP-B1 掃描發現）。
+            # 漏掉的後果不是「少一點設定」，是**副本會沒有 MSEL、沒有 ROE、沒有禁射區地跑**
+            # ——看起來一切正常，直到你發現腳本事件永遠不觸發、被禁的武器可以隨便用。
+            # 這也是 B1 當初不敢建在 clone 上（改掛既有局）的原因。
+            #
+            # 新增想定層設定時**務必同時改這裡**（與 `scenario/dump.py` 的白名單同一個陷阱）。
+            msel=_copy_json(src.msel),
+            roe=_copy_json(src.roe),
+            mobility_overrides=_copy_json(src.mobility_overrides),
+            no_strike_zones=_copy_json(src.no_strike_zones),
+            request_quotas=_copy_json(src.request_quotas),
+            indirect_fire_requires_approval=src.indirect_fire_requires_approval,
+            survivability_move=_copy_json(src.survivability_move),
+            # WP-C9/C4a：本 session 新增的兩個，一併複製（否則同樣會靜靜消失）。
+            allow_fratricide=src.allow_fratricide,
+            day_night=_copy_json(src.day_night),
         )
         self._db.add(new)
         self._db.flush()  # 取得 new.id
@@ -432,6 +448,18 @@ class LobbyService:
         self._require_director(user, session_id)
         purge_session_rows(self._db, session_id)
         self._db.commit()
+
+
+def _copy_json(value: object) -> object:
+    """深拷貝 JSON 欄位（list/dict 各拷一層即可——內容是純資料）。
+
+    **不能直接指派**：那會讓副本與原局共用同一個 Python 物件，改一邊動兩邊。
+    """
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, dict):
+        return dict(value)
+    return value
 
 
 def _derive_seed(name: str, user_id: str, session_id: str) -> int:
