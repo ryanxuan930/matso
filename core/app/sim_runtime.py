@@ -311,6 +311,25 @@ def _weapon_category(resolver: WeaponResolver, cmd: Any) -> str:
     return entries[0].category
 
 
+def _session_victory_conditions(db: Session, session_id: str) -> list[dict[str, Any]] | None:
+    """本局的勝負條件（開局從想定快照的那一份）。未宣告 → None → 沿用最後存活。"""
+    row = db.get(WargameSession, session_id)
+    raw = getattr(row, "victory_conditions", None) if row is not None else None
+    return [c for c in raw if isinstance(c, dict)] if isinstance(raw, list) and raw else None
+
+
+def _autonomy_victory(raw: str | bytes | None) -> list[dict[str, Any]] | None:
+    """AI 指派裡的勝負條件（歷史路徑）。**`AutonomyConfig` 目前沒有這個欄位**，
+    pydantic 會把它丟掉——留著這條只是為了不讓舊資料忽然失效。"""
+    if not raw:
+        return None
+    try:
+        conds = json.loads(raw).get("victory")
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return [c for c in conds if isinstance(c, dict)] if isinstance(conds, list) and conds else None
+
+
 def _weapon_name(resolver: WeaponResolver, cmd: Any) -> str:
     """射手這次用的武器範本名（WP-B6 ROE 可依範本名禁用）。挑法與 `_weapon_category` 同。"""
     entries = resolver.weapons_for(cmd.shooter_id)
@@ -403,15 +422,21 @@ class SimManager:
         metrics.active_sessions(len(self._tasks))  # WP-E4
 
     def _start_victory_monitor(
-        self, session_id: str, hot: RedisHotState, client: object, autonomy_raw: str | bytes
+        self,
+        session_id: str,
+        hot: RedisHotState,
+        client: object,
+        *,
+        factions: list[str],
+        explicit: list[dict[str, Any]] | None,
     ) -> asyncio.Task[None]:
-        """依指派的 victory（或最後存活預設）起勝負監視器；收場時 emit 事件 + 設旗標。"""
-        try:
-            autonomy = json.loads(autonomy_raw)
-        except (ValueError, TypeError):
-            autonomy = {}
-        factions = list((autonomy.get("factions") or {}).keys())
-        vconds = resolve_victory_conditions(autonomy.get("victory"), factions)
+        """依想定/指派的勝負條件（或最後存活預設）起勝負監視器；收場時 emit 事件 + 設旗標。
+
+        `factions` 必須是**本局實際有單位的陣營**，不是 AI 指派的鍵。
+        過去這裡讀的是 `autonomy["factions"]`——人人對戰的局那份是空的，
+        於是「最後存活」預設也生不出任何條件。
+        """
+        vconds = resolve_victory_conditions(explicit, factions)
         ledger = LedgerWriter(self._factory)
         concluded_key = session_concluded_key(session_id)
 
@@ -512,6 +537,11 @@ class SimManager:
             )
             # WP-C10.5 陣地變換：**runner 啟動讀一次**（同 ROE/mobility 紀律）。
             surviv = await asyncio.to_thread(load_session_survivability, engage_db, session_id)
+            # 勝負條件（同紀律讀一次）。**過去想定的 victory_conditions 只到得了匯出檔**
+            # ——載得進、驗得過、編輯器編得動，卻沒有一條路帶進執行期。
+            victory_conditions = await asyncio.to_thread(
+                _session_victory_conditions, engage_db, session_id
+            )
             # WP-B2 MSEL：同紀律讀一次。空清單 → runtime 每 tick 直接回 []。
             msel_entries = await asyncio.to_thread(load_session_msel, engage_db, session_id)
             msel_runtime = MselRuntime(
@@ -880,13 +910,25 @@ class SimManager:
                     gateway=ai_gateway,  # type: ignore[arg-type]
                     should_stop=self._stop.is_set,
                 )
-                # 勝負監視器（O11.5）：週期評估物理狀態（非 LLM）→ 有勝方 → SESSION_CONCLUDED
-                # + 設收場旗標（runner 停、不再重啟）。條件取自指派的 victory，否則最後存活預設。
-                # WP-E4：**只算決策 worker**。勝負監視器下一行才加進 ai_tasks，
-                # 它不是 AI 決策 worker（不呼叫 LLM），算進去會讓「AI 在跑幾條」永遠多一。
+                # WP-E4：**只算決策 worker**。勝負監視器不是 AI 決策 worker（不呼叫 LLM），
+                # 算進去會讓「AI 在跑幾條」永遠多一。
                 self._ai_workers[session_id] = len(ai_tasks)
                 metrics.ai_workers(sum(self._ai_workers.values()))
-                ai_tasks.append(self._start_victory_monitor(session_id, hot, client, autonomy_raw))
+
+            # 勝負監視器（O11.5）：週期評估物理狀態（非 LLM）→ 有勝方 → SESSION_CONCLUDED
+            # + 設收場旗標（runner 停、不再重啟）。
+            # **過去它在 `if 有 AI 指派` 之內**——於是人人對戰的局永遠不會自動收場，
+            # COP 的勝負橫幅永遠不出現。勝負是物理判定，與有沒有 AI 無關。
+            # 條件優先序：想定宣告 > AI 指派 > 最後存活預設。
+            ai_tasks.append(
+                self._start_victory_monitor(
+                    session_id,
+                    hot,
+                    client,
+                    factions=sensor_resolver.factions(),
+                    explicit=victory_conditions or _autonomy_victory(autonomy_raw),
+                )
+            )
 
             concluded_key = session_concluded_key(session_id)
             # runner 重啟旗標（自主 AI 指派只於起跑時讀取）：起跑先清舊旗標，避免立刻自我結束；

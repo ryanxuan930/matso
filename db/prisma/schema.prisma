@@ -80,6 +80,10 @@ model WargameSession {
   /// 聚合裁決門檻（此級以上走 Lanchester）。NULL＝BATTALION（既有預設）。
   aggregateAdjudicationLevel UnitLevel?
   dayNight Json?
+  /// 本局的勝負條件（想定 `victory_conditions` 開局快照）。NULL＝未宣告＝「最後存活」。
+  /// **在此之前這份宣告只到得了匯出檔**：載得進、驗得過、編輯器編得動，
+  /// 卻沒有一條路帶進執行期，於是每一局的判定都是「最後存活」。
+  victoryConditions Json?
   /// 該局的 tick 長度（ms 模擬時間）。開局從想定快照一份。NULL＝沿用系統設定
   /// （SimParams.tick_rate_ms）。**在此之前想定的 tick_rate_ms 只進得了匯出檔**
   /// ——載得進 LoadedScenario、卻沒有任何一條路帶進執行期。

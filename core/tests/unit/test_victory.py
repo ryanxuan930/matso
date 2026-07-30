@@ -93,3 +93,43 @@ def test_victory_monitor_concludes(session_factory: sessionmaker[Session]) -> No
 
     asyncio.run(_run())
     assert concluded == [(["BLUE"], 42)]
+
+
+def test_the_monitor_starts_for_a_human_only_session() -> None:
+    """勝負是**物理判定**，與有沒有 AI 無關。
+
+    `_start_victory_monitor` 過去在 `if ai_gateway is not None and autonomy_raw:` 之內，
+    於是人人對戰（沒指派 AI）的局永遠不會自動收場，COP 的勝負橫幅永遠不出現。
+    這條用 AST 釘住「監視器不在 AI 分支裡」——行為測試要起整個 runner，成本太高
+    而且釘不住「縮排跑回去了」這種回歸。
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.sim_runtime import SimManager
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(SimManager._run_session)))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        inner = ast.dump(ast.Module(body=node.body, type_ignores=[]))
+        assert "_start_victory_monitor" not in inner, (
+            "勝負監視器被包進了某個 if——它必須無條件啟動，否則人人對戰的局不會收場"
+        )
+    assert "_start_victory_monitor" in ast.dump(tree)  # 守門本身沒失效
+
+
+def test_the_monitor_uses_the_sessions_real_factions() -> None:
+    """`factions` 過去讀的是 `autonomy["factions"]` 的鍵。
+
+    人人對戰的局那份是空的 → `last_standing_conditions([])` 生不出任何條件 →
+    監視器起來了也永遠不會判出勝方。
+    """
+    import inspect
+
+    from app.sim_runtime import SimManager
+
+    src = inspect.getsource(SimManager._run_session)
+
+    assert "factions=sensor_resolver.factions()" in src

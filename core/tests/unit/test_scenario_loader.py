@@ -193,3 +193,29 @@ def test_a_non_default_hex_resolution_is_rejected_not_ignored() -> None:
     assert _validate_hex_resolution(8) == 8
     with pytest.raises(ScenarioError, match="hex_resolution"):
         _validate_hex_resolution(9)
+
+
+def test_victory_conditions_reach_the_session_row() -> None:
+    """想定的勝負條件過去**只到得了匯出檔**。
+
+    載得進 `LoadedScenario`、`_validate_victory` 驗得過、劇本編輯器編得動，
+    但 `create_session_from_scenario` 沒有把它寫進 `WargameSession`——
+    於是 `resolve_victory_conditions` 只讀 Redis 的 ai_config（而 `AutonomyConfig`
+    根本沒有 `victory` 欄位），每一局的判定都是「最後存活」。
+    roundtrip 測試一直綠，因為 loader→dump 對得上。
+    """
+    from app.models.tables import WargameSession
+    from app.scenario.loader import create_session_from_scenario, load_scenario_package
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    loaded = load_scenario_package(_TUTORIAL)
+    assert loaded.victory_conditions  # 出貨想定本來就有宣告
+
+    with sessionmaker(bind=engine)() as db:
+        sid = create_session_from_scenario(db, loaded, master_seed=1)
+        db.commit()
+        row = db.get(WargameSession, sid)
+
+    assert row is not None
+    assert row.victory_conditions == loaded.victory_conditions

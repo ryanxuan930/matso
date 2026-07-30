@@ -452,6 +452,9 @@ def create_session_from_scenario(
         # 因為 `should_aggregate()` 一直吃它自己的預設 BATTALION。
         aggregate_adjudication_level=_agg_level(loaded.aggregate_adjudication_level),
         day_night=loaded.day_night or None,
+        # 勝負條件落地。**過去這份宣告只到得了匯出檔**——載得進、`_validate_victory`
+        # 驗得過、劇本編輯器編得動，卻沒有一條路帶進執行期。
+        victory_conditions=list(loaded.victory_conditions) or None,
         # 該局的 tick 長度落地。**過去 `tick_rate_ms` 只進得了匯出檔**——想定 schema 把它
         # 列為必填、loader 讀得進 LoadedScenario，但沒有任何一條路把它帶進執行期，
         # 於是每一局都跑系統設定那個值（roundtrip 測試仍綠，因為 loader→dump 對得上）。
