@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.engine.clock import SimTime
 from app.engine.mission_wiring import STATE_KEY, LiveMissionPlanner
 from app.state.hot_state import InMemoryHotState
@@ -215,3 +217,130 @@ def test_non_move_sub_orders_are_passed_through_untouched(session_factory) -> No
     payload = {"posture": "DEFENSE"}
     assert _hydrate(OrderType.POSTURE, payload) is payload
     assert _hydrate(OrderType.ENGAGE, {"target_unit_id": "x"}) == {"target_unit_id": "x"}
+
+
+# ---- 四種任務型都要走得完整條接線（不只 MOVE_MARCH）----
+#
+# 只測 MOVE_MARCH 的話，另外三型的 payload 形狀（objective/area/line）到底進不進得了
+# `MissionPayload.model_validate`、以及它們產的子令是不是每一種都送得出去，全都沒人驗過。
+
+
+def _run(db, world, hot, ticks: int, *, planner=None):  # type: ignore[no-untyped-def]
+    planner = planner or _planner(db, world, hot)
+    events = []
+    for t in range(1, ticks + 1):
+        events.extend(planner.plan(_now(t)))
+    return planner, events
+
+
+def test_seize_moves_along_the_axis(session_factory) -> None:  # type: ignore[no-untyped-def]
+    from _order_fakes import seed_world
+
+    world = seed_world(session_factory)
+    db = session_factory()
+    hot = InMemoryHotState()
+    hot.put_unit(world.blue_unit_id, {"lat": 23.75, "lng": 121.25, "alive": True})
+    _issue_mission(
+        db,
+        world,
+        mission_type="SEIZE",
+        params={
+            "objective": {"lat": 23.80, "lng": 121.30},
+            "axis": [{"lat": 23.77, "lng": 121.27}],
+            "objective_radius_m": 400,
+        },
+    )
+    _run(db, world, hot, 2)
+    moves = [s for s in _sub_orders(db, world) if s.order_type == "MOVE"]
+    assert moves, "SEIZE 沒有派生任何 MOVE 子令"
+    assert moves[0].payload["to_h3"]
+    db.close()
+
+
+def test_defend_issues_a_posture_order_once_in_the_area(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """DEFEND 的第二階段產的是 POSTURE 令——**不是 MOVE**。
+
+    `_hydrate` 若無條件補 `to_h3`，POSTURE 會直接驗證失敗（它沒有那個欄位）。
+    """
+    from _order_fakes import seed_world
+
+    world = seed_world(session_factory)
+    db = session_factory()
+    hot = InMemoryHotState()
+    # 一開始就站在防區裡 → 下一個 tick 就進 CONSOLIDATING 並下 POSTURE。
+    hot.put_unit(world.blue_unit_id, {"lat": 23.75, "lng": 121.25, "alive": True})
+    _issue_mission(
+        db,
+        world,
+        mission_type="DEFEND",
+        params={"area": {"lat": 23.75, "lng": 121.25}, "area_radius_m": 800},
+    )
+    _run(db, world, hot, 3)
+    types = {s.order_type for s in _sub_orders(db, world)}
+    assert "POSTURE" in types, f"DEFEND 沒有下出姿態令，只有 {types}"
+    db.close()
+
+
+def test_screen_deliberately_never_engages(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """掩護幕的任務是偵測回報，不是接戰——就位後**不下任何 ENGAGE**。
+
+    這條是釘語義的：若哪天有人「順手」讓 SCREEN 也接戰，掩護幕就變成前進攻擊。
+    """
+    from _order_fakes import seed_world
+
+    world = seed_world(session_factory)
+    db = session_factory()
+    hot = InMemoryHotState()
+    hot.put_unit(world.blue_unit_id, {"lat": 23.75, "lng": 121.25, "alive": True})
+    _issue_mission(
+        db,
+        world,
+        mission_type="SCREEN",
+        params={"line": [{"lat": 23.75, "lng": 121.25}, {"lat": 23.76, "lng": 121.26}]},
+    )
+    _run(db, world, hot, 4)
+    assert not [s for s in _sub_orders(db, world) if s.order_type == "ENGAGE"]
+    db.close()
+
+
+@pytest.mark.parametrize(
+    ("mission_type", "params"),
+    [
+        (
+            "SEIZE",
+            {"objective": {"lat": 23.80, "lng": 121.30}, "axis": [], "objective_radius_m": 400},
+        ),
+        ("DEFEND", {"area": {"lat": 23.75, "lng": 121.25}, "area_radius_m": 800}),
+        ("SCREEN", {"line": [{"lat": 23.75, "lng": 121.25}]}),
+        ("MOVE_MARCH", {"route": [{"lat": 23.80, "lng": 121.30}]}),
+    ],
+)
+def test_every_mission_type_survives_the_round_trip_through_the_order_row(  # type: ignore[no-untyped-def]
+    session_factory, mission_type, params
+) -> None:
+    """四型的 params 都要能從 DB 的 payload 重新 parse 回 `MissionPayload`，**連續多個 tick**。
+
+    planner 每 tick 都重 parse 一次（它不快取令），而 payload 裡混著 `_mission_state`
+    這種底線前綴的執行期欄位。
+
+    ⚠ `_load` 的底線過濾**目前不是必要的**——pydantic 預設 `extra="ignore"`，我用突變測試
+    驗過：拿掉過濾這一組仍然全綠。留著是為了讓「哪天有人把 `MissionPayload` 改成
+    `extra="forbid"`」不會炸掉每一道進行中的任務令。不要在註解裡宣稱它現在擋住了什麼。
+    """
+    from _order_fakes import seed_world
+
+    from app.models.tables import Order
+
+    world = seed_world(session_factory)
+    db = session_factory()
+    hot = InMemoryHotState()
+    hot.put_unit(world.blue_unit_id, {"lat": 23.75, "lng": 121.25, "alive": True})
+    _issue_mission(db, world, mission_type=mission_type, params=params)
+    _run(db, world, hot, 3)
+    missions = (
+        db.query(Order)
+        .filter(Order.session_id == world.session_id, Order.order_type == "MISSION")
+        .all()
+    )
+    assert all(m.status.value != "REJECTED" for m in missions), f"{mission_type} 被判 REJECTED"
+    db.close()
