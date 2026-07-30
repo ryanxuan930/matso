@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.adjudication import formation as _formation
 from app.adjudication import obstacles as _obs
 from app.adjudication import suppression as _sup
+from app.engine import refit_wiring as _refit
 from app.engine import weather_wiring as _wx
 from app.movement import params as _mp
 
@@ -103,6 +104,8 @@ class SimParams:
     # --- 後勤（WP-C7.1）---
     # 每模擬日消耗率 {類別: 份/日}。**空 dict ＝全 0 ＝既有局不會憑空開始餓肚子。**
     supply_daily_rates: dict[str, float] = field(default_factory=dict)
+    # WP-C7.3 每模擬日恢復的戰力點。**0 ＝不修復（中性）**——想定要主動給。
+    repair_per_day: float = _refit.REPAIR_PER_DAY
     # --- 崩潰復原（WP-E1）---
     # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），
     # 而牆鐘會隨 TickPacer 的過載降頻漂移。600 tick ≈ 5 分鐘牆鐘（@ 預設 0.5s/tick）。

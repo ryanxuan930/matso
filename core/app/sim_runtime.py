@@ -45,6 +45,7 @@ from app.engine.logistics import ResupplySystem
 from app.engine.mission_wiring import LiveMissionPlanner
 from app.engine.movement import UnitMovementSystem
 from app.engine.obstacle_wiring import drain_engineer_orders
+from app.engine.refit_wiring import refit_tick
 from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
 from app.engine.smoke_wiring import SmokeCache
@@ -249,6 +250,35 @@ def _resupply_tick(factory: Any, hot: Any, session_id: str, tick: int) -> list[A
             return (unit.faction, float(unit.current_lat), float(unit.current_lng))
 
         return auto_resupply(db, hot, session_id, lookup, tick)
+
+
+def _refit_tick(
+    factory: Any,
+    hot: Any,
+    session_id: str,
+    faction_of: Any,
+    tick: int,
+    tick_rate_ms: int,
+    repair_per_day: float,
+) -> list[Any]:
+    """整補結算（WP-C7.3）。另開 DB session——理由同 `_posture_tick`。"""
+    from app.models.tables import TacticalUnit
+
+    if repair_per_day <= 0:
+        return []  # 連 DB session 都不開
+    with factory() as db:
+
+        def lookup(unit_id: str) -> tuple[str, float, float] | None:
+            unit = db.get(TacticalUnit, unit_id)
+            if unit is None or unit.current_lat is None or unit.current_lng is None:
+                return None
+            return (unit.faction, float(unit.current_lat), float(unit.current_lng))
+
+        events = refit_tick(
+            db, hot, session_id, lookup, faction_of, tick, tick_rate_ms, repair_per_day
+        )
+        db.commit()
+        return events
 
 
 def _suppress_hit(hot: Any, unit_id: str, category: str) -> None:
@@ -714,6 +744,20 @@ class SimManager:
                 )
                 if sup:
                     await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, sup)
+                # WP-C7.3 整補：戰損單位在補給點旁、無敵情、有料件時逐 tick 恢復。
+                # `repair_per_day=0`（預設）→ 第一行就回空 list，既有局零成本。
+                rf = await asyncio.to_thread(
+                    _refit_tick,
+                    self._factory,
+                    hot,
+                    session_id,
+                    sensor_resolver.faction_for,
+                    sim_clock.now().tick,
+                    sim_params.tick_rate_ms,
+                    sim_params.repair_per_day,
+                )
+                if rf:
+                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, rf)
                 # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
                 # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
                 await asyncio.to_thread(tick_suppression, hot, sim_clock.now().tick)
