@@ -24,6 +24,11 @@ class CellEffects:
     uav_operability: bool = True
     rotary_wing_operability: bool = True
     artillery_dispersion_modifier: float = 1.0
+    # WP-C4b 風場。**契約本來就有**（`WeatherCell.wind_ms` / `wind_dir_deg`，proto 欄位 3/4）
+    # ——是 core 的 `_cell_from_proto` 只讀 `effects` 把它丟掉了。0＝無風（中性）。
+    # 風向為**風的來向**（氣象慣例：北風＝0 度＝從北方吹來）。
+    wind_ms: float = 0.0
+    wind_dir_deg: float = 0.0
 
 
 CLEAR = CellEffects()  # 晴天：所有 modifier 中性

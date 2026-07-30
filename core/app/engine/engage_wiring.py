@@ -334,6 +334,7 @@ def make_engage_env(  # type: ignore[no-untyped-def]
     hot: HotStateStore,
     gateway: object | None = None,
     weather: WeatherState | None = None,
+    weather_for: Callable[[], WeatherState | None] | None = None,
     smoke_for: Callable[[], list[SmokeCloud]] | None = None,
     tick_for: Callable[[], int] | None = None,
 ):
@@ -353,6 +354,12 @@ def make_engage_env(  # type: ignore[no-untyped-def]
       `suppression` 與 `posture` 導出。**兩者從交戰真實化時代就恆為 1.0**——掛點早就留好，
       系統一直缺席。無壓制、MOVING 姿態 → 剛好 1.0，既有局位元不變。
     """
+
+    def _weather_now() -> WeatherState | None:
+        """本 tick 的天氣。WP-C4b：有 `weather_for` 就現讀（逐 tick 刷新），
+        否則沿用建構時的快照（＝既有行為）。"""
+        return weather_for() if weather_for is not None else weather
+
     w_res = _weather_res(weather) if weather is not None else 8
 
     def env_for(shooter_id: str, target_id: str, indirect_fire: bool = False) -> EnvSnapshot:
@@ -387,8 +394,9 @@ def make_engage_env(  # type: ignore[no-untyped-def]
             except Exception:
                 los_clear = True
         weather_mod = 1.0
-        if weather is not None:
-            effects = weather.effects_at(h3.latlng_to_cell(s_lat, s_lng, w_res))
+        wx = _weather_now()
+        if wx is not None:
+            effects = wx.effects_at(h3.latlng_to_cell(s_lat, s_lng, w_res))
             weather_mod = engagement_weather_modifier(effects, indirect_fire)
         return EnvSnapshot(
             range_m=range_m,

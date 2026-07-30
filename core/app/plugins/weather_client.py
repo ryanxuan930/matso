@@ -27,11 +27,17 @@ class WeatherClient:
             )
         except grpc.RpcError:
             return WeatherState.clear()
-        cells = {cell.h3_index: _cell_from_proto(cell.effects) for cell in resp.cells}
+        cells = {cell.h3_index: _cell_from_proto(cell) for cell in resp.cells}
         return WeatherState(cells, stale=resp.stale)
 
 
-def _cell_from_proto(effects: weather_pb2.WeatherEffects) -> CellEffects:
+def _cell_from_proto(cell: weather_pb2.WeatherCell) -> CellEffects:
+    """proto cell → core 的效果鏡像。
+
+    ⚠ 第一版只收 `cell.effects`，把 `wind_ms`/`wind_dir_deg` 丟掉了——**契約一直有風**，
+    是 core 這一側沒讀。煙幕漂移（WP-C4c）與 UAV 可用性判斷都需要它。
+    """
+    effects = cell.effects
     return CellEffects(
         rf_attenuation_db=effects.rf_attenuation_db,
         mobility_modifier=effects.mobility_modifier,
@@ -40,4 +46,6 @@ def _cell_from_proto(effects: weather_pb2.WeatherEffects) -> CellEffects:
         uav_operability=effects.uav_operability,
         rotary_wing_operability=effects.rotary_wing_operability,
         artillery_dispersion_modifier=effects.artillery_dispersion_modifier,
+        wind_ms=cell.wind_ms,
+        wind_dir_deg=cell.wind_dir_deg,
     )

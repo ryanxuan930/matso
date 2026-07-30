@@ -95,6 +95,7 @@ class SensorResolver:
 def make_detect_env(
     gateway: object | None = None,
     weather: WeatherState | None = None,
+    weather_for: Callable[[], WeatherState | None] | None = None,
     light_for: Callable[[], LightLevel] | None = None,
     smoke_for: Callable[[], list[SmokeCloud]] | None = None,
     tick_for: Callable[[], int] | None = None,
@@ -111,6 +112,11 @@ def make_detect_env(
       （雷達/聲學/SIGINT 穿得過煙——把它們也擋掉等於把煙幕當成電磁屏障）。
     - 座標與快照給定即確定性 → replay 安全。
     """
+
+    def _weather_now() -> WeatherState | None:
+        """本 tick 的天氣（WP-C4b：有回呼就現讀，否則沿用建構時快照＝既有行為）。"""
+        return weather_for() if weather_for is not None else weather
+
     w_res = _weather_res(weather) if weather is not None else 8
 
     def env_for(observer: SensorUnit, target: TargetUnit) -> DetectionEnv:
@@ -125,9 +131,10 @@ def make_detect_env(
             except Exception:
                 los_clear = True  # 服務中斷 → 不致盲（安全退化）
         weather_mod = 1.0
-        if weather is not None:
+        wx = _weather_now()
+        if wx is not None:
             try:
-                effects = weather.effects_at(h3.latlng_to_cell(observer.lat, observer.lng, w_res))
+                effects = wx.effects_at(h3.latlng_to_cell(observer.lat, observer.lng, w_res))
                 weather_mod = detection_weather_modifier(effects, observer.sensor.sensor_kind)
             except Exception:
                 weather_mod = 1.0

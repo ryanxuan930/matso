@@ -54,6 +54,7 @@ from app.engine.suppression_wiring import (
     drain_posture_orders,
     tick_suppression,
 )
+from app.engine.weather_wiring import WeatherCache
 from app.factions.relations import FactionRelations
 from app.factions.session_store import load_session_relations
 from app.factions.visibility import visible_factions
@@ -131,6 +132,25 @@ class _NoLosGateway:
 def _fire_plan_gateway() -> PhysicsGateway:
     gw = _engage_gateway()
     return gw if gw is not None else _NoLosGateway()  # type: ignore[return-value]
+
+
+def _weather_snapshot_at(sim_tick: int) -> WeatherState | None:
+    """指定 tick 的天氣快照（WP-C4b）。
+
+    ⚠ **插件的 RPC 一直是 tick-aware 的**（`GetWeatherRequest.sim_tick`）——
+    是 core 只呼叫了一次且永遠傳 0。缺的從來不是能力。
+    """
+    try:
+        import grpc
+
+        from app.config import Settings
+        from app.plugins.weather_client import WeatherClient
+
+        channel = grpc.insecure_channel(Settings().weather_grpc_target)
+        return WeatherClient(channel).fetch_state(sim_tick)
+    except Exception:
+        _LOG.warning("天氣快照建立失敗（tick=%s），天氣修正退回晴天", sim_tick)
+        return None
 
 
 def _weather_snapshot() -> WeatherState | None:
@@ -429,6 +449,13 @@ class SimManager:
             # WP-C4c 煙幕：逐 tick 一次 query 的快取（沒有煙 → 空 list → 一次幾何都不做）。
             # **另開 DB session**：不可借用 engage_db，那條在 tick 之中被 order source commit。
             smoke_cache = SmokeCache(self._factory, session_id)
+            # WP-C4b 天氣逐 tick 刷新。`weather_refresh_ticks=0`（預設）→ `refreshes` 為
+            # False → 整局沿用啟動快照＝既有行為，一個位元都不差。
+            weather_cache = WeatherCache(
+                _weather_snapshot_at,
+                refresh_ticks=sim_params.weather_refresh_ticks,
+                initial=_weather_snapshot(),
+            )
             if resumed.start_tick:
                 _LOG.info("session %s 自 tick=%d 續跑", session_id, resumed.start_tick)
             sim_clock = SimClock(  # #93 可調節奏
@@ -454,8 +481,10 @@ class SimManager:
                             make_engage_env(
                                 hot,
                                 _engage_gateway(),
-                                _weather_snapshot(),
-                                # WP-C4c：回呼而非值——`env_for` 在建構時就固定了。
+                                # WP-C4b：回呼而非值——`env_for` 在建構時就固定了，
+                                # 傳一份快照進去整局就永遠停在那一份（＝本卡要修的病）。
+                                weather_for=lambda: weather_cache.at(sim_clock.now().tick),
+                                # WP-C4c：同上。
                                 smoke_for=lambda: smoke_cache.at(sim_clock.now().tick),
                                 tick_for=lambda: sim_clock.now().tick,
                             ),
@@ -522,7 +551,7 @@ class SimManager:
                     faction_for=sensor_resolver.faction_for,
                     env_for=make_detect_env(
                         _engage_gateway(),
-                        _weather_snapshot(),
+                        weather_for=lambda: weather_cache.at(sim_clock.now().tick),
                         # **每次呼叫現讀**：sweep 跨 tick 重用同一個 env_for，
                         # 快取一個等級會讓整局停在建立時的那一刻。
                         light_for=(

@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.adjudication import formation as _formation
 from app.adjudication import obstacles as _obs
 from app.adjudication import suppression as _sup
+from app.engine import weather_wiring as _wx
 from app.movement import params as _mp
 
 _CONFIG_KEY = "sim"
@@ -95,6 +96,10 @@ class SimParams:
     mine_strike_strength_loss: float = _obs.MINE_STRIKE_STRENGTH_LOSS
     # 工兵通過雷區的機率倍率（規格：減半）。
     engineer_mine_strike_mult: float = _obs.ENGINEER_MINE_STRIKE_MULT
+    # --- 環境演進（WP-C4b）---
+    # 天氣刷新間隔（tick）。**0 ＝永不刷新 ＝既有的「整局一份啟動快照」**，
+    # 這是中性預設：既有局位元不變、golden 不必重錄。
+    weather_refresh_ticks: int = _wx.DEFAULT_REFRESH_TICKS
     # --- 崩潰復原（WP-E1）---
     # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），
     # 而牆鐘會隨 TickPacer 的過載降頻漂移。600 tick ≈ 5 分鐘牆鐘（@ 預設 0.5s/tick）。

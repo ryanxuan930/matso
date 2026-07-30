@@ -179,3 +179,53 @@ def test_radar_sees_through_smoke_but_optics_do_not() -> None:
     )
     assert optical.needs_los is True  # → 會被煙擋
     assert acoustic.needs_los is False  # → 不受煙影響
+
+
+# ---- 風向漂移（WP-C4b 把風接進來之後）----
+
+
+def test_no_wind_means_no_drift() -> None:
+    from app.adjudication.obscurants import drift
+
+    cloud = _cloud(24.0, 121.0)
+    assert drift(cloud, 0.0, 90.0, 10) is cloud
+    assert drift(cloud, 5.0, 90.0, 0) is cloud
+
+
+def test_smoke_drifts_downwind_not_upwind() -> None:
+    """⚠ **`wind_dir_deg` 是氣象慣例的「來向」**：北風＝0 度＝從北方吹來，煙要往**南**走。
+
+    直接拿它當移動方位角會讓煙往上風處飄——而那個錯誤在畫面上完全合理（煙有在動），
+    只有對著風標看才會發現方向反了。
+    """
+    from app.adjudication.obscurants import drift
+
+    cloud = _cloud(24.0, 121.0)
+    north_wind = drift(cloud, 10.0, 0.0, 5)  # 北風 → 往南
+    assert north_wind.lat < cloud.lat
+    assert abs(north_wind.lng - cloud.lng) < 1e-6
+
+    west_wind = drift(cloud, 10.0, 270.0, 5)  # 西風 → 往東
+    assert west_wind.lng > cloud.lng
+
+
+def test_drift_is_deterministic_and_scales_with_time() -> None:
+    """位置由 (初始位置, 風, 經過 tick) 完全決定——不抽任何隨機，
+    所以不必存每 tick 的位置，也不會擾動 RNG 串流。"""
+    from app.adjudication.obscurants import drift
+
+    cloud = _cloud(24.0, 121.0)
+    a = drift(cloud, 8.0, 45.0, 3)
+    b = drift(cloud, 8.0, 45.0, 3)
+    assert (a.lat, a.lng) == (b.lat, b.lng)
+    far = drift(cloud, 8.0, 45.0, 6)
+    assert abs(far.lat - cloud.lat) > abs(a.lat - cloud.lat)
+
+
+def test_drift_preserves_identity_and_lifetime() -> None:
+    """漂移不是新的一團煙——半徑、到期 tick、feature_id 都要跟著走。"""
+    from app.adjudication.obscurants import drift
+
+    cloud = SmokeCloud(24.0, 121.0, 150.0, 42, feature_id="f1")
+    moved = drift(cloud, 5.0, 180.0, 2)
+    assert (moved.radius_m, moved.expires_at_tick, moved.feature_id) == (150.0, 42, "f1")

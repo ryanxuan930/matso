@@ -28,6 +28,7 @@ WP-C2 的 `obstacles_at` 也是用同一個理由重用既有的線段判定。
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -39,6 +40,8 @@ DEFAULT_SMOKE_RADIUS_M = 150.0
 DEFAULT_SMOKE_TICKS = 8
 # 每多一發延長的 tick 數——發數是發煙者唯一能調的旋鈕。
 TICKS_PER_ROUND = 2
+
+_M_PER_DEG_LAT = 111_320.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +61,33 @@ class SmokeCloud:
 def duration_ticks(rounds: int) -> int:
     """發數 → 持續 tick。**發數是發煙者唯一能調的旋鈕**（見模組說明）。"""
     return DEFAULT_SMOKE_TICKS + TICKS_PER_ROUND * max(0, rounds - 1)
+
+
+def drift(cloud: SmokeCloud, wind_ms: float, wind_dir_deg: float, elapsed_ticks: int) -> SmokeCloud:
+    """煙隨風漂移（WP-C4b/C4c）。回漂移後的煙（原物件不變——frozen）。
+
+    ⚠ **`wind_dir_deg` 是氣象慣例的「來向」**：北風＝0 度＝從北方吹來，煙**往南**走。
+    直接拿它當移動方位角會讓煙往上風處飄，而那個錯誤在畫面上看起來完全合理
+    （煙有在動），只有對著風標看才會發現方向反了。
+
+    漂移是**確定性的**：位置由 (初始位置, 風, 經過 tick) 完全決定，不抽任何隨機，
+    所以不需要存每 tick 的位置，也不會擾動 RNG 串流。
+    """
+    if wind_ms <= 0.0 or elapsed_ticks <= 0:
+        return cloud
+    # 來向 → 去向：+180 度。
+    bearing = math.radians((wind_dir_deg + 180.0) % 360.0)
+    metres = wind_ms * 60.0 * elapsed_ticks  # 1 tick = 1 分鐘
+    dlat = metres * math.cos(bearing) / _M_PER_DEG_LAT
+    coslat = math.cos(math.radians(cloud.lat)) or 1e-9
+    dlng = metres * math.sin(bearing) / (_M_PER_DEG_LAT * coslat)
+    return SmokeCloud(
+        lat=cloud.lat + dlat,
+        lng=cloud.lng + dlng,
+        radius_m=cloud.radius_m,
+        expires_at_tick=cloud.expires_at_tick,
+        feature_id=cloud.feature_id,
+    )
 
 
 def blocks_los(
@@ -92,5 +122,6 @@ __all__ = [
     "SmokeCloud",
     "active",
     "blocks_los",
+    "drift",
     "duration_ticks",
 ]

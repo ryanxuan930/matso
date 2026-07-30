@@ -82,8 +82,10 @@ broadcaster、`compute_state_hash`）都得學會忽略它——四處要改、�
 
 - **下一步第一件事**：C4b（天氣 tick 化 + REPLAY 模式）是 C4 最後一塊。
 - **未竟項**：
-  1. **風向漂移未做**。規格寫「隨 weather wind 向量漂移」，但 `CellEffects` **沒有風場**
-     ——要做得先擴 weather 契約（C4b 一起處理較合理）。目前煙原地不動直到消散。
+  1. ~~風向漂移未做，要先擴 weather 契約~~ ← **這句是錯的，C4b 查證後更正**：
+     風場**一直在契約裡**（`WeatherCell.wind_ms`/`wind_dir_deg`，proto 欄位 3/4），
+     是 core 的 `_cell_from_proto` 只讀 `effects` 把它丟掉了。`drift()` 已於 C4b 實作
+     （**不需要改契約**），但**尚未掛進查詢路徑**——`load_active_smoke` 仍回原始位置。
   2. **前端沒有畫煙**：MapFeature 有進圖層機制，但 `kind="SMOKE"` 沒有半透明圓的樣式，
      也沒有隨剩餘 tick 淡出。
   3. **COP 下不了發煙任務**：`ammo_type` 在契約與 payload 都通了，但火力任務面板沒有彈種選擇。
