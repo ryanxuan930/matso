@@ -40,7 +40,7 @@ from app.engine.clock import SimTime
 from app.engine.rng import DeterministicRNG
 from app.engine.supply_wiring import supply_effectiveness
 from app.engine.suppression_wiring import POSTURE_KEY, SUPPRESSION_KEY
-from app.models.enums import OrderStatus
+from app.models.enums import OrderStatus, UnitLevel
 from app.models.tables import EquipmentInstance, Order, TacticalUnit
 from app.orders.schemas import OrderType
 from app.orders.state_machine import next_status
@@ -168,6 +168,7 @@ class EngagementAdjudicator:
         roe_for: RoeLookup | None = None,
         suppress: Callable[[str, str], None] | None = None,
         weapon_category_for: Callable[[EngageCommand], str] | None = None,
+        aggregate_level: UnitLevel | None = None,
     ) -> None:
         self._db = db
         self._hot = hot_state
@@ -185,6 +186,10 @@ class EngagementAdjudicator:
         # WP-C1 壓制累積（None → 不累積，既有呼叫端零行為變更）。
         self._suppress = suppress
         self._weapon_category_for = weapon_category_for
+        # 聚合裁決門檻（此級以上走 Lanchester）。**None＝BATTALION**——
+        # 這個參數過去根本不存在，`should_aggregate()` 一律吃自己的預設，
+        # 於是想定裡的 `aggregate_adjudication_level` 寫了也沒有作用。
+        self._aggregate_level = aggregate_level or UnitLevel.BATTALION
 
     def resolve(self, order: EngageCommand, now: SimTime) -> list[LedgerEvent]:
         shooter_state = self._hot.get_unit(order.shooter_id)
@@ -199,7 +204,9 @@ class EngagementAdjudicator:
         # #33a 聚合裁決：射手為營級以上 → 走 Lanchester（雙方同時消耗），取代逐平台/齊射。
         # 平台級（連/排以下）維持既有路徑（golden replay 不變）。
         shooter_unit = self._db.get(TacticalUnit, order.shooter_id)
-        if shooter_unit is not None and should_aggregate(shooter_unit.unit_level):
+        if shooter_unit is not None and should_aggregate(
+            shooter_unit.unit_level, self._aggregate_level
+        ):
             return self._resolve_aggregate(order, weapon, env, shooter_state, target_state, now)
 
         # SPEC_EXTEND P2/P3 聯合兵種：**未指定單一武器**且射手持 ≥2 種武器系統 → 武器組合加總。

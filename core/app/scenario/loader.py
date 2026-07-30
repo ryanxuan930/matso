@@ -217,6 +217,19 @@ def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> lis
     return units
 
 
+def _agg_level(raw: str) -> UnitLevel | None:
+    """想定字串 → 聚合門檻。**認不得/等於預設 → None**（＝沿用 BATTALION，欄位留空）。
+
+    留 None 而不是寫死 BATTALION：既有局的欄位是 NULL，寫死會讓「沒宣告」與
+    「明確宣告 BATTALION」在資料上分不開，而前者才是絕大多數。
+    """
+    try:
+        level = UnitLevel(str(raw).strip().upper())
+    except ValueError:
+        return None
+    return None if level is UnitLevel.BATTALION else level
+
+
 def _branch_of(raw: str) -> UnitBranch:
     """想定字串 → `UnitBranch`。**認不得就回 UNKNOWN**，不要讓一個打錯的兵科擋掉整份想定載入。
 
@@ -418,6 +431,9 @@ def create_session_from_scenario(
         indirect_fire_requires_approval=loaded.indirect_fire_requires_approval or None,
         # `or None`＝未宣告寫 NULL。NOT NULL + default 會回頭改掉既有局的語義。
         allow_fratricide=loaded.allow_fratricide or None,
+        # 聚合裁決門檻落地：**過去整個沒有持久化**——想定寫了 COMPANY/BRIGADE 也完全沒作用，
+        # 因為 `should_aggregate()` 一直吃它自己的預設 BATTALION。
+        aggregate_adjudication_level=_agg_level(loaded.aggregate_adjudication_level),
         day_night=loaded.day_night or None,
         # WP-C10.5 陣地變換落地：未宣告存 None ＝ 停用（既有局零變更）。
         survivability_move=loaded.survivability_move or None,

@@ -66,7 +66,7 @@ from app.fires.scheduler import run_due_fire_missions
 from app.fires.survivability import load_session_survivability
 from app.governance.guard import seal_violation
 from app.intel.sensor_system import SensorSweepSystem
-from app.models import WargameSession
+from app.models import UnitLevel, WargameSession
 from app.movement.params import MOVE_SPEED_KMH, MOVE_TICK_RATE_MS
 from app.movement.session_mobility import load_session_mobility_rules
 from app.movement.terrain_sampler import build_terrain_cell_sampler, build_terrain_path_fn
@@ -99,6 +99,14 @@ _LOG = logging.getLogger("app.sim")
 _TICK_RATE_MS = MOVE_TICK_RATE_MS  # sim time：1 分 / tick
 _PACE_COMPRESSION = 120.0  # 真實節奏：60000/1000/120 = 0.5s / tick
 _UNIT_SPEED_KMH = MOVE_SPEED_KMH
+
+
+def _aggregate_level(db: Session, session_id: str) -> UnitLevel | None:
+    """本局的聚合裁決門檻。**開局讀一次**（與 ROE/mobility_rules 同紀律：
+    推演中途改想定不影響進行中的局）。未宣告 → None → 裁決層沿用 BATTALION。
+    """
+    row = db.get(WargameSession, session_id)
+    return row.aggregate_adjudication_level if row is not None else None
 
 
 def _engage_gateway() -> object | None:
@@ -568,6 +576,10 @@ class SimManager:
                             # WP-C1：命中即累積壓制。武器類別決定累積量（砲兵高、直射低）。
                             suppress=lambda uid, cat: _suppress_hit(hot, uid, cat),
                             weapon_category_for=lambda cmd: _weapon_category(resolver, cmd),
+                            # 聚合裁決門檻由想定宣告（此級以上走 Lanchester）。
+                            # 過去這個值載得進 LoadedScenario 卻沒有持久化，
+                            # `should_aggregate()` 一律吃自己的預設 BATTALION。
+                            aggregate_level=_aggregate_level(engage_db, session_id),
                         ),
                         # WP-C10.2 面目標射擊：**獨立的 RNG stream**——散布抽樣次數會隨發數變動，
                         # 與交戰共用 stream 的話，打一次砲就會擾動所有交戰的隨機序列。

@@ -77,6 +77,8 @@ model WargameSession {
   /// 已核准的 FIRE_SUPPORT 申請單。null/false＝不設限（既有局零變更）。
   indirectFireRequiresApproval Boolean?
   allowFratricide Boolean?
+  /// 聚合裁決門檻（此級以上走 Lanchester）。NULL＝BATTALION（既有預設）。
+  aggregateAdjudicationLevel UnitLevel?
   dayNight Json?
 }
 

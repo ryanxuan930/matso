@@ -65,3 +65,67 @@ def test_the_command_node_threshold_still_means_battalion_and_above() -> None:
         assert _SIZE_RANK[level] <= _COMMAND_RANK, f"{level} 應為指揮節點"
     for level in (UnitLevel.COMPANY, UnitLevel.SECTION, UnitLevel.SQUAD, UnitLevel.INDIVIDUAL):
         assert _SIZE_RANK[level] > _COMMAND_RANK, f"{level} 不應為指揮節點"
+
+
+def test_aggregate_threshold_is_configurable_not_hardwired() -> None:
+    """想定的 `aggregate_adjudication_level` 要真的能改變門檻。
+
+    這一欄過去**載得進 LoadedScenario、也 dump 得出來（roundtrip 測試綠）
+    卻從來沒有被持久化**，於是 `should_aggregate()` 一律吃自己的預設 BATTALION
+    ——想定寫 COMPANY 或 BRIGADE 完全沒有作用，而且沒有任何測試會紅。
+    """
+    from app.adjudication.aggregate import should_aggregate
+
+    # 預設門檻：營級以上聚合，連級以下不聚合
+    assert should_aggregate(UnitLevel.BATTALION) is True
+    assert should_aggregate(UnitLevel.COMPANY) is False
+    # 想定把門檻降到連級 → 連也要聚合，排仍不聚合
+    assert should_aggregate(UnitLevel.COMPANY, UnitLevel.COMPANY) is True
+    assert should_aggregate(UnitLevel.PLATOON, UnitLevel.COMPANY) is False
+    # 想定把門檻提高到旅級 → 營不再聚合
+    assert should_aggregate(UnitLevel.BATTALION, UnitLevel.BRIGADE) is False
+    assert should_aggregate(UnitLevel.BRIGADE, UnitLevel.BRIGADE) is True
+
+
+def test_loader_leaves_the_default_threshold_as_null() -> None:
+    """未宣告 / 明確宣告 BATTALION → 都存 None。
+
+    留 None 而不是寫死 BATTALION：既有局的欄位是 NULL，寫死會讓「沒宣告」與
+    「明確宣告 BATTALION」在資料上分不開，而前者才是絕大多數。
+    """
+    from app.scenario.loader import _agg_level
+
+    assert _agg_level("BATTALION") is None
+    assert _agg_level("") is None
+    assert _agg_level("NOT_A_LEVEL") is None
+    assert _agg_level("COMPANY") is UnitLevel.COMPANY
+    assert _agg_level(" brigade ") is UnitLevel.BRIGADE
+
+
+def test_the_adjudicator_actually_passes_its_configured_threshold() -> None:
+    """裁決層呼叫 `should_aggregate` 時**必須把注入的門檻傳進去**。
+
+    ⚠ 只測 `should_aggregate(level, threshold)` 本身是不夠的——那個函式一直都支援
+    第二個參數，真正的 bug 是**呼叫端從來沒傳**。我第一版就是這樣寫的，
+    把「回到寫死」這個突變放過去了。這條掃 AST，讓「有沒有傳」看得出來。
+    """
+    import ast
+    import pathlib
+
+    from app.adjudication import adjudicator as mod
+
+    tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "should_aggregate"
+    ]
+    assert calls, "adjudicator 沒有呼叫 should_aggregate？"
+    for call in calls:
+        total = len(call.args) + len(call.keywords)
+        assert total >= 2, (
+            "should_aggregate 只傳了單位層級、沒傳門檻——"
+            "想定的 aggregate_adjudication_level 又會變成沒有作用"
+        )
