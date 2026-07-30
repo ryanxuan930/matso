@@ -253,3 +253,34 @@ def test_non_director_cannot_delete(session_factory: sessionmaker[Session]) -> N
     m = auth_header(login(client, "mallory")["access_token"])
     assert client.post(f"/api/v1/sessions/{sid}/archive", headers=m).status_code == 403
     assert client.delete(f"/api/v1/sessions/{sid}", headers=m).status_code == 403
+
+
+def test_allow_fratricide_reaches_the_api(session_factory: sessionmaker[Session]) -> None:
+    """WP-C9：`allowFratricide` 要**從 DB 一路回到 `/sessions`**。
+
+    這條在補一個具體的洞：後端早就有這個旗標（想定 → `WargameSession.allowFratricide` →
+    `precheck` 放行友軍目標），但**沒有任何 API 回它**，於是 COP 只能永遠把盟軍濾出
+    ENGAGE 下拉——後端放行了，操作員還是點不到。
+
+    兩邊都斷言：預設要是 `False`（既有局行為不變），設成 True 後要真的變 True
+    （只測預設值的話，欄位寫死回 False 也會綠）。
+    """
+    from app.models.tables import WargameSession
+
+    seed_user(session_factory)
+    client = make_client(session_factory)
+    h = auth_header(login(client)["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "誤傷局"}, headers=h).json()["id"]
+
+    # 用 id 撈而不是 `[0]`：這個帳號是統裁（看得到全部 session），本檔日後多開一局
+    # 就會讓位置索引指到別人的局。
+    def mine() -> bool:
+        rows = client.get("/api/v1/sessions", headers=h).json()
+        return next(s["allow_fratricide"] for s in rows if s["id"] == sid)
+
+    assert mine() is False
+
+    with session_factory() as db:
+        db.get(WargameSession, sid).allow_fratricide = True  # type: ignore[union-attr]
+        db.commit()
+    assert mine() is True

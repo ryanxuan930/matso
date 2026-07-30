@@ -22,6 +22,10 @@ const props = defineProps<{
   collapsedFactions: Set<string>
   engageTargets: UnitView[]
   targetUnit: UnitView | null
+  /** WP-C9：本局是否允許誤傷裁決（後端 `allow_fratricide`）。 */
+  allowFratricide: boolean
+  /** 觀測者對某陣營是否為友軍/盟軍——決定要不要要求誤傷確認。 */
+  isFriendly: (faction?: string | null) => boolean
   /** 該單位是否在本帳號的指揮範圍內（roster 的 unit_scope）。 */
   inScope: (u: UnitView) => boolean
   /** 活血量（STATE_DIFF 優先）。 */
@@ -73,8 +77,16 @@ const canSubmit = computed(() => {
   if (o.orderType === 'ENGINEER') {
     return o.engineerAction === 'BREACH' ? !!o.engineerFeatureId : !!o.engineerPoint
   }
-  return !!o.targetUnitId
+  if (!o.targetUnitId) return false
+  // WP-C9：目標是友軍 → **一定要勾確認**。後端 `allow_fratricide` 只是「不擋」，
+  // 誤傷是要寫進 AAR 的事，得有一個刻意的動作。
+  return !fratricideTarget.value || o.fratricideAck
 })
+
+/** 目前鎖定的目標是不是友軍/盟軍（＝這一發會是誤傷）。 */
+const fratricideTarget = computed(
+  () => !!props.targetUnit && props.isFriendly(props.targetUnit.faction),
+)
 </script>
 
 <template>
@@ -417,14 +429,29 @@ const canSubmit = computed(() => {
     </select>
   </template>
   <template v-else>
-    <div class="hint">點地圖上的敵方單位鎖定目標（紅環），或從清單選：</div>
+    <div class="hint">
+      點地圖上的敵方單位鎖定目標（紅環），或從清單選：<template v-if="allowFratricide"
+        ><br >本局<b>允許誤傷</b>——友軍要先按「設定目標」進入瞄準才點得到。</template
+      >
+    </div>
     <select v-model="ordering.targetUnitId" data-testid="engage-target">
       <option :value="null">選目標</option>
-      <option v-for="u in engageTargets" :key="u.id" :value="u.id">{{ u.designation }}</option>
+      <option v-for="u in engageTargets" :key="u.id" :value="u.id">
+        {{ isFriendly(u.faction) ? `⚠ ${u.designation}（友軍）` : u.designation }}
+      </option>
     </select>
     <div class="dest" data-testid="target-label">
       {{ targetUnit ? `🎯 ${targetUnit.designation}（${targetUnit.faction}）` : '未鎖定目標' }}
     </div>
+    <!-- WP-C9 誤傷二次確認。換目標會自動退回未勾（見 useCopOrdering 的 watch）。 -->
+    <label v-if="fratricideTarget" class="fratricide" data-testid="fratricide-ack">
+      <input v-model="ordering.fratricideAck" type="checkbox" >
+      <span
+        >⚠ <b>對友軍開火</b>：{{ targetUnit?.designation }} 與本軍為同盟關係。此令將照常執行並<b
+          >記入 AAR</b
+        >。</span
+      >
+    </label>
     <template v-if="ordering.weapons.length">
       <select v-model="ordering.weaponId" data-testid="engage-weapon">
         <option :value="null">{{ ordering.weapons.length >= 2 ? '聯合火力（全武器一起打）' : '預設武器' }}</option>
@@ -751,5 +778,21 @@ const canSubmit = computed(() => {
 .precheck ul {
   margin: 0.25rem 0 0;
   padding-left: 1rem;
+}
+.fratricide {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 6px 8px;
+  border: 1px solid var(--p-red-500);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--p-red-500) 12%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.fratricide input {
+  margin-top: 2px;
+  flex: none;
 }
 </style>

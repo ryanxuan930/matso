@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（五）：WP-C9 前端 affordance**。C9 的後端在 2026-07-30 就做完了，但 `allow_fratricide` **沒有任何 API 回它**——想定 → `WargameSession.allowFratricide` → `precheck` 放行友軍目標這條鏈是通的，前端卻無從得知，於是 COP 永遠把盟軍濾出 ENGAGE 下拉、也拒絕點選友軍：**後端放行了，操作員還是點不到**。補齊：`SessionSummary` 加欄（契約 + 生成型別）→ COP 把盟軍列進下拉並標「⚠ …（友軍）」→ **瞄準中**才能點選友軍為目標（不加這個條件的話，平時想點友軍看資訊就會變成鎖定目標）→ 送出前要勾一次確認，**換目標即自動失效**（勾一次就能對不同友軍連續開火的話，那個勾選等於沒有意義）。途中挖出**另一個既有缺陷**：白軍全局視角下 `observerFaction` 為空，`isFriendly` 對所有單位回 true——那句話的意思是「全部以友軍外型呈現，至少看得見」，不是「全部都是我的盟友」——於是白軍的 ENGAGE 下拉**一直是空的**（挑不到任何目標）。分出 `isAlly`（沒有觀測陣營就沒有己方，也就談不上誤傷）一併修掉。**活系統實測**：BLUE 視角選 B3 → 下拉 35 個目標、12 個 BLUE 標⚠（13 減自己）、RED/YELLOW 不標；選敵軍不出現確認框、選友軍出現且送出鈕**變灰**、勾了才亮、換目標又變灰；實際送出 B3→B1，後端收下並在 precheck 留下 `fratricide_warning：⚠ 友軍誤傷…記入 AAR`（測完已取消該令、旗標復原）。另：實測期間**意外驗證了 WP-E2 的鎖定**——猜密碼 5 次後帳號真的被鎖（`lockedUntil` 落在未來），且回的是與密碼錯誤相同的訊息。**驗收**：pytest 1951（+1）、mypy 265、ruff/eslint/vue-tsc 綠。
+
 - 2026-07-30：**Backlog 清倉（四）：契約/實作漂移閘門（全端點）**。CI 只跑 `openapi_spec_validator`——它驗的是**規格語法**，不驗路由有沒有實作，於是兩個方向的漂移都沒有閘門：契約有實作沒有＝**規格殘骸**（前端照契約生型別、寫呼叫，然後在執行期吃 404）；實作有契約沒有＝**前端拿不到型別**（只能手刻 any 或猜欄位名）。**關鍵是路徑參數名要正規化**：契約寫 `/sessions/{id}`、實作寫 `/sessions/{session_id}`——那不是漂移是命名不同，不正規化會冒出 **111 筆假陽性**把真正的 21 筆淹掉；比較的是**結構**不是參數名。**既有 21 筆列成允許清單而不是把閘門關掉**：7 筆規格殘骸（`/sessions/{id}/ledger` 躺了很久從沒實作、`/admin/plugins*`、`/ai/consult`、`/injects`（實作是單數）…）+ 14 筆無契約端點（`/aar/*` 五條、`/autonomy` 三條、`/orbat-permissions` 兩條…）。這樣做有兩個好處：**新的漂移立刻會紅**（閘門的目的），而既有的 21 筆變成**看得見的欠帳**而不是沒人知道的事實。另加一條「**清單只能變短**」的測試——修好一條卻忘了從清單刪掉時會轉紅，逼人維護它，否則閘門會慢慢失效。`/healthz` 與 `/metrics` 明確豁免（不屬版本化 API）。三個方向的突變逐一驗過會紅：新增無契約端點、契約新增沒實作的路徑、清單留了已修好的項目。**驗收**：pytest 1950（+4）、mypy 265、ruff 綠。
 
 - 2026-07-30：**Backlog 清倉（三）：盟軍觀測者 + integration 測試與活 runner 的競態**。①**盟軍不算觀測者**（兩處一起修）：SPEC 寫「任一**友軍**」、關係矩陣也讓盟軍互相可見，但 `c2/service.has_observer_on`（臨機火力的觀測條件）與 `fire_wiring.observer_verdict`（散布修正）**都只認自己陣營**——於是聯軍作戰時，盟軍的前觀明明看得到目標，本軍卻**叫不動火力**、或者**散布照樣加倍**。與 C9 的 `friendly_losses` 用 `==` 是同一個 bug 家族：**敵我判斷不可以用字串相等**。兩處都改走關係矩陣，未注入 `relations` 時退回只認自己陣營（既有呼叫端不受影響）；觀測者陣營集**依名稱排序**（會進 SQL 的 IN）。②**我把那個偶發紅的診斷記錯了**：原本記成「跨測試的 Redis 殘留狀態」，但殘留狀態不會只在整包跑時出現。實際機制是**與活 runner 的競態**——integration fixture 建的是 `archivedAt IS NULL` 的真局，而開發機上跑著的 core 容器裡的 `SimManager` 每 3 秒掃一次那個條件並**認養任何新出現的局**（`_session_ids`），認養後就對同一批 Redis 鍵與 DB 列寫入，而測試正在斷言它們；單檔跑 1.6 秒內結束來不及被認養故必綠，整包跑較慢就偶發紅。**實測驗證**：單檔連跑 12 次 0 失敗；查活 DB 確認 runner 目前確實認養了三個局。修法是把 integration 的 session 標成 `archived_at`（這些測試自己建 Kernel 手動推 tick，從不需要活執行期，標封存也順便表達了那個意圖），**三個 integration 檔案都有同樣的暴露**，一起修。整包連跑 6 次全綠。**驗收**：pytest 1946（+8）、mypy 265、ruff 綠。
@@ -198,9 +200,11 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   機器有負載時（例如同時 `docker compose build`）本來就會紅——marker 的說明自己寫著
   「絕對時間依硬體而定，共享 CI runner 不穩，故 CI 排除」。**那不是回歸**。
   正確數字：`1840 passed, 8 skipped, 4 deselected`。
-- **WP-C9 的三個未竟口**：①前端 COP 仍把盟軍濾出 ENGAGE 下拉、且拒絕點擊友軍為目標
-  （`cop.vue`）——`allow_fratricide` 開了後端放行，**操作員還是點不到**；需要 affordance +
-  確認對話框。②AI 結構上不可能誤傷（`worker.py` 在 LLM 看到敵情前就用 `is_hostile` 濾過，
+- ~~WP-C9 前端 affordance~~ —— **已補**（2026-07-30）：`allow_fratricide` 進 `SessionSummary`，
+  COP 下拉列出盟軍（標「⚠ …（友軍）」）、瞄準中可點選友軍、送出前須勾確認（換目標即失效）。
+  順手修掉一個既有缺陷：白軍全局視角下 ENGAGE 下拉**一直是空的**（`isFriendly` 在無觀測陣營時
+  對所有單位回 true，那是渲染語義不是同盟關係）——改用 `isAlly`。
+- **WP-C9 剩下的兩個未竟口**：①AI 結構上不可能誤傷（`worker.py` 在 LLM 看到敵情前就用 `is_hostile` 濾過，
   分解器只從那份清單挑目標）。③直射濺射（同格/鄰格友軍距離衰減）是**新能力**不是新係數：
   `Target`/`EnvSnapshot` 沒有 lat/lng，且 `lethal_radius_m` 只在武器契約的 artillery `$def`
   ——KINETIC 範本一律 0.0。要做得先改契約（紅線 4）。

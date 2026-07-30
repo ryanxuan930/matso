@@ -73,6 +73,18 @@ export function useCopOrdering(opts: {
   const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
   const targeting = ref(false)
   const targetUnitId = ref<string | null>(null)
+  /**
+   * WP-C9：對友軍/盟軍開火的**二次確認**。
+   *
+   * 後端 `allow_fratricide` 只是「不擋」，不是「隨手就能點」。誤傷是要寫進 AAR 的事，
+   * 所以它需要一個**刻意的動作**——換了目標就自動退回未確認（下面的 watch），
+   * 否則勾一次就能一路對不同友軍連續開火，那個勾選等於沒有意義。
+   */
+  const fratricideAck = ref(false)
+  // 換目標 → 確認自動失效。勾一次就能連續對不同友軍開火的話，這個勾選等於沒有意義。
+  watch(targetUnitId, () => {
+    fratricideAck.value = false
+  })
   const precheck = ref<OrderResponse['precheck'] | null>(null)
   const message = ref('')
 
@@ -137,6 +149,7 @@ export function useCopOrdering(opts: {
     destLatLng.value = null
     targeting.value = false
     targetUnitId.value = null
+    fratricideAck.value = false
     weaponId.value = null
     ammoType.value = null
     firePolicy.value = 'FREE'
@@ -419,6 +432,7 @@ export function useCopOrdering(opts: {
     destLatLng,
     targeting,
     targetUnitId,
+    fratricideAck,
     precheck,
     message,
     movePreview,

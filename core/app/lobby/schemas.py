@@ -44,3 +44,7 @@ class SessionSummary(BaseModel):
     # 演習物件本身只有白軍/管理看得到；這兩欄是每局資訊，人人可見。
     exercise_id: str | None = None
     session_role: str | None = None
+    # WP-C9：本局是否允許誤傷裁決。**前端唯一的來源**——後端早就有這個旗標（想定 →
+    # `WargameSession.allowFratricide` → `precheck` 放行友軍目標），但沒有任何 API 回它，
+    # 於是 COP 把盟軍濾出下拉、也拒絕點選友軍：**後端放行了，操作員還是點不到**。
+    allow_fratricide: bool = False

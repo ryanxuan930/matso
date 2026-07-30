@@ -122,6 +122,8 @@ const factionRelations = ref<Record<string, string>>({})
 const myFaction = ref<string>('') // 觀測者陣營（GET /sessions.my_faction）
 const sessionStart = ref<string | null>(null) // 開局時間（#4 執行時間顯示）
 const orbatEdit = ref(false) // 本 session 是否可編輯編裝（白軍，或本軍且該局開放自編）
+// WP-C9：本局是否允許誤傷裁決。**預設 false**——關著的時候 COP 的行為與這張卡之前完全相同。
+const allowFratricide = ref(false)
 const mySeatRole = ref<string | null>(null) // 席位（WP-B5.2）；null＝未指派（沿用角色權限）
 const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個陣營）；範圍外單位不可下令
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
@@ -249,7 +251,7 @@ function factionPower(units: UnitView[]): { pct: number; mass: number; ko: numbe
 
 // 單位/敵情 → 地圖渲染模型（觀測者友我判準、fog 一律取後端 /intel）。見該模組說明。
 const demoMode = computed(() => route.query.demo === '1' || Number(route.query.units) > 0)
-const { isFriendly, ownUnits, contacts } = useCopUnits({
+const { observerFaction, isFriendly, ownUnits, contacts } = useCopUnits({
   live,
   realUnits,
   intelContacts,
@@ -269,8 +271,26 @@ const { unitCardPos, onSelectScreenPos } = cardDrag
 
 // 可作 ENGAGE 目標的真單位（他軍）——供下拉與地圖點選鎖定共用。
 const realUnitIds = computed(() => new Set(realUnits.value.map((u) => u.id)))
+/**
+ * 誤傷判定要的是「**已知**的同盟關係」，不是 `isFriendly` 的渲染語義。
+ *
+ * 白軍在全局視角下沒有己方陣營（`observerFaction` 為空），`isFriendly` 對**所有**單位回 true
+ * ——那句話的意思是「全部以友軍外型呈現，至少看得見」，不是「全部都是我的盟友」。
+ * 拿它當誤傷判定會錯兩次：白軍全局視角下 ENGAGE 下拉會列出 35 個「⚠ 友軍」，
+ * 而且（這是**既有缺陷**）在本卡之前那個下拉是**永遠空的**——白軍全局視角根本挑不到目標。
+ * 沒有觀測陣營時「誤傷」不成立：沒有己方，就沒有自己人。
+ */
+function isAlly(faction?: string | null): boolean {
+  return !!observerFaction.value && isFriendly(faction)
+}
+
+// WP-C9：`allow_fratricide` 開啟 → 友軍也列入。後端 `blocks_engagement` 早就放行了，
+// 但下拉濾掉、地圖也點不到，於是那條規則在 UI 上不存在——**後端放行了，操作員還是點不到**。
+// 仍然只列「他人」：自己打自己不是誤傷，是沒有意義的操作。
 const engageTargets = computed(() =>
-  realUnits.value.filter((u) => u.id !== selectedId.value && !isFriendly(u.faction)),
+  realUnits.value.filter(
+    (u) => u.id !== selectedId.value && (allowFratricide.value || !isAlly(u.faction)),
+  ),
 )
 // 火力計畫挑砲兵用：只列我方（後端仍會擋越權下令，這裡是 UX）。
 const friendlyUnits = computed(() => realUnits.value.filter((u) => isFriendly(u.faction)))
@@ -306,6 +326,7 @@ async function refresh() {
       my_faction?: string
       start_time?: string | null
       orbat_edit?: boolean
+      allow_fratricide?: boolean
       my_unit_scope?: string[]
       my_seat_role?: string | null
     }[]
@@ -314,6 +335,7 @@ async function refresh() {
   myFaction.value = me?.my_faction ?? ''
   sessionStart.value = me?.start_time ?? null
   orbatEdit.value = !!me?.orbat_edit
+  allowFratricide.value = !!me?.allow_fratricide
   myUnitScope.value = me?.my_unit_scope ?? []
   mySeatRole.value = me?.my_seat_role ?? null
 }
@@ -415,12 +437,16 @@ function onUnitClick(e: { id: string; faction: string; kind: string }) {
     selectUnit(e.id)
     return
   }
-  if (isReal && selectedId.value && !isFriendly(e.faction)) {
+  // WP-C9：允許誤傷時，**瞄準中**才鎖友軍為目標。沒這個條件的話，平時想點友軍看資訊
+  // 就會變成鎖定目標——把「我要打他」和「我要看他」混成同一個手勢是很糟的預設。
+  const targetable = !isAlly(e.faction) || (allowFratricide.value && targeting.value)
+  if (isReal && selectedId.value && targetable) {
     orderType.value = 'ENGAGE'
     targetUnitId.value = e.id
     targeting.value = false
     precheck.value = null
-    message.value = `已鎖定目標：${realUnits.value.find((u) => u.id === e.id)?.designation ?? e.id}`
+    const name = realUnits.value.find((u) => u.id === e.id)?.designation ?? e.id
+    message.value = isAlly(e.faction) ? `⚠ 已鎖定友軍目標：${name}` : `已鎖定目標：${name}`
   }
 }
 
@@ -651,6 +677,8 @@ onBeforeUnmount(() => {
           :collapsed-factions="collapsedFactions"
           :engage-targets="engageTargets"
           :target-unit="targetUnit"
+          :allow-fratricide="allowFratricide"
+          :is-friendly="isAlly"
           :in-scope="inScope"
           :live-health="liveHealth"
           @select="selectUnit"

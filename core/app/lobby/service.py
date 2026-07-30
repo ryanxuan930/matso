@@ -345,6 +345,7 @@ class LobbyService:
             exercise_id=session.exercise_id,
             session_role=session.session_role.value if session.session_role else None,
             orbat_edit=orbat_edit,
+            allow_fratricide=bool(session.allow_fratricide),
             my_unit_scope=my_unit_scope or [],
             my_seat_role=my_seat_role,
             archived_at=(

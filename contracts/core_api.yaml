@@ -195,6 +195,7 @@ components:
         world_start_time: { type: [string, "null"], description: 想定世界初始日期時間 ISO8601（#16/#6 日照） }
         archived_at: { type: [string, "null"], description: 封存時間 ISO8601（#31；有值＝已封存） }
         orbat_edit: { type: boolean, default: false, description: 呼叫者是否可編輯本 session 的編裝（白軍全開，或本軍且該局開放自編） }
+        allow_fratricide: { type: boolean, default: false, description: "本局是否允許誤傷裁決（WP-C9）。開啟時 COP 才會把友軍列為可選目標，並要求二次確認。" }
         my_unit_scope: { type: array, items: { type: string }, description: 呼叫者限指揮之單位子集（空＝整個陣營；COP 下令面板灰化範圍外） }
         my_seat_role:
           oneOf:

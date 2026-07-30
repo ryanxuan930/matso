@@ -1271,6 +1271,11 @@ export interface components {
              * @default false
              */
             orbat_edit: boolean;
+            /**
+             * @description 本局是否允許誤傷裁決（WP-C9）。開啟時 COP 才會把友軍列為可選目標，並要求二次確認。
+             * @default false
+             */
+            allow_fratricide: boolean;
             /** @description 呼叫者限指揮之單位子集（空＝整個陣營；COP 下令面板灰化範圍外） */
             my_unit_scope?: string[];
             /** @description 呼叫者在此 session 的席位（WP-B5.1/B5.2）。null＝未指派席位（權限沿用角色規則）。 COP 據此顯示「你坐哪一席」與越權時的說明——後端仍是權威，前端只做提示。 */
