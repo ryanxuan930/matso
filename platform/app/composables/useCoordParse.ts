@@ -14,13 +14,18 @@
  *
  * 純函式、不碰地圖、不碰網路——所以測得起來（見 `platform/tests/coord-parse.test.ts`）。
  */
-import { toPoint } from 'mgrs'
+import { forward, toPoint } from 'mgrs'
 
 export interface ParsedCoord {
   lat: number
   lng: number
   /** 判定出來的輸入格式，供畫面回饋「我把它讀成什麼」。 */
   format: 'DECIMAL' | 'DMS' | 'MGRS'
+  /**
+   * 需要提醒操作員的事（非錯誤，但值得看一眼）。目前只有一種：
+   * 輸入的 MGRS 分帶字母與該點的正規分帶不符（見 `parseMgrs`）。
+   */
+  warning?: string
 }
 
 export type CoordParseResult =
@@ -128,7 +133,21 @@ function parseMgrs(raw: string): CoordParseResult | null {
   try {
     const [lng, lat] = toPoint(compact)
     if (!inRange(lat, lng)) return { ok: false, reason: 'MGRS 換算結果超出有效範圍' }
-    return { ok: true, value: { lat, lng, format: 'MGRS' } }
+    // ⚠ **分帶字母與實際位置不符要講出來。**
+    // 100 km 方格代號加東北距已經定出位置，分帶字母只是粗略消歧——所以
+    // `51QTG1234567890` 與 `51RTG1234567890` 會解析到同一個點，函式庫不會報錯。
+    // 但對抄座標的人來說，字母不符通常代表**抄錯了一碼**，而那一碼的代價可能是
+    // 火力落在別的地方。這裡不擋（解析結果是有效的），但一定要提醒。
+    let warning: string | undefined
+    try {
+      const canonical = forward([lng, lat], (compact.length - 5) / 2)
+      if (canonical !== compact) {
+        warning = `輸入的分帶與該點的正規寫法不符：${compact} → ${canonical}。請確認是否抄錯。`
+      }
+    } catch {
+      /* 正規化失敗不影響解析結果本身——不因為提醒功能壞掉就拒絕一個有效座標 */
+    }
+    return { ok: true, value: { lat, lng, format: 'MGRS', warning } }
   } catch {
     return { ok: false, reason: '無法解析的 MGRS（分帶或方格字母不合法）' }
   }

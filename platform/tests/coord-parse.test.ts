@@ -125,3 +125,16 @@ test('沒有半球字母的三段數字不會被誤讀成度分秒', () => {
   assert.equal(r.ok, true)
   assert.equal(r.ok && r.value.format, 'DECIMAL')
 })
+
+test('MGRS 分帶字母與實際位置不符 → 解析成功但要提醒', () => {
+  // `51QTG…` 與 `51RTG…` 解析到**同一個點**：100km 方格代號加東北距已經定位，
+  // 分帶字母只是粗略消歧，函式庫不會報錯。但對抄座標的人來說，
+  // 字母不符通常代表抄錯了一碼——而那一碼的代價可能是火力落在別的地方。
+  const shifted = ok('51QTG1234567890')
+  const canonical = ok('51RTG1234567890')
+
+  assert.ok(Math.abs(shifted.lat - canonical.lat) < 1e-9, '兩者應解析到同一個點')
+  assert.ok(shifted.warning, '分帶不符必須提醒')
+  assert.match(shifted.warning!, /51RTG1234567890/)
+  assert.equal(canonical.warning, undefined, '正規寫法不該有提醒')
+})

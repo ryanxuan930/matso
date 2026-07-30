@@ -30,16 +30,19 @@ const emit = defineEmits<{ (e: 'locate', p: { lat: number; lng: number }): void 
 const query = ref('')
 const error = ref('')
 const hit = ref('')
+const warn = ref('')
 
 function submit() {
   error.value = ''
   hit.value = ''
+  warn.value = ''
   const result = parseCoordInput(query.value)
   if (!result.ok) {
     error.value = result.reason
     return
   }
-  const { lat, lng, format } = result.value
+  const { lat, lng, format, warning } = result.value
+  warn.value = warning ?? ''
   // **回饋「我把它讀成什麼格式」**——輸入 `24 05 50` 時使用者以為是度分秒、
   // 系統讀成十進位度，不講出來就會變成一個安靜的誤解。
   hit.value = `依${COORD_FORMAT_LABELS[format]}判讀 → ${lat.toFixed(5)}, ${lng.toFixed(5)}`
@@ -61,7 +64,10 @@ function submit() {
     <button type="submit" data-testid="coord-locate">標定</button>
   </form>
   <div v-if="error" class="cr-err" data-testid="coord-error">{{ error }}</div>
-  <div v-else-if="hit" class="cr-hit" data-testid="coord-hit">{{ hit }}</div>
+  <template v-else-if="hit">
+    <div class="cr-hit" data-testid="coord-hit">{{ hit }}</div>
+    <div v-if="warn" class="cr-warn" data-testid="coord-warn">⚠ {{ warn }}</div>
+  </template>
 
   <div class="cr-sep">或點地圖任一點</div>
   <template v-if="point">
@@ -112,6 +118,11 @@ function submit() {
 .coord-readout .cr-hit {
   color: #4ade80;
   margin-bottom: 0.35rem;
+}
+.coord-readout .cr-warn {
+  color: #fbbf24;
+  margin-bottom: 0.35rem;
+  line-height: 1.35;
 }
 .coord-readout .cr-sep {
   color: #64748b;
