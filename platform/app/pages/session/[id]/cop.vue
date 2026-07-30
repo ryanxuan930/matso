@@ -165,6 +165,7 @@ const {
   firePoint,
   missionType,
   missionPoint,
+  engineerPoint,
   missionPath,
   missionNeedsPath,
   resetOrderForm,
@@ -388,6 +389,12 @@ function onMapClick(e: { lng: number; lat: number; h3: string }) {
       missionPoint.value = { lng: e.lng, lat: e.lat }
       targeting.value = false
     }
+    return
+  }
+  // WP-C2 障礙作業：點地圖＝設障作業點（與火力任務同款單點手感）。
+  if (orderType.value === 'ENGINEER' && targeting.value) {
+    engineerPoint.value = { lng: e.lng, lat: e.lat }
+    targeting.value = false
     return
   }
   // ENGAGE 瞄準中點到空白（未命中敵方單位）→ 取消瞄準但保留選取（避免誤點就丟失單位，#3）。

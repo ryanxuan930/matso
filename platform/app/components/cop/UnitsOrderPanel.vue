@@ -39,6 +39,8 @@ const SUBMIT_LABELS: Record<string, string> = {
   FIRE_MISSION: '送出火力任務',
   POSTURE: '送出姿態令',
   MISSION: '下達任務',
+  FORMATION: '送出隊形/乘駐車令',
+  ENGINEER: '送出障礙作業令',
 }
 
 /**
@@ -64,6 +66,12 @@ const canSubmit = computed(() => {
   if (o.orderType === 'MISSION') {
     // 幾何收齊了才送得出去。SEIZE/DEFEND 要主目標；SCREEN/MOVE_MARCH 要至少一個點。
     return o.missionNeedsPoint ? !!o.missionPoint : o.missionPath.length > 0
+  }
+  // WP-C3：**兩者至少指定一項**（後端 payload 的 model_validator 也擋，這裡先擋住送出）。
+  if (o.orderType === 'FORMATION') return !!o.formation || !!o.mounted
+  // WP-C2：BREACH 要標的、EMPLACE 要落點。
+  if (o.orderType === 'ENGINEER') {
+    return o.engineerAction === 'BREACH' ? !!o.engineerFeatureId : !!o.engineerPoint
   }
   return !!o.targetUnitId
 })
@@ -130,6 +138,8 @@ const canSubmit = computed(() => {
     <option value="FIRE_MISSION">火力任務（打座標）</option>
     <option value="POSTURE">姿態（掘壕/防禦）</option>
     <option value="MISSION">任務（奪佔/防守/掩護/行軍）</option>
+    <option value="FORMATION">隊形 / 乘駐車</option>
+    <option value="ENGINEER">障礙作業（破障/設障）</option>
   </select>
   <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
     🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
@@ -326,6 +336,75 @@ const canSubmit = computed(() => {
       >
       <span class="dim">公尺 · 目標圈/防區範圍</span>
     </label>
+  </template>
+  <!-- WP-C3 隊形/乘駐車：後端收成一個 FORMATION 令，兩者至少指定一項。 -->
+  <template v-else-if="ordering.orderType === 'FORMATION'">
+    <label class="rounds">
+      隊形
+      <select v-model="ordering.formation" data-testid="formation-select">
+        <option value="">（不變更）</option>
+        <option value="COLUMN">縱隊 · 行軍最快、挨砲最慘</option>
+        <option value="LINE">橫隊 · 火力全開、機動最慢</option>
+        <option value="WEDGE">楔形 · 攻擊隊形</option>
+        <option value="VEE">V 形 · 預期正面接敵</option>
+        <option value="HERRINGBONE">魚骨 · 停止間環形警戒</option>
+      </select>
+    </label>
+    <label class="rounds">
+      乘駐車
+      <select v-model="ordering.mounted" data-testid="mounted-select">
+        <option value="">（不變更）</option>
+        <option value="true">上車 · 速度快、目標大</option>
+        <option value="false">下車 · 受彈面小、火力全</option>
+      </select>
+    </label>
+    <div class="hint">
+      兩者至少要指定一項；選「不變更」的欄位維持原狀——只想下車的令不該把隊形一起重設。
+    </div>
+  </template>
+  <!-- WP-C2 障礙作業：須工兵單位且距作業點 500 m 內（預檢會擋並說明原因）。 -->
+  <template v-else-if="ordering.orderType === 'ENGINEER'">
+    <select v-model="ordering.engineerAction" data-testid="engineer-action">
+      <option value="EMPLACE">設障 · 構築新障礙</option>
+      <option value="BREACH">破障 · 清除既有障礙</option>
+    </select>
+    <template v-if="ordering.engineerAction === 'EMPLACE'">
+      <select v-model="ordering.obstacleType" data-testid="obstacle-type">
+        <option value="WIRE">鐵絲網 · 非工兵幾乎過不去</option>
+        <option value="MINEFIELD">雷區 · 觸雷即戰損並停止</option>
+        <option value="TANK_DITCH">戰車壕 · 實質阻擋</option>
+        <option value="ABATIS">鹿砦 · 伐木障礙</option>
+        <option value="BRIDGE_DEMO">斷橋 · 道路加速失效</option>
+      </select>
+      <div class="movebtns">
+        <button
+          data-testid="pick-engineer-point"
+          :class="{ armed: ordering.targeting }"
+          @click="ordering.waypointMode = false; ordering.targeting = !ordering.targeting"
+        >
+          {{ ordering.targeting ? '點地圖標定…' : '標定作業點' }}
+        </button>
+      </div>
+      <div class="dest" data-testid="engineer-point">
+        <template v-if="ordering.engineerPoint">
+          🚧 {{ ordering.engineerPoint.lat.toFixed(5) }}, {{ ordering.engineerPoint.lng.toFixed(5) }}
+        </template>
+        <template v-else>未標定</template>
+      </div>
+    </template>
+    <label v-else class="rounds">
+      標的
+      <input
+        v-model="ordering.engineerFeatureId"
+        type="text"
+        placeholder="障礙標註 id"
+        data-testid="engineer-feature-id"
+      >
+    </label>
+    <div class="hint">
+      ⚠ 須工兵單位（ORBAT 的 <code>unit_kind=ENGINEER</code>）且距作業點 500 m 內。
+      破障/設障各有工時（雷區約 45 分鐘、斷橋約 2 小時），**完工才會改變地圖**。
+    </div>
   </template>
 
   <!-- WP-C1 姿態令：宣告要進入的姿態。**轉換要時間**，這裡只是下令開始做。 -->

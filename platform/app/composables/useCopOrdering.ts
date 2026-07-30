@@ -66,7 +66,9 @@ export function useCopOrdering(opts: {
 }) {
   const { sessionId, selectedId, selectedUnit, selectedUnitFixed, refresh, toasts } = opts
 
-  const orderType = ref<'MOVE' | 'ENGAGE' | 'FIRE_MISSION' | 'POSTURE' | 'MISSION'>('MOVE')
+  const orderType = ref<
+    'MOVE' | 'ENGAGE' | 'FIRE_MISSION' | 'POSTURE' | 'MISSION' | 'FORMATION' | 'ENGINEER'
+  >('MOVE')
   const destH3 = ref<string | null>(null)
   const destLatLng = ref<{ lng: number; lat: number } | null>(null) // 精確移動落點（#2）
   const targeting = ref(false)
@@ -265,6 +267,25 @@ export function useCopOrdering(opts: {
   // 留著上一個任務型的點只會送出一道意思相反的令。
   watch(missionType, clearMission)
 
+  // ---- WP-C3 隊形/乘駐車令 ----
+  //
+  // 後端收成**一個 FORMATION 令**（payload 可帶 formation 與/或 mounted），
+  // 至少要指定一項。`mounted` 是三態：`null`＝不動該欄（只想換隊形時不該把乘駐車一起重設）。
+  const formation = ref<'COLUMN' | 'LINE' | 'WEDGE' | 'VEE' | 'HERRINGBONE' | ''>('')
+  const mounted = ref<'' | 'true' | 'false'>('')
+
+  // ---- WP-C2 障礙作業令 ----
+  //
+  // BREACH 破既有障礙（要 feature_id）；EMPLACE 設新障礙（要型別 + 座標）。
+  // **須工兵單位**（ORBAT `attributes.unit_kind=ENGINEER`）且距作業點 500 m 內——
+  // 預檢會擋，所以這裡不重複驗，但錯誤訊息會說明原因。
+  const engineerAction = ref<'BREACH' | 'EMPLACE'>('EMPLACE')
+  const obstacleType = ref<'MINEFIELD' | 'WIRE' | 'TANK_DITCH' | 'ABATIS' | 'BRIDGE_DEMO'>('WIRE')
+  const engineerFeatureId = ref<string>('')
+  /** EMPLACE 的落點（點地圖選）。 */
+  const engineerPoint = ref<{ lng: number; lat: number } | null>(null)
+  const engineerRadiusM = ref(200)
+
   // ---- WP-C1 姿態令 ----
   // 預設 DEFENSE 而不是 MOVING：下姿態令的人不會是為了叫單位站起來走（那是 MOVE 令的事）。
   const posture = ref<'MOVING' | 'HASTY' | 'DEFENSE' | 'DUG_IN'>('DEFENSE')
@@ -283,6 +304,25 @@ export function useCopOrdering(opts: {
       }
     }
     if (orderType.value === 'POSTURE') return { posture: posture.value }
+    if (orderType.value === 'FORMATION') {
+      // **只送有宣告的欄位**——送 null 會被 pattern 驗證擋掉，而送空字串更糟（意思不明）。
+      return {
+        ...(formation.value ? { formation: formation.value } : {}),
+        ...(mounted.value ? { mounted: mounted.value === 'true' } : {}),
+      }
+    }
+    if (orderType.value === 'ENGINEER') {
+      if (engineerAction.value === 'BREACH') {
+        return { action: 'BREACH', feature_id: engineerFeatureId.value }
+      }
+      return {
+        action: 'EMPLACE',
+        obstacle_type: obstacleType.value,
+        lat: engineerPoint.value?.lat,
+        lng: engineerPoint.value?.lng,
+        radius_m: engineerRadiusM.value,
+      }
+    }
     if (orderType.value === 'MISSION') {
       const point = missionPoint.value ? { lat: missionPoint.value.lat, lng: missionPoint.value.lng } : null
       const path = missionPath.value.map(([lng, lat]) => ({ lat: lat as number, lng: lng as number }))
@@ -396,6 +436,15 @@ export function useCopOrdering(opts: {
     firePoint,
     fireRounds,
     posture,
+    // WP-C3 隊形/乘駐車
+    formation,
+    mounted,
+    // WP-C2 障礙作業
+    engineerAction,
+    obstacleType,
+    engineerFeatureId,
+    engineerPoint,
+    engineerRadiusM,
     missionType,
     missionPoint,
     missionPath,

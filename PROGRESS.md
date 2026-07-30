@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（二）：COP 終於下得了 ENGINEER 與 FORMATION 令**。C2 與 C3 的後端、預檢、契約、生成型別全通了，但 `useCopOrdering.ts` 的 `orderType` union 一直是五個令型——**使用者點不到**，而破障是 V2.1 exit 的 armor-breakthrough CPX 的必要動作。補上：令型下拉兩個新選項、FORMATION 面板（隊形 + 乘駐車各一個「（不變更）」選項，對應後端「只送有宣告的欄位」的語義——送 null 會被 pattern 擋、送空字串意思不明）、ENGINEER 面板（設障選型別 + 點地圖標作業點；破障填標的 id）、`canSubmit` 兩條前置驗證、地圖點擊路由到 `engineerPoint`。面板明寫「須工兵單位且距作業點 500 m 內」與「破障/設障各有工時，**完工才會改變地圖**」——那兩件事使用者不知道就會覺得令下了沒反應。**另核對掉一條過期的 Backlog**：`CALL_FOR_FIRE` 前端其實早就補好了（標籤、`KINDS_NEEDING_TARGET`、`target_lat/lng` 都在），該條目是舊的。**驗收**：前端 lint/typecheck 綠。
+
 - 2026-07-30：**Backlog 清倉（一）：兩條資料遺失路徑**。①**`clone_session` 掉九個想定衍生欄**（原記七個，加上本 session 新增的 `allow_fratricide`/`day_night`）：`msel`/`roe`/`mobilityOverrides`/`noStrikeZones`/`requestQuotas`/`indirectFireRequiresApproval`/`survivabilityMove` 全都沒被複製——**副本會沒有 MSEL、沒有 ROE、沒有禁射區地跑**，看起來一切正常直到你發現腳本事件永遠不觸發、被禁的武器可以隨便用（B1 當初就是因此不敢建在 clone 上）。測試改成**掃 `WargameSession` 的欄位表**而不是逐欄列舉：逐欄的測試會跟著程式一起漏（新增欄位時兩邊都忘記，測試照樣綠），現在任何新欄位都必須明確歸類為「該複製」或「刻意不複製（列豁免表並寫理由）」，沒有第三條路。②**前端想定編輯器的 `exportScenario` 是第三份手寫白名單**，正在漏 `roe`/`request_quotas`/`indirect_fire_requires_approval`/`survivability_move`（加上本 session 的兩個共六個）——用編輯器存一次想定，那些設定就沒了。**這次改成結構性的修法**：`ScenarioModel.passthrough` 在 import 時收走所有未建模的鍵、export 時先攤開再讓明確欄位覆蓋，**任何未來的想定設定都會自動存活**，不需要有人記得回來改。同一個手寫白名單的 bug 已經咬過三次（後端 dump、後端 clone、前端編輯器），前兩次的修法都是「再列一個欄位」，於是下一個新設定又被下一個人忘記。以 `npx tsx` 實跑 roundtrip 驗證六個設定全數存活，並確認拿掉 `passthrough` 後真的會遺失。**另誠實記一筆**：`_copy_json` 的別名保護**端到端測不出來**（讀回來的是 DB 反序列化的新物件，JSON round-trip 本身就打斷了別名），所以那一條直接測 helper 而不是假裝端到端驗得到。**驗收**：pytest 1938（+4）、mypy 265、ruff、前端兩閘門綠。
 
 - 2026-07-30：**WP-E4 監控落地完成（使用者裁示：不加容器）**。規格寫「compose 增 prometheus+grafana 服務」，動手前先問——那是**部署決定不是程式決定**：Grafana 預設埠 3000 **已被前端占用**，且 air-gapped 部署每多一個映像就多一件要打包的事；使用者選了「metrics only」，`/metrics` 端點 + 儀表板/告警規則留成 `ops/monitoring/` 的檔案由既有監控接手。**兩個關鍵設計**：①**行程內註冊表**——`SimManager` 由 `main.py` 的 lifespan 啟動，與 FastAPI 同一個行程，所以 tick 量測與 `/metrics` 共用記憶體，不需要 Redis 載體；⚠ 那是**前提不是巧合**，runner 若被拆成獨立行程，這個模組會安靜地只回報 API 行程看得到的部分（tick 指標全部歸零），註解寫在模組頂端留給那時候的人。②**指標不帶 session/單位標籤**，兩個獨立理由任一個都足夠：基數爆炸（每開一局多一組時間序列），以及 **`/metrics` 通常不驗證身分**（Prometheus 機器對機器抓取）——把 session id 放進去等於把「有哪些推演正在跑」公開出去；**指標回答「系統健康嗎」，不回答「誰在打誰」**，有一條測試掃過所有輸出斷言唯一合法標籤是直方圖的 `le`。**自己寫 exposition 而不是 `prometheus_client`**（與「不加容器」同一個理由：air-gapped 少一個相依），**代價真的付了**：⚠ **直方圖累積做了兩次**（`observe` 對每個 `value <= upper` 的桶都 +1 已是累積，`render` 又累加一次）→ 桶數超過 `_count`，**Prometheus 算出來的分位數是錯的**；而且錯得看起來很合理（曲線仍單調遞增），**是我印出樣張逐行看才發現的**，不是測試發現的——測試是之後補的，這正是為什麼那一組測試要逐字釘住輸出。**tick 量測不寫帳本**（牆鐘觀測不是模擬事實；放進 Ledger 會讓同一份想定在不同機器上算出不同 hash），故 golden 未重錄。**`/metrics` 永不拋**（一個壞掉的指標不該讓抓取整個失敗——那會讓監控在最需要它的時候先掛掉）。告警門檻**保守**（會叫的告警才有人看），`MatsoAiWorkersAllDown` 特別要求 `active_sessions > 0`——沒有推演時 worker 為 0 是正常的，單看 worker 數會一直誤報。**驗收**：pytest 1934（+13）、mypy 265、ruff 綠；儀表板 JSON 與規則 YAML 皆可 parse。5 個突變全數被抓（含我自己犯過的那個）。**未竟並明寫**：`matso_io_latency_ms` 與 `matso_ai_workers` **定義了但沒有寫入端**——那正是本 session 抓過三次的「元件對、沒人接」，所以明寫在此而不是假裝做完了；儀表板未在真 Grafana 開過；告警規則未跑過 `promtool check rules`。worklog: monitoring.md。
@@ -201,17 +203,13 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   分解器只從那份清單挑目標）。③直射濺射（同格/鄰格友軍距離衰減）是**新能力**不是新係數：
   `Target`/`EnvSnapshot` 沒有 lat/lng，且 `lethal_radius_m` 只在武器契約的 artillery `$def`
   ——KINETIC 範本一律 0.0。要做得先改契約（紅線 4）。
-- **前端下不了 `ENGINEER` 與 `FORMATION` 令**（WP-C2/C3）：後端、預檢、契約、生成型別全通了，
-  但 `useCopOrdering.ts` 的 `orderType` union 仍是 `MOVE|ENGAGE|FIRE_MISSION|POSTURE|MISSION`
-  ——**使用者點不到**。破障是 V2.1 exit 的 armor-breakthrough CPX 的必要動作，這是那張卡的前置。
-  同組還缺：地圖編輯器標障礙時選 `obstacle_type`/`density`、ORBAT 勾 `unit_kind=ENGINEER`、
-  單位卡切隊形/乘駐車、2525 mounted 修飾符。
+- **地圖編輯器標障礙時不能選 `obstacle_type`/`density`、ORBAT 不能勾 `unit_kind=ENGINEER`**
+  （WP-C2 剩餘）：COP 現在下得了 ENGINEER/FORMATION 令，但**想定端仍無法預先佈置有型別的
+  障礙、也無法標記工兵單位**——只能靠 API/MSEL 注入。2525 mounted 修飾符同樣未做。
 - **斷橋只是「不減速的障礙」**（WP-C2）：`blocks_road()` 寫好了但還沒接進路由/道路加速，
   也沒有涉水判定。障礙 contact 偵測（敵障礙轉本軍標註）同樣未做。
 - **令沒有 TTL**（WP-C10.3）：`at_tick` 到期的令若因射手 OFFLINE 被通信閘門擋下，會留在
   VALIDATED 直到通聯恢復——準備射擊可能遲到數十個 tick 才落地。逾時作廢與「換一門砲重試」都未做。
-- **`CALL_FOR_FIRE` 完全沒有前端**：`REQUEST_KIND_LABELS` 漏了它，`submitRequest` 寫死
-  `params: {}` 而後端要求 `target_lat`/`target_lng` → 從 UI 送不出一張合法的臨機火力申請。
 - **`emplace_ticks` 沒有消費者**（WP-C10.5 明列未做）：進入陣地後的待命時間——
   打完就跑之後不該能立刻再開火。需新增 `WeaponProfile` 欄位 + `fire_wiring` 一條「就位了沒」的分支。
 - **契約與實作的漂移沒有閘門**：CI 只跑 `openapi_spec_validator`（驗語法，不驗路由）。
