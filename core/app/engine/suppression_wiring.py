@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.adjudication.suppression import (
+    DEFAULT_TICK_RATE_MS,
     SUPPRESSION_DECAY,
     Posture,
     PostureState,
@@ -99,7 +100,12 @@ def apply_area_suppression(
     return touched
 
 
-def tick_suppression(hot: HotStateStore, tick: int, decay: float = SUPPRESSION_DECAY) -> int:
+def tick_suppression(
+    hot: HotStateStore,
+    tick: int,
+    decay: float = SUPPRESSION_DECAY,
+    tick_rate_ms: int = DEFAULT_TICK_RATE_MS,
+) -> int:
     """每 tick 的衰減與姿態收斂。回實際更新的單位數。
 
     **只寫真的變了的單位**：熱狀態的每一次 `update_unit` 都會進 STATE_DIFF 推給 client，
@@ -107,17 +113,20 @@ def tick_suppression(hot: HotStateStore, tick: int, decay: float = SUPPRESSION_D
 
     `decay` 由呼叫端傳入該局的 `SimParams.suppression_decay`。**過去這裡不傳**，
     於是設定頁上那個欄位存得進讀得回、物理一個位元都不動。
+
+    `tick_rate_ms` 同理：衰減率與工事工時都以**分鐘**為基準，得知道一個 tick 有多長
+    才換算得出來。不傳＝1 分鐘/tick（舊行為）。
     """
     touched = 0
     for unit_id, state in hot.get_all().items():
         patch: dict[str, Any] = {}
         raw = state.get(SUPPRESSION_KEY)
         if isinstance(raw, (int, float)) and raw > 0:
-            decayed = decay_suppression(float(raw), decay)
+            decayed = decay_suppression(float(raw), decay, tick_rate_ms)
             if decayed != raw:
                 patch[SUPPRESSION_KEY] = round(decayed, 3)
         posture = read_posture(state)
-        advanced = posture.advance(tick)
+        advanced = posture.advance(tick, tick_rate_ms)
         if advanced != posture:
             patch[POSTURE_KEY] = advanced.current.value
             patch[POSTURE_SINCE_KEY] = advanced.since_tick

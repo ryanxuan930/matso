@@ -941,6 +941,7 @@ class SimManager:
                     hot,
                     sim_clock.now().tick,
                     sim_params.suppression_decay,  # #93（過去零讀取端）
+                    tick_rate_ms,  # 衰減率與工事工時以分鐘為基準，須知道一 tick 多長
                 )
                 # POSTURE 令（在此之前是 NoOp——令收得下、狀態機也走得完，就是沒有任何效果）。
                 await asyncio.to_thread(

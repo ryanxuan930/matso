@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.adjudication.suppression import (
     Posture,
     PostureState,
@@ -116,3 +118,50 @@ def test_dug_in_halves_incoming_hit_chance() -> None:
     """掘壕的生存優勢——沒有這個，防禦方的準備工作在模型裡毫無意義。"""
     assert posture_modifier(Posture.DUG_IN) == 0.5
     assert posture_modifier(Posture.DEFENSE) < posture_modifier(Posture.HASTY) < 1.0
+
+
+# --------------------------------------------------------------------------- tick 長度
+
+
+def test_posture_work_is_measured_in_minutes_not_ticks() -> None:
+    """工事工時是**分鐘**，不是 tick——不然改 tick_rate_ms 會偷偷改掉挖壕時間。
+
+    這條抓的是一個真的漏洞：`POSTURE_TICKS` 的註解寫「1 tick = 1 分鐘」，
+    但 `tick_rate_ms` 是想定可調的，而移動/補給/耗損/整補全都有除以它。
+    官方 demo 與使用者的想定都寫 `tick_rate_ms: 1000`（1 tick ＝ 1 模擬秒），
+    於是掘壕 240 tick ＝ **4 分鐘**就完成，而不是 4 小時。
+    """
+    from app.adjudication.suppression import posture_ticks
+
+    # 1 分鐘/tick（舊行為的基準）：掘壕 240 tick。
+    assert posture_ticks(Posture.DUG_IN, 60_000) == 240
+    assert posture_ticks(Posture.DEFENSE, 60_000) == 30
+    # 1 秒/tick：同樣的 4 小時 = 14400 tick，而不是 240。
+    assert posture_ticks(Posture.DUG_IN, 1_000) == 14_400
+    assert posture_ticks(Posture.DEFENSE, 1_000) == 1_800
+    # 即時的兩級永遠是 0（別讓換算把它們變成 1）。
+    assert posture_ticks(Posture.MOVING, 1_000) == 0
+    assert posture_ticks(Posture.HASTY, 1_000) == 0
+
+
+def test_dug_in_at_one_second_ticks_is_not_ready_after_240_ticks() -> None:
+    """同一件事從狀態機那一端再驗一次：4 小時的工事不會在 4 分鐘後就生效。"""
+    st = PostureState().order(Posture.DUG_IN, tick=0)
+    assert st.settled(240, 1_000) is Posture.MOVING, "1 秒/tick 時 240 tick 才 4 分鐘"
+    assert st.settled(14_400, 1_000) is Posture.DUG_IN, "滿 4 小時應完成"
+    # 1 分鐘/tick 的既有行為不變。
+    assert st.settled(240, 60_000) is Posture.DUG_IN
+
+
+def test_suppression_decay_is_per_minute_not_per_tick() -> None:
+    """壓制衰減率是**每分鐘**。1 秒/tick 的想定過去 5 個 tick（5 秒）就散光。"""
+    # 1 分鐘/tick：一次衰減就是一次乘法（既有行為，golden 靠這條）。
+    assert decay_suppression(1.0, 0.7, 60_000) == pytest.approx(0.7)
+    # 1 秒/tick：一個 tick 只過了 1/60 分鐘，幾乎不該掉。
+    one_sec = decay_suppression(1.0, 0.7, 1_000)
+    assert one_sec > 0.99, f"1 秒只該掉一點點，實得 {one_sec}"
+    # 但走滿 60 個 tick（＝1 分鐘）之後，要收斂到與 1 分鐘/tick 的一次衰減相同。
+    value = 1.0
+    for _ in range(60):
+        value = decay_suppression(value, 0.7, 1_000)
+    assert value == pytest.approx(0.7, abs=1e-6)

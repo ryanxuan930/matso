@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import enum
+import math
 from dataclasses import dataclass
 
 # 壓制上限。1.0 ＝ 完全趴下：射擊效能剩 `1 - SUPPRESSION_FIRE_PENALTY`。
@@ -63,13 +64,43 @@ POSTURE_MODIFIER: dict[Posture, float] = {
     Posture.DUG_IN: 0.5,
 }
 
-# 轉換到該姿態所需的模擬 tick（1 tick = 1 分鐘）。
-POSTURE_TICKS: dict[Posture, int] = {
+# 轉換到該姿態所需的**模擬分鐘數**。
+#
+# ⚠ 這裡的單位曾經是「tick」，註解寫著「1 tick = 1 分鐘」——但 `tick_rate_ms` 是
+# 想定可調的（schema 允許 100 ms 以上），而移動、補給、耗損、整補**全都有除以它**。
+# 於是一張 `tick_rate_ms: 1000` 的想定（1 tick ＝ 1 模擬秒，官方 demo 與使用者的想定
+# 都是這個值）裡：掘壕 240 tick ＝ 4 **分鐘**就完成，而不是 4 小時；
+# 準備陣地 30 秒就好。工事從此變成一個幾乎免費的按鈕。
+#
+# 現在存的是分鐘，實際 tick 數由 `posture_ticks()` 依該局的 tick 長度換算。
+POSTURE_MINUTES: dict[Posture, int] = {
     Posture.MOVING: 0,
     Posture.HASTY: 0,
     Posture.DEFENSE: 30,
     Posture.DUG_IN: 240,
 }
+
+_MS_PER_MIN = 60_000.0
+# 換算基準：**1 tick ＝ 1 分鐘**。舊行為等同於 `tick_rate_ms=60000`，
+# 故所有預設參數都設成這個值——既有呼叫端與 golden 錄影位元不變。
+DEFAULT_TICK_RATE_MS = 60_000
+
+
+def minutes_per_tick(tick_rate_ms: int = DEFAULT_TICK_RATE_MS) -> float:
+    """一個 tick 代表幾分鐘的模擬時間。tick_rate_ms 非法 → 退回 1 分鐘。"""
+    return (tick_rate_ms / _MS_PER_MIN) if tick_rate_ms > 0 else 1.0
+
+
+def posture_ticks(target: Posture, tick_rate_ms: int = DEFAULT_TICK_RATE_MS) -> int:
+    """轉換到 `target` 需要幾個 tick（依該局的 tick 長度換算）。
+
+    **無條件進位且至少 1 tick**（除非本來就是 0 分鐘）：時間再短也不能在
+    「宣告的同一個 tick」就享有工事防護——那正是這個狀態機存在的理由。
+    """
+    minutes = POSTURE_MINUTES.get(target, 0)
+    if minutes <= 0:
+        return 0
+    return max(1, math.ceil(minutes / minutes_per_tick(tick_rate_ms)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +111,7 @@ class PostureState:
     target: Posture = Posture.MOVING
     since_tick: int = 0
 
-    def settled(self, tick: int) -> Posture:
+    def settled(self, tick: int, tick_rate_ms: int = DEFAULT_TICK_RATE_MS) -> Posture:
         """此刻**實際生效**的姿態。
 
         轉換未完成 → 仍算前一級。宣告掘壕的那一秒就享有掘壕的防護，
@@ -88,12 +119,12 @@ class PostureState:
         """
         if self.target is self.current:
             return self.current
-        needed = POSTURE_TICKS.get(self.target, 0)
+        needed = posture_ticks(self.target, tick_rate_ms)
         return self.target if tick - self.since_tick >= needed else self.current
 
-    def advance(self, tick: int) -> PostureState:
+    def advance(self, tick: int, tick_rate_ms: int = DEFAULT_TICK_RATE_MS) -> PostureState:
         """轉換完成就把 target 收成 current。呼叫端每 tick 呼叫一次。"""
-        if self.target is not self.current and self.settled(tick) is self.target:
+        if self.target is not self.current and self.settled(tick, tick_rate_ms) is self.target:
             return PostureState(current=self.target, target=self.target, since_tick=tick)
         return self
 
@@ -120,10 +151,20 @@ def add_suppression(current: float, weapon_category: str, rounds: int = 1) -> fl
     return min(MAX_SUPPRESSION, max(0.0, current) + delta * max(0, rounds))
 
 
-def decay_suppression(current: float, decay: float = SUPPRESSION_DECAY) -> float:
+def decay_suppression(
+    current: float,
+    decay: float = SUPPRESSION_DECAY,
+    tick_rate_ms: int = DEFAULT_TICK_RATE_MS,
+) -> float:
     """每 tick 衰減。**低於 0.01 直接歸零**——留一個永遠除不盡的小數只會讓熱狀態每 tick 都在變，
-    每個 tick 都推一次 STATE_DIFF 給所有 client。"""
-    nxt = max(0.0, current) * decay
+    每個 tick 都推一次 STATE_DIFF 給所有 client。
+
+    `decay` 是**每分鐘**的乘法衰減率（見 `SUPPRESSION_DECAY`），依該局的 tick 長度
+    取冪。過去這裡是直接每 tick 乘一次，於是 1 秒/tick 的想定裡壓制 5 秒就散光——
+    比一次齊射的持續時間還短，等於整個壓制模型不存在。
+    """
+    minutes = minutes_per_tick(tick_rate_ms)
+    nxt = max(0.0, current) * (decay**minutes if minutes != 1.0 else decay)
     return 0.0 if nxt < 0.01 else nxt
 
 
@@ -144,8 +185,8 @@ def posture_modifier(posture: Posture) -> float:
 
 __all__ = [
     "MAX_SUPPRESSION",
+    "POSTURE_MINUTES",
     "POSTURE_MODIFIER",
-    "POSTURE_TICKS",
     "SUPPRESSION_DECAY",
     "SUPPRESSION_PER_HIT",
     "Posture",
@@ -153,6 +194,8 @@ __all__ = [
     "add_suppression",
     "decay_suppression",
     "fire_modifier",
+    "minutes_per_tick",
     "move_modifier",
     "posture_modifier",
+    "posture_ticks",
 ]

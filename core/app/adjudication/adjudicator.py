@@ -358,7 +358,7 @@ class EngagementAdjudicator:
         result = resolve_aggregate_tick(force_a, force_b, agg_env, self._rng, now.tick)
         self._apply_agg_force(shooter_unit, result.a_strength_after, s_auth)
         self._apply_agg_force(target_unit, result.b_strength_after, t_auth)
-        self._spend_aggregate_ammo(order.shooter_id, shooter_state, ammo)
+        self._spend_aggregate_ammo(order.shooter_id, shooter_state, ammo, order.weapon_template_id)
         # WP-C1：被一整個營砲擊當然會被壓制。過去這一步只掛在 `_apply`（平台級）上。
         if self._suppress is not None and result.b_loss > 0:
             self._suppress(order.target_id, self._weapon_category(order))
@@ -366,7 +366,11 @@ class EngagementAdjudicator:
         return result.events
 
     def _spend_aggregate_ammo(
-        self, shooter_id: str, shooter_state: dict[str, object], ammo: int
+        self,
+        shooter_id: str,
+        shooter_state: dict[str, object],
+        ammo: int,
+        weapon_template_id: str | None = None,
     ) -> None:
         """聚合交戰一個 tick 的彈藥消耗：**每個平台一發**（同齊射模型的量綱）。
 
@@ -379,7 +383,18 @@ class EngagementAdjudicator:
         cur = float(shooter_state.get("strength") or auth)  # type: ignore[arg-type]
         ratio = (cur / auth) if auth > 0 else 1.0
         spent = max(1, int(platforms * max(0.0, min(1.0, ratio))))
-        self._hot.update_unit(shooter_id, {"ammo": max(0, ammo - spent)})
+        patch: dict[str, Any] = {"ammo": max(0, ammo - spent)}
+        # 與單武器路徑同一筆帳：扣了就要寫回 `ammo_by_weapon` 與 DB，
+        # 否則 COP 上一個打了整天的旅永遠顯示滿彈（見 `_persist_ammo`）。
+        wid = self._fired_instance_id(shooter_id, weapon_template_id)
+        if wid is not None:
+            raw_abw = shooter_state.get("ammo_by_weapon")
+            abw: dict[str, int] = dict(raw_abw) if isinstance(raw_abw, dict) else {}
+            base = int(abw.get(wid, ammo))
+            abw[wid] = max(0, base - spent)
+            patch["ammo_by_weapon"] = abw
+            self._persist_ammo(wid, abw[wid])
+        self._hot.update_unit(shooter_id, patch)
 
     def _resolve_combined(
         self,
@@ -487,6 +502,42 @@ class EngagementAdjudicator:
             return "KINETIC"
         return self._weapon_category_for(order) or "KINETIC"
 
+    def _persist_ammo(self, weapon_id: str, remaining: int) -> None:
+        """把剩餘彈藥寫回 DB 的 `EquipmentInstance`（commit 由 `_complete` 一併處理）。
+
+        熱狀態才是執行期的權威，DB 這一份是給**兩個讀者**用的：
+        `GET /units/{id}/weapons`（COP 單位卡、選彈畫面），以及 sim 重啟時的重新播種。
+        少寫這一筆不會讓當下的裁決算錯，但會讓畫面上的彈量停在開局值——
+        操作員據此決定要不要補給，那就是會出事的錯。
+        """
+        inst = self._db.get(EquipmentInstance, weapon_id)
+        if inst is not None:
+            inst.current_state = {**(inst.current_state or {}), "ammo": int(remaining)}
+
+    def _fired_instance_id(self, shooter_id: str, weapon_template_id: str | None) -> str | None:
+        """單一武器路徑實際開火的那件裝備（`EquipmentInstance.id`）。
+
+        判不出來就回 None **而不是猜一件**——猜錯會扣到別把槍的彈藥，
+        那比不扣還糟（畫面顯示的數字是錯的，但看起來很合理）。
+
+        - 未注入武器組合查表 → None（單元測試的極簡裝配走這條，行為與過去相同）。
+        - 恰好一件武器 → 就是它（絕大多數單位）。
+        - 指名了武器且對得上實例 id → 那一件。
+        - 其餘（持多武器又只指名範本 id）→ None。
+        """
+        if self._combined_weapons_for is None:
+            return None
+        weapons = self._combined_weapons_for(shooter_id)
+        if not weapons:
+            return None
+        if len(weapons) == 1:
+            return weapons[0].weapon_id
+        if weapon_template_id:
+            for w in weapons:
+                if w.weapon_id == weapon_template_id:
+                    return w.weapon_id
+        return None
+
     def _apply(self, order: EngageCommand, result: EngagementResult) -> None:
         if result.status is Resolution.REJECTED:
             return  # 合法性未過（彈藥/射程/LOS）→ 不消耗、不變更
@@ -504,13 +555,25 @@ class EngagementAdjudicator:
             # 持久化剩餘彈藥到 DB EquipmentInstance（#53）：供 GET /weapons 顯示正確 + sim 重啟續戰
             # 不回滿。weapon_id＝EquipmentInstance.id。commit 由 _complete 一併處理。
             for wid in result.ammo_spent_by_weapon:
-                inst = self._db.get(EquipmentInstance, wid)
-                if inst is not None:
-                    inst.current_state = {**(inst.current_state or {}), "ammo": abw[wid]}
+                self._persist_ammo(wid, abw[wid])
         else:
             ammo = int(shooter.get("ammo", 0))
             # 消耗實際發射彈藥（單發＝1；squad 齊射＝發射數）。
-            self._hot.update_unit(order.shooter_id, {"ammo": max(0, ammo - result.ammo_spent)})
+            spend_patch: dict[str, Any] = {"ammo": max(0, ammo - result.ammo_spent)}
+            # #53 同紀律：**單武器路徑過去只扣純量 `ammo`**，既不動 `ammo_by_weapon`
+            # 也不寫回 DB。後果是 `GET /units/{id}/weapons`（COP 單位卡與選彈畫面讀的
+            # 就是它）永遠顯示滿彈——一個排打光了子彈，畫面上還是 900 發；sim 一重啟
+            # 熱狀態重播種，彈匣還會自己補滿。聯合兵種與火力任務兩條路徑早就都持久化了，
+            # 只有最常見的那條（一個單位一種武器）漏掉。
+            fired = self._fired_instance_id(order.shooter_id, order.weapon_template_id)
+            if fired is not None:
+                abw = dict(shooter.get("ammo_by_weapon") or {})
+                # 缺鍵→以純量 `ammo` 當基準（seed 之前或舊局的熱狀態）。
+                base = int(abw.get(fired, ammo))
+                abw[fired] = max(0, base - result.ammo_spent)
+                spend_patch["ammo_by_weapon"] = abw
+                self._persist_ammo(fired, abw[fired])
+            self._hot.update_unit(order.shooter_id, spend_patch)
         if result.status is Resolution.HIT:
             # WP-C1：被打中就會被壓制。**由此處呼叫而非每 tick 掃描**——
             # 壓制的來源是具體的一次命中，掃描式的模型分不清「被打三次」與「被打一次但很久」。

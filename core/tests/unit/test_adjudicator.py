@@ -547,3 +547,74 @@ async def test_a_battalion_obeys_the_scenario_roe(
 
     assert events[0].ai_decision["reason"] == "ROE"  # type: ignore[index]
     assert hot.get_unit(world.red_unit_id)["strength"] == 100.0
+
+
+async def test_single_weapon_engagement_persists_spent_ammo_to_db(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """**最常見的那條路徑**：一個單位一種武器，開火後 DB 的彈藥也要跟著扣。
+
+    聯合兵種（≥2 武器）與火力任務兩條路徑早就都寫回 `EquipmentInstance` 了，
+    唯獨「單武器齊射」只扣熱狀態的純量 `ammo`。後果不是裁決算錯——是
+    `GET /units/{id}/weapons`（COP 單位卡與選彈畫面讀的就是它）**永遠顯示滿彈**：
+    一個排打光了子彈，畫面上還是 900 發，指揮官據此決定不用補給。
+    sim 一重啟熱狀態重新播種，彈匣還會自己補滿。
+
+    而一個步槍排正是這套系統裡最多的單位。
+    """
+    from app.models.tables import EquipmentInstance, EquipmentTemplate
+
+    world = seed_world(session_factory)
+    with session_factory() as db:
+        tmpl = EquipmentTemplate(
+            name="RIFLE_SOLO",
+            category="KINETIC",
+            base_stats={
+                "max_range_m": 8000,
+                "ph_by_range_band": [[100, 1.0], [8000, 1.0]],
+                "damage_by_armor_class": {"INFANTRY": 35},
+                "pk_by_armor_class": {"INFANTRY": 0.5},
+                "ammo_types": ["A556"],
+            },
+        )
+        db.add(tmpl)
+        db.flush()
+        inst = EquipmentInstance(
+            template_id=tmpl.id,
+            owner_id=world.blue_unit_id,
+            quantity=30,
+            current_state={"ammo": 900},
+        )
+        db.add(inst)
+        db.commit()
+        _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+
+        hot = InMemoryHotState()
+        hot.put_unit(
+            world.blue_unit_id,
+            {"ammo": 900, "strength": 100.0, "authorized_strength": 100.0},
+        )
+        hot.put_unit(
+            world.red_unit_id,
+            {
+                "health": 100.0,
+                "armor_class": "INFANTRY",
+                "strength": 100.0,
+                "authorized_strength": 100.0,
+                "platform_count": 10,
+            },
+        )
+        # 只有**一件**武器 → 走單武器/齊射路徑（len(cweapons) < 2）。
+        weapons = [CombinedWeapon(inst.id, _RIFLE_C, quantity=30, ammo=900)]
+        _adjudicator_combined(db, hot, lambda _sid: weapons).resolve(cmd, SimTime(0, 0))
+
+        spent_hot = 900 - int(hot.get_unit(world.blue_unit_id)["ammo"])
+        assert spent_hot > 0, "齊射應該要消耗彈藥"
+
+        db.refresh(inst)
+        assert inst.current_state["ammo"] == 900 - spent_hot, (
+            f"DB 的彈藥要與熱狀態一致：熱狀態扣了 {spent_hot}，DB 卻是 {inst.current_state['ammo']}"
+        )
+        # 逐武器帳也要記上，否則之後這個單位拿到第二件武器就會「回滿」。
+        assert hot.get_unit(world.blue_unit_id)["ammo_by_weapon"][inst.id] == 900 - spent_hot
