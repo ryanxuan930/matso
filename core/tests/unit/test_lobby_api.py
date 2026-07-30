@@ -152,6 +152,66 @@ def test_delete_session_with_children(session_factory: sessionmaker[Session]) ->
         assert not db.execute(_select(TacticalUnit).where(TacticalUnit.session_id == sid)).first()
 
 
+def test_delete_retries_when_the_running_sim_holds_the_rows(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """刪一局**進行中**的推演會和它自己的 runner 搶列——撞到就重試，不要吐 500。
+
+    偵測 sweep 每 tick 都在改寫 `IntelContact`，MariaDB 於是丟
+    1020「Record has changed since last read」。使用者看到的症狀是
+    「刪除失敗、再按一次就成功」——那是最糟的一種錯誤：看起來像隨機故障，
+    實際上有明確成因（活體全系統檢查在清理測試局時真的踩到）。
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from app.lobby import service as svc
+
+    monkeypatch.setattr(svc, "_DELETE_BACKOFF_S", 0.0)  # 測試不要真的睡
+    seed_user(session_factory)
+    client = make_client(session_factory)
+    h = auth_header(login(client)["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "進行中"}, headers=h).json()["id"]
+
+    calls = {"n": 0}
+    real = svc.purge_session_rows
+
+    def flaky(db: Session, session_id: str):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OperationalError("purge", {}, Exception("1020 Record has changed"))
+        return real(db, session_id)
+
+    monkeypatch.setattr(svc, "purge_session_rows", flaky)
+    assert client.delete(f"/api/v1/sessions/{sid}", headers=h).status_code == 204
+    assert calls["n"] == 2, "第一次撞鎖後應重試一次就成功"
+
+
+def test_delete_gives_up_after_the_retry_budget(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一直撞就要真的失敗——無限重試會讓一個壞掉的刪除永遠掛在那裡轉圈。"""
+    from sqlalchemy.exc import OperationalError
+
+    from app.lobby import service as svc
+
+    monkeypatch.setattr(svc, "_DELETE_BACKOFF_S", 0.0)
+    seed_user(session_factory)
+    client = make_client(session_factory)
+    h = auth_header(login(client)["access_token"])
+    sid = client.post("/api/v1/sessions", json={"name": "永遠鎖著"}, headers=h).json()["id"]
+
+    calls = {"n": 0}
+
+    def always_locked(db: Session, session_id: str):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        raise OperationalError("purge", {}, Exception("1020 Record has changed"))
+
+    monkeypatch.setattr(svc, "purge_session_rows", always_locked)
+    with pytest.raises(OperationalError):
+        client.delete(f"/api/v1/sessions/{sid}", headers=h)
+    assert calls["n"] == svc._DELETE_ATTEMPTS
+
+
 def test_clone_session_copies_units_equipment_and_new_seed(
     session_factory: sessionmaker[Session],
 ) -> None:

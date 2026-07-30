@@ -22,6 +22,7 @@ from app.lobby.schemas import (
     SessionSummary,
 )
 from app.lobby.service import LobbyService
+from app.sim_control import session_concluded_key
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["lobby"])
 
@@ -98,7 +99,25 @@ def delete_session(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),
     lobby: LobbyService = Depends(get_lobby_service),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
-    """永久刪除推演（#31）——連同單位/事件/標註。限統裁/管理；前端須二次確認。"""
-    lobby.delete_session(user, session_id)
+    """永久刪除推演（#31）——連同單位/事件/標註。限統裁/管理；前端須二次確認。
+
+    **先讓 runner 停下再刪**：進行中的那一局，它自己的偵測 sweep 每 tick 都在改寫
+    `IntelContact`，與刪除搶同一批列 → MariaDB 1020 → 500。收場旗標會讓 runner 結束
+    迴圈且掃描層不再重建它（O11.5 既有機制）；service 端另有重試涵蓋輪詢的空窗。
+
+    刪除失敗要把旗標清掉——否則使用者會留下一局**再也不會前進**的推演，
+    而畫面上完全看不出原因。
+    """
+    client = make_redis(settings.redis_url)
+    concluded = session_concluded_key(session_id)
+    with contextlib.suppress(Exception):
+        client.set(concluded, "1")
+    try:
+        lobby.delete_session(user, session_id)
+    except Exception:
+        with contextlib.suppress(Exception):
+            client.delete(concluded)
+        raise
     return Response(status_code=status.HTTP_204_NO_CONTENT)

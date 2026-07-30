@@ -10,8 +10,10 @@
 from __future__ import annotations
 
 import hashlib
+import time
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.auth.schemas import CurrentUser
@@ -29,6 +31,11 @@ from app.models import SessionParticipant, UserRole, WargameSession
 _OMNISCIENT_ROLES = frozenset(
     {UserRole.EXERCISE_DIRECTOR, UserRole.WHITE_CELL_STAFF, UserRole.ADMIN}
 )
+
+
+# 刪局重試（見 `delete_session`）。runner 停下來要一輪掃描（3 秒），故總等待需超過它。
+_DELETE_ATTEMPTS = 5
+_DELETE_BACKOFF_S = 1.0
 
 
 class LobbyService:
@@ -457,10 +464,26 @@ class LobbyService:
         多數子表（單位/事件/指令/參與者/檢查點/情報/AI 記錄/AAR）未設 DB 級 onDelete cascade，
         直接刪 session 會觸發 FK 違反 → 500。故此依 FK 安全順序先清子表再刪 session；
         EquipmentInstance / 單位階層由 TacticalUnit 的 ondelete=CASCADE 一併帶走。
+
+        ## 為什麼要重試
+
+        刪一局**進行中**的推演，會和它自己的 runner 搶同一批列：偵測 sweep 每 tick 都在
+        改寫 `IntelContact`，於是 MariaDB 丟 1020「Record has changed since last read」。
+        呼叫端（API 層）已先設收場旗標讓 runner 停下，但旗標是輪詢的——中間有個窗口。
+        使用者看到的症狀是「刪除失敗」、再按一次就成功了，那是最糟的一種錯誤：
+        看起來像隨機故障，實際上有明確成因。
         """
         self._require_director(user, session_id)
-        purge_session_rows(self._db, session_id)
-        self._db.commit()
+        for attempt in range(_DELETE_ATTEMPTS):
+            try:
+                purge_session_rows(self._db, session_id)
+                self._db.commit()
+                return
+            except OperationalError:
+                self._db.rollback()
+                if attempt == _DELETE_ATTEMPTS - 1:
+                    raise
+                time.sleep(_DELETE_BACKOFF_S)
 
 
 def _copy_json(value: object) -> object:

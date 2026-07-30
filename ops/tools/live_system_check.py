@@ -36,8 +36,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import h3
 
@@ -229,12 +230,15 @@ class Result:
     notes: list[str] = field(default_factory=list)
 
 
+# 一條檢查：拿到世界把手，回一句「實際觀測到什麼」的敘述（失敗時丟 CheckError）。
+CheckFn = Callable[["World"], str]
+
 RESULTS: list[Result] = []
-_CHECKS: dict[str, tuple[str, Any]] = {}
+_CHECKS: dict[str, tuple[str, CheckFn]] = {}
 
 
-def check(code: str, title: str) -> Any:
-    def deco(fn: Any) -> Any:
+def check(code: str, title: str) -> Callable[[CheckFn], CheckFn]:
+    def deco(fn: CheckFn) -> CheckFn:
         _CHECKS[code] = (title, fn)
         return fn
 
@@ -245,7 +249,9 @@ class CheckError(AssertionError):
     """檢查失敗——訊息必須同時說出期望與實際。"""
 
 
-def expect(cond: bool, message: str) -> None:
+def expect(cond: object, message: str) -> None:
+    """`cond` 收 object 而非 bool——空清單/空集合本身就是「沒有」，
+    逼呼叫端每次寫 `len(x) > 0` 只會讓失敗訊息更難讀。"""
     if not cond:
         raise CheckError(message)
 
@@ -278,7 +284,8 @@ class World:
 
     def state(self, as_faction: str | None = None, token: str | None = None) -> dict[str, Any]:
         q = f"?as_faction={as_faction}" if as_faction else ""
-        return self.api.get(f"/api/v1/sessions/{self.session_id}/state{q}", token=token)
+        raw = self.api.get(f"/api/v1/sessions/{self.session_id}/state{q}", token=token)
+        return cast(dict[str, Any], raw)
 
     def refresh(self, *, require_tick: bool = False) -> dict[str, Any]:
         """重讀狀態並更新 designation → unit 對照。`require_tick` 會等 runner 真的開始跑。"""
@@ -344,10 +351,11 @@ class World:
 
     def order(self, designation: str, order_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         unit = self.unit(designation)
-        return self.api.post(
+        raw = self.api.post(
             f"/api/v1/sessions/{self.session_id}/orders",
             {"unit_id": unit["id"], "order_type": order_type, "payload": payload},
         )
+        return cast(dict[str, Any], raw)
 
     def orders(self) -> list[dict[str, Any]]:
         return list(self.api.get(f"/api/v1/sessions/{self.session_id}/orders"))
@@ -490,20 +498,64 @@ def c3_move(w: World) -> str:
     return f"行進 {planned:.0f} m，最終偏差 {left:.0f} m，指令 {status}"
 
 
-@check("C4", "油料：移動真的燒油，且燒的量與距離相稱")
+@check("C4", "油料：滿箱是整個編成的量，移動真的燒油且與里程相稱")
 def c4_fuel(w: World) -> str:
-    # C3 已經讓 BLU_ARM 走了約 3 km。MBT 每公里 4.5、滿箱 1900。
-    remaining = w.fuel("BLU_ARM")
-    expect(remaining > 0, f"油量不該歸零（實得 {remaining}）")
-    burned = 1900.0 - remaining
-    expect(burned > 1.0, f"移動了 3 km 卻幾乎沒燒油（燒了 {burned:.1f}）")
-    # 3 km × 4.5 ≈ 13.5；容許地形繞路讓實際里程變長，但不該離譜。
-    expect(burned < 120.0, f"燒油量 {burned:.1f} 遠超過 3 km 行程應有的量（≈13.5）")
+    """兩件事一起驗，因為它們曾經互相掩蓋。
+
+    1. **滿箱＝編成的量**。容量與油耗都乘了建制數，但「惰性滿油」曾經只填一台車的油
+       ——4 輛 MBT 的連隊開局只有 1/4 的油卻以 4 倍速率消耗，續航從 420 km 掉到 105 km。
+       畫面上看不出來（油量是個沒有基準的數字），症狀只有「怎麼開沒多遠就拋錨了」。
+    2. **移動真的扣油**，而且扣的量與實際里程相稱。
+
+    這裡不寫死任何常數當基準——改用「沒動過的同型單位」當對照組，
+    以及「自己移動前後的差」當量測值。寫死的基準會在編裝一改就變成假紅燈。
+    """
+    # 對照組：RED_ARM 與 BLU_ARM 同編裝（4 輛 MBT），且從未移動 → 應為滿箱。
+    full = w.fuel("RED_ARM")
+    expect(full > 0, f"沒動過的裝甲單位油量不該是 0（實得 {full}）")
+    # MBT 單車 1900 × 4 輛。這是想定寫死的編裝，故可直接比對。
+    expect(
+        abs(full - 1900.0 * 4) < 1.0,
+        f"4 輛 MBT 的滿箱應為 {1900 * 4}，實得 {full}——只填一台車的油會讓續航變成 1/4",
+    )
+
+    # 量測：讓 BLU_ARM 再走 1 km，看油量掉多少。
+    before = w.fuel("BLU_ARM")
+    expect(before > 0, f"BLU_ARM 開走前就沒油了（{before}）")
+    unit = w.unit("BLU_ARM")
+    dest_lat, dest_lng = unit["lat"], unit["lng"] + 1.0 / KM_PER_DEG_LNG
+    w.order(
+        "BLU_ARM",
+        "MOVE",
+        {
+            "to_h3": h3.latlng_to_cell(dest_lat, dest_lng, 8),
+            "mobility_profile": "TRACKED",
+            "to_lat": dest_lat,
+            "to_lng": dest_lng,
+        },
+    )
+
+    def arrived() -> Any:
+        u = w.unit("BLU_ARM")
+        return u if haversine_m(u["lat"], u["lng"], dest_lat, dest_lng) < 120 else None
+
+    w.wait_until(arrived, "BLU_ARM 走完這 1 km", timeout=180)
+    after = w.fuel("BLU_ARM")
+    burned = before - after
+    # 1 km × 4.5/車 × 4 車 ＝ 18。地形繞路會讓實際里程長一些，但不該離譜。
+    expect(burned > 0, f"走了 1 km 卻沒扣油（{before} → {after}）")
+    expect(
+        4.0 < burned < 90.0,
+        f"1 km 燒了 {burned:.1f}（預期約 18，容許繞路）——量級不對",
+    )
 
     # 沒有油料模型的徒步單位應該回 0（而不是假裝有油）。
     foot = w.fuel("BLU_INF")
     expect(foot == 0.0, f"徒步單位不該有油量，實得 {foot}")
-    return f"BLU_ARM 燒了 {burned:.1f} 油（剩 {remaining:.0f}/1900）；徒步單位油量 0"
+    return (
+        f"對照組滿箱 {full:.0f}（=1900×4）；BLU_ARM 走 1 km 燒 {burned:.1f}"
+        f"（剩 {after:.0f}）；徒步單位油量 0"
+    )
 
 
 @check("C5", "直射交戰：ENGAGE 真的造成傷亡並消耗彈藥")
