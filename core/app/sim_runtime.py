@@ -49,7 +49,7 @@ from app.engine.rng import DeterministicRNG
 from app.engine.sensor_wiring import SensorResolver, make_detect_env
 from app.engine.smoke_wiring import SmokeCache
 from app.engine.subsystems import ChainedOrderSource, DispatchingAdjudicator
-from app.engine.supply_wiring import tick_supply
+from app.engine.supply_wiring import auto_resupply, tick_supply
 from app.engine.suppression_wiring import (
     apply_hit_suppression,
     drain_posture_orders,
@@ -234,6 +234,21 @@ def _supply_tick(hot: Any, tick: int, tick_rate_ms: int, rates: dict[str, float]
             hot.update_unit(unit_id, patch)
             changed += 1
     return changed
+
+
+def _resupply_tick(factory: Any, hot: Any, session_id: str, tick: int) -> list[Any]:
+    """自動補給（WP-C7.2）。另開 DB session——理由同 `_posture_tick`。"""
+    from app.models.tables import TacticalUnit
+
+    with factory() as db:
+
+        def lookup(unit_id: str) -> tuple[str, float, float] | None:
+            unit = db.get(TacticalUnit, unit_id)
+            if unit is None or unit.current_lat is None or unit.current_lng is None:
+                return None
+            return (unit.faction, float(unit.current_lat), float(unit.current_lng))
+
+        return auto_resupply(db, hot, session_id, lookup, tick)
 
 
 def _suppress_hit(hot: Any, unit_id: str, category: str) -> None:
@@ -692,6 +707,13 @@ class SimManager:
                     sim_params.tick_rate_ms,
                     sim_params.supply_daily_rates,
                 )
+                # WP-C7.2 自動補給：低於再訂購水位 → 從最近的己方補給點拉貨。
+                # 沒有補給點/沒有單位缺補 → 一次查詢之外什麼都不做。
+                sup = await asyncio.to_thread(
+                    _resupply_tick, self._factory, hot, session_id, sim_clock.now().tick
+                )
+                if sup:
+                    await asyncio.to_thread(LedgerWriter(self._factory).append, session_id, sup)
                 # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
                 # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
                 await asyncio.to_thread(tick_suppression, hot, sim_clock.now().tick)

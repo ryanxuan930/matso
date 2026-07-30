@@ -277,7 +277,34 @@ class AreaFireAdjudicator:
             return []
         bda = self._bda_event(order, verdict, shooter_faction, aim, result.losses, now)
         out = [event, bda] if bda is not None else [event]
-        return [*out, *self._fratricide_events(order, shooter_faction, result, now)]
+        out.extend(self._fratricide_events(order, shooter_faction, result, now))
+        # WP-C7.2：落點半徑內的補給點一併摧毀——**打擊敵後勤是可行戰法**。
+        # 用既有的面射擊蒐集半徑，不另造一套「攻擊建物」的裁決。
+        out.extend(self._destroy_supply_points(order, aim, entry, now))
+        return out
+
+    def _destroy_supply_points(
+        self, order: Any, aim: tuple[float, float], entry: Any, now: SimTime
+    ) -> list[LedgerEvent]:
+        """摧毀落點殺傷半徑內的補給點（WP-C7.2）。回帳本事件。
+
+        `lethal_radius_m` 為 0 的武器（直射範本）自然什麼都炸不到——不必特判。
+        """
+        from app.engine.supply_points import destroy_at
+
+        radius = float(getattr(entry.profile, "lethal_radius_m", 0.0) or 0.0)
+        if radius <= 0.0 or not self._session_id:
+            return []
+        ids = destroy_at(self._db, self._session_id, aim[0], aim[1], radius)
+        return [
+            LedgerEvent(
+                event_type="SUPPLY_POINT_DESTROYED",
+                tick=now.tick,
+                initiator_id=order.shooter_id,
+                ai_decision={"feature_id": fid},
+            )
+            for fid in ids
+        ]
 
     def _fratricide_events(
         self, order: Any, shooter_faction: str | None, result: Any, now: SimTime

@@ -145,10 +145,67 @@ def needs_resupply(state: dict[str, Any]) -> list[SupplyClass]:
     )
 
 
+def auto_resupply(db: Any, hot: Any, session_id: str, unit_lookup: Any, tick: int) -> list[Any]:
+    """低於再訂購水位的單位 → 從最近的己方補給點拉貨（WP-C7.2）。回帳本事件。
+
+    **「拉」不是「推」**（見 `supply_points` 模組說明）。沒有任何單位低於水位、
+    或本局根本沒有補給點時，**一次 DB 查詢之外什麼都不做**。
+
+    `unit_lookup(unit_id) -> (faction, lat, lng) | None` 由呼叫端提供——
+    本模組不查 `TacticalUnit`（那是呼叫端已經有的資料）。
+    """
+    from app.engine.supply_points import draw_from, load_points, nearest_usable, topped_up
+    from app.state.ledger import LedgerEvent
+
+    hungry = [
+        (uid, classes)
+        for uid in sorted(hot.get_all())
+        if (classes := needs_resupply(hot.get_unit(uid) or {}))
+    ]
+    if not hungry:
+        return []
+    points = load_points(db, session_id)
+    if not points:
+        return []
+
+    events: list[Any] = []
+    for unit_id, classes in hungry:
+        meta = unit_lookup(unit_id)
+        if meta is None:
+            continue
+        faction, lat, lng = meta
+        point = nearest_usable(points, faction, lat, lng)
+        if point is None:
+            continue  # 補給線斷了——**這正是打擊敵後勤要達到的效果**
+        levels = read_levels(hot.get_unit(unit_id) or {})
+        wanted = {
+            c: max(0.0, levels[c].capacity - levels[c].on_hand) for c in classes if c in levels
+        }
+        issued = draw_from(db, point, wanted)
+        if not issued:
+            continue
+        hot.update_unit(unit_id, {SUPPLY_KEY: write_levels(topped_up(levels, issued))})
+        events.append(
+            LedgerEvent(
+                event_type="RESUPPLIED",
+                tick=tick,
+                initiator_id=unit_id,
+                ai_decision={
+                    "supply_point": point.feature_id,
+                    "issued": {c.value: round(v, 3) for c, v in sorted(issued.items())},
+                },
+            )
+        )
+    if events:
+        db.commit()
+    return events
+
+
 __all__ = [
     "STARVED_DAYS_KEY",
     "SUPPLY_KEY",
     "SUPPLY_TICK_KEY",
+    "auto_resupply",
     "needs_resupply",
     "read_levels",
     "supply_effectiveness",
