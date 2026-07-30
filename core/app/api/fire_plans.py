@@ -23,6 +23,7 @@ from app.api.deps import get_current_user, get_db, get_gateway
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.errors import AuthForbiddenError, SessionNotFoundError
+from app.factions.session_store import load_session_relations
 from app.fires.service import (
     FirePlanError,
     NewTarget,
@@ -246,6 +247,7 @@ def _order_service(db: Session, gateway: PhysicsGateway, session_id: str) -> Ord
         db,
         gateway,
         tick_source=lambda: _tick(session_id),
+        relations=load_session_relations(db, session_id),  # 見 `api/deps.py` 的警語
         event_sink=LedgerWriter(default_session_factory()),
     )
 

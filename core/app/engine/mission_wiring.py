@@ -207,7 +207,9 @@ class LiveMissionPlanner:
         if parent is None:
             return []
         rejected: list[LedgerEvent] = []
-        service = OrderService(self._db, self._gateway)
+        # ⚠ 關係矩陣要一起傳。planner 選目標時用的是 `self._relations`（`_world_view`），
+        # 子令的閘門若退回全 HOSTILE 預設，兩邊對「誰是盟軍」的認定就不一致。
+        service = OrderService(self._db, self._gateway, relations=self._relations)
         for sub in sub_orders:
             try:
                 otype = OrderType(sub.order_type)

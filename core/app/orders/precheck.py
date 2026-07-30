@@ -339,7 +339,10 @@ def run_precheck(
 ) -> PrecheckResult:
     """依 order 類型跑對應物理檢查，回 PrecheckResult（feasible + 各項）。
 
-    relations=None 時退回全 HOSTILE 預設（N 方前語義相容；ENGAGE 對非敵陣營→ROE 攔）。
+    ⚠ `relations=None` 退回 `FactionRelations()`＝**全 HOSTILE**，那對 ROE 而言是
+    **fail-open**：`is_hostile("BLUE","GREEN")` 為 True，於是「不可打盟軍」那條只擋得住
+    打自己陣營。正式路徑（`api/deps.py`、`api/fire_plans.py`、`ai_loop/orders_bridge.py`、
+    `engine/mission_wiring.py`）**必須**注入該局矩陣；None 只保留給測試與尚無 session 的呼叫端。
     `acknowledge_restricted`：下令者已明確確認「限制射擊區仍要射擊」（WP-A3）。
     """
     payload = validated.payload
@@ -531,6 +534,7 @@ def _precheck_engage(
             PrecheckCheck(name="target_exists", passed=False, detail="目標單位不存在於此 session")
         ]
     # ROE：只能打敵對陣營（§12.1）——打盟軍/中立一律拒（friendly fire / 攻中立）。
+    # 這條**只有在呼叫端注入了該局關係矩陣時才真的擋得住盟軍**（見 `run_precheck` 的警語）。
     if not relations.is_hostile(unit.faction, target.faction):
         rel = relations.relation(unit.faction, target.faction).value
         detail = f"目標陣營關係為 {rel}，非敵對，禁止交戰"

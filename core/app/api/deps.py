@@ -16,6 +16,7 @@ from app.auth.tokens import JwtCodec
 from app.config import Settings
 from app.db import default_session_factory
 from app.errors import AuthInvalidTokenError
+from app.factions.session_store import load_session_relations
 from app.lobby.service import LobbyService
 from app.orders.precheck import LosOutcome, PhysicsGateway, TerrainGatewayAdapter
 from app.orders.service import OrderService
@@ -129,9 +130,16 @@ def get_order_service(
     # session_id 由路徑 `/sessions/{session_id}/orders` 注入；tick_source 讓下令戳記真實 sim tick
     # （否則永遠 0 → 指令全部顯示 T0、無法依下令時間排序）。
     # WP-A3：event_sink 供「限制射擊區 knowing override」留痕（LedgerWriter 自身處理 seq/tip）。
+    #
+    # ⚠ **relations 一定要注入**。少了它，`OrderService._relations` 是 None，`run_precheck`
+    # 退回 `FactionRelations()`＝**全 HOSTILE**，於是 `_precheck_engage` 的 ROE 分支
+    # （`not is_hostile(...)`）只有在打**自己陣營**時才成立——`is_hostile("BLUE","GREEN")`
+    # 在預設矩陣裡是 True。結果：**人類指揮官一直可以對盟軍下 ENGAGE 並通過預檢**，
+    # 而 AI 路徑（`orders_bridge.py` 有傳 relations）反而擋得住。恰好倒過來。
     return OrderService(
         db,
         gateway,
         tick_source=lambda: _live_tick(session_id),
+        relations=load_session_relations(db, session_id),
         event_sink=LedgerWriter(default_session_factory()),
     )

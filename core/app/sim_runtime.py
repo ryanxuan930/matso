@@ -562,7 +562,9 @@ class SimManager:
                         tick,
                         surviv,
                         rngs["survivability"],
-                        lambda s: OrderService(s, _fire_plan_gateway(), lambda: tick),
+                        lambda s: OrderService(
+                            s, _fire_plan_gateway(), lambda: tick, relations=relations
+                        ),
                     )
 
             def _fire_plan_tick(tick: int) -> int:
@@ -573,7 +575,10 @@ class SimManager:
                         fdb,
                         session_id,
                         tick,
-                        lambda s: OrderService(s, _fire_plan_gateway(), lambda: tick),
+                        # 關係矩陣一律帶入——見 `api/deps.py` 的警語（少了它 ROE 是 fail-open）。
+                        lambda s: OrderService(
+                            s, _fire_plan_gateway(), lambda: tick, relations=relations
+                        ),
                     )
 
             async def _apply_live_edits() -> None:
