@@ -247,6 +247,8 @@ model User {
   role         UserRole
   createdAt    DateTime             @default(now())
   participants SessionParticipant[]
+  failedAttempts Int?
+  lockedUntil DateTime?
 }
 
 model SessionParticipant {
@@ -597,4 +599,15 @@ model ParameterSeal {
   sealedBy     String
   contentHash  String
   snapshotBlob Bytes
+}
+
+model RevokedToken {
+  jti       String   @id
+  userId    String
+  expiresAt DateTime
+  reason    String
+  revokedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }

@@ -11,6 +11,7 @@ claims：sub（user id）、role、type（access|refresh）、iat、exp。refres
 from __future__ import annotations
 
 import enum
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -35,6 +36,10 @@ class TokenClaims:
     subject: str  # user id
     role: str
     token_type: TokenType
+    # WP-E2：撤銷的最小單位。舊 token（簽發時還沒有這個欄位）解出來是 ""，
+    # **那些一律當作不可撤銷但仍有效**——強制失效會在部署當下把所有人踢掉。
+    jti: str = ""
+    expires_at: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +50,9 @@ class JwtCodec:
     algorithm: str = "HS256"
     now: Callable[[], datetime] = _utcnow
 
-    def issue(self, subject: str, role: str, token_type: TokenType, ttl_s: int) -> str:
+    def issue(
+        self, subject: str, role: str, token_type: TokenType, ttl_s: int, jti: str | None = None
+    ) -> str:
         issued = self.now()
         payload: dict[str, Any] = {
             "sub": subject,
@@ -53,6 +60,8 @@ class JwtCodec:
             "type": token_type.value,
             "iat": int(issued.timestamp()),
             "exp": int((issued + timedelta(seconds=ttl_s)).timestamp()),
+            # WP-E2：每張 token 一個 id，撤銷表以此為鍵。
+            "jti": jti or uuid.uuid4().hex,
         }
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
@@ -72,4 +81,11 @@ class JwtCodec:
         role = payload.get("role")
         if not isinstance(subject, str) or not isinstance(role, str):
             raise AuthInvalidTokenError("token 缺少 sub/role")
-        return TokenClaims(subject=subject, role=role, token_type=expected_type)
+        raw_exp = payload.get("exp")
+        return TokenClaims(
+            subject=subject,
+            role=role,
+            token_type=expected_type,
+            jti=str(payload.get("jti") or ""),
+            expires_at=int(raw_exp) if isinstance(raw_exp, (int, float)) else 0,
+        )

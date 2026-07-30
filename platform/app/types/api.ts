@@ -45,7 +45,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description 用戶端丟棄 token 即登出（無狀態 JWT）；此端點供審計/對稱性 */
+        /** @description 登出並**撤銷該 refresh token**（WP-E2）。在此之前本端點是 no-op（「用戶端丟棄 token 即登出」），於是撿到 refresh token 的人照樣能一直換發新的 access。 */
         post: operations["logout"];
         delete?: never;
         options?: never;
@@ -2157,7 +2157,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshRequest"];
+            };
+        };
         responses: {
             /** @description Logged out */
             204: {

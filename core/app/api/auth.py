@@ -1,7 +1,8 @@
 """Auth REST 端點（O4.1，SPEC §16.1）。
 
 POST /api/v1/auth/login    帳密 → JWT 對（access + refresh）
-POST /api/v1/auth/refresh  refresh token → 新 access token
+POST /api/v1/auth/refresh  refresh token → 新 access token（輪替：舊的立即撤銷）
+POST /api/v1/auth/logout   撤銷 refresh token（WP-E2；在此之前是 no-op）
 POST /api/v1/auth/logout   無狀態 JWT，用戶端丟棄即登出（此端點供對稱/審計）
 GET  /api/v1/auth/me       目前使用者（bearer）
 """
@@ -34,8 +35,18 @@ def refresh(req: RefreshRequest, auth: AuthService = Depends(get_auth_service)) 
 
 
 @router.post("/logout", status_code=204)
-def logout(_: CurrentUser = Depends(get_current_user)) -> Response:
-    # 無狀態 JWT：伺服器不維護黑名單（Phase 1）；登出即用戶端丟棄 token。
+def logout(
+    req: RefreshRequest,
+    _: CurrentUser = Depends(get_current_user),
+    auth: AuthService = Depends(get_auth_service),
+) -> Response:
+    """撤銷該 refresh token（WP-E2）。
+
+    ⚠ **在此之前這個端點是 no-op**（註解自己寫著「伺服器不維護黑名單」），
+    於是登出只是前端把 token 丟掉——**撿到的人照樣能一直換發新的 access**。
+    現在真的撤銷。
+    """
+    auth.logout(req.refresh_token)
     return Response(status_code=204)
 
 

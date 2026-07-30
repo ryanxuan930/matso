@@ -1170,7 +1170,12 @@ paths:
     post:
       operationId: logout
       security: [{ bearerAuth: [] }]
-      description: 用戶端丟棄 token 即登出（無狀態 JWT）；此端點供審計/對稱性
+      description: 登出並**撤銷該 refresh token**（WP-E2）。在此之前本端點是 no-op（「用戶端丟棄 token 即登出」），於是撿到 refresh token 的人照樣能一直換發新的 access。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
       responses: { "204": { description: Logged out } }
   /auth/me:
     get:

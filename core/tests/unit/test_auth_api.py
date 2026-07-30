@@ -85,11 +85,16 @@ def test_refresh_rejects_access_token_401(session_factory: sessionmaker[Session]
 
 
 def test_logout_requires_auth_then_204(session_factory: sessionmaker[Session]) -> None:
+    """WP-E2：logout 現在要帶 refresh token（才撤銷得掉）。"""
     seed_user(session_factory)
     client = make_client(session_factory)
-    assert client.post("/api/v1/auth/logout").status_code == 401
+    assert client.post("/api/v1/auth/logout", json={"refresh_token": "x"}).status_code == 401
     tokens = login(client)
-    r = client.post("/api/v1/auth/logout", headers=auth_header(tokens["access_token"]))
+    r = client.post(
+        "/api/v1/auth/logout",
+        json={"refresh_token": tokens["refresh_token"]},
+        headers=auth_header(tokens["access_token"]),
+    )
     assert r.status_code == 204
 
 

@@ -27,7 +27,23 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = await apiFetch<CurrentUser>('/auth/me')
   }
 
-  function logout(): void {
+  /**
+   * 登出：**先請後端撤銷 refresh token**，再清本地。
+   *
+   * ⚠ 只清本地是不夠的（WP-E2 之前就是那樣）：refresh token 沒被撤銷，
+   * 撿到它的人照樣能一直換發新的 access。撤銷失敗仍照清本地——
+   * 使用者按了登出就該登出，後端連不上不該把他困在已登入狀態。
+   */
+  async function logout(): Promise<void> {
+    const token = refresh.value
+    if (token) {
+      try {
+        await apiFetch('/auth/logout', { method: 'POST', body: { refresh_token: token } })
+      }
+      catch {
+        // 已過期/後端不可用——照樣清本地。
+      }
+    }
     user.value = null
     access.value = null
     refresh.value = null

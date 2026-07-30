@@ -5,6 +5,7 @@
 """
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -241,8 +242,29 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column("passwordHash", String(191))
     totp_secret: Mapped[str | None] = mapped_column("totpSecret", String(191))
     role: Mapped[UserRole] = mapped_column("role", SAEnum(UserRole))
+    # WP-E2 帳號鎖定（防爆破）。NULL/0 ＝從未失敗過（既有列的語義）。
+    failed_attempts: Mapped[int | None] = mapped_column("failedAttempts", Integer)
+    locked_until: Mapped[datetime | None] = mapped_column("lockedUntil", DateTime, nullable=True)
     created_at: Mapped[str] = mapped_column(
         "createdAt", DateTime(timezone=False), server_default=func.now()
+    )
+
+
+class RevokedToken(Base):
+    """已撤銷的 refresh token（WP-E2）。
+
+    以 `jti` 為鍵。**過期的列可以安全清掉**——token 本身也過期了，留著只是佔位。
+    `reason` 供稽核：是正常登出、輪替汰換，還是偵測到重用（可能被竊）。
+    """
+
+    __tablename__ = "RevokedToken"
+
+    jti: Mapped[str] = mapped_column("jti", String(191), primary_key=True)
+    user_id: Mapped[str] = mapped_column("userId", String(191))
+    expires_at: Mapped[datetime] = mapped_column("expiresAt", DateTime)
+    reason: Mapped[str] = mapped_column("reason", String(191))
+    revoked_at: Mapped[str] = mapped_column(
+        "revokedAt", DateTime(timezone=False), server_default=func.now()
     )
 
 

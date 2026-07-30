@@ -249,7 +249,9 @@ async function doRemoveParticipant(userId: string) {
 }
 
 async function onLogout() {
-  auth.logout()
+  // WP-E2：logout 現在會打後端撤銷 refresh token，必須 await——
+  // 不 await 的話 navigateTo 可能在請求送出前就把頁面換掉。
+  await auth.logout()
   await navigateTo('/login')
 }
 
