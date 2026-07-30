@@ -111,3 +111,117 @@ def test_state_change_emits_event(session_factory: sessionmaker[Session]) -> Non
     changed = [e for e in events if e.event_type == "COMMS_STATE_CHANGED"]
     assert changed and changed[0].ai_decision["to"] == "ONLINE"
     assert (hot.get_unit("mover") or {}).get("comms_state") == "ONLINE"
+
+
+# ---- 地形遮蔽與天氣衰減：過去 `mesh_states(nodes)` 兩個參數都沒傳 ----
+
+
+class _Blocked:
+    """全部視線都被擋（山稜線）。記錄查詢次數以驗快取。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def has_los(self, _a: object, _b: object) -> object:
+        self.calls += 1
+        return type("O", (), {"visible": False})()
+
+
+def _run_with(
+    factory: sessionmaker[Session],
+    hot: InMemoryHotState,
+    ticks: int,
+    **kwargs: object,
+) -> list:
+    comms = CommsSystem(
+        session_id=_SID, session_factory=factory, hot_state=hot, interval_ticks=5, **kwargs
+    )
+    clock = SimClock(tick_rate_ms=1000)
+    events = []
+    for _ in range(ticks):
+        events.extend(asyncio.run(comms.evaluate(clock.now())))
+        clock.advance()
+    return events
+
+
+def _pair(factory: sessionmaker[Session], km_east: float) -> None:
+    _seed(
+        factory,
+        [
+            ("hq", "BLUE", 23.75, 121.20, UnitLevel.BATTALION),
+            ("a", "BLUE", 23.75, 121.20 + km_east / 101.0, UnitLevel.PLATOON),
+        ],
+    )
+
+
+def test_a_ridgeline_between_two_units_degrades_the_link(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """稜線後面的部隊與平原上同距離的部隊通聯**過去完全一樣**——`obstructed` 從沒傳過。"""
+    _pair(session_factory, 30.0)
+    clear = InMemoryHotState()
+    _run_with(session_factory, clear, 6)
+    blocked = InMemoryHotState()
+    _run_with(session_factory, blocked, 6, gateway=_Blocked())
+
+    assert (clear.get_unit("a") or {}).get("comms_state") == "ONLINE"
+    assert (blocked.get_unit("a") or {}).get("comms_state") != "ONLINE"
+
+
+def test_obstruction_lookups_are_cached_per_cell_pair(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """靜止部隊不該每個通訊 tick 都重問一次地形服務（穩態命中率接近 100%）。"""
+    _pair(session_factory, 30.0)
+    gw = _Blocked()
+    _run_with(session_factory, InMemoryHotState(), 21, gateway=gw)  # tick 0/5/10/15/20 共 5 次重算
+
+    assert gw.calls == 1
+
+
+def test_terrain_service_failure_does_not_black_out_the_net(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """地形服務掛掉 → 退回通視。**不可**退成遮蔽：那會讓全軍忽然集體失聯。"""
+
+    class _Broken:
+        def has_los(self, _a: object, _b: object) -> object:
+            raise RuntimeError("terrain down")
+
+    _pair(session_factory, 30.0)
+    hot = InMemoryHotState()
+    _run_with(session_factory, hot, 6, gateway=_Broken())
+
+    assert (hot.get_unit("a") or {}).get("comms_state") == "ONLINE"
+
+
+def test_weather_rf_attenuation_degrades_the_link(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """`CellEffects.rf_attenuation_db` 過去**全系統零消費者**：暴雨對無線電毫無影響。"""
+    import h3
+
+    from app.weather import CellEffects, WeatherState
+
+    _pair(session_factory, 30.0)
+    storm = WeatherState({h3.latlng_to_cell(23.75, 121.20, 8): CellEffects(rf_attenuation_db=40.0)})
+    hot = InMemoryHotState()
+    _run_with(session_factory, hot, 6, weather_for=lambda: storm)
+
+    assert (hot.get_unit("a") or {}).get("comms_state") != "ONLINE"
+
+
+def test_weather_elsewhere_does_not_touch_this_net(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """天氣是逐格的：雷雨下在別處，這條鏈路不受影響。"""
+    import h3
+
+    from app.weather import CellEffects, WeatherState
+
+    _pair(session_factory, 30.0)
+    elsewhere = WeatherState({h3.latlng_to_cell(0.0, 0.0, 8): CellEffects(rf_attenuation_db=99.0)})
+    hot = InMemoryHotState()
+    _run_with(session_factory, hot, 6, weather_for=lambda: elsewhere)
+
+    assert (hot.get_unit("a") or {}).get("comms_state") == "ONLINE"

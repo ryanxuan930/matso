@@ -673,6 +673,11 @@ class SimManager:
                     session_factory=self._factory,
                     hot_state=hot,
                     interval_ticks=sim_params.comms_interval_ticks,  # #93 可調
+                    # 過去這裡只有距離：`mesh_states(nodes)` 兩個參數都沒傳，
+                    # 於是稜線後面的部隊與平原上同距離的部隊通聯完全一樣，
+                    # 而 `rf_attenuation_db` 全系統零消費者。
+                    gateway=_engage_gateway(),
+                    weather_for=lambda: weather_cache.at(sim_clock.now().tick),
                 ),
                 logistics=ResupplySystem(  # #85 補給：RESUPPLY 令加油（取代 NoOp）
                     session_id=session_id,

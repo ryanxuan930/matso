@@ -106,6 +106,7 @@ def mesh_states(
     *,
     obstructed: dict[tuple[str, str], bool] | None = None,
     weather_attenuation_db: float = 0.0,
+    attenuation_db: dict[tuple[str, str], float] | None = None,
     jamming_db: float = 0.0,
 ) -> dict[str, LinkState]:
     """網狀連通 → 每個單位的通訊狀態（§6.1 multi-hop 中繼）。
@@ -113,8 +114,12 @@ def mesh_states(
     先算兩兩鏈路狀態（取雙向較差者），組圖：ONLINE 邊為強鏈、DEGRADED 邊為弱鏈、OFFLINE 不連。
     自任一指揮節點做 BFS——全程強鏈可達→ONLINE；經任一弱鏈可達→DEGRADED；不可達→OFFLINE（孤島）。
     無指揮節點時，退化為「以任一節點為錨」（避免全體 OFFLINE 的無意義結果）。
+
+    `attenuation_db` 是**逐鏈路**的天氣衰減（覆蓋 `weather_attenuation_db` 純量）。
+    天氣本來就是逐格的：一整片雷雨只該罰穿過它的那幾條鏈路，不是全網齊罰。
     """
     obstructed = obstructed or {}
+    attenuation_db = attenuation_db or {}
     by_id = {n.unit_id: n for n in nodes}
     ids = [n.unit_id for n in nodes]
     # 兩兩邊狀態（無序對取雙向較差）。
@@ -124,12 +129,13 @@ def mesh_states(
             na, nb = by_id[a], by_id[b]
             dist = haversine_m((na.lng, na.lat), (nb.lng, nb.lat))
             obs = obstructed.get((a, b), obstructed.get((b, a), False))
+            atten = attenuation_db.get((a, b), attenuation_db.get((b, a), weather_attenuation_db))
             m_ab = link_margin_db(
                 na.profile,
                 nb.profile,
                 dist,
                 obstructed=obs,
-                weather_attenuation_db=weather_attenuation_db,
+                weather_attenuation_db=atten,
                 jamming_db=jamming_db,
             )
             m_ba = link_margin_db(
@@ -137,7 +143,7 @@ def mesh_states(
                 na.profile,
                 dist,
                 obstructed=obs,
-                weather_attenuation_db=weather_attenuation_db,
+                weather_attenuation_db=atten,
                 jamming_db=jamming_db,
             )
             st = link_state(min(m_ab, m_ba))

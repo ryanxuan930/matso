@@ -14,7 +14,10 @@ WP-C5 起本系統同時是**位置回報**的產出端：依 `position_report_i
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Callable
 
+import h3
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
@@ -34,10 +37,22 @@ from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.models.enums import UnitLevel
 from app.state.hot_state import HotStateStore
 from app.state.ledger import LedgerEvent
+from app.weather import WeatherState
+
+_LOG = logging.getLogger("engine.comms")
 
 # 指揮節點門檻：BATTALION（含）以上視為指揮/中繼錨點（單位規模排名越小越大）。
 _SIZE_RANK = {level: rank for rank, level in enumerate(UnitLevel)}
 _COMMAND_RANK = _SIZE_RANK[UnitLevel.BATTALION]
+
+# 天線離地高（公尺）——與交戰/偵測的觀測高同量級（車裝鞭狀天線約 3m、架設桿約 10m）。
+_ANTENNA_HEIGHT_M = 10.0
+
+# 地形遮蔽快取的格網解析度。**這是本設計的關鍵**：兩點間的視線是地形的靜態函數，
+# 只要雙方還在同一對格子裡答案就不變。單位每 tick 只走幾百公尺、多數時候根本沒動，
+# 於是穩態下遮蔽查詢近乎零次——同 `movement._terrain_cost_cache` 的招式。
+# res 9（邊長約 175m）：夠細到不把山另一頭的位置當成同一格，又夠粗到讓靜止部隊全數命中快取。
+_LOS_CACHE_RES = 9
 
 
 def _profile_from_stats(stats: dict) -> CommsProfile:  # type: ignore[type-arg]
@@ -68,7 +83,17 @@ def _profile_from_stats(stats: dict) -> CommsProfile:  # type: ignore[type-arg]
 
 
 class CommsSystem:
-    """滿足 Kernel 的 `CommsSystem` 介面。每 interval tick 重算各陣營通訊網狀狀態。"""
+    """滿足 Kernel 的 `CommsSystem` 介面。每 interval tick 重算各陣營通訊網狀狀態。
+
+    ## 過去這裡只有距離
+
+    `mesh_states` 一直收得下地形遮蔽與天氣衰減兩個參數，但活執行期呼叫的是
+    **`mesh_states(nodes)`**——兩個都沒傳。於是山稜線後面的部隊與平原上同距離的部隊
+    通聯完全一樣，`CellEffects.rf_attenuation_db` 在整個程式裡一個消費者都沒有。
+    無線電在兵推裡最重要的兩件事（擋在哪、天氣多壞）就這樣不存在。
+
+    兩者都改為**注入式**：不注入 → 逐位元維持舊行為（既有測試/golden 不動）。
+    """
 
     def __init__(
         self,
@@ -77,11 +102,19 @@ class CommsSystem:
         session_factory: sessionmaker,  # type: ignore[type-arg]
         hot_state: HotStateStore,
         interval_ticks: int = 5,
+        gateway: object | None = None,
+        weather_for: Callable[[], WeatherState | None] | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
         self._hot = hot_state
         self._interval = max(1, interval_ticks)
+        # 地形 gateway（有 `has_los` 即可）。None → 不查遮蔽（舊行為）。
+        self._gateway = gateway
+        # WP-C4b：逐 tick 的天氣。回呼而非值——傳快照進來整局就停在那一份。
+        self._weather_for = weather_for
+        # 格對 → 是否遮蔽。靜止部隊穩態命中率接近 100%，見 `_LOS_CACHE_RES` 說明。
+        self._los_cache: dict[tuple[str, str], bool] = {}
 
     async def evaluate(self, now: SimTime) -> list[LedgerEvent]:
         if now.tick % self._interval != 0:
@@ -110,8 +143,15 @@ class CommsSystem:
                 )
 
         events: list[LedgerEvent] = []
+        weather = self._weather_for() if self._weather_for is not None else None
         for _faction, nodes in by_faction.items():
-            states = mesh_states(nodes)
+            states = mesh_states(
+                nodes,
+                obstructed=self._obstructions(nodes),
+                attenuation_db=self._attenuations(nodes, weather),
+                # 干擾（EW）尚無來源：沒有干擾機單位、契約也沒有這個欄位。
+                # **刻意留 0 而不是編一個值**——假的干擾比沒有干擾更難察覺。
+            )
             positions = {n.unit_id: (n.lat, n.lng) for n in nodes}
             for uid, st in states.items():
                 prev = self._hot.get_unit(uid) or {}
@@ -124,6 +164,66 @@ class CommsSystem:
                 if prev_state != st.value and prev_state is not None:
                     events.append(self._event(uid, prev_state, st, now))  # 首次播種不記事件
         return events
+
+    def _obstructions(self, nodes: list[CommsNode]) -> dict[tuple[str, str], bool]:
+        """逐鏈路地形遮蔽。無 gateway → 空 dict（＝舊行為，全部視為通視）。
+
+        gateway 掛掉時**退回通視**而不是遮蔽：地形服務抖一下就讓全軍失聯，
+        比慢一拍嚴重得多（同 `make_detect_env` 的退化紀律）。
+        """
+        gateway = self._gateway
+        has_los = getattr(gateway, "has_los", None)
+        if has_los is None:
+            return {}
+        cells = {n.unit_id: h3.latlng_to_cell(n.lat, n.lng, _LOS_CACHE_RES) for n in nodes}
+        out: dict[tuple[str, str], bool] = {}
+        ids = [n.unit_id for n in nodes]
+        by_id = {n.unit_id: n for n in nodes}
+        for i, a in enumerate(ids):
+            for b in ids[i + 1 :]:
+                key = (cells[a], cells[b]) if cells[a] <= cells[b] else (cells[b], cells[a])
+                if key[0] == key[1]:
+                    continue  # 同一格 → 必然通視，不必問
+                cached = self._los_cache.get(key)
+                if cached is None:
+                    na, nb = by_id[a], by_id[b]
+                    try:
+                        outcome = has_los(
+                            (na.lat, na.lng, _ANTENNA_HEIGHT_M),
+                            (nb.lat, nb.lng, _ANTENNA_HEIGHT_M),
+                        )
+                        cached = not bool(getattr(outcome, "visible", True))
+                    except Exception:
+                        _LOG.warning("通聯遮蔽查詢失敗，該鏈路退回通視")
+                        cached = False
+                    self._los_cache[key] = cached
+                if cached:
+                    out[(a, b)] = True
+        return out
+
+    def _attenuations(
+        self, nodes: list[CommsNode], weather: WeatherState | None
+    ) -> dict[tuple[str, str], float]:
+        """逐鏈路天氣 RF 衰減（dB）。取**兩端較大者**：一端在雷雨裡整條鏈路就受罰。
+
+        無天氣快照 → 空 dict（舊行為）。`rf_attenuation_db` 在契約與 `CellEffects` 裡
+        一直都有，只是全系統沒有任何消費者。
+        """
+        if weather is None:
+            return {}
+        res = weather.resolution()
+        per_unit = {
+            n.unit_id: weather.effects_at(h3.latlng_to_cell(n.lat, n.lng, res)).rf_attenuation_db
+            for n in nodes
+        }
+        out: dict[tuple[str, str], float] = {}
+        ids = [n.unit_id for n in nodes]
+        for i, a in enumerate(ids):
+            for b in ids[i + 1 :]:
+                worst = max(per_unit[a], per_unit[b])
+                if worst > 0:
+                    out[(a, b)] = worst
+        return out
 
     def _position_report(
         self,
