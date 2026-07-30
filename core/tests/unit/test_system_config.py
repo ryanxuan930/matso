@@ -37,7 +37,9 @@ def test_get_returns_editable_and_readonly(session_factory: sessionmaker[Session
     assert set(body["ai"]) >= {"ai_mode", "llm_base_url", "llm_model", "ai_modes"}
     assert body["ai"]["ai_modes"] == ["AI_OFF", "AI_BARE", "AI_FULL"]
     assert set(body["readonly"]) >= {"env", "terrain_grpc_target", "ai_loop_wired"}
-    assert body["readonly"]["ai_loop_wired"] is False  # AI 迴路尚未接入活執行期
+    # WP-F3：自主迴路自 O11 起就接入活執行期（sim_runtime 起 per-faction worker），
+    # F3 再把 RoleManager 與 AIInvocationLog 接上。這個旗標過去一直是過時的 False。
+    assert body["readonly"]["ai_loop_wired"] is True
 
 
 def test_put_persists_ai_and_llm(session_factory: sessionmaker[Session]) -> None:

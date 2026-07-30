@@ -1047,7 +1047,22 @@ G5（引用查核）與 `citation_verifier` 注入（盤點：現況 None→AI_B
 - 語料入庫優先序（依 [JCATS-A]/[JCATS-F] 的訓練語境）：準則文件 > 想定文書範本 > 裝備諸元公開資料。
   使用者供檔走 F1 管線；**不虛構語料**。
 
-#### WP-F3 RoleManager 與 AIInvocationLog 接入活執行期　★★
+#### WP-F3 RoleManager 與 AIInvocationLog 接入活執行期　★★　✅ 2026-07-30
+
+> **已完成**（worklog: `docs/worklog/ai-audit.md`）。
+> 1. **這是同一個病的第三例**：`RoleManager` 與 `InvocationLogWriter` 寫好了、測試也有，
+>    但**非測試引用是 0**——decider 直連 `client.complete()`，活自主推演一筆稽核都沒有。
+>    前兩例是 WP-B2 的 `NoOpTriggerChecker` 與 WP-A2 的 `NoOpMissionPlanner`。
+> 2. **路由不可以改掉 prompt**：`RoleManager` 預設用註冊表的**靜態** prompt，
+>    而 decider 用的是 `build_system_prompt(role, mode)` 的**模式感知**版本。
+>    直接路由過去 prompt 就變了——而 `ReplayClient` 按 prompt 雜湊重播，
+>    **所有已錄的自主場次會在那一刻全部失效**。故 `AIRequest` 加 `system_prompt` 覆寫欄位
+>    （None＝註冊表版本，既有行為不變），並有測試逐字比對兩條路徑的 messages。
+> 3. **測試打在組裝點**（decider 有沒有真的用 RoleManager、prompt 有沒有被改掉），
+>    不在 RoleManager 自己的行為上——這個缺陷的形狀就是「元件對、沒人接」。
+> 4. **`ai_loop_wired` 自 O11 起就是過時的 False**，一併修正。
+> 5. **未竟**：佇列批次/OPFOR 優先級未生效（decider 走單發 `invoke()`；要批次得改決策時序，
+>    屬另一張卡）、`guardrail_result` 仍是 `not_evaluated`、AAR 不顯示稽核紀錄。
 
 盤點：活自主迴路由 `LlmFactionDecider` 直連 client，未經 RoleManager 佇列、活期無 invocation 稽核。
 **規格**：worker 的 LLM 呼叫改經 RoleManager（批次佇列/OPFOR 優先級生效）；每次呼叫落
@@ -1175,7 +1190,7 @@ C1 ✅ 壓制/姿態（2026-07-31）→ C3 ✅ 乘駐車/隊形（2026-07-31）�
       → C9 ✅ 誤傷語意（2026-07-30，後端；前端 affordance 未做）
 C4 ✅ 環境演進三卡全數完成（2026-07-30）：C4a 晝夜 + C4b 天氣 tick 化 + C4c 煙幕
 C7 ✅ 後勤體系三卡全數完成（2026-07-30）：C7.1 補給類別 + C7.2 補給線 + C7.3 修復整補
-F3 RoleManager/稽核接線；F1 INGEST 最小切片
+F3 ✅ RoleManager/稽核接線（2026-07-30）；F1 INGEST 最小切片
 G3 E2E 補齊（隨各卡）＋ G4 白軍控制台
 E2 認證強化；E4 監控落地
 ```

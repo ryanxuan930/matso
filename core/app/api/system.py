@@ -115,7 +115,9 @@ def _view(db: Session, settings: Settings) -> SystemConfigView:
             "redis_url": _mask_url(settings.redis_url),
             "stub_gateway": settings.stub_gateway,
             # AI 決策迴路是否已接入活執行期（目前未接；設定僅供連線測試/未來推演）。
-            "ai_loop_wired": False,
+            # WP-F3：O11 起自主迴路就已接入活執行期，這個旗標一直沒跟著改；
+            # F3 把 RoleManager/AIInvocationLog 也接上之後，它更沒有理由是 False。
+            "ai_loop_wired": True,
         },
     )
 

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -30,6 +31,8 @@ from matso_ai.inference.client import (
 )
 from matso_ai.prompts import build_system_prompt
 from matso_ai.roles import Role
+
+_LOG = logging.getLogger(__name__)
 
 # 序列化對「單一本機模型」的呼叫：多陣營 worker 共用同一 decider/後端，若同時打一顆 12B 模型，
 # 兩個大請求互搶 GPU → 每個都爆逾時。用行程級鎖讓 worker 執行緒輪流呼叫（各自拿滿算力）。
@@ -121,6 +124,7 @@ class LlmFactionDecider:
         role: Role = Role.FACTION_COMMANDER,
         adapter: str = "base",
         serialize_calls: bool = True,
+        role_manager: Any = None,
     ) -> None:
         self._client = client
         self._model = model
@@ -129,12 +133,38 @@ class LlmFactionDecider:
         self._adapter = adapter
         # 單一本機模型 → 序列化（多陣營 worker 輪流，不互搶 GPU）；雲端後端自有併發 → 免序列化。
         self._serialize = serialize_calls
+        # WP-F3：有 RoleManager 就走它（佇列/優先級/adapter 攤銷/`AIInvocationLog` 稽核）。
+        # None → 直連 client（既有行為，供不需要稽核的測試與離線工具用）。
+        self._role_manager = role_manager
+        self._session_id: str | None = None
+
+    def bind_session(self, session_id: str | None) -> None:
+        """綁定本 decider 服務的 session——稽核紀錄要能對回是哪一局的決策。"""
+        self._session_id = session_id
 
     def decide(self, context: dict[str, Any], *, feedback: str | None = None) -> dict[str, Any]:
         system = build_system_prompt(self._role, self._mode)
         user = render_context_prompt(context) + OUTPUT_INSTRUCTION
         if feedback:
             user += _FEEDBACK_PREFIX + feedback
+        if self._role_manager is not None:
+            # ⚠ **一定要把 `system` 帶過去**。RoleManager 預設用註冊表的靜態 prompt，
+            # 而這裡的是模式感知版本；換掉 prompt 會讓 `ReplayClient`（按 prompt 雜湊重播）
+            # 的所有已錄自主場次在那一刻全部失效。
+            from matso_ai.inference.role_manager import AIRequest
+
+            request = AIRequest(
+                role=self._role,
+                user_prompt=user,
+                session_id=self._session_id,
+                system_prompt=system,
+            )
+            if self._serialize:
+                with _LLM_CALL_LOCK:
+                    result = self._role_manager.invoke(request)
+            else:
+                result = self._role_manager.invoke(request)
+            return _extract_json(result.response.text)
         messages = [ChatMessage("system", system), ChatMessage("user", user)]
         if self._serialize:
             with _LLM_CALL_LOCK:
@@ -195,8 +225,15 @@ def make_llm_faction_decider(
     mode: AiMode | str = AiMode.AI_BARE,
     replay_dir: str | None = None,
     record_dir: str | None = None,
+    session_id: str | None = None,
+    audit: bool = True,
 ) -> LlmFactionDecider:
-    """由 #54 系統設定建 decider（OpenAI 相容後端）；record/replay 決定性見 build_llm_client。"""
+    """由 #54 系統設定建 decider（OpenAI 相容後端）；record/replay 決定性見 build_llm_client。
+
+    WP-F3：`audit=True`（預設）→ 呼叫走 `RoleManager`，每一次都落 `AIInvocationLog`
+    （prompt hash / 模式 / 耗時）。**在此之前活自主迴路直連 client，一筆稽核都沒有**
+    ——`RoleManager` 與 `InvocationLogWriter` 在 repo 裡的非測試引用是 0。
+    """
     client = build_llm_client(
         base_url=base_url,
         api_key=api_key,
@@ -204,7 +241,36 @@ def make_llm_faction_decider(
         replay_dir=replay_dir,
         record_dir=record_dir,
     )
+    manager = _make_role_manager(client, model=model, mode=mode) if audit else None
     # 雲端後端（如 Google AI Studio）自有併發能力 → 不序列化；本機單一模型 → 序列化。
-    return LlmFactionDecider(
-        client, model=model, mode=mode, serialize_calls=_is_local_backend(base_url)
+    decider = LlmFactionDecider(
+        client,
+        model=model,
+        mode=mode,
+        serialize_calls=_is_local_backend(base_url),
+        role_manager=manager,
     )
+    decider.bind_session(session_id)
+    return decider
+
+
+def _make_role_manager(client: Any, *, model: str, mode: AiMode | str) -> Any:
+    """建 `RoleManager` + `InvocationLogWriter`（WP-F3）。
+
+    建不起來（ai 套件缺席之類）→ **回 None 而不是拋**：稽核掛掉不該讓整個自主推演停擺，
+    但**要留 log**，否則「為什麼沒有稽核紀錄」會變成一個無跡可循的問題。
+    """
+    try:
+        from app.db import default_session_factory
+        from matso_ai.inference.invocation_log import InvocationLogWriter
+        from matso_ai.inference.role_manager import RoleManager
+
+        return RoleManager(
+            client,
+            log_writer=InvocationLogWriter(default_session_factory()),
+            model=model,
+            mode=_mode_str(mode),
+        )
+    except Exception:
+        _LOG.warning("RoleManager 建立失敗，AI 呼叫將不落稽核紀錄", exc_info=True)
+        return None

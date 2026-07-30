@@ -35,6 +35,13 @@ class AIRequest:
     user_prompt: str
     session_id: str | None = None
     request_id: str | None = None  # 呼叫端關聯用（不影響處理）
+    # WP-F3：呼叫端自備的 system prompt。**None ＝用註冊表的**（既有行為）。
+    #
+    # ⚠ 這個欄位的存在理由很具體：活自主迴路的 `LlmFactionDecider` 用
+    # `build_system_prompt(role, mode)` 組**模式感知**的 prompt，與註冊表的靜態版本不同。
+    # 若路由過來時強制改用註冊表版本，prompt 就變了——而 `ReplayClient` 是**按 prompt
+    # 雜湊重播**的，所有已錄的自主場次會在那一刻全部失效。
+    system_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,7 +129,7 @@ class RoleManager:
             self._adapter_swaps += 1
             self._current_adapter = cfg.adapter
         messages = [
-            ChatMessage("system", cfg.system_prompt),
+            ChatMessage("system", request.system_prompt or cfg.system_prompt),
             ChatMessage("user", request.user_prompt),
         ]
         start = self._clock()

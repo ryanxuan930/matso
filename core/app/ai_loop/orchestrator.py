@@ -156,6 +156,8 @@ def start_ai_workers(
         model=str(ai.get("llm_model") or ""),
         api_key=str(ai.get("llm_api_key") or ""),
         mode=mode,
+        # WP-F3：稽核紀錄要對得回是哪一局的決策。
+        session_id=session_id,
     )
     guardrail = GuardrailGateway()
     # #98：改讀該局持久化的關係矩陣（原本寫死全 HOSTILE，導致 AI 會攻擊盟軍）。
