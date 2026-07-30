@@ -163,11 +163,17 @@ class UnitMovementSystem:
         with self._session_factory() as db:
             orders = (
                 db.execute(
-                    select(Order).where(
+                    select(Order)
+                    .where(
                         Order.session_id == self._session_id,
                         Order.order_type == "MOVE",
                         Order.status.in_([OrderStatus.VALIDATED, OrderStatus.EXECUTING]),
                     )
+                    # ⚠ **紅線 1**：這一條 drain 消耗 `movement` RNG stream（觸雷擲骰、
+                    # 強穿耗損）。主鍵是 uuid4，沒有排序就等於「同一份想定重開一局，
+                    # 抽樣順序換人」。engine 底下另外五條 drain 都有這一行
+                    # （其中兩處還註明「確定性順序」），偏偏會抽樣的這條漏了。
+                    .order_by(Order.issued_at_tick, Order.id)
                 )
                 .scalars()
                 .all()
@@ -366,7 +372,7 @@ class UnitMovementSystem:
         # WP-C2：站在障礙裡 → 速度倍率（鐵絲網/戰車壕 ×0.1）。**在道路加速之後**乘：
         # 障礙就是拿來卡住道路的，讓道路基準把它蓋掉等於障礙對主要接近路線無效。
         if here:
-            engineer = is_engineer(unit.attributes)
+            engineer = is_engineer(unit)
             step_km *= transit_speed_multiplier(here, engineer=engineer)
             ev_mine = self._roll_mine(unit, here, step_km, engineer, now)
             if ev_mine is not None:
@@ -616,7 +622,10 @@ class UnitMovementSystem:
     def _load_obstacles(self, db: object) -> list[Obstacle]:
         rows = (
             db.execute(  # type: ignore[attr-defined]
-                select(MapFeature).where(MapFeature.session_id == self._session_id)
+                # 排序同上：障礙的並列順序決定觸雷擲骰與強穿耗損的套用次序。
+                select(MapFeature)
+                .where(MapFeature.session_id == self._session_id)
+                .order_by(MapFeature.id)
             )
             .scalars()
             .all()

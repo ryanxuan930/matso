@@ -456,11 +456,9 @@ def _precheck_engineer(
     checks = [
         PrecheckCheck(
             name="engineer_qualified",
-            passed=is_engineer(unit.attributes),
+            passed=is_engineer(unit),
             detail=(
-                "障礙作業需工兵單位（ORBAT attributes.unit_kind=ENGINEER）"
-                if not is_engineer(unit.attributes)
-                else "工兵單位"
+                "障礙作業需工兵單位（ORBAT 兵科設為工兵）" if not is_engineer(unit) else "工兵單位"
             ),
         )
     ]

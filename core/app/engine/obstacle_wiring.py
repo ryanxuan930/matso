@@ -11,12 +11,17 @@
 ⚠ WP-C3 就是在這一層栽的：`mounted` 缺鍵被 `bool()` 收成 False，讓既有局命中率無聲掉 20%。
 純函數的預設參數天生中性，**會出事的永遠是「接線怎麼把缺值翻成值」**。所以濾在入口。
 
-## 為什麼工兵是 `attributes.unit_kind` 而不是新欄位
+## 「是不是工兵」為什麼會有兩個鍵
 
-ORBAT 的兵種屬性（`platform_count` 等）本來就住在 `TacticalUnit.attributes`。
-為一個布林開 migration，在 schema 上多一個只有工兵會填的欄位，換不到任何查詢能力
-——沒有任何地方需要「找出所有工兵單位」的索引。缺值＝不是工兵，這也是安全的方向：
-**多算成工兵才會讓雷區失效**。
+本模組原本只認 `attributes.unit_kind`，理由是「為一個布林開 migration 換不到查詢能力」。
+**那個理由現在過期了**：2026-07-30 的兵科卡加了真正的 `TacticalUnit.branch` 欄位
+（想定編輯器與 ORBAT PATCH 都寫它），於是變成**兩個互不相通的鍵**——
+ORBAT 寫 `branch=ENGINEER`，這裡卻讀 `attributes.unit_kind`，
+結果是 **ENGINEER 令永遠過不了預檢**（「障礙作業需工兵單位」），
+而畫面上那支部隊明明標著工兵符號。
+
+現在兩個都認：`branch` 是正途，`attributes.unit_kind` 保留為既有資料的退路。
+缺值＝不是工兵仍然是安全的方向：**多算成工兵才會讓雷區失效**。
 """
 
 from __future__ import annotations
@@ -43,8 +48,18 @@ ENGINEER_KIND = "ENGINEER"
 BREACH_KEY = "breach"  # 熱狀態：{"feature_id": str, "ticks_left": int}
 
 
-def is_engineer(attributes: Any) -> bool:
-    """單位是否為工兵。缺值/型別不對 → False（見模組說明的方向性）。"""
+def is_engineer(unit: Any) -> bool:
+    """這支部隊是不是工兵。**`branch` 與 `attributes.unit_kind` 兩個鍵都認**。
+
+    傳入 `TacticalUnit`（或任何有 `.branch` / `.attributes` 的物件）。
+    也容忍直接傳 attributes dict——舊呼叫端的相容路徑。
+    """
+    branch = getattr(unit, "branch", None)
+    if branch is not None:
+        value = getattr(branch, "value", branch)
+        if str(value).upper() == ENGINEER_KIND:
+            return True
+    attributes = getattr(unit, "attributes", unit)
     if not isinstance(attributes, dict):
         return False
     return str(attributes.get(UNIT_KIND_KEY) or "").upper() == ENGINEER_KIND

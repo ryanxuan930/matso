@@ -77,10 +77,10 @@ export function commsLabel(c?: string): string {
  * 括號裡的數字是被命中率修正——防禦方的準備工作值不值得，指揮官要看得到才決定得了。
  */
 export const POSTURE_LABELS: Record<string, { text: string; hint: string }> = {
-  MOVING: { text: '行進', hint: '無掩蔽（被命中率 ×1.0）' },
-  HASTY: { text: '臨時掩蔽', hint: '就地臥倒/利用地物（×0.85，即時生效）' },
-  DEFENSE: { text: '準備陣地', hint: '構築中的陣地（×0.7，需 30 分鐘）' },
-  DUG_IN: { text: '掘壕固守', hint: '完整工事（×0.5，需 4 小時）' },
+  MOVING: { text: '運動間', hint: '無掩蔽，暴露於直射與間瞄火力（被命中率 ×1.0）' },
+  HASTY: { text: '應急掩蔽', hint: '就地臥倒、利用地形地物（×0.85，即時生效）' },
+  DEFENSE: { text: '整備陣地', hint: '構工中之陣地（×0.7，需 30 分鐘）' },
+  DUG_IN: { text: '掘壕固守', hint: '完成之掩體工事（×0.5，需 4 小時）' },
 }
 export function postureLabel(p?: string): string {
   return (p && POSTURE_LABELS[p]?.text) || p || '—'

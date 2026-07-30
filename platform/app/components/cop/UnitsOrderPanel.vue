@@ -358,19 +358,19 @@ const fratricideTarget = computed(
       隊形
       <select v-model="ordering.formation" data-testid="formation-select">
         <option value="">（不變更）</option>
-        <option value="COLUMN">縱隊 · 行軍最快、挨砲最慘</option>
-        <option value="LINE">橫隊 · 火力全開、機動最慢</option>
-        <option value="WEDGE">楔形 · 攻擊隊形</option>
-        <option value="VEE">V 形 · 預期正面接敵</option>
-        <option value="HERRINGBONE">魚骨 · 停止間環形警戒</option>
+        <option value="COLUMN">縱隊 · 行軍速度最快，遭砲擊傷亡最重</option>
+        <option value="LINE">橫隊 · 正面火力最大，行進速度最慢</option>
+        <option value="WEDGE">楔形 · 攻擊隊形，火力前指、翼側可展開</option>
+        <option value="VEE">V 形 · 預期正面接敵，主力居後待命</option>
+        <option value="HERRINGBONE">魚骨 · 停止間 360 度警戒，掩護縱隊翼側</option>
       </select>
     </label>
     <label class="rounds">
       乘駐車
       <select v-model="ordering.mounted" data-testid="mounted-select">
         <option value="">（不變更）</option>
-        <option value="true">上車 · 速度快、目標大</option>
-        <option value="false">下車 · 受彈面小、火力全</option>
+        <option value="true">乘車 · 機動迅速，車輛暴露面大</option>
+        <option value="false">徒步 · 暴露面小，可全般運用步兵火力</option>
       </select>
     </label>
     <div class="hint">

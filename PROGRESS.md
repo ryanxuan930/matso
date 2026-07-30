@@ -239,15 +239,13 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 🟠 **[HIGH] MSEL SPAWN_UNITS 的 put_unit 與正規 seed_combat_state 鍵集不一致：增援的 armor_class 退回硬編 INFANTRY，且沒有 ammo/footprint_m**
   - 形狀：有值卻被靜默忽略（同一份熱狀態有兩條寫入路徑，其中一條沒跟上修正）
   - 影響：(1) MSEL 生成的裝甲增援（配 MBT）在熱狀態被記為 `armor_class=INFANTRY`，被步槍以 pk=0.70 打死——armor.py 已修好、卻在第二條路徑復發。(2) 單一武器的增援：`core/app/adjudication/adjudicator.py:231` `ammo_count=int(shooter_state.get(\"ammo\", 0))` 取到 0 → `engagement.py:291-292` 回 `NO_AMMO` REJECTED，但 precheck
-- 🟠 **[HIGH] 「是不是工兵」在 repo 裡有兩個互不相通的鍵：ORBAT 寫 branch=ENGINEER，precheck/引擎讀 attributes.unit_kind**
-  - 形狀：名實不符（同一概念的寫入端與讀取端用了不同鍵名）
-  - 影響：想定用 ORBAT 唯一能表達工兵的方式（`branch: ENGINEER`）編一個工兵連，下 ENGINEER 令（BREACH/EMPLACE）一律被 precheck 以 `engineer_qualified` 失敗 REJECTED——WP-C2 整套障礙/工兵子系統對任何從想定載入的局都不可用。自動路徑更明顯：`decomposer.py:272` 用讀取端 A（branch）挑到工兵單位並產生 EMPLACE 子令，子令送進 OrderService 後被讀取端 B（attributes.unit_
+- ✅ ~~[HIGH] 工兵兩個互不相通的鍵~~ —— **已修**（2026-07-30）：`is_engineer()` 改吃 unit，
+  `branch` 與 `attributes.unit_kind` 兩個都認。原本的「不開新欄位」理由已被兵科卡作廢。
 - 🟠 **[HIGH] STATE_DIFF 每陣營投影對「SensorResolver 不認得的單位」fail-open —— MSEL 增援單位的即時位置廣播給所有陣營**
   - 形狀：fail-open 預設（空字串被當成「沒有陣營」而放行）
   - 影響：想定用 MSEL 腳本投入增援（WP-B2 的主要用途，例如 D+2 的紅軍第二梯隊）時，那批單位從落地的第一個 tick 起，就把 lat/lng/strength 每 tick 推播給**每一個**連線的作戰方 client；它們打出去的每一筆交戰事件也是全域廣播。玩家看不到本來的敵軍，卻看得到增援——而且看得最清楚。若某陣營是「只以增援方式登場」，它連 `observers`／`visible_for` 表都不在（sim_runtime.py:673-674 同樣取自開局時的 `sensor_resolver
-- 🟠 **[HIGH] 移動子系統的 MOVE 令 drain 沒有 ORDER BY——RNG stream \"movement\" 的抽樣順序隨 DB 掃描順序漂**
-  - 形狀：other（紅線 1：決定性；同時是「隱含契約沒被寫下來」——全 repo 其他 drain 都排序，只有這一條漏）
-  - 影響：同一 tick 內有 ≥2 個單位觸發 movement stream 抽樣（例：兩支部隊同時踩進雷區，或同一 tick 兩道 MOVE 被 admit 而路徑都穿越障礙）時，誰先抽到哪個亂數由 MariaDB 的掃描順序決定。具體：A 連與 B 連同 tick 進入同一片雷區，第一次 rng.random() 若 <p 則觸雷者停止移動並扣戰力，另一個毫髮無傷——誰被炸完全取決於 DB 回傳順序。以相同 master_seed + 相同想定重開一局（Order.id 是新的 uuid4）→ 觸雷的換成另一支部隊
+- ✅ ~~[HIGH] MOVE drain 無 ORDER BY~~ —— **已修**（2026-07-30）：補上
+  `.order_by(Order.issued_at_tick, Order.id)`（其餘五條 drain 早就有）。
 - 🟠 **[HIGH] rollback 只回捲熱狀態／Order／TacticalUnit 四欄——EquipmentInstance（油料/彈藥/載運量）、MapFeature（破障/補給點存量/摧毀）、FirePlanTarget 全部留在被棄世代**
   - 形狀：other（checkpoint/rollback 漏存＝回滾後行為改變）
   - 影響：白軍把局回滾到 tick T：單位位置/戰力/令狀態都回到 T，但一個裝甲營在 T+400 tick 已把油燒乾——DB 的 EquipmentInstance.currentState.fuel 仍是 0，於是回滾後第一個 tick 就 `load_unit_fuel(...).remaining <= 0` → 立刻發 MOVE_HALTED_FUEL、令直接 COMPLETED，那個營在「油箱是滿的」的時間點動彈不得。同理：T+N 被工兵破掉的雷區回滾後仍 `breached=True`（部隊照樣穿過去）、T
@@ -284,16 +282,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - 🟡 **[MEDIUM] MSEL 注入類帳本事件沒有 initiator/target → 受眾判定回 None（全域），`/aar/export` 把紅軍增援的陣營與 unit id 交給藍軍**
   - 形狀：fail-open 預設（audience is None ＝ 全部人可見）
   - 影響：MSEL 腳本的存在與內容本來是白軍專屬（`/Users/ryanchang/Codes/matso/core/app/api/msel.py:35` 明訂「MSEL 腳本限白軍/統裁存取：任何一方看得到就等於知道接下來會發生什麼」），但同一份資訊從 AAR 這條路漏出去：藍軍在演習中就知道紅軍第幾 tick 有增援、有幾個單位、它們的 id 是什麼——再把那些 id 餵給 `/movement/preview`（見上）就得到座標。
-- 🟡 **[MEDIUM] _load_obstacles 的 MapFeature 查詢沒有 ORDER BY——觸雷擲骰順序與強穿耗損的並列順序隨 DB 漂**
-  - 形狀：other（紅線 1：決定性排序）
-  - 影響：一支部隊同一 tick 站在兩片重疊雷區裡：兩片密度不同（p 不同），先擲哪一片決定是否觸雷、以及後續整條 movement stream 的位移。強穿路徑：一條路徑在同一線段上同時穿過一棟建築與一道障礙時，先抽 BUILDING(0.06–0.16) 還是先抽 OBSTACLE(0.03–0.10) 會給出不同的戰力損失，且因為 `remaining -= loss` 是遞減複利，總損失也不同。重開同一想定（新 MapFeature uuid）→ 結果不同。
-
-### ✅ 契約/實作欄位漂移掃描（2026-07-30）——**四個靜默錯誤已修**
-掃了 `weaponeering.schema.json`（全 $defs）、`scenario.schema.json`、`seed_weapons.py`
-共 **99 個欄位名**，逐一 grep `core/ ai/ platform/app/ modules/ db/ scenarios/` 並讀程式確認。
-找到 40+ 個沒有讀取端的欄位，其中 6 個是「**有值卻被靜默忽略**」——那比死欄位嚴重，
-因為它產生**錯誤的模擬結果**而不是沒有結果。**已修四個**（commit 見當日）：
-
+- ✅ ~~[MEDIUM] _load_obstacles 無 ORDER BY~~ —— **已修**（2026-07-30）。
 - ~~🔴 `armor_class` 從想定進來的單位一律 INFANTRY~~ → **已修**：資料一直都在
   （`SEED_VEHICLES["MBT"]["armor_class"] == "ARMOR"`，掛在**裝備範本**上），缺的只是
   「單位 → 編裝 → 裝甲級別」這一步。新增 `adjudication/armor.py` 由編裝導出（取最強的那件），
