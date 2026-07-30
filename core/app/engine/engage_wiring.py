@@ -34,7 +34,12 @@ from app.adjudication.formation import (
     shooter_frontage_modifier,
 )
 from app.adjudication.obscurants import SmokeCloud, blocks_los
-from app.adjudication.suppression import Posture, fire_modifier, posture_modifier
+from app.adjudication.suppression import (
+    SUPPRESSION_FIRE_PENALTY,
+    Posture,
+    fire_modifier,
+    posture_modifier,
+)
 from app.adjudication.weapon import WeaponProfile
 from app.engine.formation_wiring import read_formation
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
@@ -349,6 +354,7 @@ def make_engage_env(  # type: ignore[no-untyped-def]
     weather_for: Callable[[], WeatherState | None] | None = None,
     smoke_for: Callable[[], list[SmokeCloud]] | None = None,
     tick_for: Callable[[], int] | None = None,
+    fire_penalty: float = SUPPRESSION_FIRE_PENALTY,
 ):
     """回傳 env_for(shooter, target, indirect_fire) → EnvSnapshot（射程+地形LOS+天氣，Phase3）。
 
@@ -416,7 +422,10 @@ def make_engage_env(  # type: ignore[no-untyped-def]
             weather_modifier=weather_mod,
             terrain_cover_modifier=cover_mod,
             # WP-C1：射手被壓制 → 打不準；目標有工事 → 更難被打中。
-            shooter_suppression_modifier=fire_modifier(_as_float(s.get("suppression"))),
+            # #93：滿壓制的射擊效能倍率可調。**過去這裡不傳**——設定頁改了完全沒作用。
+            shooter_suppression_modifier=fire_modifier(
+                _as_float(s.get("suppression")), fire_penalty
+            ),
             target_posture_modifier=posture_modifier(_posture_of(t)),
             # WP-C3：目標乘車/隊形 → 好不好打；射手乘車/隊形 → 打得出多少火力。
             # **走 `read_formation` 而不是自己 `bool(...)`**：乘駐車是三態，

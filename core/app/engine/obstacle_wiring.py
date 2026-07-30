@@ -108,6 +108,8 @@ def roll_mine_strike(
     rng: DeterministicRNG,
     *,
     engineer: bool,
+    p_per_km: float | None = None,
+    engineer_mult: float | None = None,
 ) -> Obstacle | None:
     """本 tick 是否觸雷。回踩到的那一片雷區，沒觸雷回 None。
 
@@ -122,7 +124,13 @@ def roll_mine_strike(
         if otype is not ObstacleType.MINEFIELD:
             continue
         p = mine_strike_probability(
-            otype, distance_km, is_engineer=engineer, breached=o.breached, density=o.density
+            otype,
+            distance_km,
+            is_engineer=engineer,
+            breached=o.breached,
+            density=o.density,
+            p_per_km=p_per_km,
+            engineer_mult=engineer_mult,
         )
         if p <= 0.0:
             continue

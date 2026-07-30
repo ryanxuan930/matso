@@ -24,7 +24,6 @@ from sqlalchemy.orm import sessionmaker
 from app.adjudication.daylight import move_speed_modifier as night_move_modifier
 from app.adjudication.effectiveness import effectiveness_pct
 from app.adjudication.formation import formation_of, march_speed_modifier
-from app.adjudication.obstacles import MINE_STRIKE_STRENGTH_LOSS
 from app.adjudication.suppression import move_modifier
 from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
@@ -206,7 +205,15 @@ class UnitMovementSystem:
                     # #80：per-unit 機動速度（由編裝導出）→ 存 payload._step_km（跨 tick 沿用）；
                     # #81：另存 _mobility_profile 供地形成本查表。
                     tempo = str(p.get("tempo") or "NORMAL")
-                    mob = resolve_unit_mobility(db, o.unit_id)
+                    # #93：徒步速度以**該局的推演參數**導出。過去這裡不傳，
+                    # 而預覽端（api/movement）有傳——於是調了設定，預覽 ETA 變了、
+                    # 實跑照舊速度走，正是 sim_params 模組說明「紀律 2」禁止的那個病。
+                    mob = resolve_unit_mobility(
+                        db,
+                        o.unit_id,
+                        foot_xc_kmh=self._params.foot_xc_kmh,
+                        foot_road_kmh=self._params.foot_road_kmh,
+                    )
                     p = {
                         **p,
                         "_step_km": mob.step_km(self._tick_rate_ms, tempo=tempo),
@@ -353,7 +360,7 @@ class UnitMovementSystem:
         hot_state = self._hot_state.get_unit(unit.id) or {}
         raw_sup = hot_state.get(SUPPRESSION_KEY)
         if isinstance(raw_sup, (int, float)) and raw_sup > 0:
-            step_km *= move_modifier(float(raw_sup))
+            step_km *= move_modifier(float(raw_sup), self._params.suppression_move_penalty)
         # WP-C3：隊形的行軍速度倍率。縱隊最快、魚骨（停下來的警戒隊形）幾乎不動。
         # COLUMN（中性預設）＝1.0，既有局位元不變。
         step_km *= march_speed_modifier(formation_of(hot_state.get(FORMATION_KEY)))
@@ -476,11 +483,20 @@ class UnitMovementSystem:
         """
         if self._rng is None:
             return None
-        hit = roll_mine_strike(here, step_km, self._rng, engineer=engineer)
+        hit = roll_mine_strike(
+            here,
+            step_km,
+            self._rng,
+            engineer=engineer,
+            # #93：雷區殺傷力可調。**過去這三個係數在 SimParams 裡但引擎讀模組常數**
+            # ——調了完全沒作用。
+            p_per_km=self._params.mine_strike_p_per_km,
+            engineer_mult=self._params.engineer_mine_strike_mult,
+        )
         if hit is None:
             return None
         before = float(unit.current_strength)
-        after = max(0.0, before - MINE_STRIKE_STRENGTH_LOSS)
+        after = max(0.0, before - self._params.mine_strike_strength_loss)
         unit.current_strength = after
         authorized = float(unit.authorized_strength) or 100.0
         self._hot_state.update_unit(

@@ -48,13 +48,28 @@ _OBS_HEIGHT_M = 10.0
 INTRINSIC_OPTICAL = SensorProfile.from_base_stats(SEED_SENSORS["EO_DAY"])
 
 
+def intrinsic_optical(range_m: float | None = None) -> SensorProfile:
+    """內建基本目視。`range_m` 為 None → 出貨值（既有行為位元不變）。
+
+    活執行期傳該局的 `SimParams.intrinsic_optical_range_m`——**過去那個欄位沒有讀取端**，
+    設定頁上調得動、存得回，偵測距離一步都不會變。
+    """
+    if range_m is None or range_m <= 0:
+        return INTRINSIC_OPTICAL
+    return SensorProfile.from_base_stats({**SEED_SENSORS["EO_DAY"], "max_range_m": float(range_m)})
+
+
 class SensorResolver:
     """單位 → 感測器規格。裝備導出者優先（取 max_range 最遠的一件），否則用內建基本目視。
 
     活執行期建構一次（與 `WeaponResolver` 同紀律）：sweep 每 tick 都要查，不可每次打 DB。
     """
 
-    def __init__(self, db: Session, session_id: str) -> None:
+    def __init__(
+        self, db: Session, session_id: str, intrinsic_range_m: float | None = None
+    ) -> None:
+        # #93 內建目視距離（None → 出貨值）。
+        self._intrinsic = intrinsic_optical(intrinsic_range_m)
         self._by_unit: dict[str, SensorProfile] = {}
         self._faction_by_unit: dict[str, str] = {}
         self._session_id = session_id
@@ -104,7 +119,7 @@ class SensorResolver:
             if best is None or profile.max_range_m > best.max_range_m:
                 best = profile
         # 無感測裝備 → 內建基本目視（見模組 docstring）。
-        self._by_unit[unit.id] = best or INTRINSIC_OPTICAL
+        self._by_unit[unit.id] = best or self._intrinsic
 
     def sensor_for(self, unit_id: str) -> SensorProfile | None:
         return self._by_unit.get(unit_id)

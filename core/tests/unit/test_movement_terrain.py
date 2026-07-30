@@ -330,3 +330,39 @@ def test_weather_service_failure_does_not_halt_the_march(
     assert _dist_covered(session_factory, "wx-down", uid) == _dist_covered(
         session_factory, "wx-ok", base_id
     )
+
+
+def test_the_configured_foot_speed_reaches_the_live_run(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """**預覽端有傳、實跑端沒傳**——調了設定，預覽 ETA 變了、單位還是照舊速度走。
+
+    `sim_params` 的模組說明「紀律 2」明文禁止這件事（預覽與執行必須同源）。
+    """
+    from app.sim_params import SimParams
+
+    with session_factory() as db:
+        fast_id = _seed(db, "fast", vehicle=None)
+        db.commit()
+    with session_factory() as db:
+        slow_id = _seed(db, "slow", vehicle=None)
+        db.commit()
+
+    for sid, kmh in (("fast", 20.0), ("slow", 5.0)):
+        mover = UnitMovementSystem(
+            session_id=sid,
+            session_factory=session_factory,
+            hot_state=InMemoryHotState(),
+            tick_rate_ms=60_000,
+            rng=DeterministicRNG(1, "movement"),
+            sim_params=SimParams(foot_xc_kmh=kmh),
+        )
+        clock = SimClock(tick_rate_ms=60_000)
+        for _ in range(5):
+            asyncio.run(mover.step(clock.now()))
+            clock.advance()
+
+    fast = _dist_covered(session_factory, "fast", fast_id)
+    slow = _dist_covered(session_factory, "slow", slow_id)
+    assert fast > slow
+    assert abs(fast - slow * 4.0) < 0.05  # 20 / 5 ＝ 4 倍

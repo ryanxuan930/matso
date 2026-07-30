@@ -109,16 +109,21 @@ def mine_strike_probability(
     is_engineer: bool,
     breached: bool,
     density: float = 1.0,
+    p_per_km: float | None = None,
+    engineer_mult: float | None = None,
 ) -> float:
     """本段行程的觸雷機率。夾在 [0, 1]。
 
     `density` 是雷區密度倍率（`attributes.density`），預設 1.0。
+    `p_per_km` / `engineer_mult` 為 None → 用出貨常數（既有行為位元不變）；
+    活執行期由該局的 `SimParams` 傳入——**過去這兩個係數在 SimParams 裡但沒有讀取端**。
     """
     if breached or otype is not ObstacleType.MINEFIELD:
         return 0.0
-    p = effect_of(otype).mine_strike_p_per_km * max(0.0, distance_km) * max(0.0, density)
+    base = effect_of(otype).mine_strike_p_per_km if p_per_km is None else max(0.0, p_per_km)
+    p = base * max(0.0, distance_km) * max(0.0, density)
     if is_engineer:
-        p *= ENGINEER_MINE_STRIKE_MULT
+        p *= ENGINEER_MINE_STRIKE_MULT if engineer_mult is None else max(0.0, engineer_mult)
     return min(1.0, max(0.0, p))
 
 

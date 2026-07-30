@@ -183,3 +183,46 @@ def test_scenario_tick_rate_beats_the_system_setting(session_factory) -> None:  
         assert session_tick_rate_ms(db, "s-silent", params) == 60_000
         # 查無此局 → 系統設定，不炸。
         assert session_tick_rate_ms(db, "nope", params) == 60_000
+
+
+def test_every_tunable_actually_reaches_the_engine() -> None:
+    """**存得進讀得回 ≠ 有效果。**
+
+    `SimParams` 曾有 10 個欄位在整個 `core/app` 裡找不到任何讀取端：引擎讀的是模組常數。
+    使用者在設定頁調壓制衰減、觸雷戰損、下車受彈面、內建目視距離……
+    存得進去、讀得回來、圖表都對，物理一個位元都不動。
+
+    這條掃原始碼找 `params.<欄位>` / `sim_params.<欄位>` 的讀取點。**不是行為測試**
+    ——行為測試要為每個係數各起一次模擬，成本過高且釘不住「新增欄位忘了接」。
+    """
+    import re
+    from dataclasses import fields
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[2] / "app"
+    sources = "\n".join(
+        p.read_text(encoding="utf-8") for p in app_dir.rglob("*.py") if p.name != "sim_params.py"
+    )
+    # 幾個欄位不是直接屬性存取：`march_attrition` 走 `attrition_for()`、
+    # `tick_rate_ms` 走 `session_tick_rate_ms()`（兩者都在 sim_params.py 裡，已被排除）、
+    # AI 兩欄在 orchestrator 以 `_sim.` 別名讀。
+    aliases = {
+        "march_attrition": r"attrition_for\(",
+        "tick_rate_ms": r"session_tick_rate_ms\(",
+        "ai_heartbeat_s": r"_sim\.ai_heartbeat_s",
+        "ai_max_orders": r"_sim\.ai_max_orders",
+    }
+    unread = [
+        f.name
+        for f in fields(SimParams)
+        if not re.search(rf"(?:sim_)?params\.{f.name}\b", sources)
+        and not (f.name in aliases and re.search(aliases[f.name], sources))
+    ]
+
+    # ⚠ 這兩個是**功能本身還沒接**，不是參數沒接：`crew_casualties()`（載具毀損折算
+    # 乘員傷亡）與 `dismounted_exposure`（下車受彈面）在 `adjudication/formation.py`
+    # 裡有實作，但生產路徑一次都沒呼叫到。做完那張卡時要一併把這兩個名字從這裡拿掉。
+    assert unread == ["crew_casualty_fraction", "dismounted_exposure"], (
+        f"這些推演參數在設定頁調得動、引擎卻不讀：{unread}。\n"
+        "接上它，或（若對應功能尚未實作）連同這條斷言一起說明為什麼。"
+    )

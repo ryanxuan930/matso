@@ -518,11 +518,16 @@ class SimManager:
                 rngs=rngs,
                 transport_reset=RedisBroadcaster(client, session_id).reset_stream,
             )
+            # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
+            # 位置在此是因為底下的感測器解析器要用 `intrinsic_optical_range_m`。
+            sim_params = await asyncio.to_thread(load_sim_params, engage_db)
             # 播戰鬥狀態（血量/裝甲/彈藥/座標）入熱狀態：座標以 DB 為準，其餘僅補缺鍵
             # → 復原後的血量/彈藥不會被 DB 初值蓋掉。
             await asyncio.to_thread(seed_combat_state, engage_db, hot, session_id, resolver)
             # #97 偵測：單位→感測器規格/陣營的解析（一次建好快取，sweep 每 tick 查）。
-            sensor_resolver = await asyncio.to_thread(SensorResolver, engage_db, session_id)
+            sensor_resolver = await asyncio.to_thread(
+                SensorResolver, engage_db, session_id, sim_params.intrinsic_optical_range_m
+            )
             # 同 `resolver` 的理由（WP-B2）：MSEL 增援的陣營必須查得到。查不到 → STATE_DIFF
             # 的每陣營投影會把那個單位整筆剔除（fail-closed），增援對自己人也看不見。
             sensor_resolver.enable_lazy_lookup(self._factory)
@@ -577,8 +582,6 @@ class SimManager:
                     surviv.min_km,
                     surviv.max_km,
                 )
-            # #93 推演參數：**runner 啟動時讀一次** → 進行中的局不受設定變更影響。
-            sim_params = await asyncio.to_thread(load_sim_params, engage_db)
             # 該局的 tick 長度：想定宣告優先。**在此之前想定的 tick_rate_ms 只進得了
             # 匯出檔**——載得進 LoadedScenario、卻沒有一條路帶進執行期。
             tick_rate_ms = await asyncio.to_thread(
@@ -652,6 +655,8 @@ class SimManager:
                                 # WP-C4c：同上。
                                 smoke_for=lambda: smoke_cache.at(sim_clock.now().tick),
                                 tick_for=lambda: sim_clock.now().tick,
+                                # #93 滿壓制的射擊效能倍率（過去零讀取端）。
+                                fire_penalty=sim_params.suppression_fire_penalty,
                             ),
                             quantity_for=resolver.quantity_for,  # #30 squad 齊射
                             # SPEC_EXTEND P2 聯合兵種：≥2 武器系統 → 武器組合加總（帶活彈藥）。
@@ -707,7 +712,8 @@ class SimManager:
                     session_factory=self._factory,
                     hot_state=hot,
                     tick_rate_ms=tick_rate_ms,
-                    speed_kmh=_UNIT_SPEED_KMH,
+                    # #93 無法由編裝導出機動時的後備速度（過去讀寫死的模組常數）。
+                    speed_kmh=sim_params.vehicle_fallback_kmh,
                     rng=rngs["movement"],  # #28 強穿隨機耗損
                     terrain_sampler=build_terrain_cell_sampler(),  # #81 地形/坡度調速
                     # WP-C4b 天氣機動：**在此之前 `weather_mobility` 一個呼叫端都沒有**，
@@ -874,7 +880,12 @@ class SimManager:
                     await asyncio.to_thread(_emit, rf)
                 # WP-C1 壓制衰減 + 姿態收斂。跑在 tick 之間（與火力排程同一個位置）：
                 # 熱狀態的單一寫入者仍是本迴圈，不違反 single-writer。
-                await asyncio.to_thread(tick_suppression, hot, sim_clock.now().tick)
+                await asyncio.to_thread(
+                    tick_suppression,
+                    hot,
+                    sim_clock.now().tick,
+                    sim_params.suppression_decay,  # #93（過去零讀取端）
+                )
                 # POSTURE 令（在此之前是 NoOp——令收得下、狀態機也走得完，就是沒有任何效果）。
                 await asyncio.to_thread(
                     _posture_tick, self._factory, session_id, hot, sim_clock.now().tick
