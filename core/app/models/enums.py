@@ -10,13 +10,28 @@ class SessionMode(enum.StrEnum):
 
 
 class UnitLevel(enum.StrEnum):
+    """編制層級。
+
+    ⚠⚠ **宣告順序就是大小順序（大 → 小），不是隨手排的。**
+    `aggregate.py` 與 `engine/comms.py` 都用 `enumerate(UnitLevel)` 當「編制大小」的秩：
+    `_SIZE_RANK = {level: rank for rank, level in enumerate(UnitLevel)}`，
+    再以 `rank <= _SIZE_RANK[BATTALION]` 判斷「營級以上＝指揮節點」。
+    **在尾端追加新值（最自然的做法）會讓那個值變成比 INDIVIDUAL 還小**，
+    而且不會有任何錯誤——只會讓聚合門檻與通信指揮節點的判定悄悄跑掉。
+    新增層級一律插進正確的大小位置；`test_unit_level_order.py` 釘住這件事。
+    """
+
     THEATER = "THEATER"
+    ARMY_GROUP = "ARMY_GROUP"
+    ARMY = "ARMY"
     CORPS = "CORPS"
     DIVISION = "DIVISION"
     BRIGADE = "BRIGADE"
+    REGIMENT = "REGIMENT"
     BATTALION = "BATTALION"
     COMPANY = "COMPANY"
     PLATOON = "PLATOON"
+    SECTION = "SECTION"
     SQUAD = "SQUAD"
     FIRETEAM = "FIRETEAM"
     INDIVIDUAL = "INDIVIDUAL"

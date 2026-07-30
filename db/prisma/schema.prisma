@@ -107,14 +107,20 @@ enum SessionMode {
 // 2. Tactical Units & Fractal Command Chain
 // ==========================================
 
+/// ⚠ 宣告順序＝大小順序（大→小）。後端以 `enumerate(UnitLevel)` 當編制大小的秩
+/// （聚合門檻、通信指揮節點判定都靠它），在尾端追加新值會讓它變成比 INDIVIDUAL 還小。
 enum UnitLevel {
   THEATER
+  ARMY_GROUP
+  ARMY
   CORPS
   DIVISION
   BRIGADE
+  REGIMENT
   BATTALION
   COMPANY
   PLATOON
+  SECTION
   SQUAD
   FIRETEAM
   INDIVIDUAL

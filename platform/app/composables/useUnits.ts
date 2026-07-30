@@ -61,8 +61,9 @@ export interface OwnUnit {
 
 /** 編制層級 → 中文（兵-伍-班-排…，#5.3；與想定編輯器同義）。 */
 export const UNIT_LEVEL_LABELS: Record<string, string> = {
-  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', PLATOON: '排', COMPANY: '連',
-  BATTALION: '營', BRIGADE: '旅', DIVISION: '師', CORPS: '軍', THEATER: '戰區',
+  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', SECTION: '組', PLATOON: '排',
+  COMPANY: '連', BATTALION: '營', REGIMENT: '團', BRIGADE: '旅', DIVISION: '師',
+  CORPS: '軍', ARMY: '軍團', ARMY_GROUP: '集團軍', THEATER: '戰區',
 }
 export function unitLevelLabel(l?: string): string {
   return (l && UNIT_LEVEL_LABELS[l]) || l || '—'
@@ -165,20 +166,22 @@ function functionId(type?: string): string {
  * ⚠ `INDIVIDUAL` 對應 `'-'`（不畫階層符號）：**APP-6A Table IV 最小的一級是 Team/Crew**，
  * 標準裡沒有「個人」這一級，硬塞 `'A'` 是造假。
  *
- * 未用到的字母是**編制模型的洞**不是填錯：`UnitLevel` 沒有 SECTION(`C`)、
- * REGIMENT(`G`)、ARMY(`K`)、ARMY_GROUP(`L`)、COMMAND(`N`)——CORPS 之上直接跳 THEATER。
- * 那要另開一張卡補 enum，不在符號這張卡的範圍內。
+ * `N`（Command）仍未用到——那是編制模型還沒有的層級，不是填錯。
  */
 export const ECHELON_BY_LEVEL: Record<string, string> = {
   INDIVIDUAL: '-', // Table IV 沒有這一級
   FIRETEAM: 'A', // Team/Crew
   SQUAD: 'B',
+  SECTION: 'C',
   PLATOON: 'D',
   COMPANY: 'E',
   BATTALION: 'F',
+  REGIMENT: 'G', // Regiment/Group
   BRIGADE: 'H',
   DIVISION: 'I',
   CORPS: 'J',
+  ARMY: 'K',
+  ARMY_GROUP: 'L', // Army Group/Front
   THEATER: 'M', // Region
 }
 

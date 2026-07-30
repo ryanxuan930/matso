@@ -32,12 +32,16 @@
           "unit_level": {
             "enum": [
               "THEATER",
+              "ARMY_GROUP",
+              "ARMY",
               "CORPS",
               "DIVISION",
               "BRIGADE",
+              "REGIMENT",
               "BATTALION",
               "COMPANY",
               "PLATOON",
+              "SECTION",
               "SQUAD",
               "FIRETEAM",
               "INDIVIDUAL"

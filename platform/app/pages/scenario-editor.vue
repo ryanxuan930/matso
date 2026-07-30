@@ -15,9 +15,10 @@ import {
 import { emptyCondition } from '~/composables/useConditionDsl'
 import { BRANCH_LABELS, BRANCH_OPTIONS } from '~/composables/useUnits'
 
+// 由大到小（與後端 UnitLevel 的宣告順序一致——那個順序就是編制大小）。
 const LEVELS: UnitLevel[] = [
-  'THEATER', 'CORPS', 'DIVISION', 'BRIGADE', 'BATTALION',
-  'COMPANY', 'PLATOON', 'SQUAD', 'FIRETEAM', 'INDIVIDUAL',
+  'THEATER', 'ARMY_GROUP', 'ARMY', 'CORPS', 'DIVISION', 'BRIGADE', 'REGIMENT',
+  'BATTALION', 'COMPANY', 'PLATOON', 'SECTION', 'SQUAD', 'FIRETEAM', 'INDIVIDUAL',
 ]
 const RELATIONS: RelationValue[] = ['ALLIED', 'NEUTRAL', 'HOSTILE']
 
@@ -28,8 +29,9 @@ const MODE_OPTIONS = [
   { label: '輪流回合', value: 'IGO_UGO' },
 ]
 const LEVEL_LABELS: Record<UnitLevel, string> = {
-  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', PLATOON: '排', COMPANY: '連',
-  BATTALION: '營', BRIGADE: '旅', DIVISION: '師', CORPS: '軍', THEATER: '戰區',
+  INDIVIDUAL: '兵', FIRETEAM: '伍', SQUAD: '班', SECTION: '組', PLATOON: '排',
+  COMPANY: '連', BATTALION: '營', REGIMENT: '團', BRIGADE: '旅', DIVISION: '師',
+  CORPS: '軍', ARMY: '軍團', ARMY_GROUP: '集團軍', THEATER: '戰區',
 }
 const LEVEL_OPTIONS = LEVELS.map((l) => ({ label: LEVEL_LABELS[l], value: l }))
 const RELATION_LABELS: Record<RelationValue, string> = {

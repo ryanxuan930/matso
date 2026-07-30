@@ -4,8 +4,20 @@ import type { Condition, InjectAction } from '~/composables/useConditionDsl'
 
 export type RelationValue = 'ALLIED' | 'NEUTRAL' | 'HOSTILE'
 export type UnitLevel =
-  | 'THEATER' | 'CORPS' | 'DIVISION' | 'BRIGADE' | 'BATTALION'
-  | 'COMPANY' | 'PLATOON' | 'SQUAD' | 'FIRETEAM' | 'INDIVIDUAL'
+  | 'THEATER'
+  | 'ARMY_GROUP'
+  | 'ARMY'
+  | 'CORPS'
+  | 'DIVISION'
+  | 'BRIGADE'
+  | 'REGIMENT'
+  | 'BATTALION'
+  | 'COMPANY'
+  | 'PLATOON'
+  | 'SECTION'
+  | 'SQUAD'
+  | 'FIRETEAM'
+  | 'INDIVIDUAL'
 
 export interface EditorFaction { id: string; displayName?: string; color?: string }
 export interface EditorUnit {
