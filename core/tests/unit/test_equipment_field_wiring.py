@@ -108,3 +108,64 @@ def test_night_capable_is_supplied_by_seeds_and_matches_physics() -> None:
     assert SEED_SENSORS["EO_DAY"]["night_capable"] is False
     for name in ("IR_THERMAL", "GROUND_RADAR", "ACOUSTIC_ARRAY"):
         assert SEED_SENSORS[name]["night_capable"] is True, f"{name} 不該吃夜間懲罰"
+
+
+def test_rounds_per_mission_and_emplace_ticks_reach_the_profile() -> None:
+    """兩個過去**完全沒被解析**的欄位要進得了 `WeaponProfile`。
+
+    `WeaponProfile.from_base_stats` 是白名單式逐欄建構的，所以「契約有、種子有、
+    UI 編得動」完全不代表引擎讀得到——這兩欄就這樣躺了很久。
+    """
+    from app.adjudication.seed_weapons import SEED_ARTILLERY
+    from app.adjudication.weapon import WeaponProfile
+
+    for name, stats in SEED_ARTILLERY.items():
+        p = WeaponProfile.from_base_stats(stats)
+        if "rounds_per_mission" in stats:
+            assert p.rounds_per_mission == stats["rounds_per_mission"], name
+        if "emplace_ticks" in stats:
+            assert p.emplace_ticks == stats["emplace_ticks"], name
+    # 未宣告 → 0（中性預設：不設限 / 面板沿用自己的預設）
+    bare = WeaponProfile.from_base_stats(
+        {
+            "max_range_m": 1000,
+            "ph_by_range_band": [[1000, 0.5]],
+            "damage_by_armor_class": {"INFANTRY": 10},
+            "ammo_types": ["A"],
+        }
+    )
+    assert bare.rounds_per_mission == 0
+    assert bare.emplace_ticks == 0
+
+
+def test_emplacement_gate_is_neutral_when_the_unit_never_moved() -> None:
+    """**缺 `arrived_at_tick` ＝視為早已就位**，不是「剛抵達」。
+
+    這是整條閘門最重要的一條：從未移動過的單位、以及這張卡之前就存在的所有 session，
+    熱狀態裡都沒有這個鍵。若把缺鍵讀成「剛到」，既有想定的砲兵會全部突然打不出去。
+    """
+    from types import SimpleNamespace
+
+    from app.engine.clock import SimTime
+    from app.engine.fire_wiring import AreaFireAdjudicator
+
+    now = SimTime(tick=100, sim_time_ms=0)
+    entry = SimpleNamespace(profile=SimpleNamespace(emplace_ticks=5))
+
+    # 缺鍵 → 放行
+    assert AreaFireAdjudicator._emplacement_block(entry, {}, now) is None
+    # 剛抵達（差 1 tick）→ 擋
+    blocked = AreaFireAdjudicator._emplacement_block(entry, {"arrived_at_tick": 99}, now)
+    assert blocked is not None and blocked[0] == "NOT_EMPLACED"
+    # 等滿了 → 放行
+    assert AreaFireAdjudicator._emplacement_block(entry, {"arrived_at_tick": 95}, now) is None
+
+    # 武器未宣告 emplace_ticks → **連熱狀態都不讀就放行**。
+    # 用會爆的 dict 才測得出「早退」：只斷言回 None 的話，`wait <= 0` 改成 `wait < 0`
+    # 也會通過（wait=0 時 elapsed>=0 恆成立，兩者結果相同）——那是等價突變，測不到。
+    class _ExplodingState(dict):  # type: ignore[type-arg]
+        def get(self, *_a: object, **_k: object) -> object:
+            raise AssertionError("未宣告 emplace_ticks 時不該讀熱狀態")
+
+    off = SimpleNamespace(profile=SimpleNamespace(emplace_ticks=0))
+    assert AreaFireAdjudicator._emplacement_block(off, _ExplodingState(), now) is None

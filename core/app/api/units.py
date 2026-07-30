@@ -73,6 +73,9 @@ class WeaponView(BaseModel):
     min_range_m: float
     ammo_types: list[str]
     ammo_remaining: int | None
+    # 一次火力任務的準則發數（`rounds_per_mission`）。**0＝未宣告** → 下令面板沿用自己的預設。
+    # 這一欄存在的理由：軍械庫讓使用者編輯它，若沒有任何地方讀，那個欄位就是在騙人。
+    rounds_per_mission: int = 0
 
 
 def _view(
@@ -251,6 +254,7 @@ def list_unit_weapons(
                 min_range_m=profile.min_range_m,
                 ammo_types=list(profile.ammo_types),
                 ammo_remaining=ammo_remaining,
+                rounds_per_mission=profile.rounds_per_mission,
             )
         )
     return out

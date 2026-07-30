@@ -4,6 +4,8 @@
 
 ## 目前狀態摘要（3 行內，最新在上）
 
+- 2026-07-30：**Backlog 清倉（七）：`rounds_per_mission` 與 `emplace_ticks` 接上消費者**。兩欄都在契約與種子裡宣告、軍械庫也編得動，但 `WeaponProfile.from_base_stats` 是**白名單式逐欄建構**的，兩者根本沒被解析進 dataclass——「契約有、種子有、UI 編得動」完全不代表引擎讀得到。①`rounds_per_mission` → `WeaponView` → **COP 火力任務發數的預設值**（取該單位曲射武器宣告過的最大值；都沒宣告就沿用面板原本的 4）。選擇接上而非刪除的理由：一個編得動卻什麼都不影響的欄位比沒有這個欄位更糟。②`emplace_ticks` → 面射擊的 `NOT_EMPLACED` 閘門（打完就跑之後不該能立刻再開火）。**它卡了很久的真正原因是程式裡沒有任何「單位停下來了」的時間戳**：`interrupt_posture` 對已在 MOVING 的單位不寫入、抵達後沒有東西重設姿態、`UNIT_ARRIVED` 只是帳本事件不進熱狀態、MOVE 令的 `resolved_at_tick` 在活執行期根本沒被寫。故新增 `arrived_at_tick` 熱狀態鍵（寫在 movement 的 UNIT_ARRIVED 分支），並列入 broadcaster 的 `_INTERNAL_FIELDS`——「這支部隊什麼時候到位」對敵方等於一份免費的機動情報。**最關鍵的中性預設**：缺 `arrived_at_tick` ＝**視為早已就位**（不是「剛抵達」）——從未移動過的單位與這張卡之前的所有 session 都走這條，否則既有想定的砲兵會全部突然打不出去。**驗收**：pytest 1967（+2）、mypy 266、ruff/eslint/vue-tsc 綠。突變測試逐一驗過會紅——⚠ 頭兩次的突變是**無效的**（正則的 `[^)]*` 匹配不到含括號的 `stats.get(...)`；而 `wait<=0` 改 `wait<0` 是等價突變），重做後才真的紅，另補一個會爆的 dict 才測得出「未宣告時連熱狀態都不讀」。
+
 - 2026-07-30：**兵科（Field A）四層打通 + COP 載入指示 + 面板文案精簡**（使用者指示）。①**兵科**：新增 `UnitBranch` enum（16 值）貫穿 prisma→SQLAlchemy→loader→dump→契約→UnitView/ContactView→前端 SIDC→想定編輯器下拉→ORBAT PATCH。每個 2525C function ID 都**實測過 milsymbol 會畫出獨特圖示**（不是只驗 `isValid()`——有些代碼合法卻與通用框畫得一模一樣）。`UNKNOWN` 是中性預設：DB 用 `NOT NULL DEFAULT 'UNKNOWN'`，既有 44 個單位全部拿到它、對應通用框，**符號外觀零變化**。⚠ `prisma migrate dev` 要求 reset 資料庫（早期 migration 被改過），**沒有照做**——手寫 migration + `migrate deploy`，先 `mariadb-dump` 備份（77MB）。②**修掉 `ContactView.unit_type` 名實不符**：該欄裝的是 **unit_level（階層）**，於是前端拿去查兵科表永遠 miss（敵情 contact 一直也沒有兵種圖示），而若有人照欄位名接階層，敵方編成會在 CLASSIFIED 就畫上圖、且 review 看不出來。已拆成 `echelon` + `branch`，AI world_view 的 prompt 鍵一併改正（否則 LLM 會看到 `unit_type: PLATOON`）。③**COP 載入指示**：`onMounted` 刻意不 await `refresh()`（要讓地圖先畫出來），所以首屏一定有空窗，過去那段時間顯示的是**空狀態文字**（「此 session 無可下令單位」），使用者會以為這局是空的。四個面板改為載入中轉圈；成功或失敗都收掉（卡在轉圈比空狀態更糟）。④面板說明只留一句、其餘移到 hover，並拿掉規格條號（對操作員沒有意義）。**驗收**：pytest 1965（+5）、mypy 266、ruff/eslint/vue-tsc 綠、schema sync 233 欄；四個方向的突變逐一驗過會紅（破壞中性預設／打錯兵科改成拋例外／匯出漏帶 branch／契約 enum 少一值）。**活系統實測**：設定 B1-B3=裝甲、B4-B5=砲兵、B6-B8=步兵、B9=工兵、BHQ=指揮部 → 地圖出現 6 種相異 SIDC，圖示各不相同；SPA 導航實測四個面板都顯示「載入中…」且不再閃空狀態。
 
 - 2026-07-30：**單位符號照 APP-6A 呈現（使用者回報「單位名稱不見了」）**。查下去發現不是回歸，而是**己方單位從來就沒有名字**：`OwnUnit` 沒有 `designation` 欄、`realAsOwn` 沒傳、`buildUnitFeatures` 只有 IDENTIFIED 敵情 contact 才帶 `uniqueDesignation`。同一處還有兩個更深的洞：①`UnitView` **沒有 unit_type**，所以 `functionId()` 恆回 `U-----`（**沒有兵種圖示**）；②`buildSidc` 用 `padEnd('-')` 補到 15 位，**第 11–12 位永遠是 `--`**（**沒有階層符號**，連/營/旅的橫槓一條都沒有）。三者合起來＝地圖上是一排無名的通用方塊。本次修到位（以 APP-6A 1998-10 版 Table III / Figure 2a / Table IV 為準）：**Field T 番號**（左欄，符合 §506.2 右對齊）、**Field B 階層**（SIDC 第 12 位，實測 `SFGPU------A---`，FIRETEAM→`A` Team/Crew）、**Field H 失聯註記**。`buildSidc` 改成明確排 15 位。**另外修掉一個現況已經在流血的位置錯誤**：milsymbol 的錨點不在圖片中心，加了文字修飾後圖片往一側長出去，而 MapLibre 的 `icon-anchor` 預設 center——**離線虛影的 `OFFLINE +Nt` 讓符號偏了 37.9px（z12 約 1.4km）**，而高亮環/血條都畫在真點上，符號會滑出自己的環外。改為生成時記下 `getAnchor()`、逐特徵下 `icon-offset` 補償（實測「Y1」補 −9.2px、「B12」補 −12.28px，隨字寬變動）。另修 **iconKey 把每 tick 變動的值烤進圖標**的問題（`OFFLINE +12t` 每 tick 產生一張新圖、cache 無上限且從不 removeImage → 長局吃光顯存，症狀是圖標無聲消失）——改為 5 tick 分桶（同 #94 hpBucket 紀律）。新增**顯示詳細度 極簡/標準/完整**（APP-6A §506.1 明文授權）+ 超過 300 個符號自動降級並顯示提示。**實測**：STD 36 種圖標（O(N)）→ MIN **3 種**（O(詞彙)），12× 差距；e2e 8 passed（含 500 單位 42.5 FPS）。**未做（另開卡）**：Field A 兵種要動想定 schema→prisma→loader→契約→編輯器四層（紅線 5）；`UnitLevel` enum 缺 SECTION/REGIMENT/ARMY/ARMY_GROUP 導致 2525C 的 `C/G/K/L` 用不到；`ContactView.unit_type` **名實不符**（裝的是 unit_level）——照欄位名接兵種永遠 miss、照欄位名接階層則會把敵方編成在 CLASSIFIED 就畫上圖。
@@ -259,13 +261,10 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
   也沒有涉水判定。障礙 contact 偵測（敵障礙轉本軍標註）同樣未做。
 - **令沒有 TTL**（WP-C10.3）：`at_tick` 到期的令若因射手 OFFLINE 被通信閘門擋下，會留在
   VALIDATED 直到通聯恢復——準備射擊可能遲到數十個 tick 才落地。逾時作廢與「換一門砲重試」都未做。
-- **`emplace_ticks` 沒有消費者**（WP-C10.5 明列未做）：進入陣地後的待命時間——
-  打完就跑之後不該能立刻再開火。需新增 `WeaponProfile` 欄位 + `fire_wiring` 一條「就位了沒」的分支。
 - **既有的 21 筆契約/實作漂移**（閘門已裝，見 `test_contract_conformance.py` 的允許清單）：
   7 筆規格殘骸（`/sessions/{id}/ledger`、`/admin/plugins*`、`/ai/consult`…）+
   14 筆無契約端點（`/aar/*`、`/autonomy`、`/orbat-permissions`…）。
   **新的漂移現在會立刻轉紅**；這 21 筆是看得見的欠帳，清單只能變短。
-- **`rounds_per_mission` 沒有消費者**：不是門檻、也對不上火力路徑計的東西（C10.5 計的是任務次數）。
 - **面射擊的絕對殺傷量偏低**（WP-C1 驗收時量到，屬 WP-C10.2 的校準）：20 發 155mm 對露天
   步兵連只造成 1.28 戰力損失，直覺上太少。`area_fire._loss_for` 自己標了「v0 佔位」——
   相對關係（掘壕≈露天一半、壓制遠大於殺傷）是對的，絕對值要一次真的校準。

@@ -1467,6 +1467,8 @@ export interface components {
             min_range_m: number;
             ammo_types: string[];
             ammo_remaining?: number | null;
+            /** @description 一次火力任務的準則發數；0＝未宣告，下令面板沿用自己的預設。 */
+            rounds_per_mission?: number;
         };
         /**
          * @description 信文種類（[JCATS-F p.10–14] C2 工件）。REQUEST/APPROVAL 會帶 ref_id 指向申請單。

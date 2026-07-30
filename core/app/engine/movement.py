@@ -69,6 +69,11 @@ TerrainSampler = Callable[[list[str]], dict[str, tuple[str, float]]]
 # 每小時公里 → 每 tick 公里 = speed_kmh × tick_rate_ms / 3_600_000
 _MS_PER_H = 3_600_000.0
 
+# 抵達 tick（熱狀態鍵）——`emplace_ticks`「進入陣地後待命多久才能開火」的計時起點。
+# ⚠ **缺鍵＝視為早已就位**（不是「剛抵達」）。這是中性預設：從未移動過的單位、
+# 以及這張卡之前就存在的所有 session，都不會被這道新閘門擋住。
+ARRIVED_TICK_KEY = "arrived_at_tick"
+
 
 def _haversine_km(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
     r = 6371.0
@@ -372,6 +377,12 @@ class UnitMovementSystem:
             self._hot_state.update_unit(o.unit_id, {"lat": tgt_lat, "lng": tgt_lng})
             if leg >= len(targets) - 1:
                 o.status = OrderStatus.COMPLETED
+                # WP-C10.5 `emplace_ticks` 的計時起點。**在本卡之前程式裡沒有任何
+                # 「單位停下來了」的時間戳**：`interrupt_posture` 對已在 MOVING 的單位不寫入、
+                # 抵達後沒有東西重設姿態、`UNIT_ARRIVED` 只是帳本事件（不進熱狀態）、
+                # 而 MOVE 令的 `resolved_at_tick` 在活執行期根本沒被寫。
+                # 沒有這個鍵，emplace_ticks 就無從計時。
+                self._hot_state.update_unit(o.unit_id, {ARRIVED_TICK_KEY: now.tick})
                 return LedgerEvent(
                     event_type="UNIT_ARRIVED",
                     tick=now.tick,

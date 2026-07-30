@@ -34,6 +34,7 @@ from app.comms import order_admissible, parse_link_state
 from app.engine.clock import SimTime
 from app.engine.engage_wiring import WeaponEntry
 from app.engine.formation_wiring import FORMATION_KEY
+from app.engine.movement import ARRIVED_TICK_KEY
 from app.engine.rng import DeterministicRNG
 from app.engine.suppression_wiring import POSTURE_KEY, apply_area_suppression
 from app.factions.relations import FactionRelations
@@ -222,7 +223,7 @@ class AreaFireAdjudicator:
             return self._reject(order, now, "NO_INDIRECT_WEAPON", "此單位無可用的曲射武器")
 
         aim = (order.target_lat, order.target_lng)
-        reason = self._legality(order, entry, shooter, aim)
+        reason = self._legality(order, entry, shooter, aim, now)
         if reason is not None:
             return self._reject(order, now, reason[0], reason[1])
 
@@ -489,8 +490,9 @@ class AreaFireAdjudicator:
         entry: WeaponEntry,
         shooter: dict[str, Any],
         aim: tuple[float, float],
+        now: SimTime,
     ) -> tuple[str, str] | None:
-        """射程檢查。**下令當下過了不代表現在還過**——射手可能已經移動，故執行時重查。
+        """射程 + 就位檢查。**下令當下過了不代表現在還過**——射手可能已經移動，故執行時重查。
 
         刻意不查 LOS：間瞄火力打的就是看不見的地方（與 `_precheck_fire_mission` 同一決定）。
         """
@@ -498,6 +500,9 @@ class AreaFireAdjudicator:
             s_lat, s_lng = float(shooter["lat"]), float(shooter["lng"])
         except (KeyError, TypeError, ValueError):
             return ("NO_POSITION", "射擊單位無座標")
+        not_emplaced = self._emplacement_block(entry, shooter, now)
+        if not_emplaced is not None:
+            return not_emplaced
         dist = _haversine_m(s_lat, s_lng, *aim)
         if dist > entry.profile.max_range_m:
             return (
@@ -505,6 +510,32 @@ class AreaFireAdjudicator:
                 f"距離 {dist / 1000:.1f} km 超出射程 {entry.profile.max_range_m / 1000:.1f} km",
             )
         return None
+
+    @staticmethod
+    def _emplacement_block(
+        entry: WeaponEntry, shooter: dict[str, Any], now: SimTime
+    ) -> tuple[str, str] | None:
+        """進入陣地後的待命時間（`emplace_ticks`）——**打完就跑之後不該能立刻再開火**。
+
+        三道中性預設，任何一道成立就完全不擋（既有想定/既有 session 零影響）：
+        1. `emplace_ticks <= 0`（未宣告）→ 不設限。
+        2. 熱狀態沒有 `arrived_at_tick` → **視為早已就位**，不是「剛抵達」。
+           從未移動過的單位、以及這張卡之前就存在的所有 session 都走這條。
+        3. 已經等滿了 → 放行。
+        """
+        wait = entry.profile.emplace_ticks
+        if wait <= 0:
+            return None
+        raw = shooter.get(ARRIVED_TICK_KEY)
+        if not isinstance(raw, (int, float)):
+            return None  # 缺鍵＝早已就位（中性預設）
+        elapsed = now.tick - int(raw)
+        if elapsed >= wait:
+            return None
+        return (
+            "NOT_EMPLACED",
+            f"進入陣地後尚未就位（還需 {wait - elapsed} tick，需 {wait} tick 展開）",
+        )
 
     def _gather_targets(self) -> list[AreaTarget]:
         """全部有座標的單位——**敵我皆收**。只收敵軍等於把友軍傷害悄悄關掉。"""

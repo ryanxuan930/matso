@@ -54,6 +54,11 @@ class WeaponProfile:
     # 動能武器細分（現代軍事分類，N10）：SMALL_ARMS/AUTOCANNON/ATGM/TANK_MAIN_GUN/…（供 UI 與
     # 未來子型行為；引擎現以 pk/ph 資料驅動，kinetic_kind 為分類元資料）。
     kinetic_kind: str = "GENERIC"
+    # 一次火力任務的準則發數。**0＝未宣告**——下令面板才會沿用自己的預設值。
+    # 這欄過去沒有任何程式讀，軍械庫卻讓使用者編輯它：一個編得動、卻什麼都不影響的欄位。
+    rounds_per_mission: int = 0
+    # 進入陣地後的待命 tick 數（打完就跑之後不該能立刻再開火）。**0＝不設限（中性預設）**。
+    emplace_ticks: int = 0
     # 每發對各裝甲級別的擊殺機率 P(kill|hit) ∈ [0,1]（真實化交戰 Phase 1）。有值＝命中造成
     # 期望傷亡＝pk×每平台戰力；無值則退回 damage_by_armor_class[ac]/100 以相容既有種子。
     pk_by_armor_class: dict[str, float] = field(default_factory=dict)
@@ -104,6 +109,8 @@ class WeaponProfile:
                 str(k): float(v) for k, v in (stats.get("pk_by_armor_class") or {}).items()
             },
             kinetic_kind=str(stats.get("kinetic_kind", "GENERIC")),
+            rounds_per_mission=int(stats.get("rounds_per_mission", 0) or 0),
+            emplace_ticks=int(stats.get("emplace_ticks", 0) or 0),
             dispersion_cep_m=float(stats.get("dispersion_cep_m", 0.0) or 0.0),
             lethal_radius_m=float(stats.get("lethal_radius_m", 0.0) or 0.0),
             # 飛彈類：以 missile_kind 存在判定為飛彈；maneuverable 預設 True（巡弋式，僅判射程），

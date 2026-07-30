@@ -18,6 +18,7 @@ import redis
 
 from app import metrics
 from app.comms import REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY, project_position
+from app.engine.movement import ARRIVED_TICK_KEY
 from app.fires.survivability import MISSION_COUNT_KEY
 from app.state.hot_state import SessionDiff, UnitDiff, session_tick_key
 from app.state.ledger import LedgerEvent
@@ -153,7 +154,12 @@ def build_state_diff_envelope(
 # 就是「凍結前的真實位置」。一律剝掉（含全知的真實副本：統裁看 lat/lng 就好）。
 # ⚠ 這是 **denylist**：任何新的熱狀態鍵一被寫入就會自動出現在 STATE_DIFF 裡。
 # WP-C10.5 的陣地變換計數是引擎內部帳，沒有任何 client 消費者 → 剝掉。
-_INTERNAL_FIELDS = frozenset({REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY, MISSION_COUNT_KEY})
+# 內部記帳用的熱狀態鍵——不外送給前端（它們是引擎的私事，不是戰場事實）。
+# `arrived_at_tick` 尤其不可外送：那是「這支部隊什麼時候到位」，
+# 對敵方等於一份免費的機動情報。
+_INTERNAL_FIELDS = frozenset(
+    {REPORT_LAT_KEY, REPORT_LNG_KEY, REPORT_TICK_KEY, MISSION_COUNT_KEY, ARRIVED_TICK_KEY}
+)
 
 
 def _public_fields(fields: UnitDiff) -> UnitDiff:

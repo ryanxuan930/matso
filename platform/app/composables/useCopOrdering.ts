@@ -161,6 +161,12 @@ export function useCopOrdering(opts: {
   /** 抓此單位可用武器；失敗（他方/無裝備）→ 空清單，下拉隱藏。 */
   async function loadWeapons(unitId: string) {
     weapons.value = await fetchWeapons(sessionId.value, unitId).catch(() => [])
+    // 火力任務發數改用該單位曲射武器的**準則發數**（`rounds_per_mission`）。
+    // 這一欄在軍械庫編得動，但過去**沒有任何程式讀它**——一個編得動卻什麼都不影響的欄位
+    // 比沒有這個欄位更糟。取所有武器裡宣告過的最大值（多門砲時以火力最強者為準）；
+    // 都沒宣告（0）→ 保持既有預設，行為不變。
+    const doctrinal = Math.max(0, ...weapons.value.map((w) => w.rounds_per_mission ?? 0))
+    if (doctrinal > 0) fireRounds.value = doctrinal
   }
 
   // ---- #28 移動路徑預覽 ----
