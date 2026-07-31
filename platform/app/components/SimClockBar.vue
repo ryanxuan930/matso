@@ -1,6 +1,15 @@
 <script setup lang="ts">
 // 系統牆鐘列（#4）：sim tick + 開局以來執行時間 + 目前真實時間。now 初值 0 避免 SSR 水合不一致。
-const props = defineProps<{ tick?: number | null; startTime?: string | null }>()
+const props = defineProps<{
+  tick?: number | null
+  startTime?: string | null
+  /**
+   * 白軍是否暫停中。**這一格的存在理由是消除一個誤判**：
+   * 過去沒有任何 GET 曝露暫停旗標，操作員看到 tick 不動時無從分辨
+   * 「白軍按了暫停」與「系統掛了」——前者等就好，後者要叫人。
+   */
+  paused?: boolean
+}>()
 
 const now = ref(0)
 let timer: ReturnType<typeof setInterval> | null = null
@@ -37,12 +46,20 @@ const realClock = computed(() =>
 <template>
   <div class="clockbar" data-testid="sim-clock">
     <span class="seg" title="推演時間（模擬 tick）"><i>推演</i>{{ tickText }}</span>
+    <span
+      v-if="props.paused"
+      class="seg paused"
+      data-testid="sim-paused"
+      title="白軍已暫停推演——tick 不前進是預期的，不是系統故障"
+    ><i class="pi pi-pause" /> 已暫停</span>
     <span class="seg" title="開局以來執行時間"><i>執行</i>{{ elapsed }}</span>
     <span class="seg" title="目前真實時間"><i>現在</i>{{ realClock }}</span>
   </div>
 </template>
 
 <style scoped>
+.paused { color: #fbbf24; font-weight: 600 }
+
 .clockbar {
   display: flex;
   gap: 0.75rem;

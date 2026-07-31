@@ -2045,6 +2045,11 @@ export interface components {
         StateSnapshotView: {
             /** @description 快照當下的 sim tick（無活模擬的局為 0） */
             tick: number;
+            /**
+             * @description 本局是否被白軍暫停中。**過去沒有任何 GET 曝露這件事**——暫停旗標只有 `POST /control` 會寫、runner 會讀，於是操作員看到 tick 不動時 無從分辨「白軍按了暫停」與「系統掛了」，那是兩種完全不同的處置。
+             * @default false
+             */
+            paused: boolean;
             /** @description 觀測陣營的**整體通聯姿態** ONLINE/DEGRADED/OFFLINE（WP-C5）。 這是敵情粗化的依據本身（後端算一次，前端只用來顯示「敵情圖粗化中」， 不得據此自行改動資料——粗化已在 `contacts` 上生效）。god view 為 null。 */
             comms_posture: string | null;
             /** @description 快照當下的傳輸層 seq（`session:{id}:broadcast_seq`）。**於讀取狀態之前取樣**—— 反過來的話，介於兩次讀取之間送出的 diff 會既不在快照裡、seq 又 ≤ last_seq， 被 client 丟棄即成為遺失的更新。 */

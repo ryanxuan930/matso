@@ -39,6 +39,7 @@ from app.auth.schemas import CurrentUser
 from app.cache import make_redis
 from app.config import Settings
 from app.intel.schemas import ContactView
+from app.sim_control import session_pause_key
 from app.state.hot_state import session_tick_key
 from app.state.redis_stream import seq_key
 
@@ -50,6 +51,10 @@ class StateSnapshotView(BaseModel):
 
     tick: int
     last_seq: int
+    # 白軍是否暫停中。**過去沒有任何 GET 曝露這件事**——暫停旗標只有 `POST /control` 會寫、
+    # runner 會讀，於是操作員看到 tick 不動時無從分辨「白軍按了暫停」與「系統掛了」。
+    # 那是兩種完全不同的處置：前者等就好，後者要叫人。
+    paused: bool = False
     observer_faction: str | None
     # WP-C5：觀測陣營的整體通聯姿態（god view 為 None）。前端據此顯示「敵情圖粗化中」——
     # 粗化本身**已在 contacts 上生效**，本欄純為說明，client 不得據此再動資料。
@@ -72,6 +77,18 @@ def _int_key(client: object, key: str) -> int:
         return 0
 
 
+def _flag_key(client: object, key: str) -> bool:
+    """讀一個布林旗標鍵。Redis 掛掉 → False。
+
+    **不可回 True**：讀不到就說「暫停中」會讓操作員以為是白軍的決定而放心等下去，
+    而實際上是基礎設施出問題。看不到就當沒暫停，讓 tick 不動這件事自己說話。
+    """
+    try:
+        return client.get(key) is not None  # type: ignore[attr-defined]
+    except Exception:
+        return False
+
+
 @router.get("/{session_id}/state", response_model=StateSnapshotView)
 def get_state(
     session_id: str,
@@ -84,12 +101,14 @@ def get_state(
     # ⚠ 順序有意義：seq 必須在狀態**之前**取樣（見模組 docstring）。
     last_seq = _int_key(client, seq_key(session_id))
     tick = _int_key(client, session_tick_key(session_id))
+    paused = _flag_key(client, session_pause_key(session_id))
 
     relations = get_faction_relations(session_id, as_faction, user, db)
     observer = relations.observer
     return StateSnapshotView(
         tick=tick,
         last_seq=last_seq,
+        paused=paused,
         # 觀測視角由 relations handler 推導（全知未指定 as_faction → None＝god view），
         # 不在此另算一次——多一份推導就多一個會漂移的地方。
         observer_faction=observer,

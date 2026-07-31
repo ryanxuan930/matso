@@ -17,6 +17,8 @@ defineProps<{
   commsPosture: string | null
   /** 目前 sim tick（給時鐘列）。 */
   tick: number | null
+  /** 白軍是否暫停中——讓「tick 不動」與「系統掛了」分得開。 */
+  paused?: boolean
   /**
    * WS 串流狀態（idle/connecting/live/resyncing/closed）。
    *
@@ -77,7 +79,7 @@ const widgetMenuOpen = defineModel<boolean>('widgetMenuOpen', { required: true }
     <i class="pi" :class="streamStatus === 'live' ? 'pi-circle-fill' : 'pi-circle'" />
     {{ streamStatusLabel(streamStatus) }}
   </span>
-  <ClientOnly><SimClockBar :tick="tick" :start-time="startTime" /></ClientOnly>
+  <ClientOnly><SimClockBar :tick="tick" :start-time="startTime" :paused="paused" /></ClientOnly>
   <nav class="cop-nav">
     <!-- 視角切換（#90）：僅全知角色。選陣營＝以該陣營之眼觀戰（後端套其戰場迷霧）。 -->
     <label v-if="canControl" class="vp" :class="{ 'vp-on': !!viewpoint }">

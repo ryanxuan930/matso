@@ -1052,6 +1052,13 @@ components:
         tick:
           type: integer
           description: 快照當下的 sim tick（無活模擬的局為 0）
+        paused:
+          type: boolean
+          default: false
+          description: >-
+            本局是否被白軍暫停中。**過去沒有任何 GET 曝露這件事**——暫停旗標只有
+            `POST /control` 會寫、runner 會讀，於是操作員看到 tick 不動時
+            無從分辨「白軍按了暫停」與「系統掛了」，那是兩種完全不同的處置。
         comms_posture:
           type: [string, "null"]
           description: >-
