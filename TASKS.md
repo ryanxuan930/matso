@@ -303,6 +303,9 @@
 | WP-E3 /state 原子快照與 RESYNC 閉環 ✅ | SPEC_V2 §6 WP-E3 | 契約補完（StateSnapshotView）+ 端點**複用既有 handler**（過濾一致性由構造保證）+ `/intel` 對齊 + 前端原子重建與 last_seq 去重 | ✅ 12 測試（4 組「快照 == 各端點」參數化）、pytest 1244、golden 6 未破；容器 /openapi.json 實測。worklog: state-snapshot.md |
 | WP-B6 想定資產補齊 ✅ | SPEC_V2 §6 WP-B6 | roe.schema + 載入 + **兩個生效點**（裁決層逐武器篩／precheck 早退）；`overrides/` 機動覆寫（值物件注入，禁改可通行性）；匯出無損化（`fixed`/`description`/`display_name`，**前端編輯器過去會靜默刪掉禁射區**）；orbat `equipment`；官方想定補到三個 | ✅ 48 新測試、pytest 1232、golden 6 未破。三想定無損＋位元一致 roundtrip 綠。順帶修 `tutorial-platoon` 用了不存在的 condition type `eliminate`（整局不判勝負）並把 DSL 驗證提前到載入時。worklog: scenario-assets.md |
 | WP-E1 活 session checkpoint 與崩潰復原 ✅ | SPEC_V2 §6 WP-E1 | 活局掛 checkpointer（間隔進 SimParams）+ RNG 狀態序列化 + 快照信封 v2（units/rng/orders）+ 重啟自動復原與前滾投影 + ROLLBACK 接活 + `GET /checkpoints`。**規格未列的四個斷點**：SimClock 每次重啟歸零、seed_combat_state 覆寫座標、tick 0 快照覆蓋、`load_latest` 同 ledgerSeq 未定序（實測發現） | ✅ 42 單元 + 2 整合；pytest 1183、golden 6 未破。容器實測 kill -9 後自動復原且雜湊一致、活回滾 7800→7451。規格要求的「Ledger 實體截斷」改為邏輯截斷（ADR 007）。worklog: live-checkpoint.md |
+| V2.1 exit ✅ armor-breakthrough 迷你 CPX | SPEC_V2 §7 V2.1 exit | 新想定（35 單位）+ `ops/tools/cpx_acceptance.py` 七環驗收：演習專案→四席位編組→白軍 MSEL 誘導→火協審批→禁射區護欄→事件鏈可評量 | ✅ **7/7 達成**。第一次跑 1/7——**含 MSEL 的局每 tick 崩潰、tick 恆 0**（`dict(...tuples())` 缺 `.all()`；WP-B2 標 ✅ 但從沒在有 MSEL 的局跑過，所有測試都餵假的 context_fn）。修完補事件鏈（`OrderResponse` 的 `issuer_id`/`payload` + `ORDER_REJECTED`/`REQUEST_SUBMITTED`/`REQUEST_DECIDED` 三種帳本事件）與禁射區區名 |
+| SPEC_V2 全面盤點 ✅ | — | 8 agent 逐卡查證 43 張卡的**程式實際狀態**（非讀文件）+ 排定開發順序 | ✅ [docs/SPEC_V2_AUDIT.md](docs/SPEC_V2_AUDIT.md)。22 未開始 / 8 部分 / 9 完成 / **4 張假 ✅**。最嚴重：**CI 的 AI eval gate 結構上不可能變紅**，量的是 jsonschema 有沒有裝好 |
+| Phase 0 修好量尺與假 ✅ | 盤點結論 | eval gate 可紅化／D6.2 AAR 統計分子分母／A1 迷霧補洞／C2 破障工時時間尺度 | ✅ 四軌 + 對抗式查證。查證抓到 4 HIGH，含 **A1 補洞自己引進的回歸**（中立陣營被自動接戰）與三條「mutation 打在純函數沒打在接線」 |
 
 ---
 
