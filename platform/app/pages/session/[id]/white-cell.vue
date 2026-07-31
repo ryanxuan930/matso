@@ -396,6 +396,11 @@ watch(viewpoint, loadUnits)
             </option>
           </select>
         </label>
+        <!-- 後端預設只回最近 200 個（見 `/checkpoints` 的說明）。清單剛好滿版時要講出來，
+             否則統裁會以為「更早的快照點不存在」而不是「這一頁沒列到」。 -->
+        <p v-if="checkpoints.length >= 200" class="cp-note" data-testid="wc-checkpoints-truncated">
+          僅列最近 {{ checkpoints.length }} 個快照點——更早的仍在，回滾到那些點屬稽核作業。
+        </p>
         <button data-testid="wc-checkpoints-refresh" title="重新抓取快照點" @click="loadCheckpoints">⟳</button>
         <button
           data-testid="rollback"
@@ -537,6 +542,8 @@ watch(viewpoint, loadUnits)
 </template>
 
 <style scoped>
+.cp-note { margin: 2px 0; font-size: 11px; opacity: .7 }
+
 .wc { max-width: 1000px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
 .wc-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .wc-bar h1 { font-size: 1.25rem; margin: 0; }

@@ -138,3 +138,32 @@ def test_checkpoint_list_orders_newest_first(
     body = client.get(f"/api/v1/sessions/{sid}/checkpoints", headers=auth_header(token)).json()
     assert [p["tick"] for p in body] == [100, 900]
     assert body[0]["ledger_seq"] == 99 and body[0]["state_hash"]
+
+
+def test_checkpoint_list_is_capped_and_keeps_the_newest(
+    wired: tuple, session_factory: sessionmaker[Session]
+) -> None:
+    """**截斷要落在正確的那一端。**
+
+    這個端點本來沒有上限。一場跑久的推演會累積數千個快照點（實測 3799），
+    而前端把整串塞進一個原生 `<select>`——那不是「選項有點多」，是**選不到**：
+    操作員在需要緊急回滾的時候面對的是一面牆。
+
+    回滾幾乎一定是回到**最近**的某個點（剛剛那一手下錯了），所以截斷保留新的那一端。
+    保留成舊的那一端會讓這個功能在長局裡完全失效，而且不會有任何錯誤訊息。
+    """
+    client, _fake, sid, token = wired
+    mgr = CheckpointManager(session_factory)
+    for seq in range(1, 31):
+        mgr.checkpoint(sid, tick=seq * 10, state={"u1": {"health": 100}}, ledger_seq=seq)
+
+    body = client.get(
+        f"/api/v1/sessions/{sid}/checkpoints?limit=5", headers=auth_header(token)
+    ).json()
+    assert len(body) == 5
+    assert [p["ledger_seq"] for p in body] == [30, 29, 28, 27, 26], "截斷保留了舊的那一端"
+
+    # 預設值也要有上限——不帶 limit 不等於「全部給我」。
+    default = client.get(f"/api/v1/sessions/{sid}/checkpoints", headers=auth_header(token)).json()
+    assert len(default) == 30  # 本例只有 30 筆，未觸及預設上限
+    assert default[0]["ledger_seq"] == 30

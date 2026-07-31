@@ -801,7 +801,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description 可回滾的狀態快照點（WP-E1）。限統裁——快照點洩漏對手的推演節奏。 */
+        /** @description 可回滾的狀態快照點（WP-E1）。限統裁——快照點洩漏對手的推演節奏。 **新→舊，預設只回最近 200 個**：一場跑久的推演會累積數千個快照點， 全部倒進一個下拉選單等於選不到。回滾幾乎一定是回到最近的某個點， 所以截斷落在正確的那一端；要翻更早的把 `limit` 調大（那是稽核不是操作）。 */
         get: operations["listCheckpoints"];
         put?: never;
         post?: never;
@@ -4597,7 +4597,9 @@ export interface operations {
     };
     listCheckpoints: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["SessionId"];
@@ -4606,7 +4608,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Checkpoints（依 ledger_seq 由新到舊） */
+            /** @description Checkpoints（依 ledger_seq 由新到舊，預設只回最近 200 個） */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 
 import redis
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_user, get_settings
@@ -35,6 +35,9 @@ _LOG = logging.getLogger("app.control")
 router = APIRouter(prefix="/api/v1/sessions", tags=["control"])
 
 _ACTIONS = frozenset({"PAUSE", "RESUME", "ROLLBACK"})
+# 快照點列表的預設頁大小。夠一場演習裡「往回幾步」的所有實際需求，
+# 又不會把數千筆倒進一個下拉選單。
+_CHECKPOINT_PAGE = 200
 
 
 class ControlRequest(BaseModel):
@@ -62,11 +65,21 @@ def _require_white_cell(user: CurrentUser) -> None:
 @router.get("/{session_id}/checkpoints", response_model=list[CheckpointView])
 def list_checkpoints(
     session_id: str,
+    limit: int = Query(default=_CHECKPOINT_PAGE, ge=1, le=2000),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[CheckpointView]:
-    """可回滾的快照點（WP-E1）。限統裁——快照點洩漏對手的推演節奏。"""
+    """可回滾的快照點（WP-E1），**新→舊，預設只回最近 200 個**。限統裁。
+
+    ⚠ 這裡本來沒有上限。一場跑久的推演會累積數千個快照點（實測 3799），
+    而前端把整串塞進一個原生 `<select>`——那不是「選項有點多」，是**選不到**：
+    捲軸一格幾百筆，操作員在需要緊急回滾的時候面對的是一面牆。
+
+    截斷方向是刻意的：回滾幾乎一定是回到**最近**的某個點（剛剛那一手下錯了），
+    而排序本來就是新到舊，所以 `limit` 自然落在正確的那一端。
+    真要翻更早的，把 `limit` 調大——但那是稽核行為，不是操作行為。
+    """
     _require_white_cell(user)
-    points = CheckpointManager(default_session_factory()).list_points(session_id)
+    points = CheckpointManager(default_session_factory()).list_points(session_id)[:limit]
     return [
         CheckpointView(
             tick=p.tick,
