@@ -11,6 +11,7 @@ import { POSTURE_LABELS, factionColor, healthColor } from '~/composables/useUnit
 // 新增的匯出在重新產生之前 `vue-tsc` 看不到——那會表現成一條與程式無關的紅燈。
 import { TEMPO_OPTS, rangeLabel } from '~/composables/useCopOrdering'
 import { precheckLabel } from '~/composables/useLabels'
+import type { MapFeature } from '~/composables/useMapFeatures'
 import type { UnitView } from '~/composables/useOrders'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useCopOrdering } from '~/composables/useCopOrdering'
@@ -36,6 +37,12 @@ const props = defineProps<{
   loading?: boolean
   /** 活血量（STATE_DIFF 優先）。 */
   liveHealth: (u: UnitView) => number | undefined
+  /** 地圖上看得見的障礙（破障令的可選標的）。 */
+  obstacleFeatures: MapFeature[]
+  /** 此令型是否被席位擋掉（後端 SEAT_ORDER_TYPES 投影；未指派席位一律 false）。 */
+  orderTypeDenied: (orderType: string) => boolean
+  /** 本席位（null＝未指派）。只用於說明文字。 */
+  mySeatRole: string | null
 }>()
 
 defineEmits<{ (e: 'select' | 'toggle-group', value: string): void }>()
@@ -67,6 +74,15 @@ const MISSION_OPTS = [
 /** WP-C1 姿態選項。順序＝防護由弱到強，也剛好是耗時由短到長。 */
 const POSTURE_OPTS = ['MOVING', 'HASTY', 'DEFENSE', 'DUG_IN'] as const
 
+/** 障礙型別 → 中文（破障下拉用；與設障下拉同一套用字）。 */
+const OBSTACLE_TYPE_LABELS: Record<string, string> = {
+  WIRE: '鐵絲網',
+  MINEFIELD: '雷區',
+  TANK_DITCH: '戰車壕',
+  ABATIS: '鹿砦',
+  BRIDGE_DEMO: '斷橋',
+}
+
 /** 每種令型各自的最低必要條件。前端只是 UX 早退——後端 validator 才是權威閘門。 */
 const canSubmit = computed(() => {
   const o = props.ordering
@@ -93,6 +109,18 @@ const canSubmit = computed(() => {
 const fratricideTarget = computed(
   () => !!props.targetUnit && props.isFriendly(props.targetUnit.faction),
 )
+
+/**
+ * 火力任務可選彈種。指定了武器就取那一門的，否則取全部曲射武器的**聯集**——
+ * 未指定武器時裁決層會自己挑一門，所以任何一門支援的彈種都可能派得上用場。
+ */
+const fireAmmoOptions = computed(() => {
+  const o = props.ordering
+  const pool = o.fireWeaponId
+    ? o.indirectWeapons.filter((w) => w.id === o.fireWeaponId)
+    : o.indirectWeapons
+  return [...new Set(pool.flatMap((w) => w.ammo_types ?? []))]
+})
 </script>
 
 <template>
@@ -151,15 +179,21 @@ const fratricideTarget = computed(
 
 <div v-if="selectedId" class="order" data-testid="order-panel">
   <h3>下令 · <span class="selunit" data-testid="selected-unit">{{ selectedUnit?.designation ?? selectedId }}</span></h3>
+  <!-- 席位過濾（WP-B5.2）：後端的 `SEAT_ORDER_TYPES` 才是權威，這裡只是**先停用**，
+       免得作戰官把火力任務的發數都填完了、按下送出才被 ORDER_SEAT_DENIED 彈回。
+       停用而不隱藏：看得到「這一席不能下這種令」比選項憑空消失好判斷。 -->
   <select v-model="ordering.orderType" data-testid="order-type">
-    <option value="MOVE">移動</option>
-    <option value="ENGAGE">交戰</option>
-    <option value="FIRE_MISSION">火力任務（打座標）</option>
-    <option value="POSTURE">姿態（掘壕/防禦）</option>
-    <option value="MISSION">任務（奪佔/防守/掩護/行軍）</option>
-    <option value="FORMATION">隊形 / 乘駐車</option>
-    <option value="ENGINEER">障礙作業（破障/設障）</option>
+    <option value="MOVE" :disabled="orderTypeDenied('MOVE')">移動</option>
+    <option value="ENGAGE" :disabled="orderTypeDenied('ENGAGE')">交戰</option>
+    <option value="FIRE_MISSION" :disabled="orderTypeDenied('FIRE_MISSION')">火力任務（打座標）</option>
+    <option value="POSTURE" :disabled="orderTypeDenied('POSTURE')">姿態（掘壕/防禦）</option>
+    <option value="MISSION" :disabled="orderTypeDenied('MISSION')">任務（奪佔/防守/掩護/行軍）</option>
+    <option value="FORMATION" :disabled="orderTypeDenied('FORMATION')">隊形 / 乘駐車</option>
+    <option value="ENGINEER" :disabled="orderTypeDenied('ENGINEER')">障礙作業（破障/設障）</option>
   </select>
+  <p v-if="mySeatRole && orderTypeDenied(ordering.orderType)" class="fixed-note" data-testid="seat-denied">
+    ⚠ 你的席位不能下這種令——請改選未停用的令型，或請統裁調整席位。
+  </p>
   <p v-if="selectedUnitFixed" class="fixed-note" data-testid="fixed-note">
     🔒 固定單位（指揮部等）——不可下移動令；此單位不會被派去移動或機動交戰（可於劇本編輯器調整）。
   </p>
@@ -306,6 +340,43 @@ const fratricideTarget = computed(
       >
       <span class="dim">· 每發各自散布，多發覆蓋一片</span>
     </label>
+    <!-- 多門曲射武器時才需要指定；只有一門就不必給一個只有一個選項的下拉。
+         直射武器不列入：裁決層被指名直射時會**視同未指名**自行改用曲射，
+         列出來只會讓下令者以為自己選的那門在打。 -->
+    <label v-if="ordering.indirectWeapons.length > 1" class="rounds">
+      射擊單位
+      <select v-model="ordering.fireWeaponId" data-testid="fire-weapon">
+        <option :value="null">自動（射程最遠的曲射武器）</option>
+        <option v-for="w in ordering.indirectWeapons" :key="w.id" :value="w.id">
+          {{ w.name }} · {{ rangeLabel(w.max_range_m ?? 0) }}
+        </option>
+      </select>
+    </label>
+    <!-- WP-C4c 發煙：`ammo_type="SMOKE"` 是生成煙幕的唯一入口，而煙幕是遮蔽觀測的主要手段。
+         彈種清單取自被選武器；沒指定武器就取全部曲射武器的聯集。 -->
+    <label v-if="fireAmmoOptions.length" class="rounds">
+      彈種
+      <select v-model="ordering.fireAmmoType" data-testid="fire-ammo">
+        <option :value="null">一般彈（殺傷）</option>
+        <option v-for="a in fireAmmoOptions" :key="a" :value="a">
+          {{ a === 'SMOKE' ? '發煙彈 · 落點生成煙幕，不造成傷亡' : a }}
+        </option>
+      </select>
+    </label>
+    <label class="rounds">
+      時效
+      <input
+        v-model.number="ordering.fireTtlTicks"
+        type="number"
+        min="0"
+        max="100000"
+        data-testid="fire-ttl"
+      >
+      <span class="dim">
+        · tick，0 ＝不過期。射手斷聯時令會留在待執行，恢復通聯後把彈打到舊戰場——
+        設了時效就作廢重指派。
+      </span>
+    </label>
     <!-- 本局要求火協時要掛核准單；沒有可用的單就直說，別讓人對著空下拉猜。 -->
     <select
       v-if="ordering.approvedFireRequests.length"
@@ -399,6 +470,20 @@ const fratricideTarget = computed(
         <option value="false">徒步 · 暴露面小，可全般運用步兵火力</option>
       </select>
     </label>
+    <!-- 行軍間隔換的是**被動防護**：縱隊拉長 → 一發砲彈罩得到的平台變少。
+         後端 `formation_wiring` 一直讀得到這個鍵，任務級下令的 decomposer 也會填它，
+         但人類席位沒有輸入框——同一局裡 AI 拉得開間隔、人類拉不開。 -->
+    <label v-if="ordering.formation === 'COLUMN'" class="rounds">
+      行軍間隔
+      <input
+        v-model.number="ordering.columnSpacingKm"
+        type="number"
+        min="0"
+        step="0.05"
+        data-testid="column-spacing"
+      >
+      <span class="dim">· km，0 ＝沿用預設。拉開間隔＝一發砲彈罩得到的平台變少</span>
+    </label>
     <div class="hint">
       兩者至少要指定一項；選「不變更」的欄位維持原狀——只想下車的令不該把隊形一起重設。
     </div>
@@ -433,14 +518,28 @@ const fratricideTarget = computed(
         <template v-else>未標定</template>
       </div>
     </template>
+    <!-- 破障標的：從**地圖上看得見的障礙**挑，不要手打 UUID。
+         這裡曾經是一格文字輸入框，而那串 id 在 UI 上沒有任何地方顯示得出來——
+         於是 WP-C2 障礙工兵在人類席位上只完成一半：設障點得到、破障下不了。
+         清單沿用地圖圖層的同一份可見特徵，所以看得見才選得到。 -->
     <label v-else class="rounds">
       標的
-      <input
+      <select
+        v-if="obstacleFeatures.length"
         v-model="ordering.engineerFeatureId"
-        type="text"
-        placeholder="障礙標註 id"
         data-testid="engineer-feature-id"
       >
+        <option value="">（選擇要清除的障礙）</option>
+        <option v-for="f in obstacleFeatures" :key="f.id" :value="f.id">
+          {{ f.label || '（未命名障礙）' }}
+          <template v-if="f.attributes?.obstacle_type">
+            · {{ OBSTACLE_TYPE_LABELS[String(f.attributes.obstacle_type)] ?? f.attributes.obstacle_type }}
+          </template>
+        </option>
+      </select>
+      <span v-else class="dim" data-testid="no-obstacles">
+        目前視野內沒有障礙可破——障礙要先被偵測到才選得到。
+      </span>
     </label>
     <!-- 「工兵資格」的權威判準是後端 `is_engineer()`：兵科（branch）為工兵，或舊資料的
          attributes.unit_kind。**畫面上只講兵科**——那是使用者真的按得到的那一格（單位屬性
@@ -482,18 +581,6 @@ const fratricideTarget = computed(
         >⚠ <b>對友軍開火</b>：{{ targetUnit?.designation }} 與本軍為同盟關係。此令將照常執行並<b
           >記入 AAR</b
         >。</span
-      >
-    </label>
-    <!-- WP-A3 限制射擊區二次確認。**只在後端真的因此擋下來時才出現**——
-         平時掛一個「我要往管制區裡打」的核取方塊只會被順手勾掉。 -->
-    <label
-      v-if="ordering.restrictedBlocked"
-      class="fratricide"
-      data-testid="restricted-ack"
-    >
-      <input v-model="ordering.restrictedAck" type="checkbox" >
-      <span
-        >⚠ <b>目標位於限制射擊區</b>：確認仍要射擊請勾選後重送。此令將<b>記入 AAR</b>。</span
       >
     </label>
     <template v-if="ordering.weapons.length">
@@ -542,6 +629,20 @@ const fratricideTarget = computed(
       </select>
     </template>
   </template>
+  <!-- WP-A3 限制射擊區二次確認。**放在所有令型分支之外**——`restrictedBlocked` 是從
+       precheck 結果算出來的，跟令型無關。它曾經被關在 ENGAGE 那個 v-else 裡，
+       於是**火力任務打進限制射擊區時永遠沒有確認框**：後端叫你勾選重送，
+       畫面上卻沒有那個核取方塊，該區對 FIRE_MISSION 等同絕對禁射。 -->
+  <label
+    v-if="ordering.restrictedBlocked"
+    class="fratricide"
+    data-testid="restricted-ack"
+  >
+    <input v-model="ordering.restrictedAck" type="checkbox" >
+    <span
+      >⚠ <b>目標位於限制射擊區</b>：確認仍要射擊請勾選後重送。此令將<b>記入 AAR</b>。</span
+    >
+  </label>
   <button data-testid="submit-order" :disabled="!canSubmit" @click="ordering.submit">
     {{ SUBMIT_LABELS[ordering.orderType] }}
   </button>

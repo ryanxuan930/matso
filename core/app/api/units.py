@@ -25,6 +25,7 @@ from app.adjudication import WeaponProfile
 from app.adjudication.effectiveness import health_state
 from app.adjudication.establishment import platform_count_for
 from app.adjudication.supply import SupplyClass
+from app.adjudication.weapon import INDIRECT_CATEGORIES
 from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
@@ -103,6 +104,13 @@ class WeaponView(BaseModel):
     # 一次火力任務的準則發數（`rounds_per_mission`）。**0＝未宣告** → 下令面板沿用自己的預設。
     # 這一欄存在的理由：軍械庫讓使用者編輯它，若沒有任何地方讀，那個欄位就是在騙人。
     rounds_per_mission: int = 0
+    # 是否曲射。火力任務（打座標）只有曲射武器打得到，直射被指名時裁決層會**視同未指名**
+    # 而自行退回射程最遠的曲射武器（見 `AreaFireAdjudicator` 的說明）——所以下拉裡混進
+    # 直射武器不會出錯，只會讓下令者以為自己選的那門在打。
+    #
+    # 由後端投影而不是讓前端看 `category` 自己判：`INDIRECT_CATEGORIES` 是預檢與裁決
+    # 共用的那一份權威，前端再抄一份就等著哪天兩邊漂開。
+    indirect_fire: bool = False
 
 
 def _view(
@@ -312,6 +320,7 @@ def list_unit_weapons(
                 ammo_types=list(profile.ammo_types),
                 ammo_remaining=ammo_remaining,
                 rounds_per_mission=profile.rounds_per_mission,
+                indirect_fire=str(tmpl.category) in INDIRECT_CATEGORIES,
             )
         )
     return out

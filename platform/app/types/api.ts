@@ -1351,6 +1351,8 @@ export interface components {
             my_unit_scope?: string[];
             /** @description 呼叫者在此 session 的席位（WP-B5.1/B5.2）。null＝未指派席位（權限沿用角色規則）。 COP 據此顯示「你坐哪一席」與越權時的說明——後端仍是權威，前端只做提示。 */
             my_seat_role?: components["schemas"]["SeatRole"] | null;
+            /** @description 呼叫者的席位可下的令型（後端 SEAT_ORDER_TYPES 投影）。 ⚠ **空陣列有兩種意思，要配 `my_seat_role` 一起讀**：席位為 null ＝未指派， 不做席位過濾（權限沿用角色規則）；席位非 null 而清單為空 ＝該席位唯讀 （情報官、觀察員）。只看陣列會把唯讀席位誤放成全開。 COP 據此在下令下拉裡停用其餘選項——前端不得自己抄一份席位分工表，那張表會漂開。 仍只是 UX：越權送出由 ORDER_SEAT_DENIED 擋。 */
+            my_allowed_order_types?: components["schemas"]["OrderType"][];
             /** @description 所屬演習（WP-B1）。**null＝獨立局**，與掛演習之前的行為完全相同。 演習物件本身只有白軍/管理看得到；本欄與 `session_role` 是每局資訊，人人可見。 */
             exercise_id?: string | null;
             /** @description 本局在演習中的角色（預推/正式/分析）。null＝未指定（含獨立局）。 */
@@ -1565,6 +1567,8 @@ export interface components {
             ammo_remaining?: number | null;
             /** @description 一次火力任務的準則發數；0＝未宣告，下令面板沿用自己的預設。 */
             rounds_per_mission?: number;
+            /** @description 是否為曲射武器（火力任務只有曲射打得到）。權威為後端的 INDIRECT_CATEGORIES——前端不得再抄一份類別表。 */
+            indirect_fire?: boolean;
         };
         /**
          * @description 信文種類（[JCATS-F p.10–14] C2 工件）。REQUEST/APPROVAL 會帶 ref_id 指向申請單。

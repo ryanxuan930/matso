@@ -643,3 +643,168 @@ test('單位資訊卡要顯示補給水位與斷補，且頁面真的把活值�
   assert.match(page, /:live-supply="liveSupply"/, 'cop.vue 沒有把活補給水位傳給單位卡')
   assert.match(page, /:live-starved-days="liveStarvedDays"/)
 })
+
+// ================== UI-P2：後端讀得到、面板送不出的下令參數 ==================
+
+test('火力任務要送得出彈種——發煙任務的唯一入口', async () => {
+  /**
+   * 抓的病：`FireMissionPayload.ammo_type` 後端一直讀得到（`fire_wiring.py`），
+   * 而 `ammo_type="SMOKE"` 是 WP-C4c 落點生成煙幕的**唯一**入口。面板沒有這個欄位，
+   * 於是整個發煙能力對人類席位不存在——而煙幕是遮蔽觀測的主要手段。
+   */
+  const { o } = makeOrdering()
+  o.orderType.value = 'FIRE_MISSION'
+  o.firePoint.value = { lat: 23.7, lng: 120.3 }
+  o.fireAmmoType.value = 'SMOKE'
+  await o.submit()
+
+  assert.equal(payloadOf(lastRequest('/orders')).ammo_type, 'SMOKE')
+})
+
+test('火力任務要送得出射擊武器與時效', async () => {
+  // ttl：射手斷聯時通信閘門把令留在 VALIDATED，恢復通聯後會把彈打到幾十個 tick 前的
+  // 戰場。真實作業裡那種任務是作廢重指派——沒有這個欄位就作廢不了。
+  const { o } = makeOrdering()
+  o.orderType.value = 'FIRE_MISSION'
+  o.firePoint.value = { lat: 23.7, lng: 120.3 }
+  o.fireWeaponId.value = 'w-155'
+  o.fireTtlTicks.value = 30
+  await o.submit()
+
+  const payload = payloadOf(lastRequest('/orders'))
+  assert.equal(payload.weapon_id, 'w-155')
+  assert.equal(payload.ttl_ticks, 30)
+})
+
+test('沒宣告的火力任務參數一律不送（0/null ≠ 宣告了 0）', async () => {
+  // `ttl_ticks` 的 schema 是 ge=1：送 0 會被 422 打回。而語義上 0＝不過期，
+  // 兩者混在一起會讓「指揮官沒設時效」變成「這道令送不出去」。
+  const { o } = makeOrdering()
+  o.orderType.value = 'FIRE_MISSION'
+  o.firePoint.value = { lat: 23.7, lng: 120.3 }
+  await o.submit()
+
+  const payload = payloadOf(lastRequest('/orders'))
+  assert.ok(!('ttl_ticks' in payload), 'ttl_ticks 不該憑空出現')
+  assert.ok(!('ammo_type' in payload), 'ammo_type 不該憑空出現')
+  assert.ok(!('weapon_id' in payload), 'weapon_id 不該憑空出現')
+})
+
+test('隊形令要送得出行軍間隔', async () => {
+  /**
+   * 抓的病：`formation_wiring` 一直讀 `column_spacing_km`，任務級下令的 `decomposer`
+   * 展開 MOVE_MARCH 時也會填它——但人類席位沒有輸入框。同一局裡 AI 拉得開行軍間隔、
+   * 人類拉不開，而畫面上看不出為什麼自己的縱隊挨砲挨得比較慘。
+   */
+  const { o } = makeOrdering()
+  o.orderType.value = 'FORMATION'
+  o.formation.value = 'COLUMN'
+  o.columnSpacingKm.value = 0.35
+  await o.submit()
+
+  assert.equal(payloadOf(lastRequest('/orders')).column_spacing_km, 0.35)
+})
+
+test('沒宣告行軍間隔就不送（0 是「間隔零公尺」，不是「沒設定」）', async () => {
+  const { o } = makeOrdering()
+  o.orderType.value = 'FORMATION'
+  o.formation.value = 'LINE'
+  await o.submit()
+
+  assert.ok(!('column_spacing_km' in payloadOf(lastRequest('/orders'))))
+})
+
+test('限制射擊區確認框不綁在交戰令上', () => {
+  /**
+   * 抓的病：`restricted-ack` 過去寫在 ENGAGE 的 `v-else` 分支裡，於是**火力任務打進
+   * 限制射擊區時永遠沒有確認框**——後端叫你勾選重送，畫面上卻沒有那個核取方塊，
+   * 該區對 FIRE_MISSION 等同絕對禁射（跟 NO_STRIKE 沒有差別）。
+   *
+   * 用原始碼位置斷言：確認框必須在所有令型分支**之外**。
+   */
+  const src = readSrc('components/cop/UnitsOrderPanel.vue')
+  const ackAt = src.indexOf('data-testid="restricted-ack"')
+  const engageAt = src.indexOf("v-else-if=\"ordering.orderType === 'POSTURE'\"")
+  assert.ok(ackAt > 0 && engageAt > 0)
+  assert.ok(
+    ackAt > src.indexOf('data-testid="submit-order"') - 2000 && ackAt > engageAt,
+    '限制射擊確認框仍被關在某個令型分支裡',
+  )
+  // 它自己要有 v-if，否則每道令都掛一個「我要往管制區裡打」的核取方塊。
+  assert.match(src.slice(ackAt - 200, ackAt), /v-if="ordering\.restrictedBlocked"/)
+})
+
+test('曲射判定來自後端投影，前端不得自己抄一份類別表', () => {
+  // `INDIRECT_CATEGORIES` 是預檢與裁決共用的權威。前端再抄一份就等著哪天兩邊漂開——
+  // 而症狀會是「下拉裡看得到的砲打不出去」這種查半天的病。
+  const src = readSrc('composables/useCopOrdering.ts')
+  assert.match(src, /w\.indirect_fire/, '曲射過濾沒有走後端投影的 indirect_fire')
+  assert.ok(
+    !/ARTILLERY['"]?\s*[,)\]]/.test(src),
+    '前端出現了硬編碼的曲射類別——那份表的權威在後端',
+  )
+})
+
+test('破障令要從地圖上的障礙挑，不要手打 UUID', () => {
+  /**
+   * 抓的病：破障的標的過去是一格文字輸入框，要求打入障礙標註的 UUID——
+   * 而那串 id 在 UI 上沒有任何地方顯示得出來。於是 WP-C2 障礙工兵在人類席位上
+   * 只完成一半：設障點得到、**破障根本下不了**。
+   *
+   * 清單要沿用地圖圖層的同一份可見特徵（`shownFeatures`），
+   * 否則會讓人破一個自己陣營根本偵測不到的障礙——那是繞過戰場迷霧。
+   */
+  const panel = readSrc('components/cop/UnitsOrderPanel.vue')
+  const at = panel.indexOf('data-testid="engineer-feature-id"')
+  assert.ok(at > 0, '破障標的欄位不見了')
+  assert.match(panel.slice(at - 400, at), /<select/, '破障標的仍是手打輸入框')
+  assert.match(panel, /v-for="f in obstacleFeatures"/)
+
+  const page = readSrc('pages/session/[id]/cop.vue')
+  assert.match(page, /obstacleFeatures = computed/)
+  assert.match(page, /shownFeatures\.value\.filter\(\(f\) => f\.kind === 'OBSTACLE'\)/)
+  assert.match(page, /:obstacle-features="obstacleFeatures"/)
+})
+
+test('席位不能下的令型要先停用，不要等送出才彈回', () => {
+  /**
+   * 抓的病：後端有權威表（`SEAT_ORDER_TYPES`）且送出才擋（`ORDER_SEAT_DENIED`）——
+   * 作戰官看得到「火力任務」，把落點標好、發數填完，按下送出才被彈回。
+   *
+   * 停用而不隱藏：看得到「這一席不能下這種令」比選項憑空消失好判斷。
+   */
+  const panel = readSrc('components/cop/UnitsOrderPanel.vue')
+  for (const t of ['MOVE', 'ENGAGE', 'FIRE_MISSION', 'POSTURE', 'MISSION', 'FORMATION', 'ENGINEER']) {
+    assert.ok(
+      panel.includes(`:disabled="orderTypeDenied('${t}')"`),
+      `令型 ${t} 沒有接上席位過濾`,
+    )
+  }
+  assert.match(panel, /data-testid="seat-denied"/)
+})
+
+test('未指派席位不做過濾；有席位但清單為空＝唯讀，不得放成全開', () => {
+  /**
+   * `my_allowed_order_types` 的空陣列有**兩種意思**：席位為 null ＝未指派 → 不過濾；
+   * 席位非 null 而清單空 ＝該席位唯讀（情報官、觀察員）。
+   * 只看陣列會把唯讀席位誤放成全開——那是我在設計這個欄位時差點造出來的洞。
+   */
+  const page = readSrc('pages/session/[id]/cop.vue')
+  const fn = page.slice(page.indexOf('function orderTypeDenied'))
+  assert.match(
+    fn.slice(0, 240),
+    /mySeatRole\.value !== null && !myAllowedOrderTypes\.value\.includes/,
+    '席位過濾沒有同時看 mySeatRole——空陣列會被誤讀',
+  )
+})
+
+test('席位可下令型別來自後端投影，前端不得自己抄分工表', () => {
+  // `SEAT_ORDER_TYPES` 已經被漏改過兩次（作戰官少四種令、後勤官少 RESUPPLY）。
+  // 前端再抄一份就是第三份會漂開的複本。
+  const page = readSrc('pages/session/[id]/cop.vue')
+  assert.match(page, /my_allowed_order_types/)
+  assert.ok(
+    !/S3_OPS|FSO_FIRES|S4_LOG/.test(page),
+    '前端出現了席位分工的硬編碼——那張表的權威在後端',
+  )
+})

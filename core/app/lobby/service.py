@@ -367,6 +367,7 @@ class LobbyService:
             allow_fratricide=bool(session.allow_fratricide),
             my_unit_scope=my_unit_scope or [],
             my_seat_role=my_seat_role,
+            my_allowed_order_types=_allowed_order_types(my_seat_role),
             archived_at=(
                 session.archived_at.isoformat()
                 if session.archived_at is not None and hasattr(session.archived_at, "isoformat")
@@ -506,3 +507,30 @@ def _derive_seed(name: str, user_id: str, session_id: str) -> int:
     """
     digest = hashlib.blake2b(f"{name}:{user_id}:{session_id}".encode(), digest_size=8).digest()
     return int.from_bytes(digest, "big") & 0x7FFF_FFFF_FFFF_FFFF
+
+
+def _allowed_order_types(seat_role: str | None) -> list[str]:
+    """席位 → 可下令型別。
+
+    ⚠ **未指派（None）與唯讀席位（情報官/觀察員）都回空 list**——兩者的差別由
+    `my_seat_role` 本身表達，消費端要一起讀。這裡不另造一個 sentinel：
+    「沒有席位」與「這個席位不能下令」在資料上本來就是兩個欄位的事。
+
+    投影 `seats.SEAT_ORDER_TYPES` 而不是讓前端照席位名自己查表：那張表已經被漏改過兩次
+    （作戰官少了 MISSION/POSTURE/FORMATION/ENGINEER、後勤官少了 RESUPPLY），
+    前端再抄一份就是第三份會漂開的複本，而症狀是「下拉裡看得到的令送出去被擋」。
+
+    排序固定（依 `OrderType` 宣告順序）——回應體的欄位順序不該隨 set 的雜湊擺動。
+    """
+    from app.models.enums import SeatRole
+    from app.orders.schemas import OrderType
+    from app.seats import SEAT_ORDER_TYPES
+
+    if not seat_role:
+        return []
+    try:
+        seat = SeatRole(seat_role)
+    except ValueError:
+        return []  # 不認得的席位字串：當作未指派，交還角色規則判斷
+    allowed = SEAT_ORDER_TYPES.get(seat, frozenset())
+    return [t.value for t in OrderType if t in allowed]

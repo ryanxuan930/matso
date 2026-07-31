@@ -156,6 +156,23 @@ export function useCopOrdering(opts: {
   // ---- WP-C10.2 面目標射擊（打座標，不打單位）----
   const firePoint = ref<{ lng: number; lat: number } | null>(null)
   const fireRounds = ref(4)
+  /**
+   * 火力任務要用哪一門砲、打什麼彈、多久失效。三個都是 `FireMissionPayload` 的既有欄位，
+   * 後端 `fire_wiring` 逐一讀得到——只是面板沒有輸入框，於是：
+   *
+   * - **發煙任務下不了**（`ammo_type="SMOKE"` 是 WP-C4c 生成煙幕的唯一入口，
+   *   而煙幕是遮蔽觀測的主要手段）。
+   * - 多門砲的單位無法指定用哪一門。
+   * - 沒有時效：射手斷聯時通信閘門會把令留在 VALIDATED，恢復通聯後把彈打到
+   *   幾十個 tick 前的戰場。真實作業裡那種任務是**作廢**、由火協重新指派。
+   *
+   * 三者皆 null/0 ＝不宣告，行為與過去逐字相同。
+   */
+  const fireWeaponId = ref<string | null>(null)
+  const fireAmmoType = ref<string | null>(null)
+  const fireTtlTicks = ref(0)
+  /** 本單位曲射武器（火力任務只有它們打得到）。 */
+  const indirectWeapons = computed(() => weapons.value.filter((w) => w.indirect_fire))
   /** 本局要求火協時要掛的已核准 FIRE_SUPPORT 申請單。 */
   const fireRequestId = ref<string | null>(null)
   const approvedFireRequests = ref<RequestView[]>([])
@@ -201,6 +218,10 @@ export function useCopOrdering(opts: {
     weapons.value = []
     firePoint.value = null
     fireRequestId.value = null
+    fireWeaponId.value = null
+    fireAmmoType.value = null
+    fireTtlTicks.value = 0
+    columnSpacingKm.value = 0
     // 節奏跟著單位清掉：強行軍是一個要付戰力代價的例外決定，不該因為換了一個單位
     // 就被沿用下去（下一個單位的指揮官沒有做過那個決定）。
     tempo.value = 'NORMAL'
@@ -346,6 +367,15 @@ export function useCopOrdering(opts: {
   // 至少要指定一項。`mounted` 是三態：`null`＝不動該欄（只想換隊形時不該把乘駐車一起重設）。
   const formation = ref<'COLUMN' | 'LINE' | 'WEDGE' | 'VEE' | 'HERRINGBONE' | ''>('')
   const mounted = ref<'' | 'true' | 'false'>('')
+  /**
+   * 縱隊行軍間隔（km）。**0 ＝不宣告**，沿用引擎預設。
+   *
+   * 後端 `formation_wiring` 一直讀得到這個鍵（`COLUMN_SPACING_KEY`），而任務級下令的
+   * `decomposer` 展開 MOVE_MARCH 時也會填它——但人類席位沒有輸入框。
+   * 結果是同一局裡 **AI 陣營拉得開行軍間隔、人類陣營拉不開**，
+   * 而畫面上看不出為什麼自己的縱隊挨砲挨得比較慘。
+   */
+  const columnSpacingKm = ref(0)
 
   // ---- WP-C2 障礙作業令 ----
   //
@@ -390,6 +420,8 @@ export function useCopOrdering(opts: {
       return {
         ...(formation.value ? { formation: formation.value } : {}),
         ...(mounted.value ? { mounted: mounted.value === 'true' } : {}),
+        // 0 ＝不宣告：送 0 會被讀成「間隔零公尺」，那是完全不同的一件事。
+        ...(columnSpacingKm.value > 0 ? { column_spacing_km: columnSpacingKm.value } : {}),
       }
     }
     if (orderType.value === 'ENGINEER') {
@@ -423,6 +455,10 @@ export function useCopOrdering(opts: {
         target_lng: firePoint.value?.lng,
         rounds: fireRounds.value,
         ...(fireRequestId.value ? { fire_request_id: fireRequestId.value } : {}),
+        ...(fireWeaponId.value ? { weapon_id: fireWeaponId.value } : {}),
+        ...(fireAmmoType.value ? { ammo_type: fireAmmoType.value } : {}),
+        // 0 ＝不宣告（永不過期，既有行為）。送 0 會被 schema 的 ge=1 擋掉。
+        ...(fireTtlTicks.value > 0 ? { ttl_ticks: fireTtlTicks.value } : {}),
       }
     }
     return {
@@ -523,10 +559,15 @@ export function useCopOrdering(opts: {
     combinedMode,
     firePoint,
     fireRounds,
+    fireWeaponId,
+    fireAmmoType,
+    fireTtlTicks,
+    indirectWeapons,
     posture,
     // WP-C3 隊形/乘駐車
     formation,
     mounted,
+    columnSpacingKm,
     // WP-C2 障礙作業
     engineerAction,
     obstacleType,

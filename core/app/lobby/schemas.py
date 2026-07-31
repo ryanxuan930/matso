@@ -40,6 +40,16 @@ class SessionSummary(BaseModel):
     my_unit_scope: list[str] = []  # 呼叫者限指揮之單位子集（空＝整個陣營；COP 灰化範圍外）
     # 席位（WP-B5.1/B5.2）；None＝未指派（權限沿用角色規則）。COP 據此顯示「你坐哪一席」。
     my_seat_role: str | None = None
+    # 該席位可下的令型（`seats.SEAT_ORDER_TYPES` 的投影）。
+    # ⚠ **空 list 有兩種意思，要配 `my_seat_role` 一起讀**：席位 None ＝未指派 → 不過濾
+    # （權限沿用角色規則，既有局零變更）；席位非 None 而清單為空 ＝**該席位唯讀**
+    # （情報官、觀察員）。只看清單會把唯讀席位誤放成全開。
+    #
+    # 由後端算好送出來，而不是讓前端照著席位名自己查一張表：那張表在
+    # `core/app/seats/__init__.py`，而它已經被漏改過兩次
+    # （作戰官少了 MISSION/POSTURE/FORMATION/ENGINEER、後勤官少了 RESUPPLY）。
+    # 前端再抄一份就是第三份，而症狀會是「下拉裡看得到的令送出去被擋」。
+    my_allowed_order_types: list[str] = []
     # WP-B1 所屬演習與本局角色。**None＝獨立局**，行為與掛演習之前完全相同。
     # 演習物件本身只有白軍/管理看得到；這兩欄是每局資訊，人人可見。
     exercise_id: str | None = None

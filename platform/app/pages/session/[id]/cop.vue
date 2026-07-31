@@ -146,6 +146,23 @@ const symbolDemoted = ref(false)
 // 不能顯示「此 session 無可下令單位」，否則使用者會以為這局是空的。
 const loading = ref(true)
 const mySeatRole = ref<string | null>(null) // 席位（WP-B5.2）；null＝未指派（沿用角色權限）
+/**
+ * 本席位可下的令型（後端 `SEAT_ORDER_TYPES` 投影）。
+ *
+ * ⚠ **空陣列要配 `mySeatRole` 一起讀**：席位為 null ＝未指派 → 不過濾；
+ * 席位非 null 而清單為空 ＝該席位唯讀（情報官、觀察員）。只看陣列會把唯讀席位放成全開。
+ */
+const myAllowedOrderTypes = ref<string[]>([])
+/**
+ * 下令下拉要不要停用某個選項。**未指派席位一律放行**——那條路徑的權限交還角色規則。
+ *
+ * 為什麼不在前端寫一份席位分工表：那張表在 `core/app/seats/__init__.py`，
+ * 而它已經被漏改過兩次（作戰官少了 MISSION/POSTURE/FORMATION/ENGINEER、
+ * 後勤官少了 RESUPPLY）。前端再抄一份就是第三份，症狀會是「下拉裡看得到的令送出去被擋」。
+ */
+function orderTypeDenied(t: string): boolean {
+  return mySeatRole.value !== null && !myAllowedOrderTypes.value.includes(t)
+}
 const myUnitScope = ref<string[]>([]) // 限指揮之單位子集（空＝整個陣營）；範圍外單位不可下令
 const showOrbat = ref(false) // 詳細卡的編裝編輯器展開狀態
 
@@ -315,6 +332,17 @@ const engageTargets = computed(() =>
 )
 // 火力計畫挑砲兵用：只列我方（後端仍會擋越權下令，這裡是 UX）。
 const friendlyUnits = computed(() => realUnits.value.filter((u) => isFriendly(u.faction)))
+/**
+ * 破障令可選的標的（地圖上看得見的障礙）。
+ *
+ * 過去破障令要**手打障礙標註的 UUID**，而 UI 上沒有任何地方顯示那串 id——
+ * 於是 WP-C2 障礙工兵在人類席位上只完成一半：設障點得到、破障下不了。
+ * 這裡沿用地圖圖層的同一份 `shownFeatures`，所以**看得見才選得到**，
+ * 不會讓人破一個自己陣營根本偵測不到的障礙。
+ */
+const obstacleFeatures = computed(() =>
+  mapEditor.shownFeatures.value.filter((f) => f.kind === 'OBSTACLE'),
+)
 
 // WP-E3：狀態（單位/敵情/關係/標註）改由**單一原子快照**取得。
 // 過去是四個獨立 GET 各自回來拼裝——彼此不同時，會拼出「單位是新的、敵情是舊的」的畫面。
@@ -358,6 +386,7 @@ async function refreshInner() {
       allow_fratricide?: boolean
       my_unit_scope?: string[]
       my_seat_role?: string | null
+      my_allowed_order_types?: string[]
     }[]
   >('/sessions').catch(() => [])
   const me = sessions.find((s) => s.id === sessionId.value)
@@ -367,6 +396,7 @@ async function refreshInner() {
   allowFratricide.value = !!me?.allow_fratricide
   myUnitScope.value = me?.my_unit_scope ?? []
   mySeatRole.value = me?.my_seat_role ?? null
+  myAllowedOrderTypes.value = me?.my_allowed_order_types ?? []
 }
 
 // 清空選取與下令子狀態（#6 點空白取消選取 / 選新單位前重置）。
@@ -746,6 +776,9 @@ onBeforeUnmount(() => {
           :is-friendly="isAlly"
           :in-scope="inScope"
           :live-health="liveHealth"
+          :obstacle-features="obstacleFeatures"
+          :order-type-denied="orderTypeDenied"
+          :my-seat-role="mySeatRole"
           @select="selectUnit"
           @toggle-group="toggleFactionGroup"
         />
