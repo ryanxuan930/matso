@@ -24,6 +24,7 @@ import {
   type RequestKind,
   type RequestList,
 } from '~/composables/useC2'
+import { requestParamsSummary } from '~/composables/useLabels'
 import { SEAT_ROLE_LABELS, fetchRoster } from '~/composables/useParticipants'
 
 const props = defineProps<{
@@ -224,6 +225,11 @@ async function doDecide(rid: string, approve: boolean) {
   }
 }
 
+/** 申請單內容——同 OrdersPanel：在 script 算好，樣板只拿結果。 */
+function paramsText(r: { params?: unknown }): string {
+  return requestParamsSummary(r.params as Record<string, unknown>)
+}
+
 const pending = computed(() => (reqs.value?.requests ?? []).filter((r) => r.status === 'PENDING'))
 /** 只是 UX：後端才是核覆權的權威。 */
 const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat === null)
@@ -317,6 +323,11 @@ const mayDecide = computed(() => props.mySeat === 'COMMANDER' || props.mySeat ==
             〔{{ shortSeat(r.requested_seat) }}〕
           </span>
           <span class="m-tick">T{{ r.requested_at_tick }}</span>
+        </div>
+        <!-- 申請單的**內容**（UI-P3）。核覆者按下「核准」時要知道自己核的是哪個座標——
+             過去這一格完全沒有，等於在資訊不全的情況下簽字。 -->
+        <div v-if="paramsText(r)" class="m-body" data-testid="c2-request-params">
+          {{ paramsText(r) }}
         </div>
         <!-- 核覆留痕（誰、第幾 tick）。schema 註解寫明這是給 AAR 重建事件鏈用的，
              但申請人在畫面上一直看不到是誰核的——只看得到一句核覆說明。 -->

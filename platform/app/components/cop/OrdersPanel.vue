@@ -6,6 +6,7 @@
  * 任務令分解出的子令收在母令底下（見 `orderRows`）。
  */
 import { computed } from 'vue'
+import { failedCheckLabels, orderPayloadSummary } from '~/composables/useLabels'
 import { missionPhaseLabel, orderStatusLabel, orderTypeLabel } from '~/composables/useOrders'
 import { useCopFeed } from '~/composables/useCopFeed'
 import type { OrderResponse, UnitView } from '~/composables/useOrders'
@@ -62,6 +63,20 @@ const orderRows = computed(() => {
  * 階段值只存在令載荷的 `_mission_state.phase` 裡）。所以在後端補上之前，
  * 這裡恆為空、什麼都不顯示。前端這一半先接好，後端一填就會自己亮起來。
  */
+/**
+ * 令的內容摘要與預檢未過關卡——**在 script 算好**，樣板只拿結果。
+ *
+ * 兩個理由：樣板裡 `v-if` 與插值會各呼叫一次同一個函式；而且把 `o.order_type`
+ * 寫進 `{{ }}` 會被 `ui-wording` 閘門判為「後端欄位名漏到畫面上」——
+ * 那條閘門認的是樣板插值裡的 snake_case，它分不出那是引數還是要顯示的字。
+ */
+function payloadText(o: OrderResponse): string {
+  return orderPayloadSummary(o.order_type, o.payload as Record<string, unknown>)
+}
+function failedChecks(o: OrderResponse): string[] {
+  return failedCheckLabels(o.precheck)
+}
+
 function phaseLabel(o: OrderResponse): string {
   return o.order_type === 'MISSION' ? missionPhaseLabel(o.mission_phase) : ''
 }
@@ -80,6 +95,16 @@ function phaseLabel(o: OrderResponse): string {
         {{ phaseLabel(o) }}
       </span>
     </div>
+    <!-- 令的**內容**（UI-P3）。資料一直在 `payload` 裡，畫面上一個字都沒有——
+         於是指令列是一排「火力任務 · 已完成」，事後對不上戰果、也看不出打了哪裡。 -->
+    <div v-if="payloadText(o)" class="ord-payload" data-testid="order-payload">
+      {{ payloadText(o) }}
+    </div>
+    <!-- 預檢沒過時要說是**哪一關**。`checks` 逐條標了 passed，
+         而畫面上只有「不可行」三個字——參謀得自己猜是射程、視線、彈道還是彈藥。 -->
+    <ul v-if="failedChecks(o).length" class="ord-fail" data-testid="order-failed-checks">
+      <li v-for="(f, i) in failedChecks(o)" :key="i">✗ {{ f }}</li>
+    </ul>
     <div class="ord-meta">
       <span class="ord-time" title="下令 sim tick">T{{ o.issued_at_tick
         }}<span v-if="o.resolved_at_tick != null"> → T{{ o.resolved_at_tick }}</span></span>
@@ -100,6 +125,9 @@ function phaseLabel(o: OrderResponse): string {
 </template>
 
 <style scoped>
+.ord-payload { font-size: 11px; opacity: .78; padding-left: 4px }
+.ord-fail { margin: 2px 0 0; padding-left: 16px; font-size: 11px; color: var(--p-red-400) }
+
 /* 段落小標（取代舊 sec-hd，浮動視窗內用） */
 .wsec-hd {
   font-size: 0.78rem;

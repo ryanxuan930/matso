@@ -1,3 +1,7 @@
+// `missionTypeLabel` 借自 `useOrders`（那裡是任務型別譯名的既有權威）。
+// useOrders 只 import useApi，不會回頭指向本檔，故不成環。
+import { missionTypeLabel } from '~/composables/useOrders'
+
 /**
  * 跨面板共用的中文標籤表。
  *
@@ -238,3 +242,110 @@ export function starvationModifier(days: number): number {
  * 而它其實只是「這個例外沒帶訊息」。
  */
 export const UNKNOWN_REASON = '原因不明'
+
+// ---- 令與申請單的「內容」（UI-P3）----
+//
+// `OrderResponse.payload`、`RequestView.params`、`precheck` 三者的資料一直都在回應體裡，
+// **但畫面上一個字都沒有**。加起來的後果是火協鏈（申請 → 核准 → 掛單射擊 → 檢討）
+// 在畫面上是斷的：
+//
+// - 核覆者看不到申請內容——按「核准」時不知道自己核的是哪個座標
+// - 指令列看不到打哪裡——一排「火力任務 · 已完成」，事後對不上戰果
+// - 預檢不可行時看不到是哪一關沒過（`checks` 明明逐條標了 passed）
+
+/** 座標對 → 五位小數（≈1 m）。兵推的落點精度講到公尺就夠，再多是雜訊。 */
+function latLng(lat: unknown, lng: unknown): string | null {
+  return typeof lat === 'number' && typeof lng === 'number'
+    ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+    : null
+}
+
+/**
+ * 令的內容摘要——「打哪裡、用什麼、打幾發」。
+ *
+ * **只印真的有的鍵**，缺的略過；認不得的令型回空字串而不是硬印 JSON
+ * （指令列一行塞一坨 `{"to_h3":"8a2a..."}` 比留白更難讀）。
+ */
+export function orderPayloadSummary(
+  orderType: string,
+  payload: Record<string, unknown> | null | undefined,
+): string {
+  const p = payload ?? {}
+  const bits: string[] = []
+  if (orderType === 'FIRE_MISSION') {
+    const at = latLng(p.target_lat, p.target_lng)
+    if (at) bits.push(`落點 ${at}`)
+    if (typeof p.rounds === 'number') bits.push(`${p.rounds} 發`)
+    if (p.ammo_type === 'SMOKE') bits.push('發煙')
+    else if (typeof p.ammo_type === 'string' && p.ammo_type) bits.push(String(p.ammo_type))
+    if (typeof p.ttl_ticks === 'number' && p.ttl_ticks > 0) bits.push(`時效 ${p.ttl_ticks} tick`)
+    if (p.fire_request_id) bits.push('掛核准單')
+  } else if (orderType === 'MOVE') {
+    const to = latLng(p.to_lat, p.to_lng)
+    if (to) bits.push(`往 ${to}`)
+    else if (typeof p.to_h3 === 'string') bits.push(`往 ${p.to_h3.slice(0, 10)}`)
+    if (typeof p.mobility_profile === 'string') bits.push(mobilityProfileLabel(p.mobility_profile))
+    if (p.tempo === 'FORCED_MARCH') bits.push('強行軍')
+  } else if (orderType === 'MISSION') {
+    if (typeof p.mission_type === 'string') bits.push(missionTypeLabel(p.mission_type))
+  } else if (orderType === 'FORMATION') {
+    if (typeof p.formation === 'string') bits.push(formationLabel(p.formation))
+    if (p.mounted === true) bits.push('乘車')
+    else if (p.mounted === false) bits.push('徒步')
+    if (typeof p.column_spacing_km === 'number') bits.push(`間隔 ${p.column_spacing_km} km`)
+  } else if (orderType === 'ENGINEER') {
+    if (p.action === 'BREACH') bits.push('破障')
+    else if (p.action === 'EMPLACE') bits.push('設障')
+    if (typeof p.obstacle_type === 'string') bits.push(String(p.obstacle_type))
+    const at = latLng(p.lat, p.lng)
+    if (at) bits.push(at)
+  } else if (orderType === 'POSTURE') {
+    if (typeof p.posture === 'string') bits.push(String(p.posture))
+  }
+  return bits.join(' · ')
+}
+
+const _FORMATION_TEXT: Record<string, string> = {
+  COLUMN: '縱隊',
+  LINE: '橫隊',
+  WEDGE: '楔形',
+  VEE: 'V 形',
+  HERRINGBONE: '魚骨',
+}
+function formationLabel(v: string): string {
+  return _FORMATION_TEXT[v] ?? v
+}
+
+/**
+ * 申請單內容摘要。**核覆者按「核准」時要知道自己核的是什麼。**
+ *
+ * 認不得的鍵原樣列出（`鍵: 值`）而不是丟掉——申請單的 params 是開放結構，
+ * 丟掉未知鍵等於讓核覆者在資訊不全的情況下簽字。
+ */
+export function requestParamsSummary(params: Record<string, unknown> | null | undefined): string {
+  const p = params ?? {}
+  const bits: string[] = []
+  const at = latLng(p.target_lat, p.target_lng)
+  if (at) bits.push(`目標 ${at}`)
+  for (const [k, v] of Object.entries(p)) {
+    if (k === 'target_lat' || k === 'target_lng') continue
+    if (v === null || v === undefined || v === '') continue
+    bits.push(`${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
+  }
+  return bits.join(' · ')
+}
+
+/**
+ * 預檢沒過的關卡（中文）。`checks` 逐條標了 `passed`，但畫面上只有「不可行」三個字——
+ * 參謀得自己猜是射程、視線、彈道還是彈藥。
+ */
+export function failedCheckLabels(
+  precheck: { checks?: { name?: string; passed?: boolean; detail?: string | null }[] } | null | undefined,
+): string[] {
+  return (precheck?.checks ?? [])
+    .filter((c) => c.passed === false)
+    .map((c) => {
+      const label = precheckLabel(c.name ?? '')
+      return c.detail ? `${label}：${c.detail}` : label
+    })
+}
