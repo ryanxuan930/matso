@@ -6,8 +6,14 @@ export type ConditionType =
   | 'faction_eliminated'
   | 'strength_below'
   | 'unit_in_region'
+  | 'unit_in_polygon'
+  | 'contact_established'
+  | 'manual'
+  | 'after_ticks_of'
+  | 'held_for'
   | 'all'
   | 'any'
+  | 'not'
 
 /** tick ≥ at_tick 時成立。 */
 export interface TimeCondition { type: 'time'; at_tick: number }
@@ -21,18 +27,93 @@ export interface UnitInRegionCondition {
   faction: string
   bbox: [number, number, number, number]
 }
+/** 該陣營任一單位位於多邊形內時成立。`polygon` 是 [lng,lat] 頂點序列。 */
+export interface UnitInPolygonCondition {
+  type: 'unit_in_polygon'
+  faction: string
+  polygon: Array<[number, number]>
+}
+/**
+ * `faction` 偵測到 `of` 陣營時成立（**建立接觸**，不是「進入某區」）。
+ * 用它寫「敵前鋒被我方發現」這種以情報為觸發點的狀況。
+ */
+export interface ContactEstablishedCondition {
+  type: 'contact_established'
+  faction: string
+  of: string
+}
+/**
+ * **只有白軍按下「扣發」才成立**——這是 MSEL 從「腳本自動跑」變成
+ * 「導演手上有板機」的關鍵型別。白軍控制台的扣發／跳過按鈕早就做好了，
+ * 過去劇本編輯器產不出這個型別，於是那兩顆按鈕沒有東西可以按。
+ */
+export interface ManualCondition { type: 'manual' }
+/** 某事件觸發後再過 `ticks` 個 tick 成立。用來串「A 發生後 30 分鐘，B 才發生」。 */
+export interface AfterTicksOfCondition { type: 'after_ticks_of'; event: string; ticks: number }
+/**
+ * 內層條件**連續**成立 `ticks` 個 tick 才算數。
+ * ⚠ 是「持續 N tick」不是「累計成立過 N 次」——中斷會重新計時（見後端 `_update_hold`）。
+ */
+export interface HeldForCondition { type: 'held_for'; of: Condition; ticks: number }
 /** 所有子條件皆成立（AND）。 */
 export interface AllCondition { type: 'all'; of: Condition[] }
 /** 任一子條件成立（OR）。 */
 export interface AnyCondition { type: 'any'; of: Condition[] }
+/** 子條件**不**成立時成立。`of` 是單一條件不是陣列（與 all/any 不同）。 */
+export interface NotCondition { type: 'not'; of: Condition }
 
 export type Condition =
   | TimeCondition
   | FactionEliminatedCondition
   | StrengthBelowCondition
   | UnitInRegionCondition
+  | UnitInPolygonCondition
+  | ContactEstablishedCondition
+  | ManualCondition
+  | AfterTicksOfCondition
+  | HeldForCondition
   | AllCondition
   | AnyCondition
+  | NotCondition
+
+/**
+ * 各型別的**必填欄位**——鏡像後端 `triggers._CONDITION_FIELDS`。
+ *
+ * ⚠ 這張表由 `platform/tests/condition-dsl.test.ts` 對照後端原始碼驗證：
+ * 後端新增型別而這裡沒跟上就會紅。那條閘門存在的理由是這個檔案的開頭那句話
+ * （「type 與各欄位須與後端逐字對齊」）過去只是一句註解，沒有任何東西在守它——
+ * 於是後端有 12 種、編輯器只給得出 6 種，而**缺的那幾種正是白軍控制台需要的**。
+ */
+export const CONDITION_FIELDS: Record<ConditionType, readonly string[]> = {
+  time: ['at_tick'],
+  faction_eliminated: ['faction'],
+  strength_below: ['faction', 'value'],
+  unit_in_region: ['faction', 'bbox'],
+  unit_in_polygon: ['faction', 'polygon'],
+  contact_established: ['faction', 'of'],
+  manual: [],
+  after_ticks_of: ['event', 'ticks'],
+  held_for: ['of', 'ticks'],
+  all: ['of'],
+  any: ['of'],
+  not: ['of'],
+}
+
+/** 型別 → 繁中（劇本編輯器的下拉）。 */
+export const CONDITION_LABELS: Record<ConditionType, string> = {
+  time: '到達指定 tick',
+  faction_eliminated: '陣營被殲滅',
+  strength_below: '陣營戰力低於',
+  unit_in_region: '單位進入矩形區',
+  unit_in_polygon: '單位進入多邊形區',
+  contact_established: '建立接觸（偵測到敵）',
+  manual: '白軍手動扣發',
+  after_ticks_of: '某事件之後 N tick',
+  held_for: '持續成立 N tick',
+  all: '全部成立（AND）',
+  any: '任一成立（OR）',
+  not: '不成立（NOT）',
+}
 
 /**
  * MSEL 注入的「動作」——**逐字對齊 `core/app/scenario/msel_actions.py` 的 `make_applier`**。
@@ -195,9 +276,23 @@ export function emptyCondition(type: ConditionType, faction = ''): Condition {
       return { type: 'strength_below', faction, value: 0 }
     case 'unit_in_region':
       return { type: 'unit_in_region', faction, bbox: [0, 0, 0, 0] }
+    case 'unit_in_polygon':
+      return { type: 'unit_in_polygon', faction, polygon: [] }
+    case 'contact_established':
+      return { type: 'contact_established', faction, of: '' }
+    case 'manual':
+      return { type: 'manual' }
+    case 'after_ticks_of':
+      return { type: 'after_ticks_of', event: '', ticks: 1 }
+    case 'held_for':
+      // 內層預設給 `time`：空的 `of` 會讓後端載入時就報「缺少必填欄位」，
+      // 而作者只是還沒選內層——給一個合法的起點比讓他先看到錯誤好。
+      return { type: 'held_for', of: { type: 'time', at_tick: 0 }, ticks: 1 }
     case 'all':
       return { type: 'all', of: [] }
     case 'any':
       return { type: 'any', of: [] }
+    case 'not':
+      return { type: 'not', of: { type: 'time', at_tick: 0 } }
   }
 }
