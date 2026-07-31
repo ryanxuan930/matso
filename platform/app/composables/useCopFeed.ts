@@ -26,6 +26,7 @@
  * 白名單之外的鍵仍然拿不到。這裡刻意不去「補完」看起來該有的細節：
  * 在兵推系統裡編造一個聽起來合理的原因，比留白危險得多。
  */
+import { NATO_SUPPLY_CLASSES, supplyClassLabel } from '~/composables/useLabels'
 import { commsLabel } from '~/composables/useUnits'
 import {
   missionTypeLabel,
@@ -243,6 +244,15 @@ function detailsOf(payload: Record<string, unknown>): string {
   if (issuedFuel) bits.push(`撥油 ${issuedFuel}`)
   const issuedAmmo = payload?.ammo
   if (typeof issuedAmmo === 'number') bits.push(`撥彈 ${issuedAmmo}`)
+  // 補給點撥交量 `{類別: 量}`（`RESUPPLIED`）。沒有它，這則事件只說得出
+  // 「X 自補給點受補」——後勤官判斷不了這一趟夠不夠、要不要再叫一車。
+  const issued = payload?.issued
+  if (issued && typeof issued === 'object' && !Array.isArray(issued)) {
+    for (const cls of NATO_SUPPLY_CLASSES) {
+      const amount = num((issued as Record<string, unknown>)[cls], 2)
+      if (amount) bits.push(`${supplyClassLabel(cls)} +${amount}`)
+    }
+  }
   return bits.join(' · ')
 }
 

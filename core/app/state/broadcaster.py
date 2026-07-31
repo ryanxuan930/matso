@@ -146,6 +146,11 @@ def build_event_envelope(
         # 沒有內容的空殼（型別對、什麼都看不到）。
         "cause",
         "shooter_faction",
+        # WP-C7.2 撥交量 `{類別: 量}`。少了它，`RESUPPLIED` 在 COP 上只有一句
+        # 「X 自補給點受補」——**補了什麼、補了多少都不知道**，而那正是後勤官
+        # 判斷「這一趟夠不夠、要不要再叫一車」的全部依據。
+        # 受眾已由 `event_audience` 收斂到單位自己的陣營，不外洩。
+        "issued",
     ):
         if isinstance(event.ai_decision, dict) and k in event.ai_decision:
             payload[k] = event.ai_decision[k]

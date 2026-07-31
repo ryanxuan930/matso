@@ -128,3 +128,23 @@ test('後端轉發的每一個 detail 鍵，前端都要有渲染路徑', () => 
   const missing = keys.filter((k) => !handledElsewhere.has(k) && !ts.includes(k))
   assert.deepEqual(missing, [], `後端轉發了但前端沒接：${missing.join('、')}`)
 })
+
+test('補給撥交要說出補了什麼、補了多少', () => {
+  // 抓的病：`issued` 不在 `broadcaster` 的 ai_decision 白名單裡，於是 `RESUPPLIED`
+  // 到了 COP 只剩「X 自補給點受補」——補了什麼、補了多少都不知道，
+  // 而那正是後勤官判斷「這一趟夠不夠、要不要再叫一車」的全部依據。
+  // （這條是實際打開 COP 看到 `LOG_DRAW 自補給點受補` 一片空白才發現的。）
+  const line = render({
+    event_type: 'RESUPPLIED',
+    initiator_id: 'u-blue',
+    issued: { I: 2.75, IX: 4 },
+  })
+  assert.match(line, /口糧／水 \+2\.75/)
+  assert.match(line, /維修件 \+4\.00/)
+})
+
+test('issued 在後端的 ai_decision 白名單裡（否則前端永遠收不到）', () => {
+  // 前端渲染得再漂亮，後端沒轉發就是看不到——這一條把兩邊釘在一起。
+  const py = readFileSync(new URL('../../core/app/state/broadcaster.py', import.meta.url), 'utf8')
+  assert.match(py, /^\s*"issued",$/m, 'broadcaster 的 ai_decision 白名單少了 issued')
+})
