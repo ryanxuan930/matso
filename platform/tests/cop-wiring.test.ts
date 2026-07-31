@@ -135,12 +135,13 @@ function makeOrdering(toasts = makeToasts()) {
   }
 }
 
-function makeEditor(toasts = makeToasts()) {
+/** `viewpoint`＝白軍套用中的陣營視角；補給點的歸屬就是靠它決定（見補給點那幾條）。 */
+function makeEditor(toasts = makeToasts(), viewpoint = '') {
   return {
     toasts,
     ed: useMapEditor({
       sessionId: ref('s-1'),
-      viewpoint: ref(''),
+      viewpoint: ref(viewpoint),
       canControl: computed(() => true),
       myFaction: ref('BLUE'),
       hiddenFeatureIds: ref([]),
@@ -477,4 +478,168 @@ test('單位資訊卡有掛上單位屬性編輯器', () => {
   assert.match(src, /<UnitAttributeEditor/)
   assert.match(src, /toggle-attrs/)
   assert.match(src, /:unit-level="unit\.unit_level"/)
+})
+
+// ============================ WP-C7：補給點與補給水位 ============================
+
+test('補給點的庫存要真的送進 attributes.stock', async () => {
+  /**
+   * 抓的病：庫存是補給點**唯一的實質內容**。表單編得動、送出時漏帶的話，
+   * 建出來的是一個空倉庫——它在地圖上與有貨的補給點長得一模一樣，
+   * 而 `draw_from()` 一份補給都撥不出去，下游單位的水位就是不會回升。
+   * 這正是 WP-C2 障礙型別走過的那條「編得動、送不出去」的路。
+   */
+  const { ed } = makeEditor(makeToasts(), 'BLUE')
+  ed.drawFeatureKind.value = 'SUPPLY_POINT'
+  await nextTick() // 換類別的副作用（高度只對障礙/建築有意義）要先落地，如同使用者操作面板
+  ed.drawSupplyStock.value.I = 500
+  ed.drawSupplyStock.value.IX = 80
+  ed.startDraw('POINT', 'SUPPLY_POINT')
+  ed.addDraftPoint(121.25, 23.75) // 點：一點即完成
+  await settle()
+
+  const req = lastRequest('/map-features')
+  assert.equal(req.body.kind, 'SUPPLY_POINT')
+  assert.equal(req.body.geometry_type, 'POINT')
+  assert.equal(req.body.owner_faction, 'BLUE', '補給點沒有帶陣營＝落共同層＝沒有單位拉得到')
+  assert.deepEqual(req.body.attributes, { stock: { I: 500, IX: 80 } })
+})
+
+test('沒填任何庫存的補給點不送出，而且要出聲', async () => {
+  /** 空倉庫要明寫 0——「忘了填」與「這裡真的沒貨」是不同的事，靜默建立會讓兩者分不出來。 */
+  const { ed, toasts } = makeEditor(makeToasts(), 'BLUE')
+  ed.drawFeatureKind.value = 'SUPPLY_POINT'
+  ed.startDraw('POINT', 'SUPPLY_POINT')
+  const before = requests.filter((r) => r.url.includes('/map-features') && r.method === 'POST').length
+  ed.addDraftPoint(121.25, 23.75)
+  await settle()
+
+  const after = requests.filter((r) => r.url.includes('/map-features') && r.method === 'POST').length
+  assert.equal(after, before, '沒有庫存的補給點不該被建立')
+  assert.ok(
+    toasts.list.some((t) => t.severity === 'warn' && String(t.title).includes('庫存')),
+    '擋下來了卻沒有說為什麼',
+  )
+})
+
+test('沒有陣營視角時不建補給點（共同層的補給點沒有人拉得到）', async () => {
+  /**
+   * 抓的病：白軍不指定視角時，`finishDraw` 送的 owner_faction 是 null → 後端落 WHITE_CELL。
+   * 其他每一種標註放共同層都是對的（全體可見），只有補給點例外——
+   * `nearest_usable()` 只找**同陣營**的點，共同層的補給點一份都撥不出去。
+   */
+  const { ed, toasts } = makeEditor(makeToasts(), '') // 白軍未套用陣營視角
+  ed.drawFeatureKind.value = 'SUPPLY_POINT'
+  ed.drawSupplyStock.value.I = 500
+  ed.startDraw('POINT', 'SUPPLY_POINT')
+  const before = requests.filter((r) => r.url.includes('/map-features') && r.method === 'POST').length
+  ed.addDraftPoint(121.25, 23.75)
+  await settle()
+
+  assert.equal(
+    requests.filter((r) => r.url.includes('/map-features') && r.method === 'POST').length,
+    before,
+  )
+  assert.ok(toasts.list.some((t) => String(t.title).includes('陣營')), '沒有講「補給點要有陣營」')
+})
+
+test('編輯庫存是整包換掉，不是併進舊的', async () => {
+  /**
+   * 抓的病：PATCH 對 attributes 是 **merge**。把某一格改回「不備」時若只送剩下的類別，
+   * 舊值會活下來——畫面上那一格已經清空，撥交端卻還撥得出來。
+   * 「顯示的跟送出的不一樣」在後勤上的具體形式就是這個。
+   */
+  const { ed } = makeEditor()
+  ed.mapFeatures.value = [
+    {
+      id: 'f-1',
+      kind: 'SUPPLY_POINT',
+      geometry_type: 'POINT',
+      geometry: [121.25, 23.75],
+      owner_faction: 'BLUE',
+      attributes: { stock: { I: 500, IX: 80 } },
+    },
+  ] as never
+  ed.onFeatureClick({ id: 'f-1' })
+  assert.deepEqual(
+    { I: ed.editFeatStock.value.I, IX: ed.editFeatStock.value.IX },
+    { I: 500, IX: 80 },
+    '選取補給點時沒有把既有庫存讀進表單',
+  )
+
+  ed.editFeatStock.value.IX = null // 這一格改成「不備」
+  await ed.saveFeatureEdit()
+
+  const attrs = lastRequest('/map-features', 'PATCH').body.attributes as Record<string, unknown>
+  assert.deepEqual(attrs.stock, { I: 500 }, 'stock 沒有被整包換掉，舊的 IX 會活下來')
+})
+
+test('活補給水位吃得下 STATE_DIFF 的熱狀態形狀', async () => {
+  /**
+   * 抓的病：**同一件事有兩種形狀**。STATE_DIFF 推的是熱狀態原形
+   * `{"I": [存量, 容量]}`（後端為雜湊穩定而定的編碼），`GET /units` 給的是
+   * `SupplyLevelView[]`。只認得後者的話，串流推來的更新會被整個忽略——
+   * 症狀是「水位永遠停在開局值」，與「補給系統沒生效」在畫面上完全一樣。
+   */
+  const { useLiveState } = await import('~/composables/useLiveState')
+  const patches: Record<string, Record<string, unknown>> = {}
+  const live = useLiveState({ unitPatches: patches, lastTick: 7 } as never)
+  const unit = {
+    id: 'u-1',
+    supply: [{ supply_class: 'I', on_hand: 400, capacity: 400, fraction: 1 }],
+    starved_days: 0,
+  } as never
+
+  // ① 沒有 patch → 用 GET /units 的快照。
+  assert.equal(live.liveSupply(unit)[0]!.fraction, 1)
+
+  // ② 有 patch → 熱狀態形狀要解得開，而且未編制（容量 0）的類別不列。
+  patches['u-1'] = { supply: { I: [100, 400], IX: [0, 0] }, starved_days: 2.5 }
+  const levels = live.liveSupply(unit)
+  assert.deepEqual(levels.map((s) => s.supply_class), ['I'])
+  assert.equal(levels[0]!.fraction, 0.25)
+  assert.equal(live.liveStarvedDays(unit), 2.5)
+})
+
+test('斷補天數翻成效能倍率的階梯要與後端一致', async () => {
+  // 後端只送天數，倍率是前端算的（見 useLabels.STARVATION_STEPS 的說明）。
+  // 兩份的一致性由 core/tests/unit/test_supply_point_api.py 守；這裡守的是階梯語義本身
+  // ——**是階梯不是內插**，2.9 日還在 ×0.75，滿 3 日才掉到 ×0.5。
+  const { starvationModifier } = await import('~/composables/useLabels')
+  assert.equal(starvationModifier(0), 1)
+  assert.equal(starvationModifier(2.9), 0.75)
+  assert.equal(starvationModifier(3), 0.5)
+  assert.equal(starvationModifier(99), 0.25)
+})
+
+test('地圖編輯器要有補給點庫存欄，而且補給點只給得出「點」', () => {
+  /**
+   * 抓的病：composable 帶了欄位但樣板沒有控制項＝使用者仍然填不到（同 tempo 那條）。
+   * 形狀鈕那一半同樣要守：補給點存成線/面時 `read_point()` 解不開會**整筆略過**，
+   * 而它在地圖上與有效的補給點長得一模一樣。
+   */
+  const src = readSrc('components/cop/MapEditorPanel.vue')
+  assert.match(src, /data-testid="draw-supply-stock"/, '繪製表單沒有補給點庫存欄')
+  assert.match(src, /data-testid="edit-supply-stock"/, '編輯面板改不了既有補給點的庫存')
+  assert.match(src, /data-testid="supply-destroyed"/, '補給點被打掉了畫面上看不出來')
+  assert.match(src, /drawPointOnly/, '補給點仍然畫得成線/面（畫得出來、撥交端讀不到）')
+})
+
+test('單位資訊卡要顯示補給水位與斷補，且頁面真的把活值傳下去', () => {
+  /**
+   * 這條盯的是「元件寫好了但沒人用」——本 repo 反覆出現的那類缺陷。
+   * 兩端都要驗：卡片有那兩列（不然後勤在 COP 上完全看不見），
+   * 而 `cop.vue` 有把 `liveSupply`/`liveStarvedDays` 傳下去（不然卡片永遠拿不到值）。
+   */
+  const card = readSrc('components/cop/UnitDetailCard.vue')
+  assert.match(card, /data-testid="unit-supply"/, '單位卡沒有補給水位那一列')
+  assert.match(card, /data-testid="unit-starved"/, '斷補沒有明顯的視覺提示')
+  // ⚠ 只在整檔搜 `starvationModifier` 會被 **import 那一行**餵飽——把樣板裡的呼叫拿掉，
+  // 測試照樣綠（突變測試抓出來的）。所以只看 `<template>` 那一段。
+  const tpl = card.slice(card.indexOf('<template>'))
+  assert.match(tpl, /starvationModifier\(/, '斷補只講天數不講效能——操作員無從判斷嚴重程度')
+
+  const page = readSrc('pages/session/[id]/cop.vue')
+  assert.match(page, /:live-supply="liveSupply"/, 'cop.vue 沒有把活補給水位傳給單位卡')
+  assert.match(page, /:live-starved-days="liveStarvedDays"/)
 })

@@ -53,12 +53,28 @@ def test_missing_key_reads_as_empty_not_as_all_zero() -> None:
     assert needs_resupply({}) == []
 
 
-def test_zero_consumption_rates_write_nothing() -> None:
-    """預設消耗率是 0——**既有局不會憑空開始餓肚子**。連時間戳都不該寫。"""
+def test_the_first_settlement_only_starts_the_clock() -> None:
+    """宣告了補給的單位第一次被結算時，**只寫時鐘起點、不扣任何存量**。
+
+    ⚠ 這條原本斷言的是「預設消耗率是 0 所以什麼都不寫」。那個中性是用**把物理關掉**換來的
+    ——`DAILY_CONSUMPTION` 已經改成校準過的真值（Class I 1.0 補給日/日），
+    真正的中性保證是上面那條（沒有 `supply` 鍵就一個鍵都不寫）。
+
+    而「只寫時鐘起點」這一步不能省：`supply_tick` 的唯一寫入端就是這個 patch，
+    以前缺鍵時直接把「上次結算」當成「現在」→ `elapsed` 恆為 0 → 那個鍵永遠不會被寫
+    → **宣告了補給的單位永遠不吃飯**。既有測試看不出來，因為它們每一條都自己種了它。
+    """
     hot = InMemoryHotState()
     hot.put_unit("u1", {SUPPLY_KEY: {"I": [10.0, 10.0]}})
-    assert tick_supply(hot, "u1", _DAY_TICKS, _TICK_MS) is None
-    assert daily_consumption(SupplyClass.I) == 0.0
+
+    patch = tick_supply(hot, "u1", _DAY_TICKS, _TICK_MS)
+
+    assert patch == {SUPPLY_TICK_KEY: _DAY_TICKS}
+    assert daily_consumption(SupplyClass.I) == 1.0
+    # 時鐘起好之後才真的開始扣。
+    hot.update_unit("u1", patch)
+    after = tick_supply(hot, "u1", _DAY_TICKS * 2, _TICK_MS)
+    assert after is not None and after[SUPPLY_KEY]["I"][0] == pytest.approx(9.0)
 
 
 def test_a_tick_with_zero_actual_consumption_writes_nothing_at_all() -> None:

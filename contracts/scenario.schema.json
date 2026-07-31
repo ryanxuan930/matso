@@ -228,6 +228,59 @@
         }
       }
     },
+    "supply_points": {
+      "type": "array",
+      "description": "補給點（WP-C7.2）。開局落地為 `MapFeature(kind=\"SUPPLY_POINT\")`：低於再訂購水位的單位**自己來拉**（拉不是推——推送要求補給點知道全場有誰缺什麼，而且會讓「補給線被切斷」變得無法表達），拉得到的半徑是引擎常數 3 km。打掉它，半徑內的單位水位就不再回升——**這是「打擊敵後勤」成為可行戰法的那一塊**。省略＝本局沒有補給點＝自動撥交與整補每 tick 一次查詢之外什麼都不做。⚠ 補給點是**靜態**的：它不會跟著部隊走，也沒有任何機制把後方的貨推到前方。前推補給是把補給單位（`branch: SUPPLY`）開上去、走 RESUPPLY 令，不是移動這個點。座標刻意用具名的 `lat`/`lng` 而不是 `no_strike_zones` 那種位置陣列：GeoJSON 的 `[lng, lat]` 順序一寫反，執行期就是一個目標都抓不到而且**不會報錯**，具名鍵讓那個順序只在載入器裡出現一次。",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "faction",
+          "lat",
+          "lng",
+          "stock"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "補給點名稱（落地為 MapFeature.label，AAR 與地圖上看到的就是它）"
+          },
+          "faction": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,31}$",
+            "description": "擁有陣營（須為 factions 宣告過的；載入器會擋打錯字的陣營）。**只有同陣營的單位拉得到貨**——盟軍共用是後勤協定問題不是物理問題，預設不共用比較保守。"
+          },
+          "lat": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "lng": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
+          "stock": {
+            "type": "object",
+            "description": "各類別庫存（倉庫無容量上限概念，只有存量）。單位與 orbat `supply` 的抽象量相同。只收 I 與 IX，理由見 orbat.schema.json 的 `unitSupply`：III/V 在這裡宣告也不會有人來拉（單位身上根本沒有那兩個類別的水位）。至少要有一項 > 0，否則這個點從第一個 tick 起就不可用（載入器會擋）。",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "I": {
+                "type": "number",
+                "minimum": 0
+              },
+              "IX": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
     "request_quotas": {
       "type": "object",
       "description": "申請單配額（WP-B5.2，[JCATS-A p.13] 空偵架次）。缺／未列的種類＝不限。**目前是整局總量，不是每日**——SimClock 沒有「模擬日」概念，硬做每日重置會是假的（見 docs/worklog/c2-messaging.md）。",

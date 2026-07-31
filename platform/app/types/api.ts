@@ -1497,6 +1497,20 @@ export interface components {
         AiStatusView: {
             factions: components["schemas"]["AiFactionStatus"][];
         };
+        /** @description 單一補給類別的水位（WP-C7.1）。**`capacity` 是編制上限，`on_hand` 是現有量**。 未編制的類別（`capacity <= 0`）根本不會出現在清單裡——「沒有編制這個類別」與 「編制了但空了」是完全不同的兩件事，混為一談會讓每個單位看起來都在斷補。 */
+        SupplyLevelView: {
+            /**
+             * @description 北約補給類別編號：I＝口糧/水、III＝油料、V＝彈藥、IX＝維修件。 ⚠ 與軍械庫 LOGISTICS `capacity` 的鍵（AMMO/FUEL/WATER_FOOD/BATTERY）**不是同一組命名** ——那是裝備範本的載運艙格，這裡是單位身上的存量帳。
+             * @enum {string}
+             */
+            supply_class: "I" | "III" | "V" | "IX";
+            /** @description 現有量 */
+            on_hand: number;
+            /** @description 編制上限（>0；未編制的類別不會出現） */
+            capacity: number;
+            /** @description `on_hand / capacity`（夾在 0–1）。低於 0.3 即觸發再訂購（WP-C7.2）。 */
+            fraction: number;
+        };
         UnitView: {
             id: string;
             designation: string;
@@ -1532,6 +1546,10 @@ export interface components {
              * @enum {string}
              */
             posture?: "MOVING" | "HASTY" | "DEFENSE" | "DUG_IN";
+            /** @description 補給水位（WP-C7）。**空陣列＝這個單位沒有宣告任何補給類別**，不是「全部見底」 ——既有想定一律如此（`supply` 熱狀態鍵不存在 → 引擎一次計算都不做）。 依 `SupplyClass` 的宣告順序（I → III → V → IX）排列，順序固定。 **只在友軍（己方＋盟軍）單位上供應**，他方一律空陣列：敵軍還剩幾天糧、幾成彈 是後勤情報，看得到就等於一份免費的戰果評估與斷補時機表（同 `suppression` 的 fog 規則，紅線 3）。白軍 god view 全供應。 */
+            supply: components["schemas"]["SupplyLevelView"][];
+            /** @description 斷補天數（模擬日，WP-C7.1）。>0 ＝ Class I（口糧/水）已見底且持續中； **只看 Class I**——口糧斷了才是斷補，維修件見底影響的是修復而不是即刻戰力。 效能倍率隨天數**階梯**下降（1 日 ×0.9／2 日 ×0.75／3 日 ×0.5／5 日 ×0.25）， 補到一次即歸零。同 `supply` 的 fog 規則，他方單位一律 0。 */
+            starved_days: number;
             /** @description **位置凍結**（WP-C5，SPEC_FULL §6.2）。非 null 表示 `lat`/`lng` 不是真實位置， 而是該單位**最後一次位置回報**的內容，本欄為那次回報的 tick。 OFFLINE 單位不再回報（位置對己方 COP 凍結）；DEGRADED 降頻回報（位置落後）。 只出現在**陣營視角**（一般角色，或白軍指定 `as_faction`）；白軍 god view 一律真實位置。 */
             stale_since_tick?: number | null;
         };
@@ -1974,10 +1992,10 @@ export interface components {
             /** @description IDENTIFIED 才揭露敵我 */
             faction?: string | null;
         };
-        /** @description 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面） */
+        /** @description 地圖標註/工事（武器據點/障礙/建築/控制措施/補給點；點/線/面） */
         MapFeatureView: {
             id: string;
-            /** @description OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION */
+            /** @description OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION / **SUPPLY_POINT**（WP-C7.2 補給點：帶庫存、可撥交、打得掉；見 `attributes`）。 */
             kind: string;
             /** @description POINT / LINE / POLYGON */
             geometry_type: string;
@@ -1988,17 +2006,20 @@ export interface components {
             label?: string | null;
             influence_radius_m?: number | null;
             weapon_template_id?: string | null;
+            /** @description 類別相依的自由屬性（Json 欄位，免 migration）。目前有裁決效力的形狀： **OBSTACLE**（WP-C2）：`obstacle_type`＝MINEFIELD/WIRE/TANK_DITCH/ABATIS/BRIDGE_DEMO、 `density`＝0–1；缺 `obstacle_type` ＝純幾何障礙（全中性）。 **面標註**（WP-A3）：`zone_class`＝NO_STRIKE/RESTRICTED_FIRE；只有 POLYGON 成得了區。 **SUPPLY_POINT**（WP-C7.2）：`stock`＝`{北約補給類別: 庫存量}`，類別限 I/III/V/IX （I 口糧水、III 油料、V 彈藥、IX 維修件），倉庫**無容量上限**； `destroyed`＝bool，被火力摧毀後為 true 且**留在圖上**（AAR 要看得到它曾經在那裡）。 ⚠ 補給點只認 **POINT** 幾何、歸屬必須是某一**作戰陣營**——存成面或掛在 WHITE_CELL 共同層的補給點，`nearest_usable()` 一個單位都撥交不出去（畫得出來、完全沒有效果）， 故後端在建立/編輯時即擋下。 **共通**：`color` / `width` / `notes` / `height_m` / `sidc` / `viewshed_ring`（顯示用）。 */
             attributes: Record<string, never>;
         };
         MapFeatureCreate: {
+            /** @description 見 MapFeatureView.kind（含 SUPPLY_POINT） */
             kind: string;
             geometry_type: string;
             geometry: unknown;
-            /** @description 全知可指定（含 WHITE_CELL）；否則本軍 */
+            /** @description 全知可指定（含 WHITE_CELL）；否則本軍。 ⚠ SUPPLY_POINT **不可**落在 WHITE_CELL 共同層——補給點只撥交給同陣營單位， 共同層的補給點沒有任何單位拉得到（後端擋，422 `MAP_FEATURE_SUPPLY_POINT_FACTION`）。 */
             owner_faction?: string | null;
             label?: string | null;
             influence_radius_m?: number | null;
             weapon_template_id?: string | null;
+            /** @description 見 MapFeatureView.attributes（含 SUPPLY_POINT 的 stock 形狀） */
             attributes?: Record<string, never>;
         };
         MapFeatureEdit: {

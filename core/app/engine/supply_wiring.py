@@ -17,6 +17,10 @@
 改成記「上次結算的 tick」，每次結算時按**實際經過的 tick 數**一次算清——
 回滾把 `last_tick` 一起帶回去，帳目自動一致。
 
+⚠ 但這套算法只有在**存量不被四捨五入**的前提下才成立（見 `write_levels`）。
+存量若捨到小數第四位，1 秒/tick 的想定每 tick 只吃掉 1.2e-5 份，零頭捨掉就永遠不見底、
+進位就多吃七成——而事件、畫面、單元測試全都看不出異常。
+
 ## 斷補天數也存在熱狀態
 
 `starvation_modifier` 要的是「斷了幾天」，那是**狀態**不是時刻的函數（補到一次就歸零）。
@@ -68,8 +72,15 @@ def read_levels(state: dict[str, Any]) -> dict[SupplyClass, SupplyLevel]:
 
 def write_levels(levels: dict[SupplyClass, SupplyLevel]) -> dict[str, list[float]]:
     """水位 → 可序列化的熱狀態片段。**依類別名排序**——熱狀態會進 `compute_state_hash`，
-    dict 順序不穩就會讓同一個世界算出不同的雜湊。"""
-    return {c.value: [round(v.on_hand, 4), round(v.capacity, 4)] for c, v in sorted(levels.items())}
+    dict 順序不穩就會讓同一個世界算出不同的雜湊。
+
+    ⚠ **不四捨五入**（曾經是四位小數）。存量是**逐次結算累加出來的量**，把它捨到小數第四位
+    等於每次結算都丟掉一個零頭：1 秒/tick 的想定每 tick 只吃掉 1.2e-5 份，零頭捨掉就
+    永遠不見底、進位就多吃七成，而事件與畫面完全看不出異常。而且捨入誤差是**系統性**的
+    （每次結算的增量固定，尾數方向也就固定），跑得愈久偏得愈多。
+    熱狀態的其他數量欄位（`strength`、`ammo`）本來就都是直接寫浮點——這裡沒有理由特別。
+    """
+    return {c.value: [v.on_hand, v.capacity] for c, v in sorted(levels.items())}
 
 
 def tick_supply(
@@ -83,6 +94,9 @@ def tick_supply(
 
     「無事可做」包含：沒有 `supply` 鍵（既有局）、所有類別都未編制、所有消耗率都是 0。
     這三種情況下**一個熱狀態鍵都不會被寫**，STATE_DIFF 也就不會有雜訊。
+
+    宣告了補給的單位第一次被結算時**只寫時鐘起點**（`supply_tick`），不扣任何存量
+    ——沒有起點就算不出經過時間，而這個 patch 是那個鍵唯一的寫入端。
     """
     state = hot.get_unit(unit_id) or {}
     levels = read_levels(state)
@@ -90,30 +104,40 @@ def tick_supply(
         return None
 
     raw_last = state.get(SUPPLY_TICK_KEY)
-    last = int(raw_last) if isinstance(raw_last, (int, float)) else now_tick
-    elapsed = max(0, now_tick - last)
+    if not isinstance(raw_last, (int, float)):
+        # **第一次看到這個單位：只把時鐘起點寫下來，不扣任何存量。**
+        # 這一行過去是 `last = now_tick` → `elapsed == 0` → return None。而 `supply_tick`
+        # 的**唯一寫入端就是這個 patch**——於是它永遠不會被寫，`tick_supply` 對每個
+        # 宣告了補給的單位都是死路：宣告了也永遠不吃飯。既有測試全綠，因為它們每一條
+        # 都自己種了 `supply_tick`（測試繞過了真正缺的那一層）。
+        return {SUPPLY_TICK_KEY: now_tick}
+    elapsed = max(0, now_tick - int(raw_last))
     if elapsed <= 0:
         return None
 
-    updated: dict[SupplyClass, SupplyLevel] = {}
-    changed = False
-    for supply_class, level in levels.items():
-        rate = daily_consumption(supply_class, rates)
-        after = consume(level, rate, elapsed, tick_rate_ms)
-        updated[supply_class] = after
-        if after.on_hand != level.on_hand:
-            changed = True
-    if not changed:
+    updated = {
+        c: consume(lv, daily_consumption(c, rates), elapsed, tick_rate_ms)
+        for c, lv in levels.items()
+    }
+    days = elapsed * tick_rate_ms / _MS_PER_DAY
+    drained = any(updated[c].on_hand != lv.on_hand for c, lv in levels.items())
+    if not drained and not _is_starving(updated):
         # **連時間戳都不寫**：完全沒有消耗的局不該每 tick 推一次 STATE_DIFF。
         return None
 
-    patch: dict[str, Any] = {
-        SUPPLY_KEY: write_levels(updated),
-        SUPPLY_TICK_KEY: now_tick,
-    }
-    days = elapsed * tick_rate_ms / _MS_PER_DAY
+    patch: dict[str, Any] = {SUPPLY_TICK_KEY: now_tick}
+    if drained:
+        patch[SUPPLY_KEY] = write_levels(updated)
+    # **已經見底的單位即使這一 tick 扣不動任何東西，斷補天數仍要繼續累積**——
+    # 否則懲罰會凍在剛見底的那一刻，「斷補愈久愈打不動」這個階梯就只走得到第一階。
     patch[STARVED_DAYS_KEY] = _starved_days(state, updated, days)
     return patch
+
+
+def _is_starving(levels: dict[SupplyClass, SupplyLevel]) -> bool:
+    """口糧編制了而且見底了。只看 Class I——理由同 `_starved_days`。"""
+    rations = levels.get(SupplyClass.I)
+    return rations is not None and rations.declared and rations.on_hand <= 0.0
 
 
 def _starved_days(

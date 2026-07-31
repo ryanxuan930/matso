@@ -102,9 +102,14 @@ class SimParams:
     # 這是中性預設：既有局位元不變、golden 不必重錄。
     weather_refresh_ticks: int = _wx.DEFAULT_REFRESH_TICKS
     # --- 後勤（WP-C7.1）---
-    # 每模擬日消耗率 {類別: 份/日}。**空 dict ＝全 0 ＝既有局不會憑空開始餓肚子。**
+    # 每模擬日消耗率 {類別: 份/日}。**空 dict ＝未覆寫 ＝ 用 `supply.DAILY_CONSUMPTION`
+    # 的校準值**（Class I 1.0 DOS/日、IX 0.5 點/日），不是「全 0」。
+    # 既有局不受影響靠的是「沒宣告 `supply` 就不消耗」，不是靠把率壓成 0。
+    # ⚠ 因此本欄的預設投影（`to_config`）看不到那兩個真正生效的係數，
+    # 參數凍結簽證（WP-B4）也就沒有雜湊到它們——修法要一併改前端設定頁的語義，記在回報。
     supply_daily_rates: dict[str, float] = field(default_factory=dict)
-    # WP-C7.3 每模擬日恢復的戰力點。**0 ＝不修復（中性）**——想定要主動給。
+    # WP-C7.3 每模擬日恢復的戰力點（校準值見 `refit_wiring.REPAIR_PER_DAY`）。
+    # 0 ＝不修復；想定要關掉整補就明確寫 0。
     repair_per_day: float = _refit.REPAIR_PER_DAY
     # --- 崩潰復原（WP-E1）---
     # 以 tick 計而非牆鐘秒：快照點必須落在模擬時間的確定位置（Kernel 判 `tick % interval == 0`），

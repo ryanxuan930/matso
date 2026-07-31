@@ -314,6 +314,86 @@ async def test_drain_parses_fire_policy(session_factory: sessionmaker[Session]) 
         assert cmd.weapon_template_id is None
 
 
+# 建制數刻意取大。`ammo_spent = ceil(quantity × eff × rate)`，而 `ceil` 會把小編成的
+# 斷補效應整個吃掉：7 支步槍 ×0.9 ＝ 6.3 → **仍然 ceil 成 7**，於是拿掉生產程式碼裡的
+# `supply_effectiveness` 這個測試照樣綠。70 ×0.9 ＝ 63 就沒有捨入的容身處。
+# （這也是活體驗收 C16 用 90 發而不是 9 發的原因——同一個陷阱。）
+_RIFLES = 70
+_ATGMS = 20
+
+
+async def _combined_engage(
+    factory: sessionmaker[Session], extra: dict[str, object]
+) -> tuple[list[object], InMemoryHotState, str]:
+    """跑一次**真的**聯合兵種交戰（下令 → drain → resolve），回事件與熱狀態。
+
+    刻意不叫 `resolve_combined_engagement`：這個洞就長在 `_resolve_combined` 組
+    `effectiveness` 的那幾行，純函數本身一直是對的（它照著收到的 eff 算）。
+    直接測純函數會全綠而洞還在——本 repo 這一週已經有八次同樣的教訓。
+    """
+    world = seed_world(factory)
+    with factory() as db:
+        _submit_engage(db, world)
+        (cmd,) = await EngageOrderSource(db, world.session_id).drain()
+        hot = InMemoryHotState()
+        hot.put_unit(
+            world.blue_unit_id,
+            {
+                "ammo": _RIFLES + _ATGMS,
+                "ammo_by_weapon": {"w-rifle": _RIFLES, "w-atgm": _ATGMS},
+                "strength": 100.0,
+                "authorized_strength": 100.0,
+                **extra,
+            },
+        )
+        hot.put_unit(
+            world.red_unit_id,
+            {
+                "health": 100.0,
+                "armor_class": "INFANTRY",
+                "strength": 100.0,
+                "authorized_strength": 100.0,
+                "platform_count": 10,
+            },
+        )
+        weapons = [
+            CombinedWeapon("w-rifle", _RIFLE_C, quantity=_RIFLES, ammo=_RIFLES),
+            CombinedWeapon("w-atgm", _ATGM_C, quantity=_ATGMS, ammo=_ATGMS),
+        ]
+        events = _adjudicator_combined(db, hot, lambda _sid: weapons).resolve(cmd, SimTime(0, 0))
+        return events, hot, world.blue_unit_id
+
+
+async def test_a_starving_combined_arms_unit_fires_fewer_rounds() -> None:
+    """WP-C7.1：斷補要套在**三條**裁決路徑上，聯合兵種曾是唯一漏掉的一條。
+
+    後果不是「少扣一點戰損」而是**同一支部隊有兩種物理**：操作員在下令時點了武器下拉
+    就走 `_resolve_single`（會餓），不點就走這裡（不會餓）。而規格的驗收條文
+    「斷補的裝甲連 3 模擬日後效能階梯下降」指的裝甲連，正是典型的多武器單位——
+    那句條文要適用的對象，剛好落在唯一不生效的路徑上。
+
+    斷言擊發彈數而不是戰損：`ammo_spent = ceil(quantity × eff × rate)` **不擲骰**，
+    所以一發齊射就能下結論；戰損還要乘 U(0.8, 1.2)，×0.9 那一階的區間會重疊，
+    拿一次抽樣去說「戰損降了」是在講一個自己都不相信的話。
+    （活體驗收 C16 觀測到的也正是彈數：`LOG_MIXED 98→[98]`，一發都沒少。）
+    """
+    fed, fed_hot, fed_blue = await _combined_engage(_fresh_factory(), {})
+    # 斷糧一天 → `starvation_modifier` 的第一階 ×0.9（`supply_effectiveness` 讀 `starved_days`）。
+    starved, starved_hot, starved_blue = await _combined_engage(
+        _fresh_factory(), {"starved_days": 1.0}
+    )
+
+    assert fed[0].ai_decision["mode"] == "COMBINED"  # type: ignore[attr-defined,index]
+    assert starved[0].ai_decision["mode"] == "COMBINED"  # type: ignore[attr-defined,index]
+
+    def _spent(hot: InMemoryHotState, uid: str) -> int:
+        after = hot.get_unit(uid)["ammo_by_weapon"]
+        return (100 - int(after["w-rifle"])) + (8 - int(after["w-atgm"]))
+
+    assert _spent(fed_hot, fed_blue) > 0, "吃飽的對照組一發都沒打，這條斷言沒有意義"
+    assert _spent(starved_hot, starved_blue) < _spent(fed_hot, fed_blue)
+
+
 async def test_explicit_weapon_skips_combined_path(
     session_factory: sessionmaker[Session],
 ) -> None:

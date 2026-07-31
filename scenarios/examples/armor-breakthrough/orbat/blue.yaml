@@ -13,6 +13,13 @@
 # ⚠ 座標的量測紀律見 orbat/red.yaml 檔頭——本檔 17 個位置同樣全部通過連通性與
 #   `movement/preview` 實測。
 #
+# 後勤（WP-C7）**只宣告三個單位**：裝甲營的兩個連（逆襲會拉長補給線的那兩支）與
+# 反裝甲連（前緣、已消耗）。其餘單位**刻意不宣告**——沒宣告就是「未編制」，執行期
+# 一個補給熱狀態鍵都不會被寫、一次計算都不做。這不是偷懶：全體都給一個預設水位會讓
+# 每個單位都開始記帳，而本場真正要被看見的是「哪幾支部隊的後勤會出問題」。
+# 補給類別只有 I（口糧/水）與 IX（維修件）：油料走 #84 的油料模型、彈藥走 equipment 的
+# ammo，在這裡再宣告一次只會多出一份沒有人讀的平行帳。
+#
 # equipment 只用出貨種子範本名（見 red.yaml 檔頭的清單與理由）。
 # 指揮所、砲兵陣地與旅補給點一律 fixed：它們不接受 MOVE 令，也不會被 AI 派去機動。
 faction: BLUE
@@ -70,6 +77,14 @@ units:
     equipment:
       - { template: ATGM, quantity: 12, ammo: 60 }
       - { template: RIFLE_556, quantity: 60, ammo: 600 }
+    # 已在陣地上待了一段時間的部隊：口糧與料件都不是滿的（WP-C7）。
+    # ⚠ 兩項都**刻意壓在再訂購水位（capacity 的 30%）之上**：開局就低於水位的單位會在
+    #    第一個 tick 申請補給，而它離最近的己方補給點 6.7 km（撥交半徑 3 km）——
+    #    執行期會安靜地什麼都不做（沒有事件可看）。官方想定不該示範一個看起來像壞掉的狀態。
+    #    「補不到」要當成戰術後果被看見，那得等補給申請被拒有事件可發。
+    supply:
+      I: { capacity: 3, on_hand: 1.2 }
+      IX: { capacity: 20, on_hand: 8 }
 
   # ── 機步第二營：北正面。紅軍助攻軸線的對手。
   - designation: B-2-BN
@@ -164,6 +179,9 @@ units:
     parent: B-BDE
     equipment:
       - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  # 兩個戰車連滿載出發（`on_hand` 省略＝等於 capacity）。它們是本場**唯一**由前進補給站
+  # （23.742 / 120.386）供應得到的部隊——2.7 km 與 1.2 km，都在 3 km 撥交半徑內。
+  # 逆襲一往西打就會離開那個半徑，這是指揮官投入預備隊時要一起吞下去的代價。
   - designation: B-3-A
     unit_level: COMPANY
     branch: ARMOR
@@ -173,6 +191,9 @@ units:
     equipment:
       - { template: MBT, quantity: 14 }
       - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+    supply:
+      I: { capacity: 3 }
+      IX: { capacity: 20 }
   - designation: B-3-B
     unit_level: COMPANY
     branch: ARMOR
@@ -182,6 +203,9 @@ units:
     equipment:
       - { template: MBT, quantity: 14 }
       - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+    supply:
+      I: { capacity: 3 }
+      IX: { capacity: 20 }
 
   # ── 後勤：旅補給點 fixed，補給前推點**不 fixed**。
   # 這個對比是後勤官（S4_LOG）席位存在的理由：裝甲營一旦向西逆襲，油料線就從 120.438

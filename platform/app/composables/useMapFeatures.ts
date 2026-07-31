@@ -91,6 +91,12 @@ export function fetchMovementPreview(
 }
 
 // ---- 顯示 ----
+/**
+ * 補給點（WP-C7.2）。後端 `engine/supply_points.SUPPLY_POINT_KIND` 是同一個字串，
+ * 由 `core/tests/unit/test_supply_point_api.py` 的漂移閘門釘住三處一致
+ * （契約說明／引擎常數／本清單）。打錯一個字母就是「畫得出來、撥交端讀不到」。
+ */
+export const SUPPLY_POINT_KIND = 'SUPPLY_POINT'
 export const FEATURE_KINDS = [
   { value: 'OBSTACLE', label: '障礙', color: '#ef4444' },
   { value: 'BUILDING', label: '建築', color: '#94a3b8' },
@@ -98,7 +104,28 @@ export const FEATURE_KINDS = [
   { value: 'CONTROL_MEASURE', label: '控制措施', color: '#38bdf8' },
   { value: 'TERRAIN', label: '地形', color: '#a16207' },
   { value: 'ANNOTATION', label: '標註', color: '#22d3ee' },
+  { value: SUPPLY_POINT_KIND, label: '補給點', color: '#34d399' },
 ]
+/**
+ * 只能畫成點的類別。補給點的 `read_point()` 只解得開 `[lng, lat]`——存成線/面就整筆略過，
+ * 而地圖上它看起來完全正常。後端也會擋（422），這裡是不讓使用者先畫完才吃錯誤。
+ */
+export const POINT_ONLY_KINDS: string[] = [SUPPLY_POINT_KIND]
+
+/** 補給點庫存（`attributes.stock`）：類別 → 量。非補給點/未宣告 → 空物件。 */
+export function featureSupplyStock(f: MapFeature): Record<string, number> {
+  const raw = (f.attributes as Record<string, unknown> | undefined)?.stock
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'number' && Number.isFinite(v)) out[k] = v
+  }
+  return out
+}
+/** 補給點是否已被摧毀（`attributes.destroyed`）。摧毀後**仍留在圖上**——AAR 要看得到它曾經在那裡。 */
+export function featureDestroyed(f: MapFeature): boolean {
+  return (f.attributes as Record<string, unknown> | undefined)?.destroyed === true
+}
 export function featureColor(kind: string): string {
   return FEATURE_KINDS.find((k) => k.value === kind)?.color ?? '#22d3ee'
 }

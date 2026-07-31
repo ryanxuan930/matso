@@ -39,9 +39,23 @@ REFIT_TICK_KEY = "refit_tick"
 
 # 前線不整補：這個半徑內有敵軍就不觸發（[JCATS-A p.27]）。
 SAFE_DISTANCE_M = 5000.0
-# 每模擬日恢復的戰力點。**0 ＝不修復（中性預設）**——想定/SimParams 要主動給。
-REPAIR_PER_DAY = 0.0
-# 每恢復一點戰力消耗的 Class IX。
+
+# 每模擬日恢復的戰力點（2026-07-31 校準）。
+#
+# **錨點：一個戰力掉到 60%（損失 40 點）的裝甲連退到後方整補，約 4 個模擬日恢復滿編。**
+# 40 ÷ 4 ＝ 10。⚠ **這是假設，不是量測**——它要釘住的是 [JCATS-A p.26–27]
+# 「絕非申請後直接恢復戰力／於後方恢復再前送」講的**量級**：整補以「日」計，不是以分鐘計。
+#
+# 等比例調整：恢復量與本值**嚴格線性**（`gained = per_day × days`），
+# 想把「4 天」改成「2 天」就 ×2，不必動其他任何常數。
+#
+# ⚠ 契約把它定義成**絕對戰力點**而不是建制比例（`core_api.yaml`）。實務上
+# `authorized_strength` 幾乎恆為 100（DB 預設，想定 loader 不寫），所以 10 點/日
+# ≈ 10% 建制/日；日後真的出現非 100 的編制時，小單位會顯得修得比較快。
+REPAIR_PER_DAY = 10.0
+
+# 每恢復一點戰力消耗的 Class IX。改它要連 `supply.DAILY_CONSUMPTION[IX]` 一起等比例調
+# ——那個值的錨點就是「日常保養 ＝ 每日修回 1 點戰力的料」。
 PARTS_PER_POINT = 0.5
 
 _MS_PER_DAY = 86_400_000
@@ -92,16 +106,15 @@ def refit_tick(
 ) -> list[Any]:
     """整補結算（WP-C7.3）。回帳本事件。
 
-    `repair_per_day <= 0`（預設）→ **立刻回空 list**，一次查詢都不做：既有局零成本。
+    `repair_per_day <= 0` → **立刻回空 list**，一次查詢都不做。但預設已不再是 0，
+    所以既有局的零成本保證改由 `_is_refit_candidate` 撐住（見該函式）。
     """
     from app.engine.supply_points import load_points
     from app.state.ledger import LedgerEvent
 
     if repair_per_day <= 0:
         return []
-    damaged = [
-        uid for uid in sorted(hot.get_all()) if _missing_strength(hot.get_unit(uid) or {}) > 0
-    ]
+    damaged = [uid for uid in sorted(hot.get_all()) if _is_refit_candidate(hot.get_unit(uid) or {})]
     if not damaged:
         return []
     points = load_points(db, session_id)
@@ -134,11 +147,30 @@ def refit_tick(
 
 
 def _missing_strength(state: dict[str, Any]) -> float:
+    """還差多少戰力才滿編。**四捨五入到熱狀態的三位小數解析度**——差額比解析度還小就是滿編了，
+    否則 `_apply_repair` 會為一個永遠寫不進去的零頭無限期地掛在整補候選名單上。"""
     auth = state.get("authorized_strength")
     cur = state.get("strength")
     if not isinstance(auth, (int, float)) or not isinstance(cur, (int, float)):
         return 0.0
-    return max(0.0, float(auth) - float(cur))
+    return max(0.0, round(float(auth) - float(cur), 3))
+
+
+def _is_refit_candidate(state: dict[str, Any]) -> bool:
+    """值得為它查一次 DB 的單位：有戰損，**且編制了 Class IX 或本來就在整補中**。
+
+    Class IX 本來就是 `_blocked_reason` 的硬前提，提到這裡篩是為了讓「既有局零成本」
+    是**結構性**的、而不是靠「剛好這一局沒有補給點」：沒有 `supply` 鍵 → `read_levels`
+    回空 dict → 這裡就 False → **一次 DB 查詢都不發**。`REPAIR_PER_DAY` 從 0 變成真的
+    數字之後，這是唯一還撐得住那個保證的地方。
+
+    「本來就在整補中」那一支不能省——少了它，編制被改掉的單位會留著一個永遠不歸零的
+    `refit_tick`，等於中斷了卻還在計時。
+    """
+    if _missing_strength(state) <= 0:
+        return False
+    parts = read_levels(state).get(SupplyClass.IX)
+    return (parts is not None and parts.declared) or state.get(REFIT_TICK_KEY) is not None
 
 
 def _blocked_reason(
@@ -197,7 +229,11 @@ def _apply_repair(
     hot.update_unit(
         unit_id,
         {
-            "strength": round(strength, 3),
+            # ⚠ **不四捨五入**（曾經是三位小數）。這是逐次結算累加出來的量，捨到千分位等於
+            # 每次結算丟一個零頭：1 秒/tick 的想定每 tick 只修 1.2e-4 點，捨掉就永遠不動、
+            # 進位就多修七成，而 `REFIT_PROGRESS` 事件與畫面都看不出異常。
+            # 熱狀態的 `strength` 在交戰/移動/火力那三個寫入端本來就都是直接寫浮點。
+            "strength": strength,
             "health": effectiveness_pct(strength / auth),
             SUPPLY_KEY: write_levels(levels),
             REFIT_TICK_KEY: tick,

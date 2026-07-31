@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.adjudication.supply import SupplyClass, SupplyLevel
+from app.adjudication.supply import SupplyClass, SupplyLevel, parse_class
 
 SUPPLY_POINT_KIND = "SUPPLY_POINT"
 # 單位要在這個半徑內才拉得到補給。與 `RESUPPLY_RANGE_KM` 分開：那是補給車對單位，
@@ -68,10 +68,20 @@ def read_point(row: Any) -> SupplyPoint | None:
     stock: dict[SupplyClass, float] = {}
     if isinstance(raw_stock, dict):
         for key, value in raw_stock.items():
-            try:
-                stock[SupplyClass(str(key))] = max(0.0, float(value))
-            except (ValueError, TypeError):
+            # 兩套字彙都收（見 `adjudication/supply.COMMODITY_ALIASES`）：想定作者從軍械庫
+            # 學到的是 FUEL/AMMO/WATER_FOOD/BATTERY，本模組講的是 Class 編號。
+            # 過去認不得就**靜靜丟掉**——寫 `{"FUEL": 1000}` 的補給點會變成空庫存、
+            # `usable` 是 False，畫面上一個補給點好端端地在那裡卻永遠撥不出東西。
+            supply_class = parse_class(key)
+            if supply_class is None:
                 continue
+            try:
+                amount = max(0.0, float(value))
+            except (TypeError, ValueError):
+                continue
+            # 兩套字彙同時出現（`{"III": 50, "FUEL": 100}`）就相加——覆蓋的話結果會
+            # 取決於 dict 順序，同一份想定會載出不同的庫存。
+            stock[supply_class] = stock.get(supply_class, 0.0) + amount
     return SupplyPoint(
         feature_id=str(row.id),
         faction=str(row.owner_faction or ""),

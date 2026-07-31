@@ -45,6 +45,9 @@ class ScenarioUnit:
     # WP-B6 編裝：((template_name, quantity, ammo|None), …)。空＝沿用開局的預設配發。
     # 用 tuple 而非 list：ScenarioUnit 是 frozen 值物件，list 會讓它不可雜湊也可被就地改。
     equipment: tuple[tuple[str, int, int | None], ...] = ()
+    # WP-C7 補給編制：((類別, 存量, 容量), …)，**依類別名排序**。空＝未編制任何類別＝
+    # 執行期一個 `supply` 熱狀態鍵都不會被寫（既有想定零變更、golden 不必重錄）。
+    supply: tuple[tuple[str, float, float], ...] = ()
 
 
 @dataclass(slots=True)
@@ -82,6 +85,9 @@ class LoadedScenario:
     mobility_overrides: dict[str, Any] = field(default_factory=dict)
     # 陣地變換（WP-C10.5）：{enabled, missions_before_move, min_km, max_km}。空＝停用。
     survivability_move: dict[str, Any] = field(default_factory=dict)
+    # WP-C7.2 補給點宣告（原樣帶入；開局時由 create_session_from_scenario 落地為
+    # `MapFeature(kind="SUPPLY_POINT")`）。空＝本局沒有補給點＝沒有任何單位補得到貨。
+    supply_points: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -169,6 +175,7 @@ def _build(
         msel=msel,
         victory_conditions=list(sc["victory_conditions"]),
         no_strike_zones=_validate_no_strike(sc.get("no_strike_zones", [])),
+        supply_points=_validate_supply_points(sc.get("supply_points", []), faction_ids),
         roe=roe,
         request_quotas={str(k): int(v) for k, v in (sc.get("request_quotas") or {}).items()},
         indirect_fire_requires_approval=bool(sc.get("indirect_fire_requires_approval", False)),
@@ -248,6 +255,7 @@ def _units_from_orbat_dict(orbat: dict[str, Any], faction_ids: list[str]) -> lis
                     fixed=bool(u.get("fixed", False)),
                     branch=str(u.get("branch") or "UNKNOWN"),
                     equipment=_equipment_of(u),
+                    supply=_supply_of(u, f"orbat[{faction}].units[{j}]"),
                 )
             )
     return units
@@ -287,6 +295,64 @@ def _equipment_of(unit: dict[str, Any]) -> tuple[tuple[str, int, int | None], ..
         )
         for e in (unit.get("equipment") or [])
     )
+
+
+def _supply_of(unit: dict[str, Any], label: str) -> tuple[tuple[str, float, float], ...]:
+    """orbat 單位的 supply 區段 → ((類別, 存量, 容量), …)。**結構已由 JSON Schema 驗過。**
+
+    **依類別名排序**不是美觀問題：這份宣告最後會經 `supply_wiring.write_levels` 寫進熱狀態，
+    而熱狀態會進 `compute_state_hash`——順序若隨 YAML 的書寫順序漂，同一個世界就會算出
+    兩種雜湊。排序在此與在 `write_levels` 各做一次是刻意的（兩端都不依賴對方的順序）。
+
+    `on_hand` 省略＝滿載出發：宣告了編制卻沒說現況，最不意外的讀法就是「滿的」。
+    """
+    raw = unit.get("supply") or {}
+    out: list[tuple[str, float, float]] = []
+    for name in sorted(raw):
+        level = raw[name]
+        capacity = float(level["capacity"])
+        on_hand = float(level.get("on_hand", capacity))
+        if on_hand > capacity:
+            raise ScenarioError(
+                f"{label}.supply.{name}: on_hand（{on_hand}）大於 capacity（{capacity}）"
+                "——容量是編制上限，撥交一律夾在它以下，超出的部分在第一次補給後就會消失"
+            )
+        out.append((str(name), on_hand, capacity))
+    return tuple(out)
+
+
+def _validate_supply_points(points: Any, faction_ids: list[str]) -> list[dict[str, Any]]:
+    """補給點的語意驗證（WP-C7.2）。JSON Schema 已驗結構，這裡只擋「結構合法但註定無效」。
+
+    兩條都是**沉默失效**——想定作者會以為後勤線鋪好了，而執行期什麼事都不會發生：
+
+    1. 陣營打錯字：`nearest_usable` 只找同陣營的點，於是沒有任何單位拉得到它
+       （同 `_validate_roe_factions` 的理由——JSON Schema 只驗字串格式，驗不了「這個陣營存在」）。
+    2. 庫存全 0：`SupplyPoint.usable` 恆為 False，它從第一個 tick 起就是一塊佈景。
+       而且**補不回來**——撥交是「拉」不是「推」，沒有任何機制會把貨送進一個空的點。
+    """
+    if not isinstance(points, list):
+        return []
+    known = set(faction_ids)
+    out: list[dict[str, Any]] = []
+    for i, p in enumerate(points):
+        if not isinstance(p, dict):
+            raise ScenarioError(f"scenario.yaml: supply_points[{i}]: 需為物件")
+        faction = str(p.get("faction", ""))
+        if faction not in known:
+            raise ScenarioError(
+                f"scenario.yaml: supply_points[{i}].faction: 未宣告的陣營：{faction}"
+                "——只有同陣營的單位拉得到貨，打錯字的補給點不會有任何人來補給"
+            )
+        stock = p.get("stock") or {}
+        if not any(float(v) > 0 for v in stock.values()):
+            name = p.get("name", "?")
+            raise ScenarioError(
+                f"scenario.yaml: supply_points[{i}]（{name}）: 所有類別的庫存都是 0，"
+                "這個補給點永遠不可用——撥交是「拉」不是「推」，沒有任何機制會把貨補進去"
+            )
+        out.append(dict(p))
+    return out
 
 
 def _msel_from_dict(data: dict[str, Any] | None) -> list[MselEntry]:
@@ -506,6 +572,7 @@ def create_session_from_scenario(
             current_lng=u.lng,
             is_fixed=u.fixed,
             branch=_branch_of(u.branch),
+            attributes=_unit_attributes(u),
         )
         db.add(unit)
         by_designation[(u.faction, u.designation)] = unit
@@ -516,6 +583,7 @@ def create_session_from_scenario(
                 (u.faction, u.parent)
             ].id
     _create_declared_equipment(db, loaded, by_designation)
+    _create_supply_points(db, loaded, session.id)
     if seed_default_equipment:
         from app.adjudication import seed_session_equipment
 
@@ -524,6 +592,60 @@ def create_session_from_scenario(
         seed_session_equipment(db, session.id)
     db.commit()
     return session.id
+
+
+def _unit_attributes(u: ScenarioUnit) -> dict[str, Any]:
+    """想定宣告 → `TacticalUnit.attributes`。**沒有宣告就回空 dict**（一個鍵都不寫）。
+
+    形狀刻意與熱狀態的 `supply` 片段一模一樣（`{類別: [存量, 容量]}`）：由
+    `supply_wiring.write_levels` 產出、由同模組的 `read_levels` 讀回，播種端因此不必
+    自己再解析一份。**同一份資料有兩個解析器就一定會漂**——這個 repo 已經在
+    `armor_class` 與 MSEL 增援的鍵集上各栽過一次。
+    """
+    from app.adjudication.supply import SupplyClass, SupplyLevel
+    from app.engine.supply_wiring import SUPPLY_KEY, write_levels
+
+    if not u.supply:
+        return {}
+    levels = {SupplyClass(c): SupplyLevel(on_hand, capacity) for c, on_hand, capacity in u.supply}
+    return {SUPPLY_KEY: write_levels(levels)}
+
+
+def _create_supply_points(db: Session, loaded: LoadedScenario, session_id: str) -> None:
+    """想定宣告的補給點 → `MapFeature(kind="SUPPLY_POINT")`（WP-C7.2）。
+
+    存成 MapFeature 而不是 pseudo-unit：補給點不移動、不交戰、沒有戰力，硬塞成單位會讓
+    每個 `hot.get_all()` 的消費端都得學會忽略它。存成 MapFeature 免費得到持久化、
+    checkpoint 涵蓋、地圖圖層與**已經存在的敵我可見性語義**（見 `engine/supply_points.py`）。
+
+    ⚠ `geometry` 是 GeoJSON 的 **[lng, lat]**。想定端用具名的 lat/lng 就是為了讓這個
+    順序只在這一行出現——寫反了 `nearest_usable` 會算出幾千公里的距離，於是每個單位
+    都補不到貨，而且**不會有任何錯誤訊息**。
+
+    `influence_radius_m` 刻意留空：撥交半徑是引擎常數 `DRAW_RADIUS_M`，
+    在這裡填一個數字會多出一個沒有任何程式讀的旋鈕（想定作者調了它卻什麼都不會變）。
+    """
+    from app.engine.supply_points import SUPPLY_POINT_KIND
+    from app.models.tables import MapFeature
+
+    for point in loaded.supply_points:
+        db.add(
+            MapFeature(
+                session_id=session_id,
+                kind=SUPPLY_POINT_KIND,
+                geometry_type="POINT",
+                geometry=[float(point["lng"]), float(point["lat"])],
+                owner_faction=str(point["faction"]),
+                label=str(point["name"]),
+                # 庫存依類別名排序：撥交順序與 AAR 的呈現都不該隨 YAML 的書寫順序漂。
+                attributes={
+                    "stock": {
+                        str(k): float(v) for k, v in sorted((point.get("stock") or {}).items())
+                    }
+                },
+            )
+        )
+    db.flush()
 
 
 def _create_declared_equipment(
@@ -667,6 +789,7 @@ def _load_orbats(
                     fixed=bool(u.get("fixed", False)),
                     branch=str(u.get("branch") or "UNKNOWN"),
                     equipment=_equipment_of(u),
+                    supply=_supply_of(u, f"{label}: units[{j}]"),
                 )
             )
     return units

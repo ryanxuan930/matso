@@ -18,9 +18,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.adjudication.supply import SupplyClass
 from app.api.deps import get_current_user, get_db, get_gateway
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
+from app.engine.supply_points import SUPPLY_POINT_KIND
 from app.errors import AuthForbiddenError, OrderValidationError, SessionNotFoundError
 from app.factions import WHITE_CELL, validate_faction_id
 from app.footprint import compute_footprint, haversine_m
@@ -122,6 +124,64 @@ def _check_geometry_type(geometry_type: str) -> str:
     return gt
 
 
+def _check_supply_point(
+    kind: str, geometry_type: str, geometry: Any, owner: str, attributes: dict[str, Any]
+) -> None:
+    """補給點（WP-C7.2）的三道前置檢查。**其他 kind 完全不受影響**。
+
+    這三件事在此之前都是「存得進去、讀得回來、實際沒效果」——
+    `engine/supply_points.read_point()` 對它們一律**靜默回 None**（略過該筆，不毀掉整局），
+    於是白軍在 COP 上圈了一個補給點、清單裡看得到、地圖上畫得出來，
+    而撥交端 `load_points()` 根本不認得它。畫的人沒有任何線索。
+    靜默是那個設計對的選擇（一筆髒資料不該讓整局的補給停擺）；**把話講在建立當下**才是這裡的事。
+
+    1. **只認 POINT，且幾何要真的是 `[lng, lat]`**：`read_point` 解不開就整筆略過。
+    2. **不可落在 WHITE_CELL 共同層**：`nearest_usable()` 只找**同陣營**的補給點
+       （盟軍共用是後勤協定問題，預設不共用），共同層的補給點沒有任何單位撥交得到。
+    3. **`stock` 必須宣告且類別要認得**：`read_point` 對認不得的類別 `continue`
+       ——打錯一個字母，那一格庫存就人間蒸發。空倉庫要明寫 `{"I": 0}`，
+       那與「忘了填」是不同的意思。
+    """
+    if kind != SUPPLY_POINT_KIND:
+        return
+    coords = geometry if isinstance(geometry, list) else []
+    if geometry_type != "POINT" or len(coords) < 2 or not _all_numbers(coords[:2]):
+        raise OrderValidationError(
+            "補給點只認 POINT 幾何（[lng, lat]）——存成線/面的補給點，撥交端讀不到它。",
+            error_code="MAP_FEATURE_SUPPLY_POINT_GEOMETRY",
+        )
+    if owner == WHITE_CELL:
+        raise OrderValidationError(
+            "補給點必須歸屬某一作戰陣營：補給只撥交給同陣營單位，"
+            "掛在共同層（WHITE_CELL）的補給點沒有任何單位拉得到。",
+            error_code="MAP_FEATURE_SUPPLY_POINT_FACTION",
+        )
+    stock = attributes.get("stock")
+    if not isinstance(stock, dict) or not stock:
+        raise OrderValidationError(
+            '補給點必須宣告庫存 attributes.stock，例：{"I": 500, "IX": 80}'
+            "（類別 I 口糧水、III 油料、V 彈藥、IX 維修件；空倉庫請明寫 0）。",
+            error_code="MAP_FEATURE_SUPPLY_POINT_STOCK",
+        )
+    known = {c.value for c in SupplyClass}
+    for key, value in stock.items():
+        if str(key) not in known:
+            raise OrderValidationError(
+                f"未知補給類別：{key}（限 {'/'.join(sorted(known))}）——"
+                "撥交端會靜默略過認不得的類別，那一格庫存等於不存在。",
+                error_code="MAP_FEATURE_SUPPLY_POINT_STOCK",
+            )
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            raise OrderValidationError(
+                f"補給類別 {key} 的庫存須為非負數，實得：{value!r}",
+                error_code="MAP_FEATURE_SUPPLY_POINT_STOCK",
+            )
+
+
+def _all_numbers(values: list[Any]) -> bool:
+    return all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values)
+
+
 @router.get("/{session_id}/map-features", response_model=list[MapFeatureView])
 def list_map_features(
     session_id: str,
@@ -166,6 +226,7 @@ def create_map_feature(
         if body.owner_faction and validate_faction_id(body.owner_faction) != participant.faction:
             raise AuthForbiddenError("僅可標注本軍圖層")
         owner = participant.faction
+    _check_supply_point(body.kind, gt, body.geometry, owner, dict(body.attributes or {}))
     feat = MapFeature(
         session_id=session_id,
         kind=body.kind,
@@ -223,6 +284,20 @@ def edit_map_feature(
         if not is_omniscient(user.role):
             raise AuthForbiddenError("僅 White Cell 可變更標註歸屬")
         feat.owner_faction = validate_faction_id(edit.owner_faction)
+    # 補給點的三道檢查跑在**合併之後的最終狀態**上：PATCH 對 attributes 是 merge，
+    # 只看這次送來的欄位會漏掉「原本就壞」與「這次把它改壞」兩種情形
+    # （例如把一個既有標註的 kind 改成 SUPPLY_POINT，庫存從來就沒有過）。
+    try:
+        _check_supply_point(
+            feat.kind,
+            feat.geometry_type,
+            feat.geometry,
+            feat.owner_faction,
+            dict(feat.attributes or {}),
+        )
+    except OrderValidationError:
+        db.rollback()  # 檢查跑在套用之後（要看合併結果）→ 失敗就把這次的變更整批丟掉
+        raise
     db.commit()
     return _view(feat)
 

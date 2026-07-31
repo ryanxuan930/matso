@@ -7,7 +7,9 @@
  * ——它們各自來源不同（DB 值、STATE_DIFF 活值、編裝權限），沒有共同的 composable 可收。
  */
 import { POSTURE_LABELS, commsLabel, factionColor, postureLabel, unitLevelLabel } from '~/composables/useUnits'
+import { starvationModifier, supplyClassLabel } from '~/composables/useLabels'
 import type { UnitView, WeaponView } from '~/composables/useOrders'
+import type { SupplyLevelView } from '~/composables/useLiveState'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useUnitCardDrag } from '~/composables/useUnitCardDrag'
 
@@ -31,6 +33,13 @@ defineProps<{
   livePosture: (u: UnitView) => string
   liveStaleTick: (u: UnitView) => number | null
   liveFuel: (unitId: string | null) => number | null
+  /**
+   * WP-C7 補給水位與斷補天數（活值）。**空陣列＝這個單位沒有宣告補給類別**，
+   * 不是「全部見底」——沒有宣告的既有想定不該在卡片上看起來像在挨餓。
+   * 敵方單位一律讀到中性值（後端不供應，紅線 3）。
+   */
+  liveSupply: (u: UnitView) => SupplyLevelView[]
+  liveStarvedDays: (u: UnitView) => number
   liveAmmo: (w: WeaponView) => number | null
 }>()
 
@@ -86,6 +95,18 @@ const showAttrs = ref(false)
   >
     <i class="pi pi-shield" /> {{ postureLabel(livePosture(unit)) }}
   </div>
+  <!-- WP-C7 斷補徽章。**斷補是會贏會輸的事**（Class I 見底 3 個模擬日就只剩五成效能），
+       但它不像戰損有血條可看——沒有這個徽章，指揮官要到部隊打不動了才會發現。
+       用倍率而不是只講天數：「斷補 3.0 日」對操作員沒有意義，「效能 ×0.5」有。 -->
+  <div
+    v-if="liveStarvedDays(unit) > 0"
+    class="starved"
+    :title="`Class I（口糧／水）已見底 ${liveStarvedDays(unit).toFixed(1)} 個模擬日。效能隨天數階梯下降，補到一次即歸零。`"
+    data-testid="unit-starved"
+  >
+    <i class="pi pi-exclamation-triangle" />
+    斷補 {{ liveStarvedDays(unit).toFixed(1) }} 日 · 效能 ×{{ starvationModifier(liveStarvedDays(unit)).toFixed(2) }}
+  </div>
   <div class="hpbar" :title="`作戰效能 ${hpPct}%`">
     <div class="hpfill" :style="{ width: `${hpPct}%`, background: hpColor }" />
     <span class="hptxt">效能 {{ hpPct }}%</span>
@@ -133,6 +154,22 @@ const showAttrs = ref(false)
         <span v-if="liveStaleTick(unit) != null" class="stale">
           · T{{ liveStaleTick(unit) }} 最後回報（已失聯
           {{ Math.max(0, currentTick - (liveStaleTick(unit) ?? 0)) }}t）
+        </span>
+      </dd>
+    </div>
+    <!-- WP-C7 補給水位。**沒有宣告補給類別的單位整列不出現**——空清單是「沒有這本帳」，
+         印一排 0% 會讓既有想定的每支部隊看起來都在斷補。
+         低於再訂購水位（30%）標紅：那是 auto_resupply 會去拉貨的線，也是指揮官該有動作的線。 -->
+    <div v-if="liveSupply(unit).length" data-testid="unit-supply">
+      <dt>補給</dt>
+      <dd class="supply-list">
+        <span
+          v-for="s in liveSupply(unit)"
+          :key="s.supply_class"
+          :class="{ lowsupply: s.fraction < 0.3 }"
+          :title="`${s.supply_class}·${supplyClassLabel(s.supply_class)}：${s.on_hand.toFixed(0)} / ${s.capacity.toFixed(0)}`"
+        >
+          {{ supplyClassLabel(s.supply_class) }} {{ Math.round(s.fraction * 100) }}%
         </span>
       </dd>
     </div>
@@ -202,6 +239,27 @@ const showAttrs = ref(false)
 }
 .unit-card .posture-dug_in {
   color: #34d399;
+}
+/* WP-C7 斷補徽章：用紅色而非姿態徽章的藍綠——這是「必須有動作」而不是「狀態如此」。 */
+.unit-card .starved {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.75rem;
+  font-size: 0.68rem;
+  color: #fca5a5;
+  border: 1px solid currentcolor;
+  background: rgba(127, 29, 29, 0.35);
+}
+.unit-card .supply-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.5rem;
+}
+.unit-card .supply-list .lowsupply {
+  color: #f87171; /* 低於再訂購水位（30%）＝ auto_resupply 會去拉貨的線 */
 }
 .unit-card .supbar {
   position: relative;

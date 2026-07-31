@@ -35,6 +35,10 @@ _EDITOR_MODEL = _REPO / "platform" / "app" / "composables" / "useScenarioEditor.
 _NOT_EDITED_HERE = {
     "files": "由 exportScenario 依 factions/msel 自動產生，不是人填的欄位",
     "no_strike_zones": "在 COP 的地圖編輯器畫（WP-A3）；劇本編輯器只原樣帶著不動它",
+    # 同 no_strike_zones：帶座標的地圖物件在地圖上畫才對得準，表單裡填經緯度是自找麻煩。
+    # COP 的地圖編輯器已有 SUPPLY_POINT 類別（`useMapFeatures.FEATURE_KINDS`），
+    # 劇本編輯器則靠 passthrough 原樣帶著（未建模的頂層鍵會被 exportScenario 攤回去）。
+    "supply_points": "在 COP 的地圖編輯器畫（WP-C7.2）；劇本編輯器只原樣帶著不動它",
 }
 
 

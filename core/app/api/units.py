@@ -24,12 +24,14 @@ from sqlalchemy.orm import Session
 from app.adjudication import WeaponProfile
 from app.adjudication.effectiveness import health_state
 from app.adjudication.establishment import platform_count_for
+from app.adjudication.supply import SupplyClass
 from app.api.deps import get_current_user, get_db, get_settings
 from app.api.session_scope import require_participant
 from app.auth.schemas import CurrentUser
 from app.cache import make_redis
 from app.comms import parse_link_state, project_position
 from app.config import Settings
+from app.engine.supply_wiring import STARVED_DAYS_KEY, read_levels
 from app.errors import AuthForbiddenError, SessionNotFoundError
 from app.factions import validate_faction_id
 from app.factions.session_store import load_session_relations
@@ -40,6 +42,19 @@ from app.state.live_position import push_pos_cmd
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["units"])
+
+
+class SupplyLevelView(BaseModel):
+    """單一補給類別的水位（WP-C7.1）。
+
+    **未編制的類別（`capacity <= 0`）不會出現在清單裡**——「沒有編制這個類別」與
+    「編制了但空了」是兩件完全不同的事，混為一談會讓每個單位看起來都在斷補。
+    """
+
+    supply_class: str  # 北約類別編號 I/III/V/IX
+    on_hand: float
+    capacity: float
+    fraction: float
 
 
 class UnitView(BaseModel):
@@ -68,6 +83,10 @@ class UnitView(BaseModel):
     # 於是一個剩三成兵力的連隊在 COP 上顯示「血量 0」——它還活著、還會移動、還能被打，
     # 操作員卻會把 0 讀成「已殲滅」。`health_state()` 一直都在，就是**生產零呼叫端**。
     readiness: str = "OK"
+    # WP-C7 補給。**空 list ＝沒有宣告任何補給類別**，不是「全部見底」——既有想定一律如此。
+    # 與 `suppression` 同一條 fog 規則（`own=False` 不供應），見 `_view` 的說明。
+    supply: list[SupplyLevelView] = Field(default_factory=list)
+    starved_days: float = 0.0
 
 
 class WeaponView(BaseModel):
@@ -98,6 +117,8 @@ def _view(
     `own=False`（他方單位）→ **不供應壓制度與姿態**：看得到敵軍被壓制多少，
     等於一份免費的即時戰果評估——那正是 WP-C10.4 花整張卡在擋的東西。
     姿態同理（對方掘壕到什麼程度是要靠偵察才知道的）。
+    **補給水位與斷補天數走同一條規則**（WP-C7）：敵軍還剩幾天糧、幾成彈是後勤情報，
+    看得到就等於一份「幾時去打他最省力」的時間表，比壓制度洩得更遠（它預告的是未來）。
 
     盟軍算「己方」（聯絡官會回報）；god view 沒有他方，全供應。
     """
@@ -127,7 +148,32 @@ def _view(
         readiness=health_state(
             (u.current_strength / u.authorized_strength) if u.authorized_strength else 0.0
         ),
+        supply=_supply_levels(hot) if own else [],
+        starved_days=_hot_float(hot, STARVED_DAYS_KEY) if own else 0.0,
     )
+
+
+def _supply_levels(hot: Mapping[str, Any] | None) -> list[SupplyLevelView]:
+    """熱狀態 → 補給水位清單。**沒有 `supply` 鍵就是空清單**（既有想定的唯一路徑）。
+
+    解析借 `engine/supply_wiring.read_levels`（同一份容錯規則），**不自己再寫一份**：
+    `_platform_count` 的註解已經說過兩邊各寫一份會漂到哪去，那個教訓對熱狀態編碼一樣成立。
+
+    順序照 `SupplyClass` 的**宣告順序**（I → III → V → IX），不照字典序——字典序會排成
+    I/III/IX/V，把維修件插在彈藥前面，讀的人得停下來想一下。這個順序純粹是顯示用，
+    與 `write_levels` 為雜湊穩定而採的排序無關（那一份不可改）。
+    """
+    levels = read_levels(dict(hot or {}))
+    return [
+        SupplyLevelView(
+            supply_class=c.value,
+            on_hand=round(level.on_hand, 3),
+            capacity=round(level.capacity, 3),
+            fraction=round(level.fraction, 4),
+        )
+        for c in SupplyClass
+        if (level := levels.get(c)) is not None and level.declared
+    ]
 
 
 def _hot_float(hot: Mapping[str, Any] | None, key: str) -> float:

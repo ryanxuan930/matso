@@ -4,6 +4,44 @@
   "title": "OrbatFile",
   "description": "單一陣營的戰鬥序列（orbat/<faction>.yaml，SPEC_FULL §11.1）。巢狀單位樹以 parent 參照。",
   "type": "object",
+  "$defs": {
+    "unitSupply": {
+      "type": "object",
+      "description": "本單位的補給編制（WP-C7.1）。省略＝**未編制任何類別**：執行期一個 `supply` 熱狀態鍵都不會被寫，補給結算對該單位一次計算都不做（既有想定零變更）。⚠ **只收 Class I（口糧/水）與 IX（維修件）**——那是本體系自己管的兩個類別（`adjudication/supply.py` 的 `OWNED_CLASSES`）。III（油料）已有 #84 的油料模型、V（彈藥）已有 orbat `equipment[].ammo` 的逐武器彈藥；在這裡宣告它們只會多出一份**沒有任何消費端**的平行帳：車照樣依 #84 的油耗跑、槍照樣打 `ammo_by_weapon`，而想定作者會以為自己調了油彈。要調油料/彈藥請走那兩條既有的路。",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "I": {
+          "$ref": "#/$defs/supplyLevel",
+          "description": "Class I 口糧/水。斷了會依 `starved_days` 階梯扣效能（1 日 ×0.9／2 日 ×0.75／3 日 ×0.5／5 日 ×0.25）。"
+        },
+        "IX": {
+          "$ref": "#/$defs/supplyLevel",
+          "description": "Class IX 維修件。是整補（WP-C7.3）的硬上限——沒有料件就修不動，不是修得慢。"
+        }
+      }
+    },
+    "supplyLevel": {
+      "type": "object",
+      "description": "單一類別的存量與容量。單位是**抽象量**，其意義由該想定與 SimParams 的每日消耗率共同決定（建議把 1 記成「該單位一個模擬日的份量」，capacity 3 就讀成 3 日份）。",
+      "required": [
+        "capacity"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "capacity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "編制上限。執行期以 `capacity <= 0` 表示**未編制**（不消耗、不申請補給、不扣效能），所以這裡必須 > 0——要表達沒編制就整個省略該類別，不要寫 0。"
+        },
+        "on_hand": {
+          "type": "number",
+          "minimum": 0,
+          "description": "初始存量；不得大於 capacity。省略＝等於 capacity（滿載出發）。要演練「開局就短缺」才明確給小於 capacity 的值——低於 capacity 的 30% 會在第一個 tick 就觸發自動補給申請。"
+        }
+      }
+    }
+  },
   "required": [
     "faction",
     "units"
@@ -93,6 +131,9 @@
                 }
               }
             }
+          },
+          "supply": {
+            "$ref": "#/$defs/unitSupply"
           },
           "branch": {
             "type": "string",

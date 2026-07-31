@@ -8,7 +8,14 @@
  * 故 `editor.drawLabel` 可直接 v-model，型別由 composable 的回傳型別保證。
  */
 import { factionColor } from '~/composables/useUnits'
-import { FEATURE_KINDS, featureDisplayColor, ZONE_CLASSES } from '~/composables/useMapFeatures'
+import {
+  FEATURE_KINDS,
+  SUPPLY_POINT_KIND,
+  featureDestroyed,
+  featureDisplayColor,
+  ZONE_CLASSES,
+} from '~/composables/useMapFeatures'
+import { NATO_SUPPLY_CLASSES, supplyClassLabel } from '~/composables/useLabels'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useMapEditor } from '~/composables/useMapEditor'
 
@@ -65,12 +72,16 @@ const OBSTACLE_TYPES = [
       <option v-for="k in editor.drawableKinds" :key="k.value" :value="k.value">{{ k.label }}</option>
     </select>
   </label>
+  <!-- 補給點只畫得成點：`read_point()` 只解得開 [lng, lat]，存成線/面就整筆被略過，
+       而它在圖上與有效的補給點長得一模一樣。與其畫完吃 422，不如不給那幾顆鈕。 -->
   <div class="me-btns">
     <button data-testid="draw-point" @click="editor.startDraw('POINT', editor.drawFeatureKind)">點</button>
-    <button data-testid="draw-line" @click="editor.startDraw('LINE', editor.drawFeatureKind)">線</button>
-    <button data-testid="draw-polygon" @click="editor.startDraw('POLYGON', editor.drawFeatureKind)">面</button>
-    <button data-testid="draw-rect" @click="editor.startDraw('RECTANGLE', editor.drawFeatureKind)">矩形</button>
-    <button data-testid="draw-circle" @click="editor.startDraw('CIRCLE', editor.drawFeatureKind)">圓形</button>
+    <template v-if="!editor.drawPointOnly">
+      <button data-testid="draw-line" @click="editor.startDraw('LINE', editor.drawFeatureKind)">線</button>
+      <button data-testid="draw-polygon" @click="editor.startDraw('POLYGON', editor.drawFeatureKind)">面</button>
+      <button data-testid="draw-rect" @click="editor.startDraw('RECTANGLE', editor.drawFeatureKind)">矩形</button>
+      <button data-testid="draw-circle" @click="editor.startDraw('CIRCLE', editor.drawFeatureKind)">圓形</button>
+    </template>
   </div>
   <div class="me-attrs">
     <input v-model="editor.drawLabel" class="me-in" data-testid="draw-label" placeholder="名稱（選填）">
@@ -113,6 +124,27 @@ const OBSTACLE_TYPES = [
           data-testid="draw-density"
         >
       </label>
+    </div>
+    <!-- WP-C7.2 補給點庫存：**沒有庫存的補給點撥不出任何補給**，而它在圖上看起來完全正常。
+         空倉庫請明寫 0——那與「忘了填」是不同的意思（後端也擋，422）。 -->
+    <div v-if="editor.drawFeatureKind === SUPPLY_POINT_KIND" class="me-stock" data-testid="draw-supply-stock">
+      <div class="me-sub">庫存（補給類別）</div>
+      <label v-for="c in NATO_SUPPLY_CLASSES" :key="c" class="me-h">
+        {{ c }}·{{ supplyClassLabel(c) }}
+        <input
+          v-model.number="editor.drawSupplyStock[c]"
+          :data-testid="`draw-stock-${c}`"
+          type="number"
+          min="0"
+          step="10"
+          placeholder="不備"
+        >
+      </label>
+      <div class="me-hint me-hint-zone">
+        <i class="pi pi-exclamation-triangle" />
+        補給點只撥交給<b>同陣營</b>單位（3 km 內）——請確認上方已切到該陣營視角，
+        否則會落在共同層而沒有任何單位拉得到。
+      </div>
     </div>
     <!-- WP-A3 禁射級別：**繪製當下就要選得到**。在此之前只有「畫完 → 選取 → 編輯」那一路
          寫得進 zone_class，於是畫完就以為圈好了禁射區，實際上火力裁決完全不認得它。
@@ -280,6 +312,26 @@ const OBSTACLE_TYPES = [
         : '此區內的目標需確認才可射擊：AI 令保留但升白軍確認，人員須明確勾選確認且會留痕。'
     }}
   </div>
+  <!-- WP-C7.2 補給點庫存編輯。清空某一格＝「不備該類別」；0＝「有這一格但空了」。
+       兩者對撥交端是不同的事，所以 placeholder 明講「不備」而不是留白。 -->
+  <div v-if="editor.selectedFeature.kind === SUPPLY_POINT_KIND" class="me-stock" data-testid="edit-supply-stock">
+    <div class="me-sub">庫存（補給類別）</div>
+    <div v-if="featureDestroyed(editor.selectedFeature)" class="me-hint me-hint-zone" data-testid="supply-destroyed">
+      <i class="pi pi-times-circle" /> <b>此補給點已被摧毀</b>——下游單位再也拉不到補給。
+      （刻意留在圖上：AAR 要看得到它曾經在那裡。）
+    </div>
+    <label v-for="c in NATO_SUPPLY_CLASSES" :key="c" class="me-h">
+      {{ c }}·{{ supplyClassLabel(c) }}
+      <input
+        v-model.number="editor.editFeatStock[c]"
+        :data-testid="`edit-stock-${c}`"
+        type="number"
+        min="0"
+        step="10"
+        placeholder="不備"
+      >
+    </label>
+  </div>
   <NatoSymbolSelect
     v-if="editor.selectedFeature.geometry_type === 'POINT'"
     v-model="editor.editFeatSidc"
@@ -345,6 +397,23 @@ const OBSTACLE_TYPES = [
 }
 .feye:hover {
   opacity: 1;
+}
+/* WP-C7.2 補給點庫存：每一格一列，數字欄靠右對齊（比大小時眼睛要能掃過去）。 */
+.map-editor .me-stock {
+  margin: 0.35rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.map-editor .me-stock label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+.map-editor .me-stock input {
+  width: 5rem;
+  text-align: right;
 }
 .map-editor .me-list li.hidden .fname {
   opacity: 0.4;

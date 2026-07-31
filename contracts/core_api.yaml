@@ -391,9 +391,31 @@ components:
       required: [factions]
       properties:
         factions: { type: array, items: { $ref: "#/components/schemas/AiFactionStatus" } }
+    SupplyLevelView:
+      type: object
+      description: >-
+        單一補給類別的水位（WP-C7.1）。**`capacity` 是編制上限，`on_hand` 是現有量**。
+        未編制的類別（`capacity <= 0`）根本不會出現在清單裡——「沒有編制這個類別」與
+        「編制了但空了」是完全不同的兩件事，混為一談會讓每個單位看起來都在斷補。
+      required: [supply_class, on_hand, capacity, fraction]
+      properties:
+        supply_class:
+          type: string
+          enum: [I, III, V, IX]
+          description: >-
+            北約補給類別編號：I＝口糧/水、III＝油料、V＝彈藥、IX＝維修件。
+            ⚠ 與軍械庫 LOGISTICS `capacity` 的鍵（AMMO/FUEL/WATER_FOOD/BATTERY）**不是同一組命名**
+            ——那是裝備範本的載運艙格，這裡是單位身上的存量帳。
+        on_hand: { type: number, description: 現有量 }
+        capacity: { type: number, description: 編制上限（>0；未編制的類別不會出現） }
+        fraction:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: "`on_hand / capacity`（夾在 0–1）。低於 0.3 即觸發再訂購（WP-C7.2）。"
     UnitView:
       type: object
-      required: [id, designation, unit_level, faction, health, comms]
+      required: [id, designation, unit_level, faction, health, comms, supply, starved_days]
       properties:
         id: { type: string }
         designation: { type: string }
@@ -435,6 +457,24 @@ components:
             期間仍算前一級——本欄是「已經到位的那一級」，不是「正在挖的目標」。
             移動會打回 MOVING（挖到一半的洞帶不走）。與 `suppression` 同一個 fog 規則：
             他方單位一律回 MOVING（對方掘壕到什麼程度要靠偵察）。
+        supply:
+          type: array
+          items: { $ref: "#/components/schemas/SupplyLevelView" }
+          description: >-
+            補給水位（WP-C7）。**空陣列＝這個單位沒有宣告任何補給類別**，不是「全部見底」
+            ——既有想定一律如此（`supply` 熱狀態鍵不存在 → 引擎一次計算都不做）。
+            依 `SupplyClass` 的宣告順序（I → III → V → IX）排列，順序固定。
+            **只在友軍（己方＋盟軍）單位上供應**，他方一律空陣列：敵軍還剩幾天糧、幾成彈
+            是後勤情報，看得到就等於一份免費的戰果評估與斷補時機表（同 `suppression` 的
+            fog 規則，紅線 3）。白軍 god view 全供應。
+        starved_days:
+          type: number
+          minimum: 0
+          description: >-
+            斷補天數（模擬日，WP-C7.1）。>0 ＝ Class I（口糧/水）已見底且持續中；
+            **只看 Class I**——口糧斷了才是斷補，維修件見底影響的是修復而不是即刻戰力。
+            效能倍率隨天數**階梯**下降（1 日 ×0.9／2 日 ×0.75／3 日 ×0.5／5 日 ×0.25），
+            補到一次即歸零。同 `supply` 的 fog 規則，他方單位一律 0。
         stale_since_tick:
           type: [integer, "null"]
           description: >-
@@ -999,30 +1039,52 @@ components:
         faction: { type: [string, "null"], description: IDENTIFIED 才揭露敵我 }
     MapFeatureView:
       type: object
-      description: 地圖標註/工事（武器據點/障礙/建築/控制措施；點/線/面）
+      description: 地圖標註/工事（武器據點/障礙/建築/控制措施/補給點；點/線/面）
       required: [id, kind, geometry_type, geometry, owner_faction, attributes]
       properties:
         id: { type: string }
-        kind: { type: string, description: OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION }
+        kind:
+          type: string
+          description: >-
+            OBSTACLE / BUILDING / WEAPON_EMPLACEMENT / CONTROL_MEASURE / TERRAIN / ANNOTATION /
+            **SUPPLY_POINT**（WP-C7.2 補給點：帶庫存、可撥交、打得掉；見 `attributes`）。
         geometry_type: { type: string, description: POINT / LINE / POLYGON }
         geometry: { description: GeoJSON coordinates（依 geometry_type） }
         owner_faction: { type: string, description: 擁有陣營（WHITE_CELL＝共同） }
         label: { type: [string, "null"] }
         influence_radius_m: { type: [number, "null"] }
         weapon_template_id: { type: [string, "null"] }
-        attributes: { type: object }
+        attributes:
+          type: object
+          description: >-
+            類別相依的自由屬性（Json 欄位，免 migration）。目前有裁決效力的形狀：
+            **OBSTACLE**（WP-C2）：`obstacle_type`＝MINEFIELD/WIRE/TANK_DITCH/ABATIS/BRIDGE_DEMO、
+            `density`＝0–1；缺 `obstacle_type` ＝純幾何障礙（全中性）。
+            **面標註**（WP-A3）：`zone_class`＝NO_STRIKE/RESTRICTED_FIRE；只有 POLYGON 成得了區。
+            **SUPPLY_POINT**（WP-C7.2）：`stock`＝`{北約補給類別: 庫存量}`，類別限 I/III/V/IX
+            （I 口糧水、III 油料、V 彈藥、IX 維修件），倉庫**無容量上限**；
+            `destroyed`＝bool，被火力摧毀後為 true 且**留在圖上**（AAR 要看得到它曾經在那裡）。
+            ⚠ 補給點只認 **POINT** 幾何、歸屬必須是某一**作戰陣營**——存成面或掛在 WHITE_CELL
+            共同層的補給點，`nearest_usable()` 一個單位都撥交不出去（畫得出來、完全沒有效果），
+            故後端在建立/編輯時即擋下。
+            **共通**：`color` / `width` / `notes` / `height_m` / `sidc` / `viewshed_ring`（顯示用）。
     MapFeatureCreate:
       type: object
       required: [kind, geometry_type, geometry]
       properties:
-        kind: { type: string }
+        kind: { type: string, description: "見 MapFeatureView.kind（含 SUPPLY_POINT）" }
         geometry_type: { type: string }
         geometry: {}
-        owner_faction: { type: [string, "null"], description: 全知可指定（含 WHITE_CELL）；否則本軍 }
+        owner_faction:
+          type: [string, "null"]
+          description: >-
+            全知可指定（含 WHITE_CELL）；否則本軍。
+            ⚠ SUPPLY_POINT **不可**落在 WHITE_CELL 共同層——補給點只撥交給同陣營單位，
+            共同層的補給點沒有任何單位拉得到（後端擋，422 `MAP_FEATURE_SUPPLY_POINT_FACTION`）。
         label: { type: [string, "null"] }
         influence_radius_m: { type: [number, "null"] }
         weapon_template_id: { type: [string, "null"] }
-        attributes: { type: object }
+        attributes: { type: object, description: "見 MapFeatureView.attributes（含 SUPPLY_POINT 的 stock 形狀）" }
     MapFeatureEdit:
       type: object
       properties:

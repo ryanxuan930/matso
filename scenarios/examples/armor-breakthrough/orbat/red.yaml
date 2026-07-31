@@ -16,6 +16,11 @@
 # MLRS_227 / IFV_TRACKED / MBT / FUEL_TRUCK。打錯名字會在**開局時**以精確路徑報錯而不是
 # 靜默略過（`_create_declared_equipment`），所以這裡寧可明列也不靠預設配發。
 #
+# 後勤（WP-C7）**只宣告兩個戰車連與突擊尖兵排**——會真的把補給線拉長的那三支。
+# 其餘單位刻意不宣告：沒宣告＝未編制＝執行期一個補給熱狀態鍵都不會被寫。
+# 只有 Class I（口糧/水）與 IX（維修件）；油料是 #84 的模型、彈藥是 equipment 的 ammo，
+# 在這裡重複宣告只會多出一份沒有消費端的帳（存得進去、讀得回來、實際沒效果）。
+#
 # 戰車排一律「車體 + 主砲分兩列且數量一致」：MBT 提供機動與防護（base_stats.mobility 與
 # armor_class），TANK_MAIN_GUN_120 才是開火的武器。只寫其中一個會出現「有砲沒車」
 # 或「有車不會開火」——而且畫面上看不出來。
@@ -42,6 +47,9 @@ units:
     parent: R-BDE
     equipment:
       - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  # 滿載出發（`on_hand` 省略＝等於 capacity）。出發線離紅軍旅補給點 2.9 km——**剛好**
+  # 在 3 km 撥交半徑內；一往東突破就出去了，而且回不來（補給點不會跟著走）。
+  # 攻勢的後勤代價因此是突破本身自動產生的，不需要白軍另外注入狀況。
   - designation: R-1-A
     unit_level: COMPANY
     branch: ARMOR
@@ -51,6 +59,9 @@ units:
     equipment:
       - { template: MBT, quantity: 14 }
       - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+    supply:
+      I: { capacity: 3 }
+      IX: { capacity: 20 }
   # 突擊尖兵排。距藍軍反裝甲連 B-1-C（23.724 / 120.323）**2.14 km**——同時落在
   # TANK_MAIN_GUN_120 的 4 km 射程與 ATGM 的 200 m–4 km 射程內，是本場第一個會發生的
   # 直射交戰。**這一對已實測**：雙向 ENGAGE 都通過 line_of_sight 預檢（雲林平原無遮蔽高地）。
@@ -63,6 +74,11 @@ units:
     equipment:
       - { template: MBT, quantity: 4 }
       - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 160 }
+    # 尖兵排的量比連小（排 vs 連），且**開局就在補給點半徑外**（5.0 km）——
+    # 前出到接觸線的部隊本來就是這樣。它的存糧只夠自己，補不到就得靠後續梯隊上來。
+    supply:
+      I: { capacity: 2 }
+      IX: { capacity: 6 }
   - designation: R-1-2
     unit_level: PLATOON
     branch: ARMOR
@@ -100,6 +116,9 @@ units:
     equipment:
       - { template: MBT, quantity: 14 }
       - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+    supply:
+      I: { capacity: 3 }
+      IX: { capacity: 20 }
   - designation: R-2-1
     unit_level: PLATOON
     branch: ARMOR

@@ -42,6 +42,7 @@ from app.adjudication.suppression import (
 )
 from app.adjudication.weapon import WeaponProfile
 from app.engine.formation_wiring import read_formation
+from app.engine.supply_wiring import SUPPLY_KEY, read_levels, write_levels
 from app.models import EquipmentInstance, EquipmentTemplate, TacticalUnit
 from app.state.hot_state import HotStateStore
 from app.terrain import engagement_cover_modifier
@@ -277,6 +278,9 @@ def seed_combat_state(
     座標永遠以 DB 同步（權威）；血量/裝甲/彈藥僅在熱狀態尚無時播入——避免執行期重啟時把
     交戰進度（Redis 內已扣的血量/彈藥）重置回 DB 初值。
 
+    補給（WP-C7）是**條件播種**：只有想定在 `attributes` 裡明確宣告過的單位才會拿到
+    `supply` 鍵。沒宣告的單位一個鍵都不寫——熱狀態鍵集不變、`compute_state_hash` 不變。
+
     `unit_ids` 限定只播某幾個單位（局中生成的增援用；見 `msel_actions._spawn_units`）。
     **增援必須走這條同一路徑**——MSEL 過去自己手捲一份 `hot.put_unit`，於是漏掉了
     `footprint_m` / `ammo` / `ammo_by_weapon`，且 `platform_count` 退回寫死的 1。
@@ -324,6 +328,21 @@ def seed_combat_state(
             entries = resolver.weapons_for(unit.id)
             if entries:
                 patch["ammo_by_weapon"] = {e.weapon_id: e.ammo for e in entries}
+        # WP-C7 補給：**只播想定明確宣告的類別**，沒宣告就一個鍵都不寫。
+        # 中性保證是結構性的：沒有 `supply` 鍵 → `read_levels` 回空 dict →
+        # `tick_supply` 直接 return → 一次計算都不做、一個熱狀態鍵都不寫。給每個單位一個
+        # 預設水位會讓熱狀態鍵集變大、`compute_state_hash` 跟著變，五份 golden 全部要重錄。
+        if SUPPLY_KEY not in existing:
+            # 走 `read_levels`／`write_levels` 而不是自己解析：`attributes` 裡的形狀就是
+            # 熱狀態的形狀（loader 用同一個 writer 產生的），而 `write_levels` 的類別排序
+            # 是雜湊穩定的來源——自己組 dict 就會讓順序隨 YAML 書寫順序漂。
+            declared = read_levels(unit.attributes if isinstance(unit.attributes, dict) else {})
+            if declared:
+                patch[SUPPLY_KEY] = write_levels(declared)
+                # ⚠ **不在這裡寫 `supply_tick`**：結算起點由 `tick_supply` 第一次看到這個單位時
+                # 自己落下（它是那個鍵的唯一寫入端）。播種端補一個 0 會讓熱狀態多一個寫入者，
+                # 而且在「局中重播種」（Redis 清空、runner 於 tick 5000 重啟）時會把整場
+                # 已經過去的時間一次算成消耗——單位剛被播成滿載，下一個 tick 就餓死。
         if patch:
             hot.update_unit(unit.id, patch)
     return len(units)

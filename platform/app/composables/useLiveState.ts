@@ -9,8 +9,13 @@
  * 其餘欄位沒有「以 null 表達已解除」的語意，故維持型別判斷。
  */
 import { computed } from 'vue'
+import type { components } from '~/types/api'
 import type { UnitView } from '~/composables/useOrders'
 import type { useSessionStreamStore } from '~/stores/sessionStream'
+
+export type SupplyLevelView = components['schemas']['SupplyLevelView']
+/** 顯示順序（＝北約編號順序）。後端 `/units` 已照此排序；熱狀態 patch 則是字典序。 */
+const SUPPLY_ORDER = ['I', 'III', 'V', 'IX']
 
 export function useLiveState(stream: ReturnType<typeof useSessionStreamStore>) {
   // 活模擬位置（O10.1）：優先用 STATE_DIFF 累積的最新座標，否則用 GET /units 的初始座標。
@@ -60,6 +65,45 @@ export function useLiveState(stream: ReturnType<typeof useSessionStreamStore>) {
     return typeof raw === 'string' && raw ? raw : 'MOVING'
   }
   /**
+   * 活補給水位（WP-C7）。空陣列＝**這個單位沒有宣告任何補給類別**，不是「全部見底」。
+   *
+   * **兩種形狀收在這一個函式裡**，這是本函式存在的全部理由：
+   * STATE_DIFF 推來的是熱狀態原形 `{"I": [存量, 容量]}`（那個二元陣列是後端為了
+   * 雜湊穩定而定的編碼），`GET /units` 的快照給的是 `SupplyLevelView[]`。
+   * 兩種形狀若各自散在樣板裡解一次，遲早有一邊解錯——而解錯的症狀是「水位永遠不動」，
+   * 看起來與「補給系統沒生效」一模一樣。
+   *
+   * fog of war 不在這裡做（紅線 3）：他方單位的 `/units` 回空陣列、STATE_DIFF 整筆不投影。
+   */
+  function liveSupply(u: UnitView): SupplyLevelView[] {
+    const raw = stream.unitPatches[u.id]?.supply
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const out: SupplyLevelView[] = []
+      for (const cls of SUPPLY_ORDER) {
+        const pair = (raw as Record<string, unknown>)[cls]
+        if (!Array.isArray(pair) || pair.length < 2) continue
+        const onHand = Number(pair[0])
+        const capacity = Number(pair[1])
+        // 未編制（capacity <= 0）不列——與後端 `SupplyLevel.declared` 同一條規則。
+        if (!Number.isFinite(onHand) || !Number.isFinite(capacity) || capacity <= 0) continue
+        out.push({
+          supply_class: cls as SupplyLevelView['supply_class'],
+          on_hand: onHand,
+          capacity,
+          fraction: Math.max(0, Math.min(1, onHand / capacity)),
+        })
+      }
+      return out
+    }
+    return u.supply ?? []
+  }
+  /** 活斷補天數（WP-C7）。>0 ＝ Class I 見底且持續中；補到一次即歸零。 */
+  function liveStarvedDays(u: UnitView): number {
+    const p = stream.unitPatches[u.id]
+    const raw = typeof p?.starved_days === 'number' ? p.starved_days : u.starved_days
+    return typeof raw === 'number' && raw > 0 ? raw : 0
+  }
+  /**
    * 位置凍結的時間戳（WP-C5）。非 null ＝ 圖上的座標是**最後一次位置回報**而非真實位置。
    *
    * patch 只要**有這個鍵**就以它為準（含恢復通聯時送來的 null）——只看 `typeof === 'number'`
@@ -82,6 +126,8 @@ export function useLiveState(stream: ReturnType<typeof useSessionStreamStore>) {
     liveFuel,
     liveSuppression,
     livePosture,
+    liveSupply,
+    liveStarvedDays,
     liveStaleTick,
     currentTick,
   }

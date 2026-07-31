@@ -408,6 +408,12 @@ class EngagementAdjudicator:
         s_auth = float(shooter_state.get("authorized_strength") or 100.0)
         s_cur = float(shooter_state.get("strength") or shooter_state.get("health") or s_auth)
         effectiveness = interp_effectiveness(s_cur / s_auth) if s_auth > 0 else 1.0
+        # WP-C7.1 斷補：**三條裁決路徑都要套**。這裡曾經是唯一漏掉的一條，於是
+        # 同一支部隊「指名武器」會餓（走 `_resolve_single`）、「不指名」不會餓（走這裡）——
+        # 同一場仗兩種結果，而差別只在操作員有沒有點武器下拉。
+        # 更糟的是規格的驗收條文寫的是「斷補的**裝甲連**」，而裝甲連正是典型的多武器單位：
+        # 那句條文要適用的對象，剛好就是唯一不受斷補影響的那條路徑。
+        effectiveness *= supply_effectiveness(shooter_state)
         target = Target(
             unit_id=order.target_id,
             armor_class=str(target_state.get("armor_class", "INFANTRY")),

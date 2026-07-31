@@ -55,6 +55,10 @@ def scenario_to_dict(loaded: LoadedScenario) -> dict[str, Any]:
     # （同 `fixed` 旗標曾遺失的前例）。空清單不輸出，維持既有想定的 diff 乾淨。
     if loaded.no_strike_zones:
         out["no_strike_zones"] = [dict(z) for z in loaded.no_strike_zones]
+    # WP-C7.2：補給點漏了匯出，症狀是「匯出再匯入，全軍的補給線就消失了」——
+    # 而且畫面上沒有任何徵兆（單位照樣有水位，只是永遠補不回來）。
+    if loaded.supply_points:
+        out["supply_points"] = [dict(p) for p in loaded.supply_points]
     # ⚠ 本函式是**手寫白名單**——沒列進來的鍵，匯出再匯入就會靜靜消失。
     # `no_strike_zones` 之外，以下三個都曾是（或差點是）受害者，故一律要在此列出。
     # 新增想定層設定時**務必同時改這裡**，否則「匯出再匯入」會拆掉那個設定。
@@ -103,6 +107,13 @@ def _orbat_dict(loaded: LoadedScenario, faction: str) -> dict[str, Any]:
         # 漏掉這一行的症狀與 `fixed` 當年一樣：匯出再匯入，所有單位的兵科圖示就消失了。
         if u.branch and u.branch != "UNKNOWN":
             unit["branch"] = u.branch
+        # WP-C7 補給編制。`on_hand` 一律明寫（載入時省略＝等於 capacity）——匯出端把
+        # 預設攤開，`export → import → export` 才會位元一致，而不是第二次才長出這個鍵。
+        if u.supply:
+            unit["supply"] = {
+                name: {"on_hand": on_hand, "capacity": capacity}
+                for name, on_hand, capacity in u.supply
+            }
         if u.equipment:
             unit["equipment"] = [
                 {"template": name, "quantity": qty, **({"ammo": ammo} if ammo is not None else {})}

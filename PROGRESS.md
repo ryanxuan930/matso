@@ -567,7 +567,49 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - **[O1.4 已交付]** RedisBroadcaster 只到 Redis 落地（ring buffer/pub-sub）；WS 客戶端 fan-out（訂閱、faction 過濾、推前端）屬 O4.3。
 - **[裝配提醒]** 真實裝配 Kernel 時：event_sink=LedgerWriter、hot_state=RedisHotState、broadcaster=RedisBroadcaster、wall_clock=app.runtime.PerfCounterClock。
 
+## ▶ 續作指引（2026-07-31 收工｜開機後從這裡讀起）
+
+**分支 `feat/combined-arms-fires`，工作區乾淨、已推送。全關卡綠：pytest 2251 passed / 8 skipped、
+ruff、mypy、schema-sync、buf、前端 lint+typecheck+test。**
+
+### 這次收工的狀態
+
+WP-C7 後勤體系三軌（校準錨點、補給線/補給點、前端顯示）已完成並隨本次提交落地。
+活體驗收 `ops/tools/live_system_check.py` 跑完 **16 項全綠**（先前 15/16，C16 已修）：
+
+```bash
+uv run python ops/tools/live_system_check.py --starve-days 1.0
+```
+
+⚠ **C14 會等真的模擬時間**：斷補要累積滿 1 個模擬日才觀測得到效能下降，約 12 分鐘牆鐘。
+不是當掉。`--starve-days 3.0` 走完整階梯（×0.9→×0.75→×0.5）要 ~37 分鐘。
+跑之前要先 `cd ops/compose && docker compose up -d --wait`。
+
+### 下一步（依序，前三批不互相阻擋）
+
+1. **UI-P0｜想定編輯器靜默刪資料**（`platform/app/composables/useScenarioEditor.ts`）——
+   **唯一一條正在毀壞使用者資料的**：編輯器載入既有想定再存回，`roe` / `overrides` /
+   `equipment` 三塊會被丟掉。API 層（`api/scenarios.py` 的 `ScenarioBundle`）已經修好了，
+   洞在前端的 bundle 組裝。先做這條。
+2. **UI-P1 前端半**（`platform/app/composables/useCopFeed.ts`）——後端 `broadcaster.py` 的
+   `_DETAIL_KEYS` 已經把 fuel_remaining / distance_km / strength_before/after 等轉發出來了，
+   feed 還沒渲染。純前端。
+3. **UI-P2**——席位過濾令型選單 + 九個送不出的 payload 欄位 + 破障令的地圖選點。
+4. 之後照 `docs/UI_GAPS.md` 的 P3–P6（89 項、七批），與 `docs/SPEC_V2_AUDIT.md` 的 Phase 2–5。
+
+### 開機後要先做的事
+
+```bash
+cd ops/compose && docker compose up -d --wait
+```
+
+前端**一律跑 container**（`docker compose up -d --build frontend`，必須 `up` 不能只 `build`）。
+MariaDB 對外是 **3307**（3306/8080 被使用者其他容器占用，勿動）。
+
 ## 下一步建議（給下一個接手的 agent）
+
+> ⚠ **本節已過時**（停留在 M4/M5/M6 時期，那些早已完成）。現況看上面的「續作指引」。
+> 保留作為歷史紀錄。
 
 **M0–M3 已合併回 main + CI 全綠。M5 環境模組全數完成（O5.1–O5.4：Weather LIVE/SYNTHETIC + 效果整合 + Comms/EW）。** 剩餘主線：**M4 前端**（O4.1 起）與 **M6 AI Phase 1**（需 vLLM 節點）。兩條平行路可續：
 

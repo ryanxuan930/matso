@@ -17,6 +17,7 @@ import {
   draftToFc,
   editMapFeature,
   featureLineWidth,
+  featureSupplyStock,
   featureSymbolFc,
   featureZoneClass,
   featuresToFc,
@@ -31,10 +32,13 @@ import {
   shapeToPolygon,
   DEFAULT_FEATURE_WIDTH,
   FEATURE_KINDS,
+  POINT_ONLY_KINDS,
+  SUPPLY_POINT_KIND,
   type DraftKind,
   type FeatureCreate,
   type MapFeature,
 } from '~/composables/useMapFeatures'
+import { NATO_SUPPLY_CLASSES } from '~/composables/useLabels'
 import { fetchEquipmentTemplates, type EquipmentTemplate } from '~/composables/useEquipment'
 
 export function useMapEditor(opts: {
@@ -65,6 +69,24 @@ export function useMapEditor(opts: {
   const drawObstacleType = ref('')
   const drawDensity = ref<number | null>(null)
   /**
+   * WP-C7.2 補給點庫存（類別 → 量）。**空著＝後端 422**，這是刻意的：
+   * 一個沒有庫存的補給點在圖上與有貨的長得一模一樣，而它一份補給都撥不出去
+   * ——「圈了補給點卻沒有效果」正是這張卡在修的病。空倉庫要明寫 0。
+   */
+  const drawSupplyStock = ref<Record<string, number | null>>(emptyStock())
+  function emptyStock(): Record<string, number | null> {
+    return Object.fromEntries(NATO_SUPPLY_CLASSES.map((c) => [c, null]))
+  }
+  /** 只送有填的類別（null/負數不送）；全空 → 空物件，由 `finishDraw` 擋下並說明。 */
+  function stockPayload(form: Record<string, number | null>): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const c of NATO_SUPPLY_CLASSES) {
+      const v = form[c]
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) out[c] = v
+    }
+    return out
+  }
+  /**
    * WP-A3 禁射級別——**繪製當下就要能選**。
    *
    * 在此之前只有「先畫完 → 再選取 → 從編輯面板的下拉選一次」那一條路寫得進 `zone_class`：
@@ -83,6 +105,7 @@ export function useMapEditor(opts: {
   const editFeatNotes = ref('')
   const editFeatHeight = ref<number | null>(null)
   const editFeatSidc = ref('')
+  const editFeatStock = ref<Record<string, number | null>>(emptyStock()) // WP-C7.2 補給點庫存
   // 武器射向/雷達扇區（#11 C）：射程(m) + 方向(度) + 張角(度，360=全向)。
   const editFeatRange = ref<number | null>(null)
   const editFeatDir = ref(0)
@@ -110,6 +133,8 @@ export function useMapEditor(opts: {
   const drawableKinds = computed(() =>
     FEATURE_KINDS.filter((k) => k.value !== 'WEAPON_EMPLACEMENT'),
   )
+  /** 目前選的類別只畫得成點（補給點）——樣板據此只顯示「點」那顆鈕。 */
+  const drawPointOnly = computed(() => POINT_ONLY_KINDS.includes(drawFeatureKind.value))
   const selectedFeature = computed(
     () => mapFeatures.value.find((f) => f.id === selectedFeatureId.value) ?? null,
   )
@@ -154,6 +179,7 @@ export function useMapEditor(opts: {
     drawObstacleType.value = ''
     drawDensity.value = null
     drawZoneClass.value = ''
+    drawSupplyStock.value = emptyStock()
   }
   // 障礙/建築預設高度 2m（#11）——跟著「類別」下拉走而不是跟著開始繪製走，
   // 否則使用者在表單裡調過的高度會在按下形狀鈕時被打回預設。
@@ -215,6 +241,35 @@ export function useMapEditor(opts: {
       })
       return
     }
+    // WP-C7.2 補給點的兩道前置檢查。**兩個都是後端也會擋的 422**，這裡先講的理由是
+    // 「畫完才吃錯誤」等於白畫一次；而且錯誤訊息在 toast 裡出現時，表單已經被收掉了。
+    if (drawFeatureKind.value === SUPPLY_POINT_KIND) {
+      const stock = stockPayload(drawSupplyStock.value)
+      const owner = viewpoint.value || (canControl.value ? '' : myFaction.value)
+      if (!owner) {
+        toasts.push({
+          severity: 'warn',
+          title: '補給點必須屬於某一陣營',
+          detail:
+            '補給只撥交給同陣營單位——掛在共同層的補給點沒有任何單位拉得到。'
+            + '請先在上方切換到該陣營視角再圈補給點。',
+          timeoutMs: 8000,
+        })
+        cancelDraw()
+        return
+      }
+      if (!Object.keys(stock).length) {
+        toasts.push({
+          severity: 'warn',
+          title: '補給點未宣告庫存',
+          detail: '沒有庫存的補給點與有貨的長得一模一樣，卻一份補給都撥不出去。'
+            + '空倉庫請明寫 0（那與「忘了填」是不同的意思）。',
+          timeoutMs: 8000,
+        })
+        cancelDraw()
+        return
+      }
+    }
     const isWeapon = drawFeatureKind.value === 'WEAPON_EMPLACEMENT'
     const tmpl = isWeapon
       ? weaponTemplates.value.find((t) => t.id === drawWeaponTemplate.value)
@@ -233,6 +288,10 @@ export function useMapEditor(opts: {
     if (drawFeatureKind.value === 'OBSTACLE') {
       if (drawObstacleType.value) attrs.obstacle_type = drawObstacleType.value
       if (drawDensity.value != null) attrs.density = drawDensity.value
+    }
+    // WP-C7.2：庫存是補給點唯一的實質內容，漏帶就等於圈了一個空倉庫。
+    if (drawFeatureKind.value === SUPPLY_POINT_KIND) {
+      attrs.stock = stockPayload(drawSupplyStock.value)
     }
     // WP-A3 禁射級別：**只有面成得了區**——後端 `no_strike._feature_zones` 只查
     // `geometry_type == "POLYGON"`，掛在點/線上的 `zone_class` 會被靜默忽略。
@@ -319,6 +378,12 @@ export function useMapEditor(opts: {
     editFeatNotes.value = typeof a.notes === 'string' ? a.notes : ''
     editFeatHeight.value = typeof a.height_m === 'number' ? a.height_m : null
     editFeatSidc.value = typeof a.sidc === 'string' ? a.sidc : ''
+    // WP-C7.2 庫存：未宣告的類別留 null（＝這個補給點不備該類別），不要填 0
+    // ——0 是「有這一格但空了」，兩者對撥交端是不同的事。
+    const stock = f ? featureSupplyStock(f) : {}
+    editFeatStock.value = Object.fromEntries(
+      NATO_SUPPLY_CLASSES.map((c) => [c, c in stock ? stock[c]! : null]),
+    )
     editFeatRange.value = typeof f?.influence_radius_m === 'number' ? f.influence_radius_m : null
     editFeatDir.value = typeof a.direction_deg === 'number' ? a.direction_deg : 0
     editFeatArc.value = typeof a.arc_deg === 'number' ? a.arc_deg : 360
@@ -534,6 +599,9 @@ export function useMapEditor(opts: {
     else delete attrs.height_m
     if (editFeatSidc.value) attrs.sidc = editFeatSidc.value
     else delete attrs.sidc
+    // WP-C7.2 庫存**整包換掉**（不是 merge 進舊的）：把某一類別改回「不備」時，
+    // 合併語義會讓舊值留著——畫面顯示已經清掉、撥交端卻還撥得出來。
+    if (f?.kind === SUPPLY_POINT_KIND) attrs.stock = stockPayload(editFeatStock.value)
     // WP-A3：禁射級別。清空即移除該鍵——但 PATCH 對 attributes 是 merge，刪不掉鍵，
     // 故以 null 明示「取消」，後端 merge 後值為 null，`no_strike.py` 只認非空字串故等同無效。
     if (editFeatZone.value) attrs.zone_class = editFeatZone.value
@@ -605,6 +673,7 @@ export function useMapEditor(opts: {
     drawSidc,
     drawObstacleType,
     drawDensity,
+    drawSupplyStock,
     drawZoneClass,
     drawZoneNameUnset,
     drawWidth,
@@ -618,6 +687,7 @@ export function useMapEditor(opts: {
     editFeatNotes,
     editFeatHeight,
     editFeatSidc,
+    editFeatStock,
     editFeatRange,
     editFeatDir,
     editFeatArc,
@@ -632,6 +702,7 @@ export function useMapEditor(opts: {
     influenceFc,
     draftFc,
     drawableKinds,
+    drawPointOnly,
     mayEditSelectedFeature,
     canEditSelectedFeature,
     reshapeArmedId,

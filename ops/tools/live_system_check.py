@@ -74,10 +74,30 @@ class Api:
         self.token: str | None = None
 
     def call(self, method: str, path: str, body: Any = None, *, token: str | None = None) -> Any:
+        """發一次請求。**帶著自己的 token 時，遇到 401 會重新登入再試一次。**
+
+        ⚠ 這不是「順手加的韌性」：access token 只有 15 分鐘，而後勤檢查要等**模擬日**
+        （1 模擬日 ＝ 12 分鐘牆鐘）。第一次跑 C14 就是在等第一階的路上整支工具被
+        `AUTH_TOKEN_EXPIRED` 打斷的——症狀是「跑了 15 分鐘然後說 401」，
+        看起來像後勤壞了，其實是這支工具自己的壽命不夠長。
+
+        重試**只在使用 `self.token` 時**發生：C9 用明確的 `token=` 引數驗偽造/缺席 token，
+        那兩條必須照樣拿到 401，否則權限檢查會被自己的重試機制蓋掉。
+        """
+        explicit = token is not None
+        try:
+            return self._once(method, path, body, token if explicit else self.token)
+        except ApiError as exc:
+            # 登入端點自己不能重試——帳密錯的 401 會變成無窮遞迴。
+            if explicit or exc.status != 401 or path.endswith("/auth/login"):
+                raise
+            self.token = self.login()  # token 過期 → 重新登入一次
+            return self._once(method, path, body, self.token)
+
+    def _once(self, method: str, path: str, body: Any, tok: str | None) -> Any:
         req = urllib.request.Request(
             self.base + path, method=method, headers={"content-type": "application/json"}
         )
-        tok = token if token is not None else self.token
         if tok:
             req.add_header("authorization", f"Bearer {tok}")
         payload = json.dumps(body).encode() if body is not None else None
@@ -265,20 +285,37 @@ class World:
     def __init__(self, api: Api) -> None:
         self.api = api
         self.session_id = ""
+        self.scenario_id = ""
         self.units: dict[str, dict[str, Any]] = {}
         self.notes: list[str] = []
 
     # -- 開局 --------------------------------------------------------------
 
-    def bootstrap(self) -> None:
-        self.api.token = self.api.login()
-        saved = self.api.post("/api/v1/scenarios", build_scenario())
+    def bootstrap(self, scenario: dict[str, Any] | None = None, label: str = "活體檢查") -> None:
+        """開一局全新的推演。`scenario`/`label` 讓第二張想定（後勤，見 C13）能共用這條路徑。"""
+        if self.api.token is None:
+            self.api.token = self.api.login()
+        saved = self.api.post("/api/v1/scenarios", scenario or build_scenario())
+        self.scenario_id = str(saved["id"])
         summary = self.api.post(
             "/api/v1/sessions",
-            {"name": f"活體檢查-{int(time.time())}", "scenario_id": saved["id"]},
+            {"name": f"{label}-{int(time.time())}", "scenario_id": saved["id"]},
         )
         self.session_id = summary["id"]
         self.refresh(require_tick=True)
+
+    def teardown(self) -> None:
+        """把自己開的局與想定刪掉。**只刪自己建的**——id 是 bootstrap 當下記下來的。"""
+        for path in (
+            f"/api/v1/sessions/{self.session_id}" if self.session_id else "",
+            f"/api/v1/scenarios/{self.scenario_id}" if self.scenario_id else "",
+        ):
+            if not path:
+                continue
+            try:
+                self.api.call("DELETE", path)
+            except Exception as exc:  # 清不掉要說出來，不要靜靜留一局垃圾在系統裡
+                print(f"  ⚠ 清理失敗 {path}：{exc}")
 
     # -- 讀狀態 ------------------------------------------------------------
 
@@ -769,14 +806,812 @@ def c12_victory(w: World) -> str:
     return f"紅軍尚存 {len(red_alive)} 單位，推演正確地維持 ACTIVE（未誤判收場）"
 
 
+# --------------------------------------------------------------------------- 後勤（WP-C7）
+#
+# ## 為什麼後勤自己開一局，不併進上面那張想定
+#
+# 斷補階梯以**模擬日**計，而 1 模擬日 ＝ 1440 tick ＝ 12 分鐘牆鐘（`pace_compression` 120，
+# 1 tick ＝ 1 模擬分鐘 ＝ 0.5 秒牆鐘；本機實測 10 tick/5 秒）。併在同一局的話，
+# 「某單位還剩幾天口糧」取決於 C1–C12 跑了多久——那是一個沒人控制得住的變數，
+# 於是「開打前還沒斷補」這個前提會時而成立時而不成立，檢查本身變成擲骰。
+# 自己開一局，時間軸從 0 起算，每個階段的前提都可以**直接斷言**而不是祈禱。
+#
+# ## 這一組檢查在防哪一種假綠燈
+#
+# C7 的三張子卡測試全綠，是因為測試自己 `put_unit` 了 supply 熱狀態鍵——繞過了
+# 「想定宣告 → DB → `seed_combat_state` → 熱狀態」這一整段。所以這裡**一格水位都不自己餵**：
+# 全部由想定宣告，經真的 loader、真的 runner，再從對外 API 讀回來。
+# 讀不到，就是那條鏈斷了。
+
+LOGI_TICK_MS = 60_000  # 與想定宣告的 tick_rate_ms 一致（1 tick ＝ 1 模擬分鐘）
+TICKS_PER_SIM_DAY = 86_400_000 // LOGI_TICK_MS  # 1440
+
+# 後勤想定的番號（與主想定分開命名，避免兩張想定的檢查互相參照時看錯單位）。
+FED = "LOG_FED"  # 補給充足的對照組射手
+HUNGRY = "LOG_HUNGRY"  # 會斷補的射手（單一武器 → 走齊射路徑）
+MIXED = "LOG_MIXED"  # 會斷補的射手（雙武器 → 走聯合兵種路徑）
+ARTY = "LOG_ARTY"  # 打補給點的火砲（無補給宣告＝中性對照）
+TARGET = "LOG_TGT"  # 挨打的目標（無補給宣告＝中性對照）
+DRAW = "LOG_DRAW"  # 向補給點拉貨的下游單位
+DEPOT = "紅軍前進補給點"
+
+TGT_STRENGTH = 100.0  # 每次齊射前把目標補回這個戰力（見 `fire_volley`）
+
+# C14 要走到第幾個斷補階梯（模擬日）。**這個數字就是牆鐘成本**：1 模擬日 ＝ 12 分鐘。
+# 預設 3.0 ＝ 規格驗收條文寫的天數，也是唯一能「逐發」斷言戰損下降的那一階（見 C14 說明）。
+_STARVE_DAYS = float(os.environ.get("STARVE_DAYS", "3.0"))
+
+
+def build_logistics_scenario() -> dict[str, Any]:
+    """後勤驗收專用想定。每個數字都是為了讓某一條物理在**檢查跑得完的時間內**可觀測。
+
+    佈局：
+
+        LOG_ARTY(155×6)        LOG_FED/LOG_HUNGRY/LOG_MIXED      LOG_TGT
+        -2.0 km                0 km（三個射手同座標）             +0.4 km
+        紅軍補給點 -12.0 km ／ LOG_DRAW 在其北方 500 m
+
+    - 三個射手**同一個座標**：射程、地形遮蔽、天氣對三者完全相同，於是「斷補的那個打得比較差」
+      不可能是位置差異造成的。控制變因用「構造上相同」而不是「事後統計修正」。
+    - LOG_DRAW 距補給點 500 m：在撥交半徑 3 km 內，但在 155 的殺傷半徑（60 m）與
+      壓制半徑（180 m）外——**打掉補給點不會順手打死下游單位**，否則「水位不再回升」
+      會與「單位死了」混在一起，分不出是哪一個造成的。
+    - 火砲距補給點 10 km：落在 155 的 2–30 km 射程內。
+    - 勝負條件刻意寫成一條**永遠不會成立**的（RED 要殲滅 BLUE，而 BLUE 全程沒人打它）：
+      這一局會被反覆打到 RED 目標見底，若條件寫成「殲滅 RED」，推演會中途自動收場、
+      runner 停止推進，後面的等待就會逾時，而症狀看起來像「補給系統壞了」。
+    """
+    blue = [
+        {
+            # 對照組：容量 30 日份——它必須撐過整個斷補等待（預設 3 模擬日，加上前置約 0.4 日）。
+            # 若照「3 日份」的編裝通則給 3，它會在第 3 天跟著斷補，對照組就沒了。
+            "designation": FED,
+            "unit_level": "PLATOON",
+            "branch": "INFANTRY",
+            "lat": LAT0,
+            "lng": LNG0,
+            "equipment": [{"template": "RIFLE_556", "quantity": 30, "ammo": 9000}],
+            "supply": {"I": {"capacity": 30}, "IX": {"capacity": 20}},
+        },
+        {
+            # 斷補組：3 日份的編制，但**出發時只剩 0.35 日份**（＝已經斷補線好幾天的部隊）。
+            # 0.35 日 ＝ 504 tick ≈ 4.2 分鐘牆鐘：夠 C13 量完消耗率、夠 C14 打完斷補前的基準，
+            # 又不必為了「等它吃完」多花十幾分鐘。
+            "designation": HUNGRY,
+            "unit_level": "PLATOON",
+            "branch": "INFANTRY",
+            "lat": LAT0,
+            "lng": LNG0,
+            "equipment": [{"template": "RIFLE_556", "quantity": 30, "ammo": 9000}],
+            "supply": {"I": {"capacity": 3, "on_hand": 0.35}, "IX": {"capacity": 20}},
+        },
+        {
+            # 與 HUNGRY 同時斷補，差別**只有**多一種武器系統 → 裁決走 `_resolve_combined`。
+            # 那條路徑有沒有把斷補算進去，是 SPEC「斷補的裝甲連效能下降」在聯合兵種部隊上
+            # 成不成立的關鍵，而它不會出現在任何單元測試的視野裡（測試都只給一種武器）。
+            "designation": MIXED,
+            "unit_level": "PLATOON",
+            "branch": "INFANTRY",
+            "lat": LAT0,
+            "lng": LNG0,
+            "equipment": [
+                {"template": "RIFLE_556", "quantity": 30, "ammo": 9000},
+                {"template": "AUTOCANNON_30", "quantity": 4, "ammo": 2000},
+            ],
+            "supply": {"I": {"capacity": 3, "on_hand": 0.35}, "IX": {"capacity": 20}},
+        },
+        {
+            # 無 supply 宣告＝中性對照（C13 驗它的水位欄位維持「無」）。
+            "designation": ARTY,
+            "unit_level": "COMPANY",
+            "branch": "ARTILLERY",
+            "fixed": True,
+            "lat": LAT0,
+            "lng": east_of(-2.0),
+            "equipment": [{"template": "HOWITZER_155_SP", "quantity": 6, "ammo": 200}],
+        },
+    ]
+    red = [
+        {
+            # 挨打的目標，也是第二個中性對照。連級 → platform_count 120 →
+            # 每平台戰力 0.83，一次齊射掉 ~20 點（打不死，但看得出差別）。
+            "designation": TARGET,
+            "unit_level": "COMPANY",
+            "branch": "INFANTRY",
+            "lat": LAT0,
+            "lng": east_of(0.4),
+            "equipment": [{"template": "RIFLE_556", "quantity": 120, "ammo": 900}],
+        },
+        {
+            # 容量 0.02 日份是刻意的**小**：撥交→耗盡→再撥交的一圈只要 ~20 tick（10 秒牆鐘），
+            # 於是「水位真的會回升」與「打掉之後不再回升」都能在一次檢查的期限內反覆觀測到。
+            # 給 3 日份的話，一圈要 2.1 模擬日 ＝ 25 分鐘，這條檢查就變成沒人跑得完。
+            "designation": DRAW,
+            "unit_level": "PLATOON",
+            "branch": "SUPPLY",
+            "lat": LAT0 + 0.0045,  # 補給點北方約 500 m
+            "lng": east_of(-12.0),
+            "equipment": [{"template": "RIFLE_556", "quantity": 10, "ammo": 100}],
+            "supply": {"I": {"capacity": 0.02}},
+        },
+    ]
+    return {
+        "scenario": {
+            "name": "LIVE_SYSCHECK_LOGISTICS",
+            "version": "1.0",
+            "mode": "REALTIME",
+            "tick_rate_ms": LOGI_TICK_MS,
+            "bbox": [120.1, 23.55, 120.5, 23.85],
+            "factions": [
+                {"id": "BLUE", "color": "#3b7dd8"},
+                {"id": "RED", "color": "#d83b3b"},
+            ],
+            "relations": [["BLUE", "RED", "HOSTILE"]],
+            "files": {"orbat": {"BLUE": "orbat/blue.yaml", "RED": "orbat/red.yaml"}},
+            # 永遠不會成立的條件——理由見 docstring。
+            "victory_conditions": [
+                {"faction": "RED", "condition": {"type": "faction_eliminated", "faction": "BLUE"}}
+            ],
+            "supply_points": [
+                {
+                    "name": DEPOT,
+                    "faction": "RED",
+                    "lat": LAT0,
+                    "lng": east_of(-12.0),
+                    "stock": {"I": 50, "IX": 50},
+                }
+            ],
+        },
+        "orbat": {
+            "BLUE": {"faction": "BLUE", "units": blue},
+            "RED": {"faction": "RED", "units": red},
+        },
+    }
+
+
+_LOGI: World | None = None
+
+
+def logistics_world(w: World) -> World:
+    """後勤那一局的把手（第一次呼叫時開局）。三條檢查共用同一局＝共用同一條時間軸。"""
+    global _LOGI
+    if _LOGI is None:
+        lw = World(w.api)  # 共用已登入的 Api（同一個 token）
+        lw.bootstrap(build_logistics_scenario(), label="後勤活體檢查")
+        note(f"後勤推演 {lw.session_id}（tick {lw.tick()}）")
+        _LOGI = lw
+    return _LOGI
+
+
+def note(message: str) -> None:
+    """長時間等待中的進度訊息。跑 3 個模擬日要 36 分鐘，畫面上沒有動靜的話，
+    操作員無從分辨「還在等」與「掛住了」。"""
+    print(f"    · {message}", flush=True)
+
+
+def units_now(w: World) -> dict[str, dict[str, Any]]:
+    """輕量單位快照（只打 `/units`，不像 `refresh()` 連敵情與標註一起抓）。
+
+    輪詢水位一秒好幾次，抓整包狀態會讓這支工具自己變成負載來源。
+    """
+    raw = w.api.get(f"/api/v1/sessions/{w.session_id}/units")
+    return {u["designation"]: u for u in raw}
+
+
+def supply_of(unit: dict[str, Any], supply_class: str) -> dict[str, Any] | None:
+    """單位某一補給類別的水位視圖；**未編制該類別 → None**（不是 0）。"""
+    for level in unit.get("supply") or []:
+        if level["supply_class"] == supply_class:
+            return dict(level)
+    return None
+
+
+def on_hand(unit: dict[str, Any], supply_class: str = "I") -> float:
+    level = supply_of(unit, supply_class)
+    expect(level is not None, f"{unit['designation']} 沒有 Class {supply_class} 水位——宣告掉了")
+    assert level is not None  # for type checkers
+    return float(level["on_hand"])
+
+
+def sim_days(ticks: int) -> float:
+    return ticks * LOGI_TICK_MS / 86_400_000
+
+
+def wait_for(
+    lw: World,
+    predicate: Callable[[dict[str, dict[str, Any]]], Any],
+    what: str,
+    timeout: float,
+    progress: Callable[[dict[str, dict[str, Any]]], str] | None = None,
+) -> Any:
+    """輪詢 `/units` 直到 predicate 回真值。逾時 → 說出期望與最後觀測值。
+
+    `progress` 每 30 秒印一次——這裡的等待動輒十幾分鐘（斷補階梯以模擬日計）。
+    """
+    deadline = time.time() + timeout
+    last_report = 0.0
+    seen: Any = None
+    while time.time() < deadline:
+        snap = units_now(lw)
+        seen = predicate(snap)
+        if seen:
+            return seen
+        if progress is not None and time.time() - last_report > 30:
+            last_report = time.time()
+            note(f"等「{what}」…{progress(snap)}（已 {int(time.time() - deadline + timeout)}s）")
+        time.sleep(1.0)
+    raise CheckError(f"等「{what}」逾時（{timeout:.0f}s），最後觀測＝{seen!r}")
+
+
+# -- 齊射量測 ---------------------------------------------------------------
+
+
+@dataclass
+class Volley:
+    """一次齊射的觀測值。
+
+    `rounds`（實際擊發彈數）是**確定性**的：`_resolve_volley` 的發射數 ＝
+    ceil(建制數 × 效能 × 射速)，一顆骰子都不擲。斷補倍率乘進「效能」，
+    所以彈數是這條鏈上**唯一不需要統計就能比較**的量。
+    `loss`（造成的戰力損失）另外乘了一個 U(0.8, 1.2) 的離散因子，要靠樣本或靠
+    「區間不重疊」才能下結論。
+    """
+
+    shooter: str
+    phase: str
+    rounds: int
+    loss: float
+
+
+_VOLLEYS: list[Volley] = []
+
+
+def phase_volleys(shooter: str, phase: str) -> list[Volley]:
+    return [v for v in _VOLLEYS if v.shooter == shooter and v.phase == phase]
+
+
+def weapon_ammo(lw: World, designation: str) -> int:
+    """該單位所有武器的彈藥總和（聯合兵種單位有兩種武器，要一起算）。"""
+    return sum(int(w["ammo_remaining"] or 0) for w in lw.weapons(designation))
+
+
+def restore_target(lw: World) -> None:
+    """把目標補回滿編。
+
+    **每一發齊射前都要做**：齊射的戰損被夾在「目標當前戰力」以下（`loss = min(raw, current)`），
+    目標剩 5 點時再打一次，量到的是 5 不是射手的輸出——那會讓斷補的射手看起來與吃飽的一樣強。
+    """
+    unit = units_now(lw)[TARGET]
+    lw.api.call(
+        "PATCH",
+        f"/api/v1/sessions/{lw.session_id}/units/{unit['id']}",
+        {"current_strength": TGT_STRENGTH},
+    )
+    # 編輯走 live_unit 命令通道，由 runner 在下一個 tick 的 pre_tick 套進熱狀態。
+    # DB 立刻就變了（`/units` 讀的是 DB），所以**不能**用讀回來當作已生效的證據。
+    lw.wait_ticks(2)
+
+
+def wait_order_done(lw: World, order_id: str, timeout: float = 120.0) -> str:
+    deadline = time.time() + timeout
+    status = "MISSING"
+    while time.time() < deadline:
+        status = lw.order_status(order_id)
+        if status in {"COMPLETED", "REJECTED", "CANCELLED"}:
+            return status
+        time.sleep(0.5)
+    raise CheckError(f"指令 {order_id} 在 {timeout:.0f}s 內沒有結案（停在 {status}）")
+
+
+def fire_volley(lw: World, shooter: str, phase: str) -> Volley:
+    """一發齊射：補滿目標 → 下 ENGAGE → 記彈數與戰損。"""
+    restore_target(lw)
+    ammo_before = weapon_ammo(lw, shooter)
+    target_id = units_now(lw)[TARGET]["id"]
+    order = lw.order(shooter, "ENGAGE", {"target_unit_id": target_id})
+    status = wait_order_done(lw, order["id"])
+    expect(status == "COMPLETED", f"{shooter} 的 ENGAGE 沒有完成（{status}）")
+
+    def hit(snap: dict[str, dict[str, Any]]) -> Any:
+        # 戰損落到 DB 與彈藥落到 DB 是同一個 tick 的事，但兩者不保證同一次 HTTP 讀到；
+        # 以「戰力真的掉了」為準——齊射路徑的損失是期望值算的，命中率 > 0 就一定 > 0。
+        return snap[TARGET] if float(snap[TARGET]["strength"]) < TGT_STRENGTH - 1e-6 else None
+
+    after = wait_for(lw, hit, f"{shooter} 的齊射造成戰損", timeout=60)
+    ammo_after = weapon_ammo(lw, shooter)
+    volley = Volley(
+        shooter=shooter,
+        phase=phase,
+        rounds=ammo_before - ammo_after,
+        loss=TGT_STRENGTH - float(after["strength"]),
+    )
+    expect(
+        volley.rounds > 0,
+        f"{shooter} 打了一發齊射卻沒消耗彈藥（{ammo_before} → {ammo_after}）",
+    )
+    _VOLLEYS.append(volley)
+    return volley
+
+
+def volley_round(lw: World, phase: str, shots: int) -> None:
+    """一個階段的齊射：三個射手**交錯**各打 `shots` 發。
+
+    交錯而不是一個打完換下一個：天氣、光照、目標姿態都會隨時間漂，交錯讓那個漂
+    平均地落在三個射手身上，於是「同一階段內誰打得比較差」仍然只反映補給狀態。
+    """
+    for i in range(shots):
+        for shooter in (FED, HUNGRY, MIXED):
+            v = fire_volley(lw, shooter, phase)
+            note(f"[{phase}] {shooter} 第 {i + 1} 發：彈 {v.rounds}、戰損 {v.loss:.2f}")
+
+
+# -- C13 ---------------------------------------------------------------------
+
+
+@check("C13", "補給消耗：宣告了補給的單位真的在吃，且吃的量與經過的模擬日相稱")
+def c13_supply_burn(w: World) -> str:
+    """三件事一起驗，因為它們**互相掩蓋**：
+
+    1. 播種鏈通不通（想定宣告 → DB → `seed_combat_state` → 熱狀態 → API）。
+       讀不到水位就沒有下文——C7 的所有單元測試都是自己 `put_unit` 繞過這一段的。
+    2. 消耗真的發生，而且量與經過的模擬時間相稱（不是「有動就算」）。
+    3. Class IX 的消耗恰好是 Class I 的一半——**逐類別的率是真的**，
+       不是全域一個計數器在動。這一條能抓到「所有類別共用一個率」這種假實作。
+
+    中性對照在同一局裡：沒宣告補給的兩個單位，水位欄位必須始終是「無」。
+    """
+    lw = logistics_world(w)
+
+    snap = units_now(lw)
+    for designation in (FED, HUNGRY, MIXED, DRAW):
+        expect(
+            snap[designation].get("supply"),
+            f"{designation} 宣告了補給，API 卻回空清單——"
+            f"想定→DB→熱狀態這條播種鏈斷了（實得 {snap[designation].get('supply')!r}）",
+        )
+    # 宣告的容量要一路原封不動地到得了 API（capacity 是編制，執行期不會動它）。
+    fed_i = supply_of(snap[FED], "I")
+    hungry_i = supply_of(snap[HUNGRY], "I")
+    assert fed_i is not None and hungry_i is not None
+    expect(
+        abs(float(fed_i["capacity"]) - 30.0) < 1e-6,
+        f"{FED} 宣告 capacity 30，API 回 {fed_i['capacity']}",
+    )
+    expect(
+        abs(float(hungry_i["capacity"]) - 3.0) < 1e-6,
+        f"{HUNGRY} 宣告 capacity 3，API 回 {hungry_i['capacity']}",
+    )
+    expect(
+        float(hungry_i["on_hand"]) <= 0.35 + 1e-6,
+        f"{HUNGRY} 宣告 on_hand 0.35（開局就短缺），API 回 {hungry_i['on_hand']}"
+        "——`on_hand` 省略才等於滿載，明寫的值不該被忽略",
+    )
+
+    # 中性：沒宣告的單位一格都不長。
+    for designation in (ARTY, TARGET):
+        expect(
+            snap[designation]["supply"] == [],
+            f"{designation} 沒有宣告任何補給，卻長出水位 {snap[designation]['supply']!r}"
+            "——中性保證破了（既有想定會全軍看起來在挨餓）",
+        )
+        expect(
+            snap[designation]["starved_days"] == 0.0,
+            f"{designation} 沒宣告補給卻有斷補天數 {snap[designation]['starved_days']}",
+        )
+
+    # 量測：同一份 `/state` 取 tick 與水位，避免兩次 HTTP 之間的時間差混進來。
+    def sample() -> tuple[int, float, float]:
+        state = lw.state()
+        by_designation = {u["designation"]: u for u in state["units"]}
+        fed = by_designation[FED]
+        return int(state["tick"]), on_hand(fed, "I"), on_hand(fed, "IX")
+
+    t0, i0, ix0 = sample()
+    lw.wait_ticks(120)  # 120 模擬分鐘 ≈ 60 秒牆鐘
+    t1, i1, ix1 = sample()
+
+    elapsed = t1 - t0
+    days = sim_days(elapsed)
+    burn_i, burn_ix = i0 - i1, ix0 - ix1
+    expect(burn_i > 0, f"{FED} 宣告了 Class I 卻沒有消耗（{i0} → {i1}，經過 {elapsed} tick）")
+    expect(burn_ix > 0, f"{FED} 宣告了 Class IX 卻沒有消耗（{ix0} → {ix1}）")
+    # 校準錨點：Class I 1.0 份/模擬日（存量的單位就是「補給日」）、Class IX 0.5 點/日。
+    # 容差 12%：水位在 API 端捨到小數第三位、tick 與熱狀態取樣也會差一兩個 tick。
+    expect(
+        abs(burn_i - days) <= max(0.12 * days, 0.0015),
+        f"Class I 消耗與經過時間不相稱：{elapsed} tick ＝ {days:.4f} 模擬日，"
+        f"期望消耗 ≈{days:.4f} 份（1.0 份/日），實得 {burn_i:.4f}",
+    )
+    expect(
+        abs(burn_ix - days * 0.5) <= max(0.12 * days * 0.5, 0.0015),
+        f"Class IX 消耗與經過時間不相稱：期望 ≈{days * 0.5:.4f}（0.5 點/日），實得 {burn_ix:.4f}",
+    )
+    expect(
+        snap[FED]["starved_days"] == 0.0,
+        f"{FED} 還有 {i1:.2f} 份口糧卻已在累積斷補天數",
+    )
+    return (
+        f"{elapsed} tick（{days:.4f} 模擬日）：Class I {i0:.4f}→{i1:.4f}（-{burn_i:.4f}，"
+        f"期望 {days:.4f}）、Class IX {ix0:.4f}→{ix1:.4f}（-{burn_ix:.4f}，"
+        f"期望 {days * 0.5:.4f}）；{ARTY}/{TARGET} 水位維持「無」"
+    )
+
+
+# -- C14 ---------------------------------------------------------------------
+
+
+def _starve_steps(target_days: float) -> list[tuple[float, float]]:
+    """要走過的斷補階梯（天數, 效能倍率），取自 `adjudication/supply.STARVATION_STEPS`。"""
+    ladder = [(1.0, 0.9), (2.0, 0.75), (3.0, 0.5), (5.0, 0.25)]
+    return [step for step in ladder if step[0] <= target_days + 1e-9]
+
+
+@check("C14", "斷補階梯：斷補的部隊真的打得比較差（彈數確定性下降＋戰損同步下降）")
+def c14_starvation(w: World) -> str:
+    """SPEC 驗收條文「斷補的裝甲連 3 模擬日後效能階梯下降」的活體版。
+
+    ## 「效能降低」怎麼觀測
+
+    兩個量一起看，因為它們各自補對方的洞：
+
+    - **每次齊射的實際擊發彈數**——`_resolve_volley` 的發射數 ＝ ceil(建制數 × 效能 × 射速)，
+      不擲骰。斷補倍率乘進「效能」，所以彈數是**確定性**的：吃飽 90 發、×0.9 剩 81、
+      ×0.75 剩 68、×0.5 剩 45。一發齊射就能下結論，不必統計。
+    - **對目標造成的戰力損失**——同一條式子再乘一個 U(0.8, 1.2) 的離散因子。它會漂，
+      但在 ×0.5 那一階，斷補側的上界（0.5×1.2 ＝ 0.6）低於吃飽側的下界（1.0×0.8 ＝ 0.8），
+      於是「**每一發**都比對照組低」是可以斷言的，同樣不必統計。
+      （×0.9／×0.75 兩階做不到區間不重疊，所以那兩階只斷言彈數，不對戰損下結論——
+      用一次抽樣去說「戰損降了 10%」是在講一個自己都不相信的話。）
+
+    ## 對照組是**同一時刻**的另一個射手，不是同一個射手的過去
+
+    跨階段比較會把天氣、光照、目標姿態的漂移一起算進去（這一局要跑 3 個模擬日）。
+    `LOG_FED` 與 `LOG_HUNGRY` 同座標、同編裝、同彈藥、同目標，唯一的差別是補給宣告，
+    而且兩者在同一分鐘內交錯開火——階段內的比較不需要任何修正。
+    """
+    lw = logistics_world(w)
+    target_days = _STARVE_DAYS
+    steps = _starve_steps(target_days)
+    expect(steps, f"STARVE_DAYS={target_days} 連第一階（1 模擬日）都到不了，這條檢查沒有意義")
+
+    # -- 基準：兩個射手都還吃得飽 --------------------------------------------
+    snap = units_now(lw)
+    for designation in (FED, HUNGRY, MIXED):
+        expect(
+            snap[designation]["starved_days"] == 0.0,
+            f"{designation} 在基準階段就已經斷補 {snap[designation]['starved_days']} 日"
+            "——前置步驟花掉太多時間了（本檢查需要一段「還沒斷補」的基準）",
+        )
+        expect(
+            on_hand(snap[designation], "I") > 0,
+            f"{designation} 在基準階段口糧已見底（{on_hand(snap[designation], 'I')}）",
+        )
+    volley_round(lw, "FED", shots=3)
+
+    base_fed = [v.rounds for v in phase_volleys(FED, "FED")]
+    base_hungry = [v.rounds for v in phase_volleys(HUNGRY, "FED")]
+    expect(
+        len(set(base_fed)) == 1 and len(set(base_hungry)) == 1,
+        f"基準階段的彈數本身就在跳（{FED}={base_fed}、{HUNGRY}={base_hungry}）"
+        "——確定性前提不成立，後面的比較無效",
+    )
+    expect(
+        base_fed[0] == base_hungry[0],
+        f"兩個射手在都吃飽時的彈數就不一樣（{FED}={base_fed[0]}、{HUNGRY}={base_hungry[0]}）"
+        "——它們的編裝/戰力/距離應該完全相同，對照組不成立",
+    )
+    base = base_fed[0]
+
+    # -- 等口糧見底 ----------------------------------------------------------
+    ran_dry = wait_for(
+        lw,
+        lambda s: s[HUNGRY] if on_hand(s[HUNGRY], "I") <= 0.0 else None,
+        f"{HUNGRY} 口糧見底",
+        timeout=600,
+        progress=lambda s: f"{HUNGRY} 剩 {on_hand(s[HUNGRY], 'I'):.4f} 份",
+    )
+    expect(
+        float(ran_dry["starved_days"]) >= 0.0,
+        "見底了卻沒有斷補天數欄位",
+    )
+    dry_tick = lw.tick()
+    note(f"{HUNGRY} 於 tick {dry_tick} 見底，開始累積斷補天數")
+
+    # -- 逐階驗證 ------------------------------------------------------------
+    results: list[str] = []
+    for days_threshold, modifier in steps:
+        phase = f"STARVED_{days_threshold:g}D"
+
+        def starved_enough(s: dict[str, dict[str, Any]], d: float = days_threshold) -> Any:
+            return s[HUNGRY] if float(s[HUNGRY]["starved_days"]) >= d else None
+
+        hit = wait_for(
+            lw,
+            starved_enough,
+            f"斷補累積到 {days_threshold:g} 模擬日",
+            # 1 模擬日 ＝ 12 分鐘牆鐘；給 1.6 倍的餘裕（其他推演局也在同一台機器上跑）。
+            timeout=days_threshold * 1200 + 600,
+            progress=lambda s: f"斷補 {float(s[HUNGRY]['starved_days']):.3f} 日",
+        )
+        starved_days = float(hit["starved_days"])
+        # 斷補天數不是隨便長的：它必須與「見底之後經過了多少 tick」對得上。
+        elapsed_days = sim_days(lw.tick() - dry_tick)
+        expect(
+            abs(starved_days - elapsed_days) <= max(0.1 * elapsed_days, 0.02),
+            f"斷補天數與經過時間對不上：見底後過了 {elapsed_days:.3f} 模擬日，"
+            f"`starved_days` 卻是 {starved_days:.3f}",
+        )
+        expect(
+            float(units_now(lw)[FED]["starved_days"]) == 0.0,
+            f"對照組 {FED} 也開始斷補了——它宣告了 30 日份，不該在此時見底",
+        )
+
+        volley_round(lw, phase, shots=3)
+        fed_rounds = {v.rounds for v in phase_volleys(FED, phase)}
+        hungry_rounds = {v.rounds for v in phase_volleys(HUNGRY, phase)}
+        expect(
+            fed_rounds == {base},
+            f"對照組 {FED} 的彈數在 {phase} 變了（{sorted(fed_rounds)} vs 基準 {base}）"
+            "——有別的東西在影響效能，這一階的比較不乾淨",
+        )
+        predicted = math.ceil(base * modifier)
+        actual = sorted(hungry_rounds)
+        expect(
+            len(hungry_rounds) == 1 and abs(actual[0] - predicted) <= 1,
+            f"{phase}：斷補 {starved_days:.2f} 日應套 ×{modifier} → 每次齊射 {predicted} 發"
+            f"（基準 {base}），實得 {actual}",
+        )
+        expect(
+            actual[0] < base,
+            f"{phase}：斷補了彈數卻沒下降（{actual[0]} vs 基準 {base}）"
+            "——`supply_effectiveness` 沒有乘進射手效能",
+        )
+        line = f"{days_threshold:g}日(×{modifier})：{base}→{actual[0]} 發"
+
+        if modifier <= 0.5:
+            # 只有這一階區間不重疊，戰損才能逐發斷言（見 docstring）。
+            fed_losses = [v.loss for v in phase_volleys(FED, phase)]
+            hungry_losses = [v.loss for v in phase_volleys(HUNGRY, phase)]
+            expect(
+                max(hungry_losses) < min(fed_losses),
+                f"{phase}：斷補側的戰損沒有整段低於對照組"
+                f"（斷補 {[round(x, 2) for x in hungry_losses]}、"
+                f"對照 {[round(x, 2) for x in fed_losses]}）"
+                "——×0.5 對 ×1.0 的離散區間本來就不該重疊",
+            )
+            ratio = (sum(hungry_losses) / len(hungry_losses)) / (sum(fed_losses) / len(fed_losses))
+            expect(
+                0.30 <= ratio <= 0.72,
+                f"{phase}：戰損比 {ratio:.3f} 不在 ×0.5 的合理範圍（含 ±20% 離散）",
+            )
+            line += f"、戰損比 {ratio:.3f}"
+        results.append(line)
+        note(f"[{phase}] 通過：{line}")
+
+    return f"斷補 {steps[-1][0]:g} 模擬日走完階梯 —— " + "；".join(results)
+
+
+# -- C15 ---------------------------------------------------------------------
+
+
+def _depot(lw: World) -> dict[str, Any]:
+    feats = lw.api.get(f"/api/v1/sessions/{lw.session_id}/map-features")
+    points = [f for f in feats if f["kind"] == "SUPPLY_POINT"]
+    kinds = sorted({f["kind"] for f in feats})
+    expect(points, f"本局沒有任何 SUPPLY_POINT 標註——想定宣告的補給點沒落地（實得 {kinds}）")
+    return dict(points[0])
+
+
+def _ledger_kinds(lw: World) -> set[str]:
+    """本局帳本裡出現過的事件型別。
+
+    水位變了但帳本上沒有那一筆，等於這件事**在 AAR 上不存在**——檢討會問「補給什麼時候
+    斷的」時沒有任何東西可查。所以撥交與摧毀都要在這裡看得到，不能只看得到熱狀態的數字。
+    """
+    replay = lw.api.get(f"/api/v1/sessions/{lw.session_id}/aar/replay")
+    return {t for f in replay["frames"] for t in f["event_types"]}
+
+
+def _watch_level(lw: World, designation: str, seconds: float) -> tuple[list[float], int]:
+    """盯著某單位的 Class I 水位看一段時間，回（取樣序列, 上升次數）。
+
+    「回升」＝相鄰兩次取樣之間水位變高。用**次數**而不是「最後有沒有比較高」：
+    撥交是週期性的（掉到再訂購水位才拉一次），只看頭尾很容易剛好落在同一個相位上。
+    """
+    samples: list[float] = []
+    rises = 0
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        value = on_hand(units_now(lw)[designation], "I")
+        if samples and value > samples[-1] + 1e-9:
+            rises += 1
+        samples.append(value)
+        time.sleep(0.8)
+    return samples, rises
+
+
+@check("C15", "打掉補給點：下游水位不再回升（再建一個新的又回升，證明不是整條鏈死了）")
+def c15_supply_point(w: World) -> str:
+    """SPEC 驗收條文「打掉補給點後下游單位水位不再回升」的活體版。
+
+    ## 為什麼最後還要再建一個補給點
+
+    「打掉之後不再回升」單獨看是**弱證據**——撥交整條鏈在中途因為任何原因死掉，
+    症狀一模一樣。所以打完之後用 `POST /map-features` 新建一個補給點：水位若又開始回升，
+    才證明剛才的「不回升」確實是**那個補給點被打掉**造成的，而不是後勤系統整個罷工。
+    這一步同時驗到第二條建立路徑（想定宣告 vs 白軍在 COP 上圈）。
+    """
+    lw = logistics_world(w)
+    depot = _depot(lw)
+    expect(
+        depot["geometry_type"] == "POINT" and len(depot["geometry"]) >= 2,
+        f"補給點幾何不是 POINT [lng, lat]：{depot['geometry_type']} {depot['geometry']}",
+    )
+    lng, lat = float(depot["geometry"][0]), float(depot["geometry"][1])
+    expect(
+        abs(lat - LAT0) < 0.01 and abs(lng - east_of(-12.0)) < 0.01,
+        f"補給點座標落在 ({lat:.4f}, {lng:.4f})，想定宣告的是 "
+        f"({LAT0:.4f}, {east_of(-12.0):.4f})——GeoJSON 的 [lng, lat] 寫反了？",
+    )
+    expect(
+        float((depot["attributes"].get("stock") or {}).get("I", 0)) > 0,
+        f"補給點庫存沒落地：{depot['attributes']!r}",
+    )
+    expect(depot["owner_faction"] == "RED", f"補給點歸屬應為 RED，實得 {depot['owner_faction']}")
+
+    # 1. 回升：撥交真的在發生 -------------------------------------------------
+    before, rises = _watch_level(lw, DRAW, seconds=45)
+    expect(
+        rises >= 2,
+        f"{DRAW} 在補給點旁 45 秒內只回升 {rises} 次（水位序列 {before[:12]}…）"
+        "——自動撥交沒有在跑，後面的『不再回升』就沒有對照",
+    )
+    note(f"摧毀前：{DRAW} 水位回升 {rises} 次（{min(before):.4f}–{max(before):.4f}）")
+    expect(
+        "RESUPPLIED" in _ledger_kinds(lw),
+        "水位回升了，帳本上卻沒有 RESUPPLIED——這件事在 AAR 上等於沒發生過"
+        f"（帳本現有型別：{sorted(_ledger_kinds(lw))}）",
+    )
+
+    # 2. 打掉它 --------------------------------------------------------------
+    # 走**真正的生產路徑**：砲兵火力任務 → `fire_wiring._destroy_supply_points` → `destroy_at`。
+    # 用白軍刪除 map feature 也做得到同一件事，但那不是規格說的「打擊敵後勤」，
+    # 而且會跳過火力鏈這一段（該段全 repo 零測試）。
+    order = lw.order(ARTY, "FIRE_MISSION", {"target_lat": lat, "target_lng": lng, "rounds": 8})
+    status = wait_order_done(lw, order["id"])
+    expect(status == "COMPLETED", f"火力任務沒有完成（{status}）——打不到就談不上摧毀")
+
+    def destroyed(_: Any = None) -> Any:
+        feats = lw.api.get(f"/api/v1/sessions/{lw.session_id}/map-features")
+        for f in feats:
+            if f["id"] == depot["id"] and (f["attributes"] or {}).get("destroyed"):
+                return f
+        return None
+
+    killed = w.wait_until(destroyed, "補給點被標記為已摧毀", timeout=90)
+    note(f"補給點 {killed['label']} 已摧毀（仍留在圖上供 AAR 檢視）")
+    expect(
+        "SUPPLY_POINT_DESTROYED" in _ledger_kinds(lw),
+        "補給點被標記為已摧毀，帳本上卻沒有 SUPPLY_POINT_DESTROYED"
+        "——AAR 會查不到「後勤是什麼時候、被誰打斷的」",
+    )
+
+    # 3. 不再回升 ------------------------------------------------------------
+    after, rises_after = _watch_level(lw, DRAW, seconds=45)
+    expect(
+        rises_after == 0,
+        f"補給點被打掉之後 {DRAW} 的水位還在回升 {rises_after} 次（{after[:12]}…）"
+        "——打擊敵後勤沒有效果",
+    )
+    expect(
+        after[-1] < after[0] or after[-1] == 0.0,
+        f"補給點被打掉之後水位既不回升也不下降（{after[0]:.4f} → {after[-1]:.4f}）"
+        "——消耗停了？那斷補永遠不會發生",
+    )
+    drained = wait_for(
+        lw,
+        lambda s: s[DRAW] if on_hand(s[DRAW], "I") <= 0.0 else None,
+        f"{DRAW} 在失去補給點後耗盡",
+        timeout=180,
+        progress=lambda s: f"剩 {on_hand(s[DRAW], 'I'):.4f} 份",
+    )
+    expect(
+        float(drained["starved_days"]) >= 0.0,
+        "耗盡了卻沒有 starved_days 欄位",
+    )
+
+    # 4. 對照：新建一個補給點，水位應該又回升 ---------------------------------
+    created = lw.api.post(
+        f"/api/v1/sessions/{lw.session_id}/map-features",
+        {
+            "kind": "SUPPLY_POINT",
+            "geometry_type": "POINT",
+            "geometry": [lng, lat],
+            "owner_faction": "RED",
+            "label": "紅軍補給點（重建）",
+            "attributes": {"stock": {"I": 50, "IX": 50}},
+        },
+    )
+    expect(created["kind"] == "SUPPLY_POINT", f"建立回應不是補給點：{created}")
+    recovered = wait_for(
+        lw,
+        lambda s: s[DRAW] if on_hand(s[DRAW], "I") > 0.0 else None,
+        f"{DRAW} 從新建的補給點拉到貨",
+        timeout=120,
+        progress=lambda s: f"仍是 {on_hand(s[DRAW], 'I'):.4f} 份",
+    )
+    return (
+        f"摧毀前回升 {rises} 次；火力任務摧毀補給點後 45 秒內回升 {rises_after} 次、"
+        f"水位 {after[0]:.4f}→0；以 API 新建補給點後回到 {on_hand(recovered, 'I'):.4f} 份"
+    )
+
+
+# -- C16 ---------------------------------------------------------------------
+
+
+@check("C16", "斷補對聯合兵種部隊也要生效（多武器單位走的是另一條裁決路徑）")
+def c16_combined_starvation(w: World) -> str:
+    """C14 的齊射裡一起打的第三個射手：與 `LOG_HUNGRY` 同時斷補，只多帶一種武器。
+
+    多帶一種武器就會落到 `_resolve_combined`（SPEC_EXTEND P2 的聯合兵種加總），
+    那是與齊射、聚合並列的**第三條**裁決路徑。規格的驗收條文說的是「斷補的裝甲連」，
+    而真實的裝甲連常常就是多武器系統的單位——這條路徑若沒把斷補算進去，
+    那句驗收條文對它要適用的對象剛好不成立。
+
+    本檢查靠 C14 蒐集到的齊射資料；單獨跑 `--only C16` 沒有資料可看。
+    """
+    expect(
+        phase_volleys(MIXED, "FED"),
+        "沒有基準階段的資料——本檢查需要 C14 先跑（它會順便讓 LOG_MIXED 一起開火）",
+    )
+    starved_phases = sorted({v.phase for v in _VOLLEYS if v.phase.startswith("STARVED_")})
+    expect(starved_phases, "沒有斷補階段的資料——C14 沒有跑完")
+
+    base = {v.rounds for v in phase_volleys(MIXED, "FED")}
+    expect(len(base) == 1, f"{MIXED} 基準階段的彈數就在跳：{sorted(base)}")
+    base_rounds = base.pop()
+
+    lines = []
+    unaffected = []
+    for phase in starved_phases:
+        rounds = sorted({v.rounds for v in phase_volleys(MIXED, phase)})
+        hungry = sorted({v.rounds for v in phase_volleys(HUNGRY, phase)})
+        lines.append(f"{phase}: {MIXED} {base_rounds}→{rounds}（單武器對照 {hungry}）")
+        if rounds and rounds[0] >= base_rounds:
+            unaffected.append(phase)
+    expect(
+        not unaffected,
+        f"{MIXED} 與 {HUNGRY} 同時斷補，彈數卻一發都沒少（{'；'.join(lines)}）"
+        "——聯合兵種裁決路徑沒有套用斷補效能；"
+        "`adjudication/adjudicator.py` 的 `_resolve_combined` 缺 `supply_effectiveness`，"
+        "而齊射（單武器）與聚合（營級）兩條路徑都有",
+    )
+    return "；".join(lines)
+
+
 # --------------------------------------------------------------------------- 主程式
 
 
 def main() -> int:
+    global _STARVE_DAYS
     ap = argparse.ArgumentParser(description="活體全系統檢查")
     ap.add_argument("--only", action="append", help="只跑指定代號（可重複），如 --only C3")
     ap.add_argument("--json", help="把結果另存為 JSON")
+    ap.add_argument(
+        "--starve-days",
+        type=float,
+        default=_STARVE_DAYS,
+        help="C14 要走到第幾個斷補階梯（模擬日）。**1 模擬日 ≈ 12 分鐘牆鐘**，"
+        "預設 3.0 是規格驗收條文寫的那個數字（也是唯一能逐發斷言戰損下降的那一階）；"
+        "冒煙測試可用 1.0",
+    )
+    ap.add_argument(
+        "--keep-logistics",
+        action="store_true",
+        help="保留後勤那一局（預設跑完就刪）。失敗要進去看現場時用",
+    )
     args = ap.parse_args()
+    _STARVE_DAYS = args.starve_days
 
     wanted = [c for c in _CHECKS if not args.only or c in args.only]
     api = Api(BASE)
@@ -800,6 +1635,13 @@ def main() -> int:
         except Exception as exc:
             RESULTS.append(Result(code, title, False, str(exc)))
             print(f"✗ {code} {title}\n    {exc}  [{time.time() - started:.0f}s]")
+
+    # 後勤那一局是本工具自己開的，跑完就收——**只刪自己建的**（id 在 bootstrap 當下記下）。
+    if _LOGI is not None:
+        if args.keep_logistics:
+            print(f"\n▸ 後勤推演保留：{_LOGI.session_id}（--keep-logistics）")
+        else:
+            _LOGI.teardown()
 
     passed = sum(1 for r in RESULTS if r.ok)
     print(f"\n▸ {passed}/{len(RESULTS)} 通過（推演 {world.session_id}）")

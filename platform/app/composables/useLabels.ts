@@ -180,6 +180,57 @@ export function mobilityProfileLabel(raw: string | null | undefined): string {
   return lookup(MOBILITY_LABELS, raw)
 }
 
+// ---- 補給類別與斷補（WP-C7；單位卡與補給點編輯共用）----
+
+/**
+ * 北約補給類別編號 → 繁中。用字取自 `core/app/adjudication/supply.py` 的類別表，
+ * **不另創譯名**。
+ *
+ * ⚠ 與 `useWeaponVocab.SUPPLY_CLASS_LABELS`（AMMO/FUEL/WATER_FOOD/BATTERY）**不是同一組**：
+ * 那是軍械庫 LOGISTICS 裝備範本的載運艙格鍵，這裡是單位/補給點身上的存量帳。
+ * 兩者命名不一致是 WP-C7.1 明列的既有欠帳（要動契約），不要在前端偷偷把它們對起來。
+ */
+export const NATO_SUPPLY_CLASS_LABELS: Record<string, string> = {
+  I: '口糧／水',
+  III: '油料',
+  V: '彈藥',
+  IX: '維修件',
+}
+/** 顯示順序＝北約編號順序（與後端 `SupplyClass` 的宣告順序一致，非字典序）。 */
+export const NATO_SUPPLY_CLASSES = ['I', 'III', 'V', 'IX']
+
+export function supplyClassLabel(raw: string | null | undefined): string {
+  return lookup(NATO_SUPPLY_CLASS_LABELS, raw)
+}
+
+/**
+ * 斷補效能階梯——**這是 `core/app/adjudication/supply.py` 的 `STARVATION_STEPS` 的鏡像**。
+ *
+ * 為什麼要在前端複製一份：`starved_days` 是 STATE_DIFF 推來的活值，但效能倍率不是
+ * ——後端只送天數。要在單位卡上把「斷補 3 日」翻成指揮官真正要知道的
+ * 「這支部隊現在只發揮五成」，就得有這條階梯。
+ *
+ * 兩份會漂，所以 `core/tests/unit/test_supply_point_api.py` 有一條測試逐項比對
+ * 這個常數與後端的 `STARVATION_STEPS`；改了後端沒改這裡（或反之）會直接紅。
+ * **格式不可亂動**（測試以 `[天數, 倍率]` 的字面陣列解析）。
+ */
+export const STARVATION_STEPS: [number, number][] = [
+  [0, 1.0],
+  [1, 0.9],
+  [2, 0.75],
+  [3, 0.5],
+  [5, 0.25],
+]
+
+/** 斷補 N 個模擬日後的效能倍率（階梯，不是連續衰減）。 */
+export function starvationModifier(days: number): number {
+  let result = 1
+  for (const [threshold, modifier] of STARVATION_STEPS) {
+    if (days >= threshold) result = modifier
+  }
+  return result
+}
+
 /**
  * 錯誤訊息的兜底文字。
  *

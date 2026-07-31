@@ -239,7 +239,7 @@ const stream = useSessionStreamStore()
 const live = useLiveState(stream)
 const {
   liveHealth, liveStrength, liveComms, liveFuel,
-  liveSuppression, livePosture, liveStaleTick, currentTick,
+  liveSuppression, livePosture, liveSupply, liveStarvedDays, liveStaleTick, currentTick,
 } = live
 
 /**
@@ -934,6 +934,8 @@ onBeforeUnmount(() => {
           :live-posture="livePosture"
           :live-stale-tick="liveStaleTick"
           :live-fuel="liveFuel"
+          :live-supply="liveSupply"
+          :live-starved-days="liveStarvedDays"
           :live-ammo="liveAmmo"
           @close="clearSelection"
         />
