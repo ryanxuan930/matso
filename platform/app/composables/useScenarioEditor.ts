@@ -30,6 +30,16 @@ export interface EditorUnit {
   fixed?: boolean // 固定單位（指揮部等）：不接受 MOVE 令、不會被派去移動或機動交戰
   branch?: string // 兵科：決定地圖符號的圖示（步兵斜線/裝甲橢圓/砲兵圓點…）。UNKNOWN＝通用框
   /**
+   * 編裝（WP-B6）。**這是「編輯器能不能獨立產出一份能打的想定」的分水嶺**——
+   * 沒有編裝的單位打不了仗（`ENGAGE` 找不到武器、`precheck` 直接不可行）。
+   *
+   * `template` 參照 `EquipmentTemplate.name`（不是 id）。打錯字要到**開局**才報錯，
+   * 所以 UI 一律從軍械庫清單挑，不讓人手打。
+   * **省略整個欄位 ≠ 空陣列**：省略＝沿用開局旗標 `seed_default_equipment` 的預設配發，
+   * 空陣列＝這支單位刻意什麼都不帶。兩者在 export 時要分得開。
+   */
+  equipment?: EditorEquipment[]
+  /**
    * 本檔未建模的單位欄位（`equipment`、`attributes`、`authorized_strength`…）。
    * **匯入時原樣收起、匯出時原樣攤回**——理由同 `ScenarioModel.passthrough`：
    * 編輯器只管得到 7 個欄位，而 `orbat.schema.json` 的單位遠不只 7 個。
@@ -48,7 +58,10 @@ const MODELLED_UNIT_KEYS = new Set([
   'parent',
   'fixed',
   'branch',
+  'equipment',
 ])
+/** 一件編裝。`ammo` 省略＝用範本預設攜行量。 */
+export interface EditorEquipment { template: string; quantity?: number; ammo?: number }
 export interface EditorRelation { a: string; b: string; relation: RelationValue }
 export interface EditorMsel { id: string; once: boolean; trigger: Condition; inject: InjectAction }
 export interface EditorVictory { faction: string; condition: Condition }
@@ -315,6 +328,16 @@ export function exportScenario(m: ScenarioModel): Record<string, unknown> & {
             ...(u.fixed ? { fixed: true } : {}),
             // 兵科：UNKNOWN 是預設，省略即等價（維持既有想定的 diff 乾淨）。
             ...(u.branch && u.branch !== 'UNKNOWN' ? { branch: u.branch } : {}),
+            // **undefined ≠ []**：省略＝沿用開局的預設配發；空陣列＝刻意什麼都不帶。
+            ...(u.equipment !== undefined
+              ? {
+                  equipment: u.equipment.map((e) => ({
+                    template: e.template,
+                    ...(e.quantity !== undefined ? { quantity: e.quantity } : {}),
+                    ...(e.ammo !== undefined ? { ammo: e.ammo } : {}),
+                  })),
+                }
+              : {}),
           })),
       },
     ]),
@@ -399,6 +422,9 @@ export function importScenario(
         parent: u.parent as string | undefined,
         fixed: u.fixed as boolean | undefined,
         branch: (u.branch as string | undefined) ?? 'UNKNOWN',
+        ...(Array.isArray(u.equipment)
+          ? { equipment: (u.equipment as EditorEquipment[]).map((e) => ({ ...e })) }
+          : {}),
         ...(Object.keys(unitRest).length ? { passthrough: unitRest } : {}),
       })
     }

@@ -8,6 +8,7 @@
  * `useScenarioEditor` 沒有任何執行期相依（只有 `import type`），所以無需 Nuxt 執行期即可驗。
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -234,4 +235,56 @@ test('單位上編輯器沒建模的欄位（編裝/補給宣告）要能存活�
   assert.deepEqual(saved.attributes, attributes, '補給宣告在 roundtrip 中消失了')
   assert.equal(saved.authorized_strength, 87)
   assert.equal(saved.designation, '1-1 裝甲連') // 建模欄位仍以模型為準
+})
+
+test('編裝可編輯，且「沿用預設」與「刻意不帶」分得開', () => {
+  /**
+   * P6 分水嶺：**沒有編裝的單位打不了仗**（`ENGAGE` 找不到武器、預檢直接不可行），
+   * 而編輯器過去產不出帶編裝的單位——那是「編輯器能不能獨立產出一份能打的想定」的關鍵。
+   *
+   * ⚠ **`undefined` 與 `[]` 是兩件事**（`orbat.schema.json` 寫明了）：
+   * 省略＝沿用開局旗標 `seed_default_equipment` 的預設配發；
+   * 空陣列＝這支單位刻意什麼都不帶。混為一談的後果是作者把裝備刪光存檔之後，
+   * 開局時系統又幫他配回一套預設武器——而畫面上看不出來。
+   */
+  const withEquip: ScenarioModel = {
+    ...emptyScenario(),
+    units: [
+      {
+        faction: 'BLUE',
+        designation: '1-1',
+        unitLevel: 'COMPANY',
+        equipment: [{ template: 'MBT', quantity: 14, ammo: 40 }],
+      },
+      { faction: 'BLUE', designation: '1-2', unitLevel: 'COMPANY', equipment: [] },
+      { faction: 'BLUE', designation: '1-3', unitLevel: 'COMPANY' },
+    ],
+  }
+  const units = (exportScenario(withEquip).orbat as Record<
+    string,
+    { units: Array<Record<string, unknown>> }
+  >).BLUE!.units
+
+  assert.deepEqual(units[0]!.equipment, [{ template: 'MBT', quantity: 14, ammo: 40 }])
+  assert.deepEqual(units[1]!.equipment, [], '刻意不帶裝備被寫成「沿用預設」了')
+  assert.ok(!('equipment' in units[2]!), '沒宣告的單位不該長出一個空陣列')
+
+  // roundtrip：三種狀態都要活著回來。
+  const back = importScenario(exportScenario(withEquip)).units
+  assert.deepEqual(back[0]!.equipment, [{ template: 'MBT', quantity: 14, ammo: 40 }])
+  assert.deepEqual(back[1]!.equipment, [])
+  assert.equal(back[2]!.equipment, undefined)
+})
+
+test('編裝範本一律從軍械庫清單挑，不讓人手打', () => {
+  // `equipment[].template` 參照的是 `EquipmentTemplate.name`。打錯字要到**開局**才報錯
+  // （`_create_declared_equipment` 找不到名稱就整局載不起來），而想定編輯與開局之間
+  // 隔著幾天——那時候沒有人記得打了什麼。
+  const src = readFileSync(
+    fileURLToPath(new URL('../app/pages/scenario-editor.vue', import.meta.url)),
+    'utf8',
+  )
+  assert.match(src, /fetchEquipmentTemplates\(\)/, '沒有去抓軍械庫範本')
+  assert.match(src, /:options="templateNames"/, '範本欄位不是下拉——會變成手打')
+  assert.match(src, /data-testid="equip-no-templates"/, '沒有範本時要說明，不是給一個空下拉')
 })

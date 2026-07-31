@@ -10,6 +10,7 @@ import {
   emptyScenario,
   exportScenario,
   importScenario,
+  type EditorEquipment,
   type EditorRequestQuotas,
   type EditorUnit,
   type RelationValue,
@@ -20,6 +21,7 @@ import {
 import { emptyCondition } from '~/composables/useConditionDsl'
 import { REQUEST_KIND_LABELS } from '~/composables/useC2'
 import { BRANCH_LABELS, BRANCH_OPTIONS } from '~/composables/useUnits'
+import { fetchEquipmentTemplates, type EquipmentTemplate } from '~/composables/useEquipment'
 
 // 由大到小（與後端 UnitLevel 的宣告順序一致——那個順序就是編制大小）。
 const LEVELS: UnitLevel[] = [
@@ -195,11 +197,64 @@ async function loadExisting(id: string) {
     loadError.value = `載入想定失敗：${err.code === 'SCENARIO_NOT_FOUND' ? '找不到該想定' : (err.code ?? 'UNKNOWN')}`
   }
 }
+/**
+ * 軍械庫範本（編裝下拉的來源）。
+ *
+ * **一律從清單挑，不讓人手打**：`equipment[].template` 參照的是
+ * `EquipmentTemplate.name`，打錯字要到**開局**才報錯（`_create_declared_equipment`
+ * 找不到名稱就整局載不起來）。想定編輯與開局之間隔著幾天，那時候沒有人記得打了什麼。
+ *
+ * 抓不到範本（未登入／後端沒起）→ 空清單，編裝區塊顯示提示而不是一個空下拉。
+ */
+const templates = ref<EquipmentTemplate[]>([])
+const templateNames = computed(() => templates.value.map((x) => x.name).sort())
+
 onMounted(() => {
   const q = useRoute().query.load
   const id = Array.isArray(q) ? q[0] : q
   if (id) loadExisting(String(id))
+  fetchEquipmentTemplates()
+    .then((list) => {
+      templates.value = list
+    })
+    .catch(() => {
+      templates.value = []
+    })
 })
+
+// ---- 編裝（P6：編輯器能不能獨立產出一份能打的想定的分水嶺）----
+
+/** 目前展開編裝面板的單位（以番號＋陣營為鍵——想定裡的單位還沒有 id）。 */
+const equipOpen = ref<string | null>(null)
+function unitKey(u: EditorUnit): string {
+  return `${u.faction}/${u.designation}`
+}
+function toggleEquip(u: EditorUnit) {
+  equipOpen.value = equipOpen.value === unitKey(u) ? null : unitKey(u)
+}
+/**
+ * 開始編這支單位的編裝。
+ *
+ * **從 undefined 變成 `[]` 是一個有意義的動作**：省略＝沿用開局的預設配發，
+ * 空陣列＝這支單位刻意什麼都不帶。所以第一次按下去就要建立空陣列，
+ * 否則作者刪光了所有項目，存出去的想定會退回「預設配發」而不是「什麼都不帶」。
+ */
+function ensureEquip(u: EditorUnit): EditorEquipment[] {
+  if (!u.equipment) u.equipment = []
+  return u.equipment
+}
+function addEquip(u: EditorUnit) {
+  ensureEquip(u).push({ template: templateNames.value[0] ?? '', quantity: 1 })
+}
+function removeEquip(u: EditorUnit, i: number) {
+  ensureEquip(u).splice(i, 1)
+}
+/** 摘要（收合時顯示）。`undefined` 與 `[]` 要講得不一樣。 */
+function equipSummary(u: EditorUnit): string {
+  if (u.equipment === undefined) return '（沿用預設配發）'
+  if (!u.equipment.length) return '（不配發任何裝備）'
+  return u.equipment.map((e) => `${e.template}×${e.quantity ?? 1}`).join('、')
+}
 
 function addFaction() {
   model.value.factions.push({ id: `F${model.value.factions.length + 1}`, color: '#888888' })
@@ -812,6 +867,20 @@ async function saveToServer() {
               </label>
             </template>
           </Column>
+          <!-- 編裝（P6）。**沒有編裝的單位打不了仗**——`ENGAGE` 找不到武器、預檢直接不可行。
+               範本一律從軍械庫清單挑：`template` 參照的是名稱，打錯字要到開局才報錯。 -->
+          <Column header="編裝">
+            <template #body="{ node }">
+              <button
+                class="equip-btn"
+                data-testid="unit-equip-toggle"
+                :title="equipSummary(node.data)"
+                @click="toggleEquip(node.data)"
+              >
+                {{ equipSummary(node.data) }}
+              </button>
+            </template>
+          </Column>
           <Column header="座標">
             <template #body="{ node }">
               <span class="coord-cell">
@@ -851,6 +920,44 @@ async function saveToServer() {
             </template>
           </Column>
         </TreeTable>
+        <!-- 編裝面板（展開者顯示於表格下方，與地圖選取同一個模式） -->
+        <div
+          v-for="u in model.units.filter((x) => x.faction === tree.id && unitKey(x) === equipOpen)"
+          :key="`equip-${unitKey(u)}`"
+          class="equip-panel"
+          data-testid="unit-equip-panel"
+        >
+          <div class="equip-head">
+            <b>{{ u.designation }} 編裝</b>
+            <Button size="small" text data-testid="equip-add" @click="addEquip(u)">＋ 加一件</Button>
+            <Button size="small" text severity="secondary" @click="equipOpen = null">收合</Button>
+          </div>
+          <p v-if="!templateNames.length" class="empty-hint" data-testid="equip-no-templates">
+            軍械庫沒有可用範本（或尚未登入）——請先到「軍械庫」建立裝備範本，
+            編裝參照的是範本**名稱**。
+          </p>
+          <p v-else-if="u.equipment === undefined" class="hint">
+            尚未宣告編裝：開局時會沿用預設配發。按「＋ 加一件」開始自訂
+            （<b>清空後存檔＝這支單位刻意不帶任何裝備</b>，與「沿用預設」不同）。
+          </p>
+          <div v-for="(e, ei) in u.equipment ?? []" :key="ei" class="equip-row" data-testid="equip-row">
+            <Select
+              v-model="e.template"
+              :options="templateNames"
+              size="small"
+              filter
+              placeholder="範本"
+              data-testid="equip-template"
+            />
+            <label class="equip-field">數量
+              <InputNumber v-model="e.quantity" :min="1" size="small" data-testid="equip-quantity" />
+            </label>
+            <label class="equip-field" title="省略＝用範本的預設攜行量">彈藥
+              <InputNumber v-model="e.ammo" :min="0" size="small" placeholder="預設" />
+            </label>
+            <Button size="small" text severity="danger" data-testid="equip-remove" @click="removeEquip(u, ei)">✕</Button>
+          </div>
+        </div>
         <!-- 地圖選取（展開者顯示於表格下方） -->
         <ClientOnly v-for="u in openPickersOf(tree.id)" :key="`pick-${tree.id}-${u.designation}`">
           <div class="picker-wrap" data-testid="unit-picker-wrap">
@@ -929,6 +1036,17 @@ async function saveToServer() {
 </template>
 
 <style scoped>
+.equip-btn {
+  background: none; border: 1px dashed #334155; border-radius: 4px;
+  color: #94a3b8; font-size: 0.75rem; padding: 2px 6px; cursor: pointer;
+  max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.equip-btn:hover { border-color: #64748b; color: #e2e8f0 }
+.equip-panel { border-left: 2px solid #1e293b; margin: 0.25rem 0 0.5rem; padding: 0.25rem 0 0.25rem 0.5rem }
+.equip-head { display: flex; gap: 0.5rem; align-items: center }
+.equip-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.2rem 0 }
+.equip-field { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; color: #94a3b8 }
+
 .editor { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
 .sc-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
 .sc-bar h1 { font-size: 1.25rem; margin: 0; }
