@@ -66,9 +66,6 @@ _IMPL_ONLY = {
     ("GET", "/api/v1/sessions/{}/aar/replay"),
     ("GET", "/api/v1/sessions/{}/aar/report"),
     # /aar/stats 已於 WP-D6.2 補進契約（新增 attempts / engagements_fired / stats_version 時）
-    ("GET", "/api/v1/sessions/{}/autonomy"),
-    ("PUT", "/api/v1/sessions/{}/autonomy"),
-    ("DELETE", "/api/v1/sessions/{}/autonomy"),
 }
 
 

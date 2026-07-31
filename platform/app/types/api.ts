@@ -1103,6 +1103,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/autonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 本局的 AI 自主指派設定（限統裁/白軍/管理）。未設定＝空 `factions`。 */
+        get: operations["getAutonomy"];
+        /** @description 設定 AI 自主指派。**回應是存進去之後的那份設定**（經正規化），形狀與 GET 相同—— 曾經 PUT 回 `factions` 的鍵陣列而 GET 回物件，同一欄位兩種型別。 設定後 runner 會被要求重啟以立即讀取（數秒內生效；熱狀態於 Redis 不中斷）。 */
+        put: operations["setAutonomy"];
+        post?: never;
+        /** @description 清除自主指派並停掉 AI worker（同時清除 AI 狀態遙測——無 AI 即無狀態）。 */
+        delete: operations["clearAutonomy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/orbat-permissions": {
         parameters: {
             query?: never;
@@ -1556,6 +1577,35 @@ export interface components {
             /** @description 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。 */
             errors: number;
             legs: components["schemas"]["MissionLeg"][];
+        };
+        /** @description 一個陣營的 AI 指派。`objectives` 逐條原樣進 AI 提示詞。 */
+        FactionAI: {
+            mission?: string;
+            objectives?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** @description AI 自主指派設定。**`factions` 是物件不是陣列**（鍵＝陣營代號）。 */
+        AutonomyConfig: {
+            factions?: {
+                [key: string]: components["schemas"]["FactionAI"];
+            };
+            /** @default 45 */
+            heartbeat_s: number;
+            /**
+             * @description WP-A1 對照實驗開關：true ＝ AI 改用 ground truth 敵情（全知，迷霧不適用）。 預設 false（AI 與人一樣受迷霧限制）。
+             * @default false
+             */
+            ai_ground_truth: boolean;
+        };
+        AutonomySaved: components["schemas"]["AutonomyConfig"] & {
+            ok?: boolean;
+            /** @description 是否已要求 runner 重啟以套用 */
+            restarted?: boolean;
+        };
+        AutonomyCleared: {
+            ok?: boolean;
+            restarted?: boolean;
         };
         OrbatPermissions: {
             /** @description 開放自編編裝的陣營代號。**空陣列＝只有白軍能編**（預設）。 */
@@ -5094,6 +5144,97 @@ export interface operations {
                 };
             };
             /** @description 僅管理者 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getAutonomy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Autonomy config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyConfig"];
+                };
+            };
+            /** @description 僅統裁/白軍/管理 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    setAutonomy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutonomyConfig"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomySaved"];
+                };
+            };
+            /** @description 僅統裁/白軍/管理 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    clearAutonomy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cleared */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyCleared"];
+                };
+            };
+            /** @description 僅統裁/白軍/管理 */
             403: {
                 headers: {
                     [name: string]: unknown;

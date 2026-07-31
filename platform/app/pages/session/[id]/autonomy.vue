@@ -4,6 +4,7 @@
 // 限統裁/白軍/管理（後端 RBAC 亦把關）。
 import { apiFetch } from '~/composables/useApi'
 import { describeAiStatus, useAiStatus } from '~/composables/useAiStatus'
+import type { components } from '~/types/api'
 
 const route = useRoute()
 const sessionId = String(route.params.id)
@@ -14,14 +15,15 @@ const canManage = computed(() =>
 )
 
 interface UnitView { id: string, faction: string, designation: string }
-/** 後端 FactionAI.objectives 是 `list[dict]`（core/app/api/autonomy.py），逐條原樣進 AI 提示詞。 */
+/**
+ * AI 自主指派的型別**走契約生成**，不再手抄（UI 盤點 P4）。
+ *
+ * `objectives` 是 `list[dict]`，逐條原樣進 AI 提示詞——結構由想定作者決定，
+ * 所以契約那邊也是 `additionalProperties: true`。
+ */
 type Objective = Record<string, unknown>
-interface FactionAI { mission: string, objectives: Objective[] }
-interface AutonomyView {
-  factions: Record<string, FactionAI>
-  heartbeat_s: number
-  ai_ground_truth?: boolean
-}
+type FactionAI = components['schemas']['FactionAI']
+type AutonomyView = components['schemas']['AutonomyConfig']
 
 /** 一列任務目標的編輯狀態。`extra` 保住手工（curl/舊資料）設定的結構化欄位，存檔時原樣帶回。 */
 interface ObjectiveRow { id: number, text: string, extra: Objective }

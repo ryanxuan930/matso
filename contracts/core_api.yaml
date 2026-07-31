@@ -518,6 +518,38 @@ components:
           type: integer
           description: 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。
         legs: { type: array, items: { $ref: "#/components/schemas/MissionLeg" } }
+    FactionAI:
+      type: object
+      description: 一個陣營的 AI 指派。`objectives` 逐條原樣進 AI 提示詞。
+      properties:
+        mission: { type: string }
+        objectives: { type: array, items: { type: object, additionalProperties: true } }
+    AutonomyConfig:
+      type: object
+      description: AI 自主指派設定。**`factions` 是物件不是陣列**（鍵＝陣營代號）。
+      properties:
+        factions:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/FactionAI" }
+        heartbeat_s: { type: number, default: 45 }
+        ai_ground_truth:
+          type: boolean
+          default: false
+          description: >-
+            WP-A1 對照實驗開關：true ＝ AI 改用 ground truth 敵情（全知，迷霧不適用）。
+            預設 false（AI 與人一樣受迷霧限制）。
+    AutonomySaved:
+      allOf:
+        - { $ref: "#/components/schemas/AutonomyConfig" }
+        - type: object
+          properties:
+            ok: { type: boolean }
+            restarted: { type: boolean, description: 是否已要求 runner 重啟以套用 }
+    AutonomyCleared:
+      type: object
+      properties:
+        ok: { type: boolean }
+        restarted: { type: boolean }
     OrbatPermissions:
       type: object
       required: [factions]
@@ -2771,6 +2803,49 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TestLlmResult" }
         "403": { description: 僅管理者 }
+  /sessions/{id}/autonomy:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getAutonomy
+      security: [{ bearerAuth: [] }]
+      description: 本局的 AI 自主指派設定（限統裁/白軍/管理）。未設定＝空 `factions`。
+      responses:
+        "200":
+          description: Autonomy config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyConfig" }
+        "403": { description: 僅統裁/白軍/管理 }
+    put:
+      operationId: setAutonomy
+      security: [{ bearerAuth: [] }]
+      description: >-
+        設定 AI 自主指派。**回應是存進去之後的那份設定**（經正規化），形狀與 GET 相同——
+        曾經 PUT 回 `factions` 的鍵陣列而 GET 回物件，同一欄位兩種型別。
+        設定後 runner 會被要求重啟以立即讀取（數秒內生效；熱狀態於 Redis 不中斷）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutonomyConfig" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomySaved" }
+        "403": { description: 僅統裁/白軍/管理 }
+    delete:
+      operationId: clearAutonomy
+      security: [{ bearerAuth: [] }]
+      description: 清除自主指派並停掉 AI worker（同時清除 AI 狀態遙測——無 AI 即無狀態）。
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyCleared" }
+        "403": { description: 僅統裁/白軍/管理 }
   /sessions/{id}/orbat-permissions:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

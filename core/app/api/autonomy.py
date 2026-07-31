@@ -61,54 +61,71 @@ class AutonomyConfig(BaseModel):
     ai_ground_truth: bool = False
 
 
-@router.put("/{session_id}/autonomy")
+class AutonomySaved(AutonomyConfig):
+    """PUT 的回應＝**存進去之後的那份設定**，加上兩個旗標。
+
+    ⚠ 這裡原本回 `{"factions": list(cfg.factions), ...}`——`list(dict)` 取的是**鍵**，
+    於是同一個資源的同一個欄位，PUT 回字串陣列、GET 回物件。存檔後重載會拿到兩種形狀。
+    目前沒炸只是因為前端丟棄了 PUT 的回應；那是運氣不是設計。
+    繼承 `AutonomyConfig` 讓兩邊的形狀由型別系統保證一致，不靠人記得。
+    """
+
+    ok: bool = True
+    restarted: bool = True
+
+
+class AutonomyCleared(BaseModel):
+    """DELETE 的回應。沒有設定可回——它剛被刪掉。"""
+
+    ok: bool = True
+    restarted: bool = True
+
+
+@router.put("/{session_id}/autonomy", response_model=AutonomySaved)
 def set_autonomy(
     session_id: str,
     cfg: AutonomyConfig,
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
+) -> AutonomySaved:
     _require_admin(user)
     r = _redis(settings.redis_url)
     r.set(autonomy_config_key(session_id), cfg.model_dump_json())
     # 請求 runner 重啟以立即讀取指派（數秒內生效；戰局熱狀態於 Redis 不中斷）。
     r.set(session_restart_key(session_id), "1")
-    return {
-        "ok": True,
-        "factions": list(cfg.factions),
-        "heartbeat_s": cfg.heartbeat_s,
-        "restarted": True,
-    }
+    # **回存進去的那一份**（經 pydantic 正規化後），形狀與 GET 完全相同。
+    return AutonomySaved(**cfg.model_dump())
 
 
-@router.get("/{session_id}/autonomy")
+@router.get("/{session_id}/autonomy", response_model=AutonomyConfig)
 def get_autonomy(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
+) -> AutonomyConfig:
     _require_admin(user)
     raw = _redis(settings.redis_url).get(autonomy_config_key(session_id))
     if not raw:
-        return {"factions": {}, "heartbeat_s": 45.0}
+        return AutonomyConfig()
     try:
-        return dict(json.loads(raw))
+        return AutonomyConfig(**json.loads(raw))
     except (ValueError, TypeError):
-        return {"factions": {}, "heartbeat_s": 45.0}
+        # 壞掉的 Redis 值不該讓白軍主控台整頁掛掉——回預設，讓他重設一次。
+        return AutonomyConfig()
 
 
-@router.delete("/{session_id}/autonomy")
+@router.delete("/{session_id}/autonomy", response_model=AutonomyCleared)
 def clear_autonomy(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
+) -> AutonomyCleared:
     _require_admin(user)
     r = _redis(settings.redis_url)
     r.delete(autonomy_config_key(session_id))
     r.delete(ai_status_key(session_id))  # 清除 AI 狀態遙測（無 AI 即無狀態）
     r.set(session_restart_key(session_id), "1")  # runner 重啟 → 停掉 AI worker
-    return {"ok": True, "restarted": True}
+    return AutonomyCleared()
 
 
 def _faction_status(faction: str, raw: Any, now: float) -> dict[str, Any]:
