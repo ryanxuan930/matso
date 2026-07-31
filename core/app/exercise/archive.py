@@ -164,9 +164,15 @@ def _session_bundle(db: Session, session: WargameSession) -> dict[str, Any]:
             "events": [_ledger_payload(r) for r in rows],
         },
         "aar_metrics": {
+            # 統計口徑版本——**沒有這一欄的封存包是 v1**（WP-D6.2 之前）。
+            # v1 的命中率只認單發路徑、分母含被拒交戰、聚合戰損整包記在守方，
+            # 與 v2 的數字**不可直接相比**。封存是留給日後查的，口徑要跟著一起留。
+            "stats_version": metrics.stats_version,
             "total_events": metrics.total_events,
             "event_counts": metrics.event_counts,
             "engagements": metrics.engagements,
+            "attempts": metrics.attempts,
+            "engagements_fired": metrics.engagements_fired,
             "hits": metrics.hits,
             "hit_rate": metrics.hit_rate,
             "total_damage": metrics.total_damage,

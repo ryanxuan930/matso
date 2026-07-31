@@ -132,10 +132,17 @@ def _no_strike_at(
     zone = zones.classify_latlng(lat, lng)
     if zone is None:
         return []
+    # 說得出是哪一區。泛稱只告訴受訓者「規則存在」，區名才告訴他「差點打到什麼」。
+    label = zones.name_at(lat, lng)
+    where = f"「{label}」" if label else ""
     if zone is ZoneClass.NO_STRIKE:
         return [
             PrecheckCheck(
-                name="no_strike", passed=False, detail="目標位於禁射區（No-Strike），不得射擊"
+                name="no_strike",
+                passed=False,
+                detail=(
+                    f"目標位於禁射區{where}（No-Strike），不得射擊（落點 {lat:.4f}, {lng:.4f}）"
+                ),
             )
         ]
     if acknowledged:  # 限制射擊區：使用者已明確確認 → 放行，但留痕（service 寫 Ledger）

@@ -2,10 +2,13 @@
 // AAR 儀表板（O8，SPEC §14）——時間軸 + 統計 + 敘事 + 匯出。
 import {
   aarExportDownload,
+  aarHitRateLabel,
+  aarRejectedCount,
   aarReplay,
   aarReplayStates,
   aarReport,
   aarStats,
+  aarStatsVersionNote,
   auditCitations,
   type AarReplay,
   type AarReplayStates,
@@ -42,6 +45,11 @@ async function load() {
     loading.value = false
   }
 }
+// 交戰次數的三個數字與口徑註記（WP-D6.2）。判斷式放在 `useAar` 而不是這裡：
+// 樣板繫結沒有測試接得上，搬成純函式才驗得了「畫面上那個數字是不是對的」。
+const rejectedCount = computed(() => aarRejectedCount(stats.value))
+const hitRateLabel = computed(() => aarHitRateLabel(stats.value))
+const statsVersionNote = computed(() => aarStatsVersionNote(stats.value))
 // 地圖重播：拖時間軸＝本地重算（見 composable 說明），播放/倍速在那裡。
 const { playing, speed, unitsAt, rosterAt, toggle, stop } = useAarReplay(replayStates, scrubTick)
 /**
@@ -102,11 +110,28 @@ onMounted(load)
     <template v-else>
     <section v-if="stats" data-testid="aar-stats">
       <h2>統計</h2>
+      <!-- 口徑註記：舊局的數字是舊定義算出來的，擺在一起比會得到錯誤結論。 -->
+      <p v-if="statsVersionNote" class="stats-ver" data-testid="stats-version-note">
+        ⚠ {{ statsVersionNote }}
+      </p>
       <ul>
         <li>總事件：{{ stats.total_events }}</li>
-        <li>交戰次數：{{ stats.engagements }}</li>
-        <li>命中率：{{ (stats.hit_rate * 100).toFixed(0) }}%</li>
-        <li>總戰損：{{ stats.total_damage }}</li>
+        <li>交戰事件：{{ stats.engagements }}（含營級以上聚合交戰）</li>
+        <li data-testid="stat-attempts">
+          下令交火：{{ stats.attempts }} 次 · 實際射出 {{ stats.engagements_fired }} 次 ·
+          未射出 {{ rejectedCount }} 次（超射程／無彈／無視線／ROE）
+        </li>
+        <li data-testid="stat-hit-rate">
+          命中率：{{ hitRateLabel }}
+          <small>（{{ stats.hits }} ÷ {{ stats.engagements_fired }} 次實射；未射出者不計入分母）</small>
+          <!-- 這一行不是免責聲明，是讀數說明：齊射/聯合兵種走期望值裁決，
+               「命中」的判準是該次交戰有沒有造成戰力損失。以這兩條路徑為主的局
+               本來就會逼近 100%，不寫出來會被當成「我方神準」。 -->
+          <small class="caveat">
+            齊射與聯合兵種以期望值裁決，「命中」＝該次交戰造成戰力損失，非彈著命中率。
+          </small>
+        </li>
+        <li>總戰損：{{ stats.total_damage }}（全場雙方相加）</li>
         <li>護欄攔截：{{ stats.guardrail_blocks }}</li>
         <li v-for="(v, f) in stats.damage_by_faction" :key="f">{{ f }} 承受戰損：{{ v }}</li>
       </ul>
@@ -330,6 +355,17 @@ a { margin-right: 1rem; color: #60a5fa; }
 .roster .desig { color: #e2e8f0; font-weight: 500; }
 .roster .warn { margin-left: 0.3rem; color: #f59e0b; }
 .evt-counts { columns: 2; font-size: 0.85rem; }
+/* 讀數說明：比數字暗一階、獨立成行——要讀得到，但不跟數字搶。 */
+.caveat { display: block; color: #64748b; font-size: 0.75rem; }
+/* 口徑不符：黃色警示條——不是錯誤，但看數字之前必須先讀到。 */
+.stats-ver {
+  margin: 0 0 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-left: 3px solid #f59e0b;
+  background: #78350f20;
+  font-size: 0.82rem;
+  color: #fbbf24;
+}
 /* 捏造引用：紅字 + 左側紅槓，掃一眼就知道哪一段不能念。 */
 .cite-warn { padding: 0.4rem 0.6rem; border-left: 3px solid #f87171; background: #7f1d1d20; font-size: 0.85rem; }
 .cite-warn .bad-seq { margin-left: 0.35rem; color: #f87171; font-variant-numeric: tabular-nums; }

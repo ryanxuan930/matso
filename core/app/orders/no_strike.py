@@ -16,7 +16,8 @@ from __future__ import annotations
 import contextlib
 import enum
 import math
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 import h3
@@ -49,10 +50,19 @@ class NoStrikeCells:
 
     no_strike: frozenset[str] = frozenset()
     restricted: frozenset[str] = frozenset()
+    # 格 → 區名。**拒絕訊息說得出是哪一區，檢討會才問得下去**：
+    # 「被禁射區擋下」與「被『虎尾鎮立醫院』擋下」對受訓者是兩種不同的回饋，
+    # 前者只知道規則存在，後者才知道自己差點打到什麼。
+    # 重疊時保留第一個宣告的名字（從嚴不從名——級別判定與名字無關）。
+    names: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def any_cells(self) -> bool:
         return bool(self.no_strike or self.restricted)
+
+    def name_at(self, lat: float, lng: float) -> str:
+        """該座標落在哪一個宣告區。查不到 → 空字串（呼叫端自行退回泛稱）。"""
+        return self.names.get(h3.latlng_to_cell(lat, lng, NO_STRIKE_H3_RES), "")
 
     def classify(self, cell: str) -> ZoneClass | None:
         """該格屬於哪一級。NO_STRIKE 優先（重疊時從嚴）。"""
@@ -124,17 +134,23 @@ def zones_to_cells(zones: Any) -> NoStrikeCells:
         return NoStrikeCells()
     hard: set[str] = set()
     soft: set[str] = set()
+    names: dict[str, str] = {}
     for z in zones:
         if not isinstance(z, dict):
             continue
         cells = _geometry_to_cells(z.get("geometry"))
         if not cells:
             continue
+        label = str(z.get("name") or z.get("label") or "").strip()
+        if label:
+            # 先宣告者優先——重疊時不覆寫，才不會讓名字隨 zone 清單的順序跳動。
+            for cell in cells:
+                names.setdefault(cell, label)
         if str(z.get("zone_class", "")).upper() == ZoneClass.RESTRICTED_FIRE.value:
             soft |= cells
         else:  # 未知/缺值一律從嚴視為 NO_STRIKE（安全預設）
             hard |= cells
-    return NoStrikeCells(no_strike=frozenset(hard), restricted=frozenset(soft - hard))
+    return NoStrikeCells(no_strike=frozenset(hard), restricted=frozenset(soft - hard), names=names)
 
 
 def _feature_zones(db: Session, session_id: str) -> list[dict[str, Any]]:

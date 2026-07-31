@@ -39,12 +39,64 @@ export interface AarReplayStates {
 
 export interface AarStats {
   total_events: number
+  /** 交戰事件總數（個體＋聚合，含被拒的）。 */
   engagements: number
+  /** 個體交戰的裁決次數（含被拒）——「下令交火幾次」。 */
+  attempts: number
+  /**
+   * 其中真的射出去的次數（`attempts` 扣掉 REJECTED）。**這是命中率的分母**：
+   * 超射程／無彈／無視線／ROE 不准打都是一發未發，拿去稀釋火力效益毫無意義。
+   */
+  engagements_fired: number
+  hits: number
+  /** hits ÷ engagements_fired。 */
   hit_rate: number
   total_damage: number
   guardrail_blocks: number
   damage_by_faction: Record<string, number>
   event_counts: Record<string, number>
+  /**
+   * 統計口徑版本（WP-D6.2 起）。舊封存包沒有這一欄＝v1，其命中率只認單發路徑、
+   * 分母含被拒交戰、聚合戰損整包記在守方——**與 v2 的數字不可直接相比**。
+   *
+   * 契約標為 required，這裡**刻意放寬成 optional**：欄位缺席正是要示警的那個情況
+   * （前端更新了、後端容器還是舊的）。把它宣告成必有，等於讓型別替後端背書。
+   */
+  stats_version?: number
+}
+/** 本前端所預期的統計口徑；與後端回的 `stats_version` 不符時畫面要講出來。 */
+export const AAR_STATS_VERSION = 2
+
+/**
+ * 未射出的交戰次數（下令數 − 實射數）。
+ *
+ * 「交火 40 次、命中率 30%」這句話在戰術檢討上是空的——分母是下令次數還是實射次數，
+ * 差別可以到好幾倍（超射程與無彈在真實推演裡佔比很高）。三個數字分開列，
+ * 指揮官才看得出問題出在「打不到」還是「打不準」，那是兩種完全不同的處置。
+ */
+export function aarRejectedCount(stats: AarStats | null): number {
+  if (!stats) return 0
+  return Math.max(0, stats.attempts - stats.engagements_fired)
+}
+
+/** 命中率文字。一發未發時不顯示「0%」——那會被讀成「打了但全沒中」。 */
+export function aarHitRateLabel(stats: AarStats | null): string {
+  if (!stats || !stats.engagements_fired) return '—（無一發射出）'
+  return `${(stats.hit_rate * 100).toFixed(0)}%`
+}
+
+/**
+ * 口徑不符警告（空字串＝口徑相符，不必示警）。
+ *
+ * 舊局的統計是用 v1 算的（分子只認單發路徑、分母含被拒交戰、聚合戰損整包記在守方），
+ * 跟現在的數字擺在一起比會得到錯誤結論。封存包已經把舊數字寫進歷史演習了，
+ * 補算不回來，只能讓「不可比」這件事在畫面上講清楚。
+ */
+export function aarStatsVersionNote(stats: AarStats | null): string {
+  const v = stats?.stats_version
+  if (v === AAR_STATS_VERSION) return ''
+  if (v == null) return `此局統計以舊口徑（v1）產生，與 v${AAR_STATS_VERSION} 的數字不可直接相比。`
+  return `此局統計口徑為 v${v}，本頁預期 v${AAR_STATS_VERSION}——數字不可直接相比。`
 }
 export interface AarReport {
   summary: string

@@ -166,13 +166,13 @@ onMounted(async () => {
       <h1>自主推演主控台</h1>
       <a class="back" :href="`/session/${sessionId}/cop`">← 返回 COP</a>
     </header>
-    <p class="sub">Session <code>{{ sessionId }}</code>：指派由 AI 控制的陣營，交由 AI 自動對抗。</p>
+    <p class="sub">推演局 <code>{{ sessionId }}</code>：指派由 AI 控制的陣營，交由 AI 自動對抗。</p>
 
     <p v-if="!canManage" class="forbidden">僅統裁/白軍/管理可設定自主推演。</p>
 
     <template v-else>
       <p v-if="loading">載入中…</p>
-      <p v-if="err" class="err">{{ err }}</p>
+      <p v-if="err" class="err" data-testid="autonomy-err">{{ err }}</p>
 
       <template v-if="!loading">
         <section class="card">
@@ -189,6 +189,7 @@ onMounted(async () => {
               <input
                 v-model="missions[f]"
                 class="mission"
+                :data-testid="`ai-mission-${f}`"
                 :disabled="!enabled[f]"
                 placeholder="任務敘述（例：於 06 時前肅清當面之敵並確保山脊）"
               >
@@ -232,21 +233,28 @@ onMounted(async () => {
 
           <label class="field">
             <span class="lbl">決策心跳（秒）</span>
-            <input v-model.number="heartbeat" type="number" min="10" max="600" class="hb">
+            <input
+              v-model.number="heartbeat"
+              type="number"
+              min="10"
+              max="600"
+              class="hb"
+              data-testid="ai-heartbeat"
+            >
           </label>
 
           <div class="actions">
             <button class="primary" :disabled="saving" data-testid="save-autonomy" @click="save">
               {{ saving ? '儲存中…' : (anyEnabled ? '儲存指派' : '清除指派') }}
             </button>
-            <span v-if="saveMsg" class="ok">{{ saveMsg }}</span>
+            <span v-if="saveMsg" class="ok" data-testid="autonomy-save-msg">{{ saveMsg }}</span>
           </div>
         </section>
 
         <section v-if="aiRows.length" class="card">
           <h2>AI 決策狀態</h2>
           <p class="hint">
-            每 8 秒回報一次。「已思考」持續攀升而不落單，代表 LLM 後端過慢或該陣營決策卡住。
+            每 8 秒回報一次。「已思考」持續攀升卻遲遲沒有下達，代表 LLM 後端過慢或該陣營決策卡住。
           </p>
           <div v-for="a in aiRows" :key="a.faction" class="arow" :data-testid="`ai-detail-${a.faction}`">
             <b class="afac">{{ a.faction }}</b>
@@ -259,10 +267,10 @@ onMounted(async () => {
               下一次決策 <b>{{ a.countdown }}</b>
               <template v-if="a.sinceLastDecision"> ・ 上次決策於 {{ a.sinceLastDecision }} 前</template>
             </span>
-            <span v-else class="ameta off">worker 未上線或已逾時</span>
+            <span v-else class="ameta off">決策程序未上線或已逾時</span>
             <span class="acount">
               累計決策 <b :data-testid="`ai-cycles-${a.faction}`">{{ a.cycles ?? '—' }}</b> 次
-              ・ 上一次落單 <b :data-testid="`ai-last-${a.faction}`">{{ a.lastSubmitted ?? '—' }}</b> 道
+              ・ 上一次下達 <b :data-testid="`ai-last-${a.faction}`">{{ a.lastSubmitted ?? '—' }}</b> 道
             </span>
           </div>
         </section>
@@ -275,7 +283,7 @@ onMounted(async () => {
               <b>AI 使用 ground truth 敵情（關閉 AI 的戰場迷霧）</b>
               <small>
                 開啟後，AI 指揮官直接讀取全場敵軍真實位置，不受偵測、情報時效與通聯限制——
-                與人類指揮官的資訊條件<strong>不對等</strong>。僅供「有/無迷霧」對照實驗（SPEC_V2 WP-D1）使用，
+                與人類指揮官的資訊條件<strong>不對等</strong>。僅供「有／無戰場迷霧」的對照實驗使用，
                 正常推演一律保持關閉。
               </small>
             </span>
@@ -285,9 +293,11 @@ onMounted(async () => {
         <section class="card note">
           <h2>如何啟動 / 運作</h2>
           <ul>
-            <li><strong>先決條件</strong>：於 <a href="/system-settings">系統設定</a> 把 AI 模式設為 <strong>AI_BARE 或 AI_FULL</strong>（非 AI_OFF）並填 LLM 後端位址（Ollama/vLLM/雲端）。未設 → AI 不會啟動。</li>
-            <li><strong>啟動</strong>：在此勾要交給 AI 的陣營、填任務敘述與目標，按「儲存指派」即可——runner 會於<strong>數秒內</strong>自動重啟並讓 AI 接管（戰局熱狀態保留、不中斷；不需新建 session）。</li>
-            <li>每個 AI 陣營一條決策迴路（固定心跳）：讀該陣營視角 COP → LLM 產令 → 護欄 → 落單 → 引擎執行。首次產令約需一個心跳（預設 45s）＋ LLM 回應時間。</li>
+            <!-- AI 模式的三個選項在系統設定頁是中文（見該頁的 AI_MODE_LABEL），此處照那三個中文說，
+                 使用者才對得上要點哪一個；印後端代號等於要人自己去翻譯。 -->
+            <li><strong>先決條件</strong>：於 <a href="/system-settings">系統設定</a> 把 AI 模式從「關閉」改為 <strong>「啟用・無 RAG」或「完整」</strong>並填 LLM 後端位址（Ollama/vLLM/雲端）。未設 → AI 不會啟動。</li>
+            <li><strong>啟動</strong>：在此勾要交給 AI 的陣營、填任務敘述與目標，按「儲存指派」即可——推演引擎會於<strong>數秒內</strong>自動重啟並讓 AI 接管（戰局熱狀態保留、不中斷；不需另開新局）。</li>
+            <li>每個 AI 陣營一條決策迴路（固定心跳）：讀該陣營視角 COP → LLM 產令 → 護欄審查 → 下達 → 引擎執行。首次產令約需一個心跳（預設 45s）＋ LLM 回應時間。</li>
             <li>勝負由確定性規則判定（預設「最後存活陣營」），底定即自動收場並記入戰況事件。</li>
             <li>回 <a :href="`/session/${sessionId}/cop`">COP</a> 觀戰：AI 下的令會出現在指令列，護欄干預與勝負底定會出現在戰況事件。</li>
           </ul>

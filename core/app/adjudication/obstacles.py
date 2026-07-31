@@ -23,7 +23,12 @@ SPEC_V2 寫「移動 A* 與交戰完全無視它」。**實際上不是**——`
 from __future__ import annotations
 
 import enum
+import math
 from dataclasses import dataclass
+
+# 換算函式**共用 WP-C1 那一份**而不是再寫一個：兩份同義的「一 tick 幾分鐘」必然漂開，
+# 而這正是本卡要修的那種 bug 的溫床。suppression 不 import 本模組，無循環。
+from app.adjudication.suppression import DEFAULT_TICK_RATE_MS, minutes_per_tick
 
 
 class ObstacleType(enum.StrEnum):
@@ -42,19 +47,26 @@ class ObstacleEffect:
 
     `speed_mult`：通過時的速度倍率（1.0 ＝不減速）。
     `mine_strike_p_per_km`：每公里觸雷機率（僅雷區 > 0）。
-    `breach_time_ticks`：工兵破障所需 tick（1 tick = 1 分鐘）。
+    `breach_time_minutes`：工兵破障所需的**模擬分鐘數**（實際 tick 數見 `breach_ticks()`）。
     """
 
     speed_mult: float
     mine_strike_p_per_km: float
-    breach_time_ticks: int
+    breach_time_minutes: int
 
 
 # **全中性**：沒有宣告型別的既有標註走這一份（見模組說明）。
-NEUTRAL_EFFECT = ObstacleEffect(speed_mult=1.0, mine_strike_p_per_km=0.0, breach_time_ticks=0)
+NEUTRAL_EFFECT = ObstacleEffect(speed_mult=1.0, mine_strike_p_per_km=0.0, breach_time_minutes=0)
 
 # v0 校準值。破障工時參考 [JCATS-A p.13]「工事構築須符合實際工時」——
 # 這些數字的重點不是精準，是**讓破障成為一個要付出時間的決定**而不是一個按鈕。
+#
+# ⚠ 第三欄的單位曾經是「tick」，註解寫死「1 tick = 1 分鐘」——與 WP-C1 的掘壕工時
+# 同一個 bug（commit d67fe61 修了那一半，這一半漏掉）。`tick_rate_ms` 是想定可調的，
+# 官方 demo 與使用者的想定都寫 1000（1 tick ＝ 1 模擬秒），於是破一片雷區只要 45 **秒**、
+# 炸一座橋 2 分鐘——「要付出時間的決定」退化回一個按鈕，整個工兵子系統形同不存在。
+#
+# 現在存的是**分鐘**，實際 tick 數由 `breach_ticks()` 依該局的 tick 長度換算。
 OBSTACLE_EFFECTS: dict[ObstacleType, ObstacleEffect] = {
     # 雷區不減速——它靠的是傷亡與心理效果，不是物理阻擋。
     ObstacleType.MINEFIELD: ObstacleEffect(1.0, 0.35, 45),
@@ -127,9 +139,23 @@ def mine_strike_probability(
     return min(1.0, max(0.0, p))
 
 
-def breach_ticks(otype: ObstacleType | None) -> int:
-    """破障所需 tick。未宣告型別 → 0（沒有東西可破）。"""
-    return effect_of(otype).breach_time_ticks
+def breach_minutes(otype: ObstacleType | None) -> int:
+    """破障所需的**模擬分鐘數**。未宣告型別 → 0（沒有東西可破）。"""
+    return effect_of(otype).breach_time_minutes
+
+
+def breach_ticks(otype: ObstacleType | None, tick_rate_ms: int = DEFAULT_TICK_RATE_MS) -> int:
+    """破障所需 tick（依該局的 tick 長度換算）。未宣告型別 → 0（沒有東西可破）。
+
+    **無條件進位且至少 1 tick**（除非本來就沒東西可破）：破障是「工作」不是「宣告」，
+    tick 再長也不能讓它在下令的同一個 tick 完工——那就回到按鈕了。
+
+    預設 `tick_rate_ms` 等同 1 分鐘/tick，故不傳的呼叫端拿到的仍是表上那個數字。
+    """
+    minutes = breach_minutes(otype)
+    if minutes <= 0:
+        return 0
+    return max(1, math.ceil(minutes / minutes_per_tick(tick_rate_ms)))
 
 
 def blocks_road(otype: ObstacleType | None, *, breached: bool) -> bool:
@@ -138,6 +164,7 @@ def blocks_road(otype: ObstacleType | None, *, breached: bool) -> bool:
 
 
 __all__ = [
+    "DEFAULT_TICK_RATE_MS",
     "ENGINEER_MINE_STRIKE_MULT",
     "ENGINEER_SPEED_MULT",
     "MINE_STRIKE_STRENGTH_LOSS",
@@ -147,6 +174,7 @@ __all__ = [
     "ObstacleEffect",
     "ObstacleType",
     "blocks_road",
+    "breach_minutes",
     "breach_ticks",
     "effect_of",
     "mine_strike_probability",

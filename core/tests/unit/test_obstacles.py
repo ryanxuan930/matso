@@ -472,6 +472,137 @@ def test_a_deleted_target_aborts_the_work_instead_of_reporting_success(session_f
     db.close()
 
 
+# ---- 破障工時的時間尺度（WP-C1 那個 bug 的未修兄弟）----
+
+
+def _breach_req(unit_id: str, feature_id: str):  # type: ignore[no-untyped-def]
+    from app.orders.schemas import OrderRequest, OrderType
+
+    return OrderRequest(
+        unit_id=unit_id,
+        order_type=OrderType.ENGINEER,
+        payload={"action": "BREACH", "feature_id": feature_id},
+    )
+
+
+def _seed_minefield_row(db, session_id: str) -> str:  # type: ignore[no-untyped-def]
+    """在工兵腳下擺一片敵雷區，回 feature id。"""
+    from app.models.tables import MapFeature
+
+    feature = MapFeature(
+        session_id=session_id,
+        kind="OBSTACLE",
+        geometry_type="POINT",
+        geometry=[121.25, 23.75],
+        owner_faction="RED",
+        label="敵雷區",
+        influence_radius_m=300.0,
+        attributes={"obstacle_type": "MINEFIELD"},
+    )
+    db.add(feature)
+    db.commit()
+    return feature.id
+
+
+def test_breaching_costs_the_same_simulated_time_at_any_tick_rate(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """同一片雷區，1 分鐘/tick 與 1 秒/tick 兩張想定下，破障花掉的**模擬時間相同**。
+
+    這是 commit d67fe61（壓制/掘壕）那個 bug 的未修兄弟：工時表寫的是 45，
+    註解宣稱「1 tick = 1 分鐘」，但 `tick_rate_ms` 是想定可調的，而官方 demo 與
+    使用者的想定都寫 1000。於是 1 秒/tick 的局裡破一片雷區只要 45 **秒**——
+    「要付出時間的決定」退化成一個按鈕。
+
+    ⚠ 刻意**跑完整條令的管線**（submit → drain 起工 → drain 完工）而不是只比
+    `breach_ticks()` 的回傳值：本 repo 的招牌病正是「純函數對了、接線沒接上」，
+    而這裡真正漏掉參數的就是接線（`drain_engineer_orders` 的簽名裡根本沒有 tick_rate_ms）。
+    """
+    from _order_fakes import FakeGateway, seed_world
+
+    from app.adjudication.obstacles import breach_minutes
+    from app.engine.obstacle_wiring import drain_engineer_orders
+    from app.models.tables import MapFeature
+    from app.orders.service import OrderService
+
+    world = seed_world(session_factory)
+    unit_id = _make_engineer(session_factory, world)
+    db = session_factory()
+    service = OrderService(db, FakeGateway())
+
+    def breach_once(start_tick: int, tick_rate_ms: int) -> int:
+        """下一道 BREACH 令並跑到完工。回實際花掉的 tick 數。"""
+        feature_id = _seed_minefield_row(db, world.session_id)
+        assert (
+            service.submit(
+                world.session_id, _breach_req(unit_id, feature_id), world.blue_issuer_id
+            ).status.value
+            == "VALIDATED"
+        )
+        started = drain_engineer_orders(db, world.session_id, start_tick, tick_rate_ms)
+        assert [e.event_type for e in started] == ["ENGINEER_WORK_STARTED"]
+        eta = int(started[0].detail["eta_tick"])
+        # 前一個 tick 還在施工——地圖上那片雷區仍然是雷區。
+        assert drain_engineer_orders(db, world.session_id, eta - 1, tick_rate_ms) == []
+        assert db.get(MapFeature, feature_id).attributes.get("breached") is not True
+        done = drain_engineer_orders(db, world.session_id, eta, tick_rate_ms)
+        assert [e.event_type for e in done] == ["OBSTACLE_BREACHED"]
+        return eta - start_tick
+
+    slow = breach_once(start_tick=0, tick_rate_ms=60_000)  # 1 分鐘/tick
+    fast = breach_once(start_tick=slow, tick_rate_ms=1_000)  # 1 秒/tick（demo 與使用者想定）
+
+    minutes = breach_minutes(ObstacleType.MINEFIELD)
+    assert slow == minutes  # 舊行為：1 tick = 1 分鐘 → 位元不變
+    assert slow * 60_000 == fast * 1_000 == minutes * 60_000  # 模擬時間相同
+    assert fast > slow  # tick 變短 → tick 數必然變多（沒換算的話兩者會相等）
+    db.close()
+
+
+def test_work_already_in_progress_keeps_its_original_eta(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """升級當下正在施工的令**沿用舊的完工 tick**，不因單位換算而突然變長。
+
+    真實情境：一局以舊碼（工時＝表上數字，等同 1 分鐘/tick）跑著，工兵已經動工，
+    `_work_until_tick` 早就寫進 payload；runner 重啟後開始傳 `tick_rate_ms=1000`。
+    若這時重算，那支挖到一半的工兵會突然多出 60 倍的工時。
+    """
+    from _order_fakes import FakeGateway, seed_world
+
+    from app.adjudication.obstacles import breach_minutes
+    from app.engine.obstacle_wiring import drain_engineer_orders
+    from app.models.tables import Order
+    from app.orders.service import OrderService
+
+    world = seed_world(session_factory)
+    unit_id = _make_engineer(session_factory, world)
+    db = session_factory()
+    feature_id = _seed_minefield_row(db, world.session_id)
+    resp = OrderService(db, FakeGateway()).submit(
+        world.session_id, _breach_req(unit_id, feature_id), world.blue_issuer_id
+    )
+    # 舊碼起的工：等同 tick_rate_ms=60000。
+    started = drain_engineer_orders(db, world.session_id, tick=0)
+    old_eta = int(started[0].detail["eta_tick"])
+    assert old_eta == breach_minutes(ObstacleType.MINEFIELD)
+    assert db.get(Order, resp.id).payload["_work_until_tick"] == old_eta
+
+    # 新碼接手（1 秒/tick）：完工時刻不動。重算的話會變成 45 × 60 = 2700。
+    assert drain_engineer_orders(db, world.session_id, old_eta - 1, 1_000) == []
+    done = drain_engineer_orders(db, world.session_id, old_eta, 1_000)
+    assert [e.event_type for e in done] == ["OBSTACLE_BREACHED"]
+    db.close()
+
+
+def test_a_tick_longer_than_the_job_still_costs_one_tick(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """tick 比工時還長 → 仍要**至少一個 tick**。
+
+    破障是「工作」不是「宣告」：一張 1 小時/tick 的想定裡，鐵絲網（20 分鐘）
+    若換算成 0 就會在下令的同一個 tick 完工——那正好又變回一個按鈕。
+    """
+    from app.adjudication.obstacles import breach_ticks
+
+    assert breach_ticks(ObstacleType.WIRE, 3_600_000) == 1
+    assert breach_ticks(None, 3_600_000) == 0  # 沒東西可破仍是 0
+
+
 def test_road_is_cut_only_for_an_unbreached_bridge_demo() -> None:
     """`road_is_cut` 是 `blocks_road` 的**消費者**——它在本卡之前完全沒有呼叫端。
 

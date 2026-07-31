@@ -47,6 +47,33 @@ def ai_status_key(session_id: str) -> str:
     return f"session:{session_id}:ai_status"
 
 
+# ai_config 裡的迷霧退回開關鍵名。**兩個消費者共用這個常數**（本檔的決策 worker、
+# `engine/mission_wiring` 的任務分解器）——字面值各寫一份的話，改名時漏掉一處
+# 就會讓某一條 AI 路徑安靜地停在預設值上，而那正是 A1 補洞前的實況。
+GROUND_TRUTH_KEY = "ai_ground_truth"
+
+
+def ground_truth_enabled(redis_client: Any, session_id: str) -> bool:
+    """該局是否開了 `ai_ground_truth` 全知退回開關（SPEC_V2 WP-D1 的對照實驗用）。
+
+    **讀不到一律回 False，也就是走迷霧投影**——這個預設方向是刻意的：
+    設定讀取失敗時該退到「AI 看得比較少」，不是退到全知。反過來寫的話，
+    一次 Redis 逾時就等於整局偷偷取消迷霧，而且畫面上完全看不出來。
+    """
+    try:
+        raw = redis_client.get(autonomy_config_key(session_id)) if redis_client else None
+    except Exception:
+        _LOG.warning("session %s 的 ai_config 讀取失敗，敵情走迷霧投影（安全側）", session_id)
+        return False
+    if not raw:
+        return False
+    try:
+        cfg = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(cfg, dict) and bool(cfg.get(GROUND_TRUTH_KEY))
+
+
 def _make_status_sink(
     client: Any, session_id: str, faction: str
 ) -> Callable[[dict[str, Any]], None]:
@@ -171,7 +198,7 @@ def start_ai_workers(
     # WP-A1：AI 敵情預設走**真實偵測**（IntelContact 投影，同 GET /intel 語義）。
     # `ai_ground_truth=true` 是刻意保留的退回開關——供「有/無迷霧」對照實驗（SPEC_V2 WP-D1），
     # 開啟即回到改版前的全知行為。預設 false：迷霧對 AI 與對人一致。
-    use_ground_truth = bool(cfg.get("ai_ground_truth"))
+    use_ground_truth = bool(cfg.get(GROUND_TRUTH_KEY))
     enemy_visibility = ground_truth_enemies if use_ground_truth else contacts_from_intel
     if use_ground_truth:
         _LOG.warning("session %s 的 AI 走 ground truth 敵情（對照實驗模式）", session_id)

@@ -60,7 +60,7 @@
     "golden_citations": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "正解引用（RAG 文件錨點，如 doctrine_red/red_delay_ops.md#RED-DELAY-03）——供殘缺情報引用正確率計分"
+      "description": "正解引用（RAG 文件錨點，如 doctrine_red/red_delay_ops.md#RED-DELAY-03）——供殘缺情報引用正確率計分。計分規則（run.py `_score_citations`）：cited_documents 命中**任一** golden（同 retrieval hit-rate 慣例）**且**不含無法解析的引用，才算這一案引對；只在有語料可引時計分（--mode AI_FULL），AI_BARE 依 §19.4 不計引用正確率"
     },
     "expect": {
       "type": "object",
@@ -92,7 +92,7 @@
         "citations_must_exist": {
           "type": "boolean",
           "default": true,
-          "description": "cited_documents 每筆須能在 RAG 庫解析（G5）"
+          "description": "cited_documents 每筆須能在 RAG 庫解析（G5）。這是**是否啟用解析查核的開關**：true（預設）＝逐筆比對語料錨點，無法解析者計入捏造引用；false＝本案例放棄量測捏造引用（報表會列出有幾個案例關掉了）"
         },
         "max_fabricated_citations": {
           "type": "integer",
@@ -103,7 +103,7 @@
         "require_uncertainty": {
           "type": "boolean",
           "default": false,
-          "description": "DEGRADED_INTEL：是否要求對缺口明示不確定（不得硬編）"
+          "description": "DEGRADED_INTEL：是否要求對缺口明示不確定（不得硬編）。計分規則（run.py `expresses_uncertainty`）：輸出的說理須含**明確**不確定用語（不確定/未確認/尚待確認/情報缺口…；『可能』這類弱對沖詞不算）**且** confidence ≤ 0.8——嘴上說不確定卻報 0.95，下游看到的仍是『很確定』。這是逐案硬性斷言：宣告 true 的案例必須全數達成，不是統計門檻"
         }
       }
     }

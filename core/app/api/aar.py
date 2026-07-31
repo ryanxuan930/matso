@@ -210,11 +210,17 @@ def get_stats(
     return {
         "total_events": m.total_events,
         "engagements": m.engagements,
+        # attempts / engagements_fired 分開回：畫面要講得出「下了 40 次令、只有 12 次射得出去」，
+        # 只給一個 hit_rate 講不出來（WP-D6.2）。
+        "attempts": m.attempts,
+        "engagements_fired": m.engagements_fired,
+        "hits": m.hits,
         "hit_rate": m.hit_rate,
         "total_damage": m.total_damage,
         "guardrail_blocks": m.guardrail_blocks,
         "damage_by_faction": m.damage_by_faction,
         "event_counts": m.event_counts,
+        "stats_version": m.stats_version,
     }
 
 

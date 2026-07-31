@@ -222,14 +222,16 @@ def _formation_tick(factory: Any, session_id: str, hot: Any, tick: int) -> int:
         return drain_formation_orders(db, session_id, hot, tick)
 
 
-def _engineer_tick(factory: Any, session_id: str, tick: int) -> list[Any]:
+def _engineer_tick(factory: Any, session_id: str, tick: int, tick_rate_ms: int) -> list[Any]:
     """ENGINEER 令的執行（WP-C2）。另開 DB session——理由同 `_posture_tick`。
 
     與 POSTURE/FORMATION 不同：這個會回帳本事件（破障/設障是**發生過的事**，
     不是一個狀態宣告），故由呼叫端交給 LedgerWriter（pre_tick 不在 Kernel 的事件蒐集路徑上）。
+
+    `tick_rate_ms` 與 `tick_suppression` 同理：破障工時以分鐘為基準，須知道一 tick 多長。
     """
     with factory() as db:
-        return drain_engineer_orders(db, session_id, tick)
+        return drain_engineer_orders(db, session_id, tick, tick_rate_ms)
 
 
 def _supply_tick(hot: Any, tick: int, tick_rate_ms: int, rates: dict[str, float]) -> int:
@@ -958,7 +960,11 @@ class SimManager:
                 )
                 # WP-C2 障礙作業令。與上面兩個不同：破障/設障要工時，且會產生帳本事件。
                 eng = await asyncio.to_thread(
-                    _engineer_tick, self._factory, session_id, sim_clock.now().tick
+                    _engineer_tick,
+                    self._factory,
+                    session_id,
+                    sim_clock.now().tick,
+                    tick_rate_ms,  # 破障工時以分鐘為基準，須知道一 tick 多長
                 )
                 if eng:
                     await asyncio.to_thread(_emit, eng)

@@ -132,7 +132,41 @@ export function userRoleLabel(raw: string | null | undefined): string {
   return lookup(USER_ROLE_LABELS, raw)
 }
 
-// ---- 機動 profile（行軍耗損設定、路徑試算共用）----
+// ---- 資料表名（演習銷毀模式的刪除筆數回報）----
+
+/**
+ * 後端 ORM 表名 → 中文資料類別。
+ *
+ * 銷毀模式回的 `rows_deleted` 鍵是**模型類別名**（`app/lobby/purge.py` 由 mapper registry
+ * 自省導出），過去原樣攤在畫面上：統裁看到的是「Message 12 / IntelContact 305」。
+ * 銷毀是不可逆操作，「到底刪掉了什麼」必須讀得懂才有意義。
+ *
+ * 後端那份清單是**自省**的（新增 session 範圍的表會自動入列），所以這裡註定會缺項——
+ * 缺項就原樣印英文表名（見模組說明），那正是「該回來補一列」的提示。
+ */
+export const DATA_TABLE_LABELS: Record<string, string> = {
+  WargameSession: '推演局',
+  TacticalUnit: '單位',
+  EquipmentInstance: '編裝',
+  MapFeature: '地圖標註',
+  TacticalEventLog: '事件帳本',
+  Order: '指令',
+  IntelContact: '情報接觸',
+  Message: 'C2 信文',
+  Request: '申請單',
+  FirePlan: '火力計畫',
+  FirePlanTarget: '火力計畫目標',
+  SimCheckpoint: '模擬檢查點',
+  AIInvocationLog: 'AI 呼叫紀錄',
+  AARReport: '戰後檢討報告',
+  SessionParticipant: '參與者名冊',
+}
+
+export function dataTableLabel(raw: string | null | undefined): string {
+  return lookup(DATA_TABLE_LABELS, raw)
+}
+
+// ---- 機動能力（行軍耗損設定、路徑試算共用）----
 
 export const MOBILITY_LABELS: Record<string, string> = {
   FOOT: '徒步',

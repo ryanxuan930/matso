@@ -36,7 +36,7 @@ from app.adjudication.obstacles import (
     obstacle_type_of,
     speed_multiplier,
 )
-from app.adjudication.suppression import MAX_SUPPRESSION
+from app.adjudication.suppression import DEFAULT_TICK_RATE_MS, MAX_SUPPRESSION
 from app.engine.rng import DeterministicRNG
 from app.engine.suppression_wiring import SUPPRESSION_KEY
 from app.movement.attrition import Obstacle
@@ -153,7 +153,9 @@ def apply_mine_suppression(hot: HotStateStore, unit_id: str) -> float:
     return value
 
 
-def drain_engineer_orders(db: Any, session_id: str, tick: int) -> list[LedgerEvent]:
+def drain_engineer_orders(
+    db: Any, session_id: str, tick: int, tick_rate_ms: int = DEFAULT_TICK_RATE_MS
+) -> list[LedgerEvent]:
     """執行 ENGINEER 令（WP-C2）。回本 tick 產生的帳本事件。
 
     ## 為什麼跟 POSTURE/FORMATION 不同形狀
@@ -161,6 +163,9 @@ def drain_engineer_orders(db: Any, session_id: str, tick: int) -> list[LedgerEve
     那兩個是**宣告**——一個 tick 之內完成。障礙作業是**工作**：破一片雷區 45 分鐘、
     炸一座橋 2 小時。所以令收下後停在 EXECUTING，把完工 tick 記在 payload 的
     `_work_until_tick`（與 MOVE 的 `_leg` 同一套：進度住在令上，checkpoint 自動涵蓋）。
+
+    `tick_rate_ms`：工時表存的是**分鐘**，要知道一個 tick 多長才換算得出 tick 數。
+    不傳＝1 分鐘/tick（舊行為，既有呼叫端與 golden 位元不變）。
 
     ⚠ 完工那一刻才改 `MapFeature`。中途取消（令被刪）＝白做，這是對的：
     破到一半的雷區還是雷區。
@@ -188,10 +193,28 @@ def drain_engineer_orders(db: Any, session_id: str, tick: int) -> list[LedgerEve
         otype = obstacle_type_of(payload.get("obstacle_type"))
         if order.status == OrderStatus.VALIDATED:
             order.status = next_status(order.status, OrderStatus.EXECUTING)
-            # BREACH 的工時看**標的**的型別；EMPLACE 看要設的型別。
-            work = breach_ticks(otype if action == "EMPLACE" else _target_type(db, payload))
-            payload["_work_until_tick"] = tick + work
-            order.payload = payload
+            # **既有的完工 tick 一律沿用，讀得到就不重算**——工時單位從 tick 改成分鐘的
+            # 那一刻，若重算，所有進行中的作業都會突然變成 60 倍長；一支已經挖了 40 分鐘
+            # 的工兵不該因為系統升級而重新開始。
+            #
+            # ⚠ 升級當下進行中的令走的是下面 EXECUTING 那條（它本來就讀 payload，
+            # 有回歸測試釘住）。這裡這一道是**結構性**的：目前沒有任何路徑會產出
+            # 「VALIDATED 但 payload 已有 `_work_until_tick`」（checkpoint 的
+            # `_restore_orders` 是 status 與 payload 同時回捲），所以它不可能被測到；
+            # 留著是因為將來若有人加了「把令打回 VALIDATED 重跑」的路徑，
+            # 進度歸零會是一個無聲的退化——而無聲的退化正是本卡在修的那一類。
+            existing = payload.get("_work_until_tick")
+            if isinstance(existing, (int, float)):
+                until_tick = int(existing)
+                work = until_tick - tick
+            else:
+                # BREACH 的工時看**標的**的型別；EMPLACE 看要設的型別。
+                work = breach_ticks(
+                    otype if action == "EMPLACE" else _target_type(db, payload), tick_rate_ms
+                )
+                until_tick = tick + work
+                payload["_work_until_tick"] = until_tick
+                order.payload = payload
             events.append(
                 LedgerEvent(
                     event_type="ENGINEER_WORK_STARTED",
@@ -200,7 +223,7 @@ def drain_engineer_orders(db: Any, session_id: str, tick: int) -> list[LedgerEve
                     detail={
                         "order_id": order.id,
                         "action": action,
-                        "eta_tick": tick + work,
+                        "eta_tick": until_tick,
                         "work_ticks": work,
                     },
                 )

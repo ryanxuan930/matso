@@ -9,6 +9,7 @@ O3.1 預設回 0（尚無運行中的 kernel 綁定）。
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -121,6 +122,42 @@ class OrderService:
                                 "order_id": order.id,
                                 "issuer_id": issuer_id,
                                 "reason": "下令者明確確認於限制射擊區射擊",
+                            },
+                        )
+                    ],
+                )
+
+        if not precheck.feasible and self._event_sink is not None:
+            # **人工下令被護欄擋下也要落帳。**
+            # `GUARDRAIL_INTERVENTION` 只給 AI 護欄用，於是 `/aar/stats` 的
+            # guardrail_blocks 對人工下令結構性恆為 0——一筆「有人想砲擊醫院」的
+            # 紀錄只活在 Order 列裡，AAR 讀不到，行動後檢討就追究不了。
+            #
+            # 事件帶 issuer 與失敗的檢查項名：檢討會問的是「誰、在第幾 tick、
+            # 想做什麼、被哪一條擋下」，四個都要答得出來。
+            # ⚠ **落帳失敗不可以把 422 變成 500**：下令被拒的理由使用者一定要看得到，
+            # 而拒絕本身已經寫進 Order 列（status=REJECTED + precheck）——帳本是給
+            # 行動後檢討用的**第二份**紀錄。第二份寫不成不該毀掉第一份的送達。
+            failed = [c.name for c in precheck.checks if not c.passed]
+            with contextlib.suppress(Exception):
+                self._event_sink.append(
+                    session_id,
+                    [
+                        LedgerEvent(
+                            event_type="ORDER_REJECTED",
+                            tick=order.issued_at_tick or 0,
+                            initiator_id=req.unit_id,
+                            target_id=str(req.payload.get("target_unit_id") or "") or None,
+                            ai_decision={
+                                "order_id": order.id,
+                                "issuer_id": issuer_id,
+                                "order_type": order.order_type,
+                                "failed_checks": failed,
+                                "reason": precheck.reason or "",
+                                # FIRE_MISSION 打的是座標，target_id 為 None——把落點帶上，
+                                # 否則帳本上看得到「被禁射區擋下」卻看不到擋在哪裡。
+                                "target_lat": req.payload.get("target_lat"),
+                                "target_lng": req.payload.get("target_lng"),
                             },
                         )
                     ],
@@ -257,6 +294,8 @@ def _to_response(order: Order, precheck: PrecheckResult | None) -> OrderResponse
         resolved_at_tick=order.resolved_at_tick,
         target_unit_id=tgt if isinstance(tgt, str) else None,
         target_h3=to_h3 if isinstance(to_h3, str) else None,
+        issuer_id=order.issuer_id,
+        payload=dict(payload),
         parent_order_id=order.parent_order_id,
         mission_type=(
             str(payload["mission_type"])

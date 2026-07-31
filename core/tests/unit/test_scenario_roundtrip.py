@@ -231,3 +231,51 @@ def test_session_level_settings_survive_export(tmp_path: Path) -> None:
     assert reloaded.request_quotas == {"AIR_RECON": 3, "FIRE_SUPPORT": 5}
     assert reloaded.indirect_fire_requires_approval is True
     assert reloaded.survivability_move["missions_before_move"] == 4
+
+
+def test_scenario_bundle_carries_every_key_the_loader_reads() -> None:
+    """`POST /scenarios` 的請求模型，鍵集不可以比載入器讀的少。
+
+    這一條抓的是一個真的靜默資料遺失：`ScenarioBundle` 只宣告
+    scenario/orbat/msel，而 pydantic 預設丟掉未宣告欄位——於是磁碟上的想定有
+    交戰規則（roe）與機動覆寫（overrides），走 HTTP 存進來的**兩者都消失**，
+    沒有任何錯誤訊息。載入器一直讀得到它們，只是永遠拿到 None。
+
+    做法是**掃載入器的原始碼**找它從 bundle 取哪些鍵，而不是手寫一份清單——
+    手寫的清單自己也會漂掉（那正是這個 bug 的成因）。
+    """
+    import ast
+    import inspect
+
+    from app.api.scenarios import ScenarioBundle
+    from app.scenario import loader
+
+    src = inspect.getsource(loader.load_scenario_bundle)
+    read_keys: set[str] = set()
+    for node in ast.walk(ast.parse(src.strip())):
+        # `bundle.get("x")` 與 `bundle["x"]` 兩種取法都要抓到。
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "bundle"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            read_keys.add(str(node.args[0].value))
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "bundle"
+            and isinstance(node.slice, ast.Constant)
+        ):
+            read_keys.add(str(node.slice.value))
+
+    assert read_keys, "掃不到任何 bundle 鍵——這條測試自己壞了，先修它"
+    declared = set(ScenarioBundle.model_fields)
+    missing = read_keys - declared
+    assert not missing, (
+        f"載入器會讀 {sorted(read_keys)}，但 ScenarioBundle 只宣告 {sorted(declared)}"
+        f"——{sorted(missing)} 會被 pydantic 靜默丟掉"
+    )

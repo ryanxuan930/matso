@@ -1,0 +1,214 @@
+# 紅軍戰鬥序列（SPEC_FULL §11.1）——第 3 裝甲旅（欠），自雲林平原西側對虎尾走廊實施突破。
+#
+# 編成的設計主張：**兩條軸線 + 一個可轉用的機步營**。南軸（R-1-BN，主攻，緯線 23.724）
+# 指向藍軍主要防禦地帶的接合部，北軸（R-2-BN，助攻，緯線 23.750）沿北側農路前進。
+# 機步營不預先分配給任何一條軸線——紅軍指揮官必須在看到藍軍預備隊動向後才決定往哪邊灌，
+# 那是本想定給攻方的核心決策點。
+#
+# ⚠ **座標是量出來的，不是想出來的**（見 scenario.yaml 檔頭）。本圖幅的 landcover 把
+#   雲林平原西半（約 120.20 以西）與若干河道／魚塭帶判為 WATER，履帶車一律不可通行；
+#   全部 18 個位置都經 `GetCellBatch` 確認落在**同一個連通的可通行區**內，
+#   並以 `movement/preview` 實測 feasible=true / terrain_impassable=false。
+#   要挪動任何一個座標，請先重跑那兩項檢查——憑地圖直覺挪會挪進河裡。
+#
+# equipment 只用出貨種子範本名（`core/app/adjudication/seed_weapons.py` 裡實際存在的）：
+# RIFLE_556 / AUTOCANNON_30 / ATGM / TANK_MAIN_GUN_120 / MORTAR_120 / HOWITZER_155_SP /
+# MLRS_227 / IFV_TRACKED / MBT / FUEL_TRUCK。打錯名字會在**開局時**以精確路徑報錯而不是
+# 靜默略過（`_create_declared_equipment`），所以這裡寧可明列也不靠預設配發。
+#
+# 戰車排一律「車體 + 主砲分兩列且數量一致」：MBT 提供機動與防護（base_stats.mobility 與
+# armor_class），TANK_MAIN_GUN_120 才是開火的武器。只寫其中一個會出現「有砲沒車」
+# 或「有車不會開火」——而且畫面上看不出來。
+faction: RED
+units:
+  # 旅指揮所：fixed（不接受 MOVE 令、AI 也不會派它機動）。
+  # 位置離 二崙鄉平民安置中心（NO_STRIKE，圓心 [120.268, 23.768]、半徑 700 m）3.5 km 以上——
+  # 把指揮所貼著安置中心設是現實中會被追究的行為，官方想定不該示範它。
+  - designation: R-BDE
+    unit_level: BRIGADE
+    branch: HQ
+    lat: 23.738
+    lng: 120.238
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+
+  # ── 第一戰車營：南軸線（主攻，緯線 23.724）。目標為藍軍 B-1-BN 正面。
+  - designation: R-1-BN
+    unit_level: BATTALION
+    branch: ARMOR
+    lat: 23.724
+    lng: 120.252
+    parent: R-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  - designation: R-1-A
+    unit_level: COMPANY
+    branch: ARMOR
+    lat: 23.724
+    lng: 120.278
+    parent: R-1-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+  # 突擊尖兵排。距藍軍反裝甲連 B-1-C（23.724 / 120.323）**2.14 km**——同時落在
+  # TANK_MAIN_GUN_120 的 4 km 射程與 ATGM 的 200 m–4 km 射程內，是本場第一個會發生的
+  # 直射交戰。**這一對已實測**：雙向 ENGAGE 都通過 line_of_sight 預檢（雲林平原無遮蔽高地）。
+  - designation: R-1-1
+    unit_level: PLATOON
+    branch: ARMOR
+    lat: 23.724
+    lng: 120.302
+    parent: R-1-A
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 160 }
+  - designation: R-1-2
+    unit_level: PLATOON
+    branch: ARMOR
+    lat: 23.718
+    lng: 120.296
+    parent: R-1-A
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 160 }
+  - designation: R-1-3
+    unit_level: PLATOON
+    branch: ARMOR
+    lat: 23.730
+    lng: 120.295
+    parent: R-1-A
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 160 }
+
+  # ── 第二戰車營：北軸線（助攻，緯線 23.750）。牽制藍軍 B-2-BN，迫其不敢抽兵南援。
+  - designation: R-2-BN
+    unit_level: BATTALION
+    branch: ARMOR
+    lat: 23.750
+    lng: 120.254
+    parent: R-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  - designation: R-2-A
+    unit_level: COMPANY
+    branch: ARMOR
+    lat: 23.750
+    lng: 120.280
+    parent: R-2-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+  - designation: R-2-1
+    unit_level: PLATOON
+    branch: ARMOR
+    lat: 23.754
+    lng: 120.302
+    parent: R-2-A
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 160 }
+  - designation: R-2-2
+    unit_level: PLATOON
+    branch: ARMOR
+    lat: 23.746
+    lng: 120.300
+    parent: R-2-A
+    equipment:
+      - { template: MBT, quantity: 4 }
+      - { template: TANK_MAIN_GUN_120, quantity: 4, ammo: 160 }
+
+  # ── 機械化步兵營：位置刻意擺在兩軸線中間（緯線 23.732–23.742），
+  # 往南或往北都是 3 km 內——「不預先配屬」在地理上才成立，不然只是嘴上說說。
+  - designation: R-3-BN
+    unit_level: BATTALION
+    branch: INFANTRY
+    lat: 23.737
+    lng: 120.250
+    parent: R-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  - designation: R-3-A
+    unit_level: COMPANY
+    branch: INFANTRY
+    lat: 23.732
+    lng: 120.276
+    parent: R-3-BN
+    equipment:
+      # 機步連＝載具 + 車載機砲 + 下車步兵，三者要同時宣告，否則裁決層只看得到其中一種武器。
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  - designation: R-3-B
+    unit_level: COMPANY
+    branch: INFANTRY
+    lat: 23.742
+    lng: 120.274
+    parent: R-3-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+
+  # ── 工兵連：突破作戰的關鍵。藍軍在主要防禦地帶前緣設障（見 msel `blue-obstacle-warno`），
+  # 紅軍作戰官要用 ENGINEER/BREACH 開通道，通不開就只能繞——這是 WP-C2 的驗收點。
+  - designation: R-ENG
+    unit_level: COMPANY
+    branch: ENGINEER
+    lat: 23.735
+    lng: 120.264
+    parent: R-BDE
+    equipment:
+      - { template: IFV_TRACKED, quantity: 6 }
+      - { template: RIFLE_556, quantity: 60, ammo: 600 }
+
+  # ── 砲兵營。營部 fixed（指揮所），兩個連的處置刻意不同：
+  - designation: R-FA-BN
+    unit_level: BATTALION
+    branch: ARTILLERY
+    lat: 23.732
+    lng: 120.240
+    parent: R-BDE
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }
+  # 自走砲連：**刻意不標 fixed**，所以 survivability_move（打滿 2 次火力任務就換陣地）
+  # 會真的咬到它。宣告了開關卻讓全部的砲都 fixed，那個開關就是一句空話——
+  # 「宣告了但不生效」正是這個 codebase 一再出事的型態。
+  # 到藍軍反裝甲連（120.323）約 8.9 km，落在 155 的 2–30 km 射程內。
+  - designation: R-FA-A
+    unit_level: COMPANY
+    branch: ARTILLERY
+    lat: 23.728
+    lng: 120.236
+    parent: R-FA-BN
+    equipment:
+      - { template: HOWITZER_155_SP, quantity: 6, ammo: 240 }
+  # 多管火箭連：fixed，且**開局即被 roe.yaml 整場禁用**（虎尾市區與集水區在散布圈內）。
+  # 刻意把裝備放進 ORBAT 而不是省略——限制要能被看見、被質疑、被 AAR 追問；
+  # 「乾脆不給這個連」會讓 ROE 條文變成沒有作用對象的空條款（loader 擋不到的沉默失效）。
+  # 到藍軍主防禦地帶（120.336）約 10.6 km，在 MLRS_227 的 8–70 km 射程內——
+  # 也就是說**打得到卻不准打**，這個張力才是它存在的意義。
+  - designation: R-FA-B
+    unit_level: COMPANY
+    branch: ARTILLERY
+    lat: 23.740
+    lng: 120.234
+    parent: R-FA-BN
+    fixed: true
+    equipment:
+      - { template: MLRS_227, quantity: 4, ammo: 96 }
+
+  # ── 後勤營：fixed（旅補給點）。攻方的補給線隨突破距離拉長，油料一斷突破即自行頓挫
+  # （#84 油料模型）。從這裡到藍軍主防禦地帶約 10.6 km，一來一回就是實打實的油耗。
+  - designation: R-LOG
+    unit_level: COMPANY
+    branch: SUPPLY
+    lat: 23.744
+    lng: 120.232
+    parent: R-BDE
+    fixed: true
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 10 }
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }

@@ -448,7 +448,7 @@ async function saveToServer() {
       class="sc-status"
       data-testid="sc-mode-warning"
     >
-      回合制（WEGO／輪流回合）尚未實作：執行期沒有回合分支，本局仍會以即時制逐 tick 推進。
+      回合制（同步回合／輪流回合）尚未實作：執行期沒有回合分支，本局仍會以即時制逐 tick 推進。
       此選項目前只是想定文件上的宣告。
     </Message>
 
@@ -545,7 +545,7 @@ async function saveToServer() {
         </div>
         <p class="hint">
           參謀能提出的申請單上限（<b>整局總量，不是每日</b>；各陣營分別計算）。留空＝不限，
-          C2 面板顯示「（不限）」；填 0 ＝ 該種申請一張都不准提。額度用罄後再提的申請會直接落
+          「信文／申請」面板顯示「（不限）」；填 0 ＝ 該種申請一張都不准提。額度用罄後再提的申請會直接落
           「已駁回」留痕，而不是被拒收——AAR 才看得出該陣營是在第幾 tick 被配額卡住。
         </p>
       </div>
@@ -604,7 +604,7 @@ async function saveToServer() {
           <Checkbox v-model="model.allowFratricide" binary data-testid="sc-fratricide-toggle" />允許友軍誤傷裁決
         </label>
         <p class="hint">
-          開了之後，對自己陣營／盟軍的 ENGAGE 不再被 ROE 直接拒絕，改為強警告＋照常裁決＋記 FRATRICIDE 事件供 AAR 追究，
+          開了之後，對自己陣營／盟軍的交戰令不再被交戰規則直接拒絕，改為強警告＋照常裁決＋記「友軍誤傷」事件供 AAR 追究，
           COP 下令面板會出現誤傷確認核取方塊。<b>不涵蓋中立方</b>（攻中立仍一律拒），面射擊也不受本開關影響——
           砲彈不挑陣營，殺傷半徑內的友軍本來就會受傷。
         </p>
@@ -623,8 +623,8 @@ async function saveToServer() {
           />曲射火力須經火協核准
         </label>
         <p class="hint">
-          開了之後，砲兵／飛彈單位的 ENGAGE 令必須掛一張已核准的「火力支援」申請單，否則預檢直接拒絕；
-          COP 下令面板會出現核准單下拉，C2 面板的申請—核覆流程才會真正被用到。不開＝曲射火力不設限。
+          開了之後，砲兵／飛彈單位的交戰令必須掛一張已核准的「火力支援」申請單，否則預檢直接拒絕；
+          COP 下令面板會出現核准單下拉，「信文／申請」面板的申請—核覆流程才會真正被用到。不開＝曲射火力不設限。
         </p>
       </div>
 
@@ -660,7 +660,7 @@ async function saveToServer() {
           {{ survivabilityNote }}
         </Message>
         <p class="hint">
-          開了之後，自走砲（履帶／輪型）打滿指定次數的火力任務就會自動下一道 MOVE 令換陣地，避免被反砲兵火力找上；
+          開了之後，自走砲（履帶／輪型）打滿指定次數的火力任務就會自動下一道移動令換陣地，避免被反砲兵火力找上；
           計的是<b>火力任務次數</b>不是發數。牽引砲不會被排程（需要牽引車，尚無資料模型）。
           不開＝砲兵不會自動轉移陣地（仍可由人工下移動令）。
         </p>
@@ -703,7 +703,7 @@ async function saveToServer() {
           </tr>
         </tbody>
       </table>
-      <p class="hint">點格切換：同盟 → 中立 → 敵對（對稱寫入）。未宣告配對預設敵對（§12.1）。</p>
+      <p class="hint">點格切換：同盟 → 中立 → 敵對（對稱寫入）。未宣告的配對一律視為敵對。</p>
     </section>
 
     <section>
@@ -757,7 +757,12 @@ async function saveToServer() {
         >
           <Column field="designation" header="番號" expander>
             <template #body="{ node }">
-              <InputText v-model="node.data.designation" size="small" placeholder="番號" />
+              <InputText
+                v-model="node.data.designation"
+                size="small"
+                placeholder="番號"
+                data-testid="unit-designation"
+              />
             </template>
           </Column>
           <Column header="編制">
@@ -884,7 +889,7 @@ async function saveToServer() {
 
     <section data-testid="victory-section" data-scenario-key="victory_conditions">
       <h2>勝負條件 <Button data-testid="add-victory" size="small" text @click="addVictory">＋</Button></h2>
-      <p class="hint">每條：指定陣營於「條件」成立時獲勝（條件 DSL 與 MSEL 觸發共用）。想定規格要求至少一條。</p>
+      <p class="hint">每條：指定陣營於「條件」成立時獲勝（條件的寫法與 MSEL 事件的觸發條件相同）。想定規格要求至少一條。</p>
       <p v-if="!model.victoryConditions.length" class="empty-hint" data-testid="victory-empty">
         尚無勝負條件——按 ＋ 新增（未設定將無法存檔）。
       </p>

@@ -1,0 +1,287 @@
+# MSEL 事件注入清單（SPEC_FULL §11.3 / SPEC_V2 §WP-B2）——裝甲突破想定的白軍誘導腳本。
+#
+# ## 兩件必須先看懂的事
+#
+# 1. **`trigger` 用的是 condition DSL**，與 victory_conditions 同一套：
+#    time / faction_eliminated / strength_below / unit_in_region / unit_in_polygon /
+#    contact_established / manual / after_ticks_of / held_for / all / any / not
+#    （`app/scenario/triggers.py` 的 `_CONDITION_FIELDS` 是唯一權威）。
+#    自己發明 type 會在**載入時**被 `validate_condition` 擋下——那是刻意的，
+#    因為執行期才發現代表整條腳本已經靜默失效了半場。
+#
+# 2. **`inject` 分兩層**，兩層都要寫對：
+#    - `event_type`（schema 必填）決定 Ledger 上那筆事件叫什麼，是 AAR 讀得懂的名字。
+#    - `action` 決定**世界真的發生什麼**，由 `app/scenario/msel_actions.py` 執行。
+#      實際支援的只有 **SPAWN_UNITS / MODIFY_UNIT / MESSAGE / PAUSE / WEATHER_OVERRIDE**；
+#      沒有 `action` ＝ 純事件注入（只落 Ledger，MSEL 最原始的用法），
+#      而**寫了不認得的 action 也只會落 Ledger** ——不會報錯、不會有任何徵兆。
+#      這正是「宣告了但不生效」那個型態，所以本檔的每一則都只用上面那五個。
+#
+#    ⚠ **MODIFY_UNIT 在想定檔裡用不了**：它要 `unit_id`，而那是開局才生成的資料庫 id，
+#      想定作者寫不出來。它是給白軍在控制台臨機注入用的。本檔因此不宣告 MODIFY_UNIT。
+#
+# ## 觸發時機的檢查
+#
+# 每一則的 bbox / 門檻都對照過開局狀態，確認**不會在 tick 0 誤觸**——
+# 條件式注入若開局就全部觸發，MSEL 等於沒有時間軸。紅軍起始最東為 R-1-1／R-2-1 的
+# 120.302，藍軍起始最西為 B-1-C 的 120.323，下面所有位置條件都落在這兩個值之間或以外。
+#
+# ⚠ 位置條件的 bbox 也必須落在**履帶車走得通的地帶**內，否則那個條件永遠不會成立
+#   （單位到不了那裡）。本檔的 bbox 都對照過 scenario.yaml 檔頭講的那份連通性掃描。
+#
+# ## 增援會改變勝負門檻
+#
+# `SPAWN_UNITS` 生出來的單位開局 strength ＝ 100，而 `strength_below` 比的是**總和**
+# （見 scenario.yaml 的說明）。所以 `red-second-echelon` 讓紅軍總戰力 1800→1900，
+# `blue-at-reinforcement` 讓藍軍 1700→1800——雙方的勝利門檻都因此變難。
+# 這是刻意的：增援本來就該讓「打垮對方」變得更貴。
+events:
+  # ─────────────────────────────────────────────────────────────────────────
+  # 1. 障礙作業命令（時間觸發，H+5 分）→ 給**作戰官（S3_OPS）**的第一件事。
+  #    MESSAGE 是唯一能把狀況送進特定席位信文匣的動作（`to_seat`）。
+  #    放在最前面，是因為設障要工時：等紅軍摸到面前才想到挖戰車壕就來不及了。
+  - id: blue-obstacle-warno
+    once: true
+    trigger: { type: time, at_tick: 5 }
+    inject:
+      event_type: OBSTACLE_WARNO
+      action: MESSAGE
+      faction: BLUE
+      to_seat: S3_OPS
+      body: >-
+        旅令：主要防禦地帶前緣（120.31–120.33 一線）構設反裝甲障礙。
+        以 B-ENG 下 ENGINEER/EMPLACE 令設置 TANK_DITCH 與 MINEFIELD，
+        重點置於南北兩營接合部（緯線 23.735 附近）。障礙須於紅軍主力接近前完成。
+      payload:
+        note: 白軍誘導——障礙遲滯是本場守方戰術構想的第一步
+        seat: S3_OPS
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 2. 紅軍攻擊準備射擊（時間觸發，H+15 分）→ 給**指揮官**的狀況判斷。
+  #    純狀況通報，不改變物理——紅軍砲兵要不要真的打，由紅軍自己下令。
+  - id: red-arty-prep
+    once: true
+    trigger: { type: time, at_tick: 15 }
+    inject:
+      event_type: ARTILLERY_PREP
+      action: MESSAGE
+      faction: BLUE
+      to_seat: COMMANDER
+      body: >-
+        觀測所回報：西方 120.23–120.24 一線多處砲口焰，判為紅軍攻擊準備射擊開始。
+        主要防禦地帶前緣受制壓，建議考量部隊姿態（POSTURE）與反砲兵火力優先序。
+      payload:
+        note: 攻擊發起徵候；此時仍在夜暗（日出於 tick 80）
+        credibility: HIGH
+        source: OBSERVATION_POST
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 3. 前緣接觸（位置觸發）→ 給**火力支援協調官（FSO）**。
+  #    bbox 西界 120.312 在紅軍起始最東（120.302）以東約 1 km，故開局不會誤觸；
+  #    東界 120.348 已在藍軍主要防禦地帶內。紅軍進到這個帶狀區＝已經接觸。
+  #    本則是火協鏈的起點：FSO 收到之後才有理由提 FIRE_SUPPORT 申請。
+  - id: red-lead-detected
+    once: true
+    trigger:
+      type: unit_in_region
+      faction: RED
+      bbox: [120.312, 23.700, 120.348, 23.775]
+    inject:
+      event_type: CONTACT_REPORT
+      action: MESSAGE
+      faction: BLUE
+      to_seat: FSO_FIRES
+      body: >-
+        前緣接觸：紅軍裝甲先頭已進入主要防禦地帶前緣。
+        本局要求曲射火協——請先提 FIRE_SUPPORT 申請並取得指揮官核准，
+        再以 B-FA-A（155，30 km）或 B-FA-B（120 迫，7 km）下 FIRE_MISSION。
+        注意虎尾鎮立醫院為 NO_STRIKE（圓心 120.330/23.737，半徑 800 m）。
+      payload:
+        note: 火協鏈起點；配額 FIRE_SUPPORT 全局 10 張
+        seat: FSO_FIRES
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 4. 紅軍第二梯隊（`after_ticks_of`）→ 前緣接觸後 30 分鐘。
+  #    用 `after_ticks_of` 而非固定時間，是因為第二梯隊的投入時機在現實中就是
+  #    「第一梯隊咬住敵人之後」，與時鐘無關。這也是本檔對該 DSL 型別的實證：
+  #    它需要跨 tick 的記憶（`MselMemory.fired_at`），而那份記憶會進 checkpoint。
+  #
+  #    ⚠ SPAWN_UNITS 的 spec 只認得 designation/unit_level/lat/lng/strength/
+  #      attributes/equipment——**沒有 branch、parent、fixed**（`_spawn_units` 沒有讀）。
+  #      寫了也不會報錯，只會靜靜不生效，所以這裡不寫。
+  - id: red-second-echelon
+    once: true
+    trigger: { type: after_ticks_of, event: red-lead-detected, ticks: 30 }
+    inject:
+      event_type: REINFORCEMENT
+      action: SPAWN_UNITS
+      faction: RED
+      units:
+        - designation: R-4-A
+          unit_level: COMPANY
+          lat: 23.738
+          lng: 120.248
+          equipment:
+            - { template: MBT, quantity: 10 }
+            - { template: TANK_MAIN_GUN_120, quantity: 10, ammo: 400 }
+      payload:
+        note: 第二梯隊戰車連自二崙地區前推，紅軍總戰力 1800→1900
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 5. 民事警告（位置觸發）→ 給**紅軍指揮官**。
+  #    紅軍推進到虎尾鎮立醫院周邊即發布。這不是懲罰，是提醒：NO_STRIKE 是硬阻擋，
+  #    對區內目標的火力會被護欄 G4 與人類 precheck 直接擋掉，不是「打了再說」。
+  #    bbox 西界 120.316 在紅軍起始最東（120.302）以東 1.4 km，開局不會誤觸。
+  - id: civil-affairs-alert
+    once: true
+    trigger:
+      type: unit_in_region
+      faction: RED
+      bbox: [120.316, 23.727, 120.346, 23.748]
+    inject:
+      event_type: CIVIL_AFFAIRS_ALERT
+      action: MESSAGE
+      faction: RED
+      to_seat: COMMANDER
+      body: >-
+        部隊已進入虎尾鎮立醫院周邊（NO_STRIKE，半徑 800 m）。
+        該區為硬阻擋：對區內目標的 ENGAGE／FIRE_MISSION 一律被拒，不得以任何理由 override。
+        另虎尾溪取水口為 RESTRICTED_FIRE，對其開火須明確 override 並記入 Ledger。
+      payload:
+        note: 保護區約束對攻守雙方對等；本則約束紅軍
+        zone: 虎尾鎮立醫院
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 6. 正面吃緊（`held_for`）→ 給**指揮官**的預備隊投入建議。
+  #    `held_for` 的語義是內層條件**連續**成立 N tick——「成立→中斷→再成立」會重新計時。
+  #    用它而不是單純的 unit_in_region，是因為「紅軍摸到防線」與「紅軍在防線上待了
+  #    二十分鐘還沒被趕走」是完全不同的兩件事，只有後者才值得動用旅預備隊。
+  - id: blue-line-under-pressure
+    once: true
+    trigger:
+      type: held_for
+      ticks: 20
+      of:
+        type: unit_in_region
+        faction: RED
+        bbox: [120.318, 23.700, 120.365, 23.775]
+    inject:
+      event_type: LINE_UNDER_PRESSURE
+      action: MESSAGE
+      faction: BLUE
+      to_seat: COMMANDER
+      body: >-
+        紅軍已在主要防禦地帶內持續存在逾 20 分鐘，第一線無法將其逐出。
+        建議考量旅預備隊（B-3-BN 裝甲營）投入時機；投入前請先確認 S4 已將
+        B-LOG-A 補給前推點推至逆襲軸線後方，否則逆襲一發起油料線即斷。
+      payload:
+        note: 預備隊投入時機是本場守方的核心決心，統裁重點之一
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 7. 鋒面過境（時間觸發，H+2 小時）→ WEATHER_OVERRIDE。
+  #    **覆蓋優先於天氣插件**：統裁說「現在起下雨」就不該被下一次天氣刷新蓋回去。
+  #    `effects` 的鍵必須是 `app/weather.py` 的 `CellEffects` 欄位——認不得的鍵會被
+  #    `effects_from` 靜默忽略（缺的用晴天預設），所以拼錯不會報錯，只會沒有效果。
+  #    `duration_ticks` 到期自動解除；省略 `effects` ＝解除覆蓋（不是「套一份晴天」）。
+  - id: weather-front
+    once: true
+    trigger: { type: time, at_tick: 120 }
+    inject:
+      event_type: WEATHER_CHANGE
+      action: WEATHER_OVERRIDE
+      duration_ticks: 90
+      effects:
+        sensor_optical_modifier: 0.55 # 雨幕：光學偵測與直射瞄準效益減半以上
+        sensor_ir_modifier: 0.80 # 熱像受影響較小，這是夜戰裝備的價值所在
+        artillery_dispersion_modifier: 1.40 # 風雨使彈著散布加大 → 間瞄命中下降
+        mobility_modifier: 0.85 # 田區泥濘，履帶車輛速度下降
+        rf_attenuation_db: 3.0 # 通聯衰減，C2 鏈路品質下降
+        uav_operability: false # 無人機停飛
+        wind_ms: 12.0
+        wind_dir_deg: 20.0 # 風的**來向**（氣象慣例）：東北風
+      payload:
+        note: 10 月東北季風鋒面過境，持續 90 分鐘後自動解除
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 8. 旅預備隊解除管制（**manual**——白軍扣板機才會發生）
+  #    `manual` 永遠不自動成立：白軍在控制台按 `POST /sessions/{id}/msel/{id}/fire`
+  #    才算數。這正是「白軍誘導」的驗收點——教官看現場狀況決定要不要發這個狀況，
+  #    而不是時間到就自動發。（`skip` 則是「決定不發」，會被記著而不是刪掉，AAR 要
+  #    看得出原定 vs 實際。）
+  - id: blue-reserve-release
+    once: true
+    trigger: { type: manual }
+    inject:
+      event_type: RESERVE_RELEASE
+      action: MESSAGE
+      faction: BLUE
+      to_seat: COMMANDER
+      body: >-
+        軍團核定：旅預備隊（B-3-BN 裝甲營）解除管制，得依情況實施逆襲。
+        逆襲軸線建議指向紅軍南軸線側翼；務必與 FSO 協調阻絕射擊，
+        並避開虎尾鎮立醫院 NO_STRIKE 區。
+      payload:
+        note: 白軍動態取捨——本則不會自動觸發，統裁扣板機才發
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 9. 軍團配屬反裝甲連（**manual**，且**會真的改變世界**）
+  #    與上一則同為 manual，但動作是 SPAWN_UNITS：扣板機之後藍軍的單位數會真的 +1、
+  #    總戰力 1700→1800。驗收時看得到的事實變化就是它——「回 200 而世界沒動」在
+  #    這裡會當場露餡。單位 id 由 msel event id **決定性派生**（禁 uuid4），
+  #    所以重播會生出同一批 id，重複扣板機也不會生出第二批（冪等）。
+  - id: blue-at-reinforcement
+    once: true
+    trigger: { type: manual }
+    inject:
+      event_type: REINFORCEMENT
+      action: SPAWN_UNITS
+      faction: BLUE
+      units:
+        - designation: B-AT-X
+          unit_level: COMPANY
+          lat: 23.730
+          lng: 120.372
+          equipment:
+            - { template: ATGM, quantity: 12, ammo: 60 }
+            - { template: RIFLE_556, quantity: 60, ammo: 600 }
+      payload:
+        note: 軍團加強一個反裝甲連，配置於主要防禦地帶後方約 4 km（23.730/120.372）
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 10. 攻勢頓挫講評（複合條件）→ PAUSE。
+  #     兩個條件都要：單看時間會變成「反正跑久就暫停」，單看戰力則可能在開局的
+  #     熱狀態尚未播種完成時就觸發（那時各陣營戰力和是 0）。
+  #     1250 是紅軍總戰力 1800 的七成——折損三成通常就是攻勢動能開始耗盡的水準。
+  #     PAUSE 與控制台的暫停共用同一個 Redis 鍵，白軍講評完照常恢復。
+  - id: culmination-review
+    once: true
+    trigger:
+      type: all
+      of:
+        - { type: time, at_tick: 180 }
+        - { type: strength_below, faction: RED, value: 1250 }
+    inject:
+      event_type: EXERCISE_PAUSE
+      action: PAUSE
+      reason: 紅軍攻勢頓挫徵候顯現，暫停實施統裁講評（突破時機、火協優先序、預備隊投入）
+      payload:
+        note: 統裁講評點；恢復由白軍控制台操作
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 11. 火箭砲兵解禁覆議（**manual**，純事件注入——刻意沒有 action）
+  #     roe.yaml 條文一把 MLRS_227 整場禁掉。ROE 是**開局快照**，MSEL 沒有任何動作
+  #     能在局中解除武器禁令（`msel_actions` 沒有這個型別）。所以本則只做一件事：
+  #     把「白軍在此時審議過解禁與否」這個決定**留在 Ledger 上供 AAR 追究**。
+  #     寫成 `action: ROE_RELEASE` 之類的看起來會動、實際上只會落一筆帳——
+  #     那種假裝比缺功能危險，故此處明白地不寫 action。
+  - id: red-mlrs-release-review
+    once: true
+    trigger: { type: manual }
+    inject:
+      event_type: ROE_REVIEW
+      faction: RED
+      payload:
+        note: >-
+          白軍就 MLRS_227 禁令進行覆議並記錄裁決。實際鬆綁須變更該局 ROE
+          並重啟該局 runner——這是已知限制，不是本想定的疏漏。
+        under_review: [MLRS_227]

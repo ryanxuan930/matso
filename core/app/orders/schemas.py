@@ -169,6 +169,12 @@ class OrderResponse(BaseModel):
     resolved_at_tick: int | None = None
     target_unit_id: str | None = None  # ENGAGE 目標單位（供指令列顯示對象）
     target_h3: str | None = None  # MOVE 目的地 hex（供指令列顯示對象）
+    # 下令者。**四席位演習的分工要能追究，靠的就是這一欄**——`Order.issuer_id` 一直存著，
+    # 但過去沒有任何讀取端回它，於是 AAR 上答不出「這道逆襲令是作戰官還是指揮官下的」。
+    issuer_id: str | None = None
+    # 下令當時的原始載荷。**FIRE_MISSION 打的是座標**，上面兩個 target_* 欄皆為 null，
+    # 不回 payload 的話，一筆「有人想砲擊醫院」的 REJECTED 紀錄說得出是誰、說不出打哪裡。
+    payload: dict[str, Any] | None = None
     # WP-A2：分解自哪一道 MISSION 令。None＝直接下的令。
     parent_order_id: str | None = None
     mission_type: str | None = None  # 僅 MISSION 令有值

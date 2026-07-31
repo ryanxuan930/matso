@@ -1161,6 +1161,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/aar/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description AAR 統計指標（§14.2）。**分子/分母的口徑見 `AarStats.stats_version`**—— WP-D6.2 改過一次語意，跨版本的數字不可直接相比。 存取控制與其他 AAR 端點相同；非全知觀測者取到的是**經迷霧投影後**的事件流， 故其戰損數字本來就會比全知少（面射擊的逐單位戰損會被剝掉）。 */
+        get: operations["getAarStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scenarios": {
         parameters: {
             query?: never;
@@ -1170,6 +1189,12 @@ export interface paths {
         };
         get: operations["listScenarios"];
         put?: never;
+        /**
+         * @description 存一份想定包（存前全量驗證，錯誤帶精確路徑）。限統裁/管理。
+         *
+         *     **請求體的鍵集必須與載入器讀的一致**——`roe` 與 `overrides` 曾經不在宣告裡，
+         *     於是走 HTTP 存進來的想定，交戰規則與機動覆寫會靜默消失且無錯誤訊息。
+         */
         post: operations["uploadScenario"];
         delete?: never;
         options?: never;
@@ -1791,6 +1816,32 @@ export interface components {
             /** @description 戰力點（人員/平台數量級） */
             strength?: number;
         };
+        /** @description AAR 統計指標。**`attempts` 與 `engagements_fired` 刻意分成兩個欄位**： 「下令交火幾次」與「真的射出去幾次」是兩件事， 用一個數字承載兩種語意正是 WP-D6.2 那個 bug 的成因。 */
+        AarStats: {
+            total_events: number;
+            /** @description 交戰事件總數（個體＋聚合，含被拒的） */
+            engagements: number;
+            /** @description 個體交戰的裁決次數（含 REJECTED）——「下令交火幾次」 */
+            attempts: number;
+            /** @description 其中真的射出去的次數（`attempts` 扣掉 REJECTED）。**這是命中率的分母**： 超射程/無彈/無視線/ROE 不准打都是一發未發，不該用來稀釋火力效益。 */
+            engagements_fired: number;
+            /** @description 裁決結果為 HIT 的個體交戰數。判定依 `ai_decision.status` （裁決層 `Resolution` 的值域）——齊射與聯合兵種路徑只寫這個鍵。 ⚠ 齊射/聯合兵種走期望值，其 HIT 的定義是「造成了戰力損失」， 不是彈著命中；以這兩條路徑為主的局，本欄實質是**有效交戰數**。 */
+            hits: number;
+            /** @description hits ÷ engagements_fired */
+            hit_rate: number;
+            /** @description 全場戰損總量（雙方相加） */
+            total_damage: number;
+            guardrail_blocks: number;
+            /** @description 各陣營**承受**的總戰損。聚合交戰按 `initiator_loss`/`target_loss` 雙側分別歸帳 （其 `damage_calc` 是雙方相加，直接用會把攻方傷亡記到守方頭上）； 面射擊按 `losses_by_unit` 逐單位歸帳。 */
+            damage_by_faction: {
+                [key: string]: number;
+            };
+            event_counts: {
+                [key: string]: number;
+            };
+            /** @description 統計口徑版本。v1 的分子只認單發路徑、分母含被拒交戰、聚合戰損雙側都記在守方； v2（WP-D6.2）三者皆已修正。**跨版本的數字不可比**——舊封存包沒有這個欄位。 */
+            stats_version: number;
+        };
         /** @description 重連用的**單一原子快照**（WP-E3；ws_protocol.md 的 RESYNC_REQUIRED 指向此端點）。 內容＝該觀測者當下看得見的全部狀態：units + contacts + map features + 陣營關係， 外加 `tick`（sim 時間）與 `last_seq`（傳輸層計數器）。 **fog of war 過濾一律在後端**（紅線 3）：本端點不自行實作過濾，而是複用 /units、/intel、/map-features、/relations 的同一份邏輯，故其可見範圍與各端點**逐項相同**。 `last_seq` 的用途：client 套用快照後，只接受 seq 大於它的 STATE_DIFF——否則 「RESYNC 送出後、快照回來前」抵達的新 diff 會被隨後回來的舊快照蓋掉。 */
         StateSnapshotView: {
             /** @description 快照當下的 sim tick（無活模擬的局為 0） */
@@ -2104,6 +2155,29 @@ export interface components {
              */
             restart_required: boolean;
         };
+        /**
+         * @description 想定包。各鍵對應 `scenarios/examples/<name>/` 目錄下的一個檔案／子目錄。
+         *     **新增鍵時載入器（`core/app/scenario/loader.py`）要同步讀，否則就是靜默丟資料。**
+         */
+        ScenarioBundle: {
+            /** @description scenario.yaml（見 contracts/scenario.schema.json） */
+            scenario: Record<string, never>;
+            /** @description {faction: orbat.yaml 內容}（見 contracts/orbat.schema.json） */
+            orbat?: Record<string, never>;
+            /** @description msel.yaml（狀況腳本） */
+            msel?: Record<string, never> | null;
+            /** @description roe.yaml（各陣營交戰規則：預設火力政策與禁用武器） */
+            roe?: Record<string, never> | null;
+            /** @description overrides/ 目錄；目前只有 mobility_matrix（想定級機動覆寫） */
+            overrides?: {
+                mobility_matrix?: Record<string, never>;
+            } | null;
+        };
+        ScenarioSaved: {
+            id: string;
+            name: string;
+            version: string;
+        };
         EquipmentStateEdit: {
             /** @description 覆寫此實例的即時狀態（如 {ammo:60}） */
             current_state: Record<string, never>;
@@ -2214,6 +2288,10 @@ export interface components {
             target_unit_id?: string | null;
             /** @description MOVE 目的地 hex */
             target_h3?: string | null;
+            /** @description 下令者的使用者 id。**行動後檢討要追究「這道逆襲令是作戰官還是指揮官下的」， 靠的就是這一欄**——Order 表一直存著 issuerId，但過去沒有任何讀取端回它， 於是四席位演習的分工在 AAR 上完全不可評量。 */
+            issuer_id?: string | null;
+            /** @description 下令當時的原始載荷。**FIRE_MISSION 打的是座標**， target_unit_id / target_h3 兩欄皆為 null——不回 payload 的話， 一筆「有人想砲擊醫院」的 REJECTED 紀錄說得出是誰，卻說不出打哪裡。 */
+            payload?: Record<string, never> | null;
             /** @description 分解自哪一道 MISSION 令（WP-A2）。null＝直接下的令。 取消母令會連帶取消所有**尚未終結**的子令——已執行的不追溯（那是既成事實）。 */
             parent_order_id?: string | null;
             /** @description 僅 MISSION 令有值 */
@@ -5000,6 +5078,42 @@ export interface operations {
             };
         };
     };
+    getAarStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AAR metrics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AarStats"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listScenarios: {
         parameters: {
             query?: never;
@@ -5025,14 +5139,38 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioBundle"];
+            };
+        };
         responses: {
             /** @description Validated & stored */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ScenarioSaved"];
+                };
+            };
+            /** @description Not an exercise director */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Scenario invalid (precise path in message) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };

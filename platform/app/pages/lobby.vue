@@ -414,7 +414,7 @@ onMounted(async () => {
           data-testid="history-item"
         >
           <span class="name" @click="navigateTo(`/session/${s.id}/cop`)">{{ s.name }}</span>
-          <span class="meta">{{ s.mode }} · 已封存</span>
+          <span class="meta">{{ sessionModeLabel(s.mode) }} · 已封存</span>
           <button
             class="edit-btn"
             data-testid="unarchive-session"

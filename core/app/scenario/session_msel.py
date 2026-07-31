@@ -60,12 +60,22 @@ def make_context_fn(
         nonlocal faction_of
         if not faction_of:
             with session_factory() as db:
+                # ⚠ **`.all()` 不可省**。`dict()` 看到物件有 `.keys()` 就會走 mapping 路徑、
+                # 回頭去 subscript 它——而 SQLAlchemy 的 `Result` 正好有 `.keys()`、
+                # 卻不支援 subscript，於是 `dict(...tuples())` 丟
+                # `TypeError: 'ChunkedIteratorResult' object is not subscriptable`。
+                # 這一行讓**每一個有 MSEL 條目的局每 tick 崩潰、tick 恆停在 0**，
+                # 而且完全沒被測出來：所有 MselRuntime 測試都餵
+                # `lambda t: TriggerContext(tick=t)` 這種假的 context_fn，
+                # 真正的 `make_context_fn` 零覆蓋（見 test_session_msel_context.py）。
                 faction_of = dict(
                     db.execute(
                         select(TacticalUnit.id, TacticalUnit.faction).where(
                             TacticalUnit.session_id == session_id
                         )
-                    ).tuples()
+                    )
+                    .tuples()
+                    .all()
                 )
         positions: list[tuple[str, float, float]] = []
         strength: dict[str, float] = {}

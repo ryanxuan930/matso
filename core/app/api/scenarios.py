@@ -30,9 +30,23 @@ router = APIRouter(prefix="/api/v1/scenarios", tags=["scenarios"])
 
 
 class ScenarioBundle(BaseModel):
+    """想定包。**欄位要與 `load_scenario_bundle` 讀的鍵集一致。**
+
+    ⚠ `roe` 與 `overrides` 曾經不在這裡，而 pydantic 預設丟掉未宣告欄位——
+    於是磁碟上的想定有 MLRS 禁令與機動覆寫，走 HTTP 存進來的**兩者都靜默消失**，
+    沒有任何錯誤訊息。載入器一直讀得到它們（`loader.py` 的 `bundle.get("roe")` 與
+    `bundle["overrides"]["mobility_matrix"]`），只是永遠拿到 None。
+
+    這一類「宣告端與消費端的鍵集漂開」是本 repo 的常見病；
+    `test_scenario_bundle_carries_every_key_the_loader_reads` 釘住兩邊不再漂開。
+    """
+
     scenario: dict[str, Any]
     orbat: dict[str, Any] = Field(default_factory=dict)
     msel: dict[str, Any] | None = None
+    roe: dict[str, Any] | None = None
+    # `{"mobility_matrix": {...}}`——與 `overrides/` 目錄的檔案結構同形。
+    overrides: dict[str, Any] | None = None
 
 
 class ScenarioSaved(BaseModel):

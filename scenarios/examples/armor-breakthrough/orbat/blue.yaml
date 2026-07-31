@@ -1,0 +1,206 @@
+# 藍軍戰鬥序列（SPEC_FULL §11.1）——第 1 機械化步兵旅（欠），虎尾走廊東段縱深防禦。
+#
+# 編成的設計主張：**兩營在線、一營預備、火力階梯化**。
+# 南（B-1-BN，緯線 23.724）與北（B-2-BN，緯線 23.750）兩個機步營各守一條軸線，
+# 裝甲營（B-3-BN）控置於東北方作為旅預備隊——它什麼時候投入由白軍以
+# msel `blue-reserve-release`（**manual**）誘導、由指揮官裁量。這是本想定給守方的
+# 核心決策點，與紅軍的「往哪條軸線灌」互為對局。
+#
+# 火力刻意做成三個射程階梯，讓火力支援協調官（FSO）真的有東西可以分配：
+#   ATGM 4 km（近戰反裝甲）→ MORTAR_120 7 km（正面壓制）→ HOWITZER_155_SP 30 km（縱深）。
+# 三者的射程若一樣，FSO 席位就退化成「按開火鈕的人」。
+#
+# ⚠ 座標的量測紀律見 orbat/red.yaml 檔頭——本檔 17 個位置同樣全部通過連通性與
+#   `movement/preview` 實測。
+#
+# equipment 只用出貨種子範本名（見 red.yaml 檔頭的清單與理由）。
+# 指揮所、砲兵陣地與旅補給點一律 fixed：它們不接受 MOVE 令，也不會被 AI 派去機動。
+faction: BLUE
+units:
+  # 旅指揮所：fixed。**位於紅軍作戰目標框內**（[120.392, 23.716]–[120.452, 23.766]）——
+  # 那正是紅軍要奪取的東西，所以它在框裡是刻意的，不是疏忽。
+  - designation: B-BDE
+    unit_level: BRIGADE
+    branch: HQ
+    lat: 23.740
+    lng: 120.430
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+
+  # ── 機步第一營：南正面（主要防禦地帶），直面紅軍主攻軸線。
+  - designation: B-1-BN
+    unit_level: BATTALION
+    branch: INFANTRY
+    lat: 23.724
+    lng: 120.352
+    parent: B-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 40, ammo: 400 }
+  - designation: B-1-A
+    unit_level: COMPANY
+    branch: INFANTRY
+    lat: 23.724
+    lng: 120.336
+    parent: B-1-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  - designation: B-1-B
+    unit_level: COMPANY
+    branch: INFANTRY
+    lat: 23.715
+    lng: 120.330
+    parent: B-1-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  # 反裝甲連：**本場最前緣的藍軍單位**（120.323），距紅軍突擊尖兵排 R-1-1 2.14 km。
+  # ATGM 最小射程 200 m，所以它不能貼著紅軍配置，得留出交戰縱深才有得打。
+  # 兵科用 INFANTRY 而非 MISSILE：這是機步旅建制內的反裝甲連（人扛／車載飛彈），
+  # 不是飛彈部隊；MISSILE 在 2525C 上畫出來會是另一回事。
+  - designation: B-1-C
+    unit_level: COMPANY
+    branch: INFANTRY
+    lat: 23.724
+    lng: 120.323
+    parent: B-1-BN
+    equipment:
+      - { template: ATGM, quantity: 12, ammo: 60 }
+      - { template: RIFLE_556, quantity: 60, ammo: 600 }
+
+  # ── 機步第二營：北正面。紅軍助攻軸線的對手。
+  - designation: B-2-BN
+    unit_level: BATTALION
+    branch: INFANTRY
+    lat: 23.750
+    lng: 120.352
+    parent: B-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 40, ammo: 400 }
+  - designation: B-2-A
+    unit_level: COMPANY
+    branch: INFANTRY
+    lat: 23.750
+    lng: 120.330
+    parent: B-2-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+  - designation: B-2-B
+    unit_level: COMPANY
+    branch: INFANTRY
+    lat: 23.758
+    lng: 120.334
+    parent: B-2-BN
+    equipment:
+      - { template: IFV_TRACKED, quantity: 14 }
+      - { template: AUTOCANNON_30, quantity: 14, ammo: 900 }
+      - { template: RIFLE_556, quantity: 90, ammo: 900 }
+
+  # ── 工兵連：作戰官（S3_OPS）的手。用 ENGINEER/EMPLACE 在兩營接合部構設戰車壕與雷區，
+  # 是「以障礙遲滯」這條戰術構想唯一真的能執行出來的方式（WP-C2）。
+  # 位置刻意離 虎尾鎮立醫院（NO_STRIKE，圓心 [120.330, 23.737]、半徑 800 m）1.43 km——
+  # 把部隊塞進硬阻擋區等於讓它無敵，那比沒有保護區還糟。
+  - designation: B-ENG
+    unit_level: COMPANY
+    branch: ENGINEER
+    lat: 23.737
+    lng: 120.344
+    parent: B-BDE
+    equipment:
+      - { template: IFV_TRACKED, quantity: 6 }
+      - { template: RIFLE_556, quantity: 60, ammo: 600 }
+
+  # ── 砲兵營：全部 fixed（已佔領陣地、完成測地）。故 survivability_move 不會咬到藍軍的砲
+  # ——`fires/displacement.due_units` 明文跳過 is_fixed 的單位，想定作者的宣告優先於開關。
+  - designation: B-FA-BN
+    unit_level: BATTALION
+    branch: ARTILLERY
+    lat: 23.748
+    lng: 120.410
+    parent: B-BDE
+    fixed: true
+    equipment:
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }
+  # 155 自走砲連：射程 30 km（最小 2 km）。到紅軍尖兵排 12.3 km、到紅軍砲兵陣地
+  # （120.236）約 16.7 km——縱深火力與反砲兵都靠它，但每一發都要先過火協
+  # （indirect_fire_requires_approval）。
+  - designation: B-FA-A
+    unit_level: COMPANY
+    branch: ARTILLERY
+    lat: 23.748
+    lng: 120.420
+    parent: B-FA-BN
+    fixed: true
+    equipment:
+      - { template: HOWITZER_155_SP, quantity: 6, ammo: 240 }
+  # 120 迫砲連：**刻意前推到 120.362**（而非跟著營部擺在 120.410）。迫砲射程只有 7 km，
+  # 擺在營部旁邊就連紅軍尖兵排都打不到，那個連在整場演習裡會是佈景。
+  # 現在到 R-1-1 是 6.15 km——在射程內但沒有餘裕，紅軍再往東推一點它就得換陣地。
+  # 這個「剛剛好」是設計出來的：迫砲的射程限制要真的構成問題，FSO 才有得選。
+  - designation: B-FA-B
+    unit_level: COMPANY
+    branch: ARTILLERY
+    lat: 23.730
+    lng: 120.362
+    parent: B-FA-BN
+    fixed: true
+    equipment:
+      - { template: MORTAR_120, quantity: 8, ammo: 320 }
+
+  # ── 裝甲營（旅預備隊）：**不 fixed**——它就是要能動的那一支。
+  # 控置於東北方，逆襲時可打紅軍北軸線的側翼、或南下增援主防禦地帶。
+  # 投入時機由白軍 msel `blue-reserve-release`（manual）誘導、指揮官裁量；
+  # 投入得太早會被紅軍的機步營黏住，太晚就來不及。
+  - designation: B-3-BN
+    unit_level: BATTALION
+    branch: ARMOR
+    lat: 23.752
+    lng: 120.400
+    parent: B-BDE
+    equipment:
+      - { template: RIFLE_556, quantity: 30, ammo: 300 }
+  - designation: B-3-A
+    unit_level: COMPANY
+    branch: ARMOR
+    lat: 23.756
+    lng: 120.408
+    parent: B-3-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+  - designation: B-3-B
+    unit_level: COMPANY
+    branch: ARMOR
+    lat: 23.748
+    lng: 120.396
+    parent: B-3-BN
+    equipment:
+      - { template: MBT, quantity: 14 }
+      - { template: TANK_MAIN_GUN_120, quantity: 14, ammo: 560 }
+
+  # ── 後勤：旅補給點 fixed，補給前推點**不 fixed**。
+  # 這個對比是後勤官（S4_LOG）席位存在的理由：裝甲營一旦向西逆襲，油料線就從 120.438
+  # 拉到 120.33 附近（約 11 km）；S4 必須先把 B-LOG-A 推上去，RESUPPLY 令才撥交得到。
+  - designation: B-LOG
+    unit_level: COMPANY
+    branch: SUPPLY
+    lat: 23.744
+    lng: 120.438
+    parent: B-BDE
+    fixed: true
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 10 }
+      - { template: RIFLE_556, quantity: 20, ammo: 200 }
+  - designation: B-LOG-A
+    unit_level: PLATOON
+    branch: SUPPLY
+    lat: 23.736
+    lng: 120.380
+    parent: B-LOG
+    equipment:
+      - { template: FUEL_TRUCK, quantity: 4 }

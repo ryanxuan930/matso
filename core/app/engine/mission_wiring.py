@@ -26,11 +26,27 @@ LLM 橋接、AAR 時間軸與 COP 下令 UI，`Kernel` 也留好了 `mission_pla
 `world_view` 走 `build_faction_context()`——與 LLM 指揮官看的是**同一份投影**。
 自己組一份「反正分解器是確定性的」會直接違反紅線 3：分解器據以選擇接敵目標的敵情，
 必須是該陣營真的偵測得到的那些。
+
+⚠ **A1 補洞（本檔曾是全知的那一條路）**：上面這段話寫對了原則，`_world_view` 卻餵
+`ground_truth_enemies` 進去——`build_faction_context` 的 docstring 白紙黑字寫著
+「`known_enemies` 由呼叫端保證已霧化」，而這裡的呼叫端沒有。於是分解器名義上吃投影、
+實際上吃 DB 全表，A1 在任務下令這條路上等於沒做。`orchestrator` 那條 AI 路徑有
+`ai_ground_truth` 開關保護，這條**完全不受開關影響**——兩個呼叫端、只有一個受管。
+現已改走 `contacts_from_intel`（同 `GET /intel` 的後端過濾），開關也接上了。
+
+### 換過來之後 SEIZE 的行為會變，那是對的
+
+沒有偵測到敵人的目標區，任務**不會**進入接戰階段——它會直接鞏固佔領。看起來像
+「A2 的接敵壞了」，其實是迷霧生效了：部隊看不見的敵人本來就不該被自動接戰。
+反過來，contact 是**最後已知位置**、永不過期，所以對著空點下 ENGAGE 也是對的
+（SPEC_V2:252 明訂）。**不要**為了讓這兩件事「看起來正常」而把敵情換回 ground truth，
+或去查 DB 核對 contact 還在不在——那正是這一段記的那個洞。
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
@@ -65,6 +81,7 @@ class LiveMissionPlanner:
         *,
         gateway: Any,
         relations: FactionRelations | None = None,
+        redis_client: Any = None,
     ) -> None:
         self._db = db
         self._session_id = session_id
@@ -72,6 +89,9 @@ class LiveMissionPlanner:
         self._gateway = gateway
         self._relations = relations or FactionRelations()
         self._memory = MissionMemory()
+        self._redis = redis_client
+        # 本局的敵情來源，解析一次後快取（見 `_enemy_visibility`）。
+        self._enemy_vis: Callable[..., list[dict[str, Any]]] | None = None
 
     # ---- Kernel 介面 ----
 
@@ -209,13 +229,50 @@ class LiveMissionPlanner:
 
     # ---- 迷霧投影後的世界（與 LLM 指揮官同一份）----
 
+    def _redis_client(self) -> Any:
+        """讀 ai_config 用的 Redis client。
+
+        ⚠ 建構這個 planner 的是 `sim_runtime`，它手上有 client 卻沒有傳進來，
+        而本卡不得改那個檔。故退而由熱狀態借用：活執行期的 `hot` 就是 `RedisHotState`，
+        它握著同一條連線。借不到（單元測試的 `InMemoryHotState`）→ None →
+        `ground_truth_enabled` 回 False ＝ 走迷霧，安全側。
+        **正解是讓 `sim_runtime` 明傳 `redis_client=`**（建構子已備好該參數），
+        那一行改動屬另一張卡。
+        """
+        if self._redis is not None:
+            return self._redis
+        return getattr(self._hot, "_redis", None)
+
+    def _enemy_visibility(self) -> Callable[..., list[dict[str, Any]]]:
+        """本局的敵情來源：預設**真實偵測投影**，`ai_ground_truth=true` 才退回全知。
+
+        只解析一次（planner 每局建一次，runner 重啟就重建）——與 `start_ai_workers`
+        對同一把開關的處理一致：ai_config 在起跑時讀定，不隨局中改動漂移，
+        免得同一局裡前半段有迷霧、後半段沒有。
+        """
+        if self._enemy_vis is None:
+            from app.ai_loop.orchestrator import ground_truth_enabled
+            from app.ai_loop.worker import ground_truth_enemies
+            from app.ai_loop.world_view import contacts_from_intel
+
+            if ground_truth_enabled(self._redis_client(), self._session_id):
+                _LOG.warning(
+                    "session %s 的任務分解走 ground truth 敵情（對照實驗模式）", self._session_id
+                )
+                self._enemy_vis = ground_truth_enemies
+            else:
+                self._enemy_vis = contacts_from_intel
+        return self._enemy_vis
+
     def _world_view(self, faction: str) -> dict[str, Any]:
-        from app.ai_loop.worker import ground_truth_enemies, load_unit_meta
+        from app.ai_loop.worker import load_unit_meta
         from app.ai_loop.world_view import faction_granularity
 
         snapshot = projected_snapshot(self._hot.get_all())
         unit_meta = load_unit_meta(self._db, self._session_id)
-        enemies = ground_truth_enemies(
+        # A1：**這裡過去直接呼叫 `ground_truth_enemies`**（見模組說明的「A1 補洞」）。
+        # 現在與 LLM 指揮官走同一個 `EnemyVisibility` 協定與同一把開關。
+        enemies = self._enemy_visibility()(
             self._db,
             self._session_id,
             faction,

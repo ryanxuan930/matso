@@ -1,0 +1,39 @@
+# 交戰規則（SPEC_FULL §11.1／§10 G4；contracts/roe.schema.json 驗證）——裝甲突破想定。
+#
+# 保護目標清單（No-Strike）**不在此檔**：見 scenario.yaml 的 no_strike_zones。
+# 白軍可於局中以 COP 地圖編輯器增修保護區、且該宣告隨局持久化，同一份資料放兩處
+# 就會有兩個權威。本檔只負責 §10 G4 的另一半：對「怎麼打」的規則約束。
+#
+# 本想定的設計主張：**攻守兩方的火力自由度必須不同**。攻方求速決、火力政策放寬；
+# 守方彈藥有限且要打持久戰，反裝甲飛彈不能拿來打步兵。若兩方規則一樣，
+# 「守方的節約與選擇」這件事在 AAR 裡就完全看不出來。
+version: "1.0"
+
+# 未於令面指定 fire_policy 的 ENGAGE 令所採用的政策。未列的陣營維持引擎預設 FREE。
+default_fire_policy:
+  # 守方：ANTI_ARMOR_HOLD ＝ 反裝甲武器只對有效目標開火。
+  # **這條會咬人**：B-1-C 的 ATGM 只有 60 發（12 具發射器），拿去打紅軍的下車步兵，
+  # 等到主攻的戰車連上來時就沒有東西可以打了。節約彈藥在這場演習裡是會被評量的決心。
+  BLUE: ANTI_ARMOR_HOLD
+  # 攻方：突破作戰講求在守方預備隊到位前貫穿，火力運用不設額外預設限制。
+  RED: FREE
+
+weapon_restrictions:
+  # ── 條文一：紅軍不得使用多管火箭（**整場**）
+  #
+  # R-FA-B 確實是一個 MLRS_227 連（見 orbat/red.yaml），所以這條是會咬人的限制，
+  # 不是空條款——ROE 條文若沒有作用對象，載入器擋不到，AAR 也問不出東西。
+  #
+  # ⚠ 為什麼是「整場禁用」而不是「打到某個時機才解禁」：
+  #   ROE 是**開局快照**（`create_session_from_scenario` 存進 WargameSession.roe，
+  #   `sim_runtime` 於 runner 啟動時讀一次），白軍局中改 ROE 需重啟該局 runner 才生效。
+  #   所以「MSEL 事件一觸發，禁令自動解除」目前做不到——寫成那樣會是一條看起來會動、
+  #   實際上不會動的規則。本檔不假裝：禁令整場有效，白軍若真要解禁，
+  #   msel `red-mlrs-release-review` 會把那個決定發成一則狀況並記進 Ledger，
+  #   實際鬆綁得由白軍改 ROE 後重啟該局 runner（這是已知限制，不是本想定的疏漏）。
+  - faction: RED
+    forbid_templates: [MLRS_227]
+    reason: >-
+      MLRS_227 致命半徑 120 m、CEP 200 m，自二崙陣地射擊之散布圈涵蓋虎尾市區與
+      湖山水庫集水區；戰役級火力管制單位未就附帶損害與水源汙染風險核給授權。
+      本限制整場有效；解禁須由白軍變更該局 ROE（見 MSEL red-mlrs-release-review）。

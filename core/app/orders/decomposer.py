@@ -1,17 +1,24 @@
 """準則分解器（WP-A2）——**純同步純函數**，把一道任務推進一步並吐出低階令。
 
-## 簽名裡看得出來它不可能偷看
+## 簽名裡看得出來它自己不會偷看——但擋不住呼叫端餵髒資料
 
 ```python
 def step(mission, state, unit, world_view, *, tick) -> MissionStep
 ```
 
-`world_view` 是**已經過迷霧投影**的 `build_faction_context()` dict（LLM decider 看的同一份），
+`world_view` **必須**是已經過迷霧投影的 `build_faction_context()` dict（LLM decider 看的同一份），
 `unit` 是其中的一筆己方單位。本模組**不 import `app.models`、不 import `app.state.hot_state`**
 ——有一條測試釘住這件事。
 
 SPEC_V2 對本卡點名的陷阱是：「分解器讀的 world_view 必須走迷霧投影，否則 AI 經由任務分解
-偷看 ground truth，A1 白做」。讓「有沒有偷看」這個問題**看簽名就能回答**，比事後稽核可靠。
+偷看 ground truth，A1 白做」。
+
+⚠ **這一段原本寫成「`world_view` 是已經過迷霧投影的 dict」，是個陳述句——而它與事實不符**：
+唯一的生產呼叫端 `engine/mission_wiring._world_view` 餵的是 `ground_truth_enemies`（DB 全表）。
+import 白名單擋得住「分解器自己去查 DB」，**擋不住呼叫端把 ground truth 裝進 `known_enemies`**；
+於是那條白名單測試全綠，而陷阱本身照樣成立。故這裡改寫成**對呼叫端的要求**（MUST），
+並在接線層釘一條測試：未被偵測到的敵人不得出現在子令裡
+（`core/tests/unit/test_mission_fog.py`）。純度靠簽名看得出來，投影得靠呼叫端那一條測試。
 
 地形不走 world_view：地形是公開地理，不是秘密。路徑規劃仍由既有的 `PhysicsGateway`
 在預檢時處理——**地形與迷霧一旦共用同一個參數，「這裡有沒有洩漏」就不再是讀簽名能回答的問題**。

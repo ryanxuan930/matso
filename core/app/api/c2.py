@@ -14,6 +14,7 @@ POST /api/v1/sessions/{session_id}/requests/{rid}/decide 核覆
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,6 +34,7 @@ from app.c2.service import (
 )
 from app.cache import make_redis
 from app.config import Settings
+from app.db import default_session_factory
 from app.errors import (
     AuthForbiddenError,
     FactionInvalidError,
@@ -45,6 +47,7 @@ from app.models import SessionParticipant, User, WargameSession
 from app.models.enums import MessageKind, RequestKind, SeatRole, UserRole
 from app.models.tables import Message, Request, TacticalUnit
 from app.orders.precheck import PhysicsGateway
+from app.state.ledger import LedgerEvent, LedgerWriter
 from app.stream.faction_filter import is_omniscient, is_visible, is_white_cell
 from app.stream.publish import publish_event
 
@@ -517,7 +520,34 @@ def post_request(
     )
     # 申請送到核覆者席位（COMMANDER），與服務層生成的 REQUEST 信文同一受眾。
     _push(settings, session_id, "C2_REQUEST", {"request_id": r.id}, r.faction, "COMMANDER")
+    _ledger(
+        session_id,
+        LedgerEvent(
+            event_type="REQUEST_SUBMITTED",
+            tick=r.requested_at_tick or 0,
+            ai_decision={
+                "request_id": r.id,
+                "kind": r.kind.value,
+                "faction": r.faction,
+                "requested_by": r.requested_by_id,
+                "requested_seat": r.requested_seat.value if r.requested_seat else None,
+                # 配額用罄會直接落 DENIED（不是拒收）——那一刻要在帳本上看得到。
+                "status": r.status.value,
+            },
+        ),
+    )
     return _req_view(db, r)
+
+
+def _ledger(session_id: str, event: LedgerEvent) -> None:
+    """把 C2 工件的流轉落進事件帳本。
+
+    **申請與核覆過去只寫 `Request` 與 `Message` 兩張關聯表**，`/aar/*` 一律讀不到，
+    於是 AAR 敘事講不出「這一發是誰批的」——而那正是四席位 CPX 最該評量的一件事。
+    落帳失敗不可以擋住核覆本身：C2 的權威在關聯表，帳本是給檢討用的第二份紀錄。
+    """
+    with contextlib.suppress(Exception):
+        LedgerWriter(default_session_factory()).append(session_id, [event])
 
 
 @router.post("/{session_id}/requests/{rid}/decide", response_model=RequestView)
@@ -544,4 +574,19 @@ def post_decide(
     )
     # 申請送到核覆者席位（COMMANDER），與服務層生成的 REQUEST 信文同一受眾。
     _push(settings, session_id, "C2_REQUEST", {"request_id": r.id}, r.faction, "COMMANDER")
+    _ledger(
+        session_id,
+        LedgerEvent(
+            event_type="REQUEST_DECIDED",
+            tick=r.decided_at_tick or 0,
+            ai_decision={
+                "request_id": r.id,
+                "kind": r.kind.value,
+                "faction": r.faction,
+                "status": r.status.value,
+                "decided_by": r.decided_by_id,
+                "note": (r.decision_note or "")[:200],
+            },
+        ),
+    )
     return _req_view(db, r)

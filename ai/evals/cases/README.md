@@ -1,8 +1,27 @@
 # ai/evals/cases/ — 評測案例（WARBENCH 風格）
 
 每個 `*.yaml` 是一個案例，由 [`../case.schema.json`](../case.schema.json) 驗證。
-runner（`python -m matso_ai.evals.run`，O6.4/O6.6 實作）逐案跑本機模型 →
+runner（`python -m matso_ai.evals.run`）逐案跑模型 →
 用 `expect` 的**性質斷言**計分 → 彙總 SPEC_FULL §19.4 四門檻。
+
+## ⚠ 要跑出有意義的數字，必須指定 responder
+
+```bash
+uv run python -m matso_ai.evals.run --responder fallback          # 只驗管線（**不量品質**）
+uv run python -m matso_ai.evals.run --responder replay  --replay-dir <dir> --model <name>
+uv run python -m matso_ai.evals.run --responder openai --base-url <url> --model <name> \
+      [--mode AI_FULL] [--record-dir <dir>]
+```
+
+`fallback` 是 runner 自己組的佔位輸出（自問自答）：`orders`/`cited_documents` 恆空，
+IHL 與捏造引用率**結構上恆 0**。此模式報表會標明「品質門檻未實際量測」，gate 只驗 schema。
+**2026-07 之前 CLI 根本沒有這個參數**，於是 CI 那條 gate 從 O6.6 起量的其實是
+「jsonschema 有沒有裝好」——寫案例時請記得：沒有 responder，`expect` 寫得再好也沒人在量。
+
+離開碼：`0` 通過／`1` 門檻未過／`2` 量尺跑不起來（缺錄音、缺端點）。
+
+引用相關欄位只在**有語料可引**時計分（`--mode AI_FULL` 才會載入 `ai/rag/corpus/` 建索引；
+`AI_BARE` 依 §19.4 不計引用正確率，且任何引用一律視為捏造）。
 
 ## 三類壓力 × 對應門檻（§9.4 / §19.4）
 

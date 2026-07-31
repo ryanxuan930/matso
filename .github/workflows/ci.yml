@@ -36,10 +36,19 @@ jobs:
         run: uv run pytest -q --cov --cov-report=term -m "not benchmark"
       - name: Golden replay (SPEC_FULL §19.1)
         run: uv run pytest core/tests/replay -m golden -q --no-cov
-      # AI eval gate（SPEC_FULL §19.4 條件式）：用錄放/fallback mock，非真模型。
-      # 案例庫空 → schema-only + EVAL_CORPUS_EMPTY 警告（仍綠）；真模型 eval 為手動 workflow。
-      - name: AI eval gate (SPEC_FULL §19.4, replay mock)
-        run: uv run python -m matso_ai.evals.run
+      # ⚠ 這一條**不是 §19.4 的品質門檻**，是 schema 健檢——名字已據實正名（2026-07）。
+      # 它跑的是 fallback responder：runner 自己組 schema-valid 佔位輸出再自己拿 schema 驗它，
+      # 於是 orders/cited_documents 恆空 → IHL 違規率與捏造引用率**結構上恆 0**。
+      # 這條綠燈實際證明的是「案例載入 → schema 驗證」這條管線是通的，與模型品質無關。
+      #
+      # 要真的量品質必須 `--responder replay`（決定性重播），而**本 repo 尚無已錄的模型回應**
+      # ——錄製需一個可達的 vLLM/Ollama 端點（見 ai-eval-manual.yml 的 --record-dir）。
+      # 錄音進 repo 之後，把下面改成：
+      #   --responder replay --replay-dir ai/evals/recordings --model <錄製時的模型名>
+      # 「這個 gate 有能力變紅」則由上面 Unit tests 裡的 ai/tests/test_evals.py 守著
+      #（餵一個會犯規的 responder → run_evals 必須 FAIL），別讓它再度退化成永遠綠。
+      - name: AI eval schema check (fallback responder — NOT a quality gate)
+        run: uv run python -m matso_ai.evals.run --responder fallback
 
   frontend:
     name: Frontend lint / typecheck

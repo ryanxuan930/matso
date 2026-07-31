@@ -9,6 +9,7 @@
  */
 import { computed, ref } from 'vue'
 import type { components } from '~/types/api'
+import { dataTableLabel, sessionStatusLabel } from '~/composables/useLabels'
 import { fetchAllUsers } from '~/composables/useParticipants'
 import {
   AUDIT_ACTION_LABELS,
@@ -227,7 +228,7 @@ actorNames.value = Object.fromEntries(
           <li v-for="s in ex.sessions" :key="s.id">
             <a :href="`/session/${s.id}/cop`">{{ s.name }}</a>
             <span class="tag">{{ SESSION_ROLE_LABELS[s.session_role ?? ''] ?? '未指定' }}</span>
-            <span class="dim">{{ s.status }}</span>
+            <span class="dim">{{ sessionStatusLabel(s.status) }}</span>
             <button
               class="edit-btn"
               data-testid="detach-session"
@@ -349,7 +350,7 @@ actorNames.value = Object.fromEntries(
         <template v-if="ex.phase === 'ARCHIVED'">
           <div class="ex-sub">銷毀模式</div>
           <p v-if="!canDestroy" class="dim" data-testid="destroy-forbidden">
-            銷毀推演資料限系統管理員（ADMIN）。
+            銷毀推演資料限系統管理員。
           </p>
           <div v-else class="ex-destroy" data-testid="exercise-destroy">
             <button
@@ -394,11 +395,14 @@ actorNames.value = Object.fromEntries(
             >
               已銷毀 {{ destroyResult.result.sessions_destroyed }} 局；
               清除活狀態鍵 {{ destroyResult.result.redis_keys_deleted ?? 0 }} 個。
+              <!-- 表名是後端 ORM 類別名（`purge.py` 自省導出）。統裁要讀的是「刪掉了哪一類資料」，
+                   `IntelContact 305` 只有寫後端的人看得懂；查無對照仍原樣印英文表名。 -->
               <span
                 v-for="[table, n] in deletedRows(destroyResult.result)"
                 :key="table"
                 class="tag"
-              >{{ table }} {{ n }}</span>
+                :title="table"
+              >{{ dataTableLabel(table) }} {{ n }}</span>
             </div>
           </div>
         </template>

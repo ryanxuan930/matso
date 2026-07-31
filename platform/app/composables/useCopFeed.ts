@@ -102,6 +102,11 @@ export const EVENT_LABELS: Record<string, string> = {
   C2_REQUEST: '收到申請案，待核覆',
   // E2E stub 模式（settings.stub_gateway）才會發：真裁決由 kernel 產出。
   ORDER_VALIDATED: '指令已驗證',
+  // 人工下令被預檢擋下。**與 AI 護欄的 GUARDRAIL_INTERVENTION 分開**：
+  // 檢討時要分得出「人下了被擋」與「AI 想下被剔除」，那是兩種完全不同的事。
+  ORDER_REJECTED: '指令被拒（預檢未過）',
+  REQUEST_SUBMITTED: '提出申請',
+  REQUEST_DECIDED: '申請已核覆',
 }
 
 /**

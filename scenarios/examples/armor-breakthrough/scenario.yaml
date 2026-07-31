@@ -1,0 +1,186 @@
+# 官方想定 #4：裝甲突破（雲林平原 — 虎尾走廊）。SPEC_FULL §11.1 / §12.1；SPEC_V2 §V2.1 exit。
+#
+# 本想定存在的理由與另三個官方想定不同：
+#   tutorial-platoon 驗「載得進來」，battalion-defense 驗「一個編制打得起來」，
+#   joint-defense 驗「兩軍以上」——**本檔要驗的是「四個席位＋白軍誘導＋火協審批的一場迷你
+#   CPX 能不能從頭跑到尾，而且全程事件鏈可評量」**（SPEC_V2 V2.1 出場條文）。
+#   所以它不只是一張地圖：它同時把 WP-B5.1 席位分工、WP-B5.2/B5.3 申請—核覆—火協、
+#   WP-B2 MSEL 白軍誘導、WP-C2 障礙工兵、WP-C7 後勤、WP-C10.5 陣地變換串成一條線。
+#   任何一項退化成「宣告了但不生效」，跑這張想定就會露餡。
+name: Armor Breakthrough — Yunlin Plain / Huwei Corridor
+version: "1.0"
+description: |
+  【一般狀況】
+  X 年 10 月，紅軍第 3 裝甲旅（欠）於雲林平原西側完成攻擊準備，企圖沿虎尾走廊
+  （東西向，緯線 23.72–23.75 之間）實施突破，貫穿藍軍主要防禦地帶，向東奪取
+  高鐵雲林站—斗六交流道地區與藍軍旅指揮所，切斷雲林縱深的東西向聯絡線。
+  藍軍第 1 機械化步兵旅（欠）以既設陣地為主要防禦地帶，兩營在線（南、北各一）、
+  一個裝甲營控置為旅預備隊，以障礙遲滯、以反裝甲飛彈與砲兵殺傷，逐次消耗紅軍攻勢動能。
+
+  【特別狀況】
+  一、H 時定於 04:00（見 day_night：tick 0 ＝ 04:00，日出在 tick 80）。紅軍刻意選在
+      夜暗實施攻擊發起，前 80 分鐘雙方的偵測距離都被壓縮——這是攻方買到的第一段時間。
+  二、虎尾鎮立醫院位於主要防禦地帶正面，列為 NO_STRIKE（硬阻擋）；虎尾溪自來水取水口
+      與高鐵雲林站區變電所列為 RESTRICTED_FIRE（不硬擋，但須明確 override 並記入 Ledger）。
+      高鐵站區恰好落在紅軍的作戰目標框內——「要奪佔但不准隨便打壞」是本場給紅軍的兩難。
+  三、本場**要求曲射火協**（indirect_fire_requires_approval: true）：任何砲兵/迫砲的
+      ENGAGE 與 FIRE_MISSION 都必須掛一張已核准的 FIRE_SUPPORT 申請單。這條是給
+      火力支援協調官（FSO）與指揮官的核心互動——FSO 提申請、指揮官核准、FSO 才打得出去。
+      全局的申請配額見 request_quotas（是**整局總量**不是每日，SimClock 沒有模擬日概念）。
+  四、紅軍的多管火箭營整場受 ROE 禁用（見 roe.yaml）：虎尾市區與湖山水庫集水區都在
+      MLRS_227 的散布圈內。它打得到卻不准打，這是刻意的。
+  五、紅軍砲兵是自走砲且**未標 fixed**，故 survivability_move 會咬到它：打滿兩次火力任務
+      就自動換陣地。藍軍砲兵已構工、已測地，標 fixed（想定作者的明確宣告優先於本開關）。
+
+  【統裁誘導】
+  白軍以 msel.yaml 注入十一則狀況，其中三則是 `manual`（白軍扣板機才會發生）：
+  旅預備隊解除管制、軍團配屬反裝甲連（SPAWN_UNITS，會讓單位數真的 +1）、以及
+  火箭砲兵禁令覆議。其餘為時間、位置、`after_ticks_of`、`held_for` 與複合條件觸發。
+  統裁重點：預備隊投入時機、火協申請的優先序、以及障礙與火力的協調。
+
+  【四個席位各做什麼】
+  - COMMANDER：核覆 FIRE_SUPPORT／RESUPPLY_VOUCHER 申請單、決定預備隊投入時機。
+  - S3_OPS   ：MOVE／MISSION／POSTURE／FORMATION／ENGINEER——設障、破障、部署與逆襲。
+  - FSO_FIRES：ENGAGE／FIRE_MISSION——提火協申請、分配砲兵與迫砲、避開禁射區。
+  - S4_LOG   ：RESUPPLY——裝甲營一旦逆襲就會拉長油料線，補給前推點 B-LOG-A 是它的手。
+# [min_lng, min_lat, max_lng, max_lat]。西起紅軍後勤與砲兵陣地，東至藍軍旅指揮所，
+# 南北含兩條攻擊軸線與四個保護區。約 0.24° × 0.09°。
+#
+# ⚠ **座標必須選在履帶車走得通、通視不被高地擋死的地方，而且必須是量出來的。**
+#   這一段是踩兩次坑才寫的：
+#   (1) 第一版設在中央山脈（121.0E/23.7N），MOVE 預覽回 `terrain_impassable`、
+#       400 m 的直射交戰被 28 m 的地形擋掉視線——地形引擎判得完全正確，錯的是想定選錯地方。
+#   (2) 第二版改到雲林平原、憑地圖直覺沿緯線 23.700 排兵，照樣不通：本圖幅的 landcover
+#       把 **120.20 以西幾乎整片、以及若干河道／魚塭帶判為 WATER**（AO 內 685 格 res-8
+#       裡有 150 格對履帶不可通行），緯線 23.700 在 120.256–120.276 正好卡著一段水域，
+#       於是 A* 判不可達、退回直線、預覽回 `terrain_impassable=true`。
+#   最後的作法：用 terrain 的 `GetCellBatch` 把 AO 內**每一格** res-8 掃出來、算連通元件，
+#   把全部 35 個單位放進**同一個連通的可通行區**（最大元件 514 格），再逐一以
+#   `POST /sessions/{id}/movement/preview` 實測 feasible=true / terrain_impassable=false。
+#   **要挪座標請先重跑這兩項檢查**——地圖上看起來是平原，資料上可能是水。
+bbox: [120.22, 23.69, 120.46, 23.78]
+# 迷你 CPX：四席位同時操作，用 WEGO 讓兩方同時下令、同時裁決，先手方不會吃掉全部資訊優勢。
+mode: WEGO
+tick_rate_ms: 60000  # 1 tick ＝ 1 分模擬時間。**絕對不要寫 1000**——那是 schema 預設值
+                     # 被原封帶過來，以 1 秒/tick 跑，一個排一 tick 只走 1.4 公尺，
+                     # 而且工事/壓制的時間尺度會整個失真（見 tutorial-platoon 的註解）。
+                     # 下方所有 at_tick 都可直接讀成分鐘：180 ＝ H+3 小時。
+hex_resolution: 8
+# 旅級單位存在（B-BDE / R-BDE）→ 營級以上走 Lanchester 聚合裁決（SPEC_FULL §7.1）；
+# 連/排級的近戰仍走逐單位裁決。本場兩條路徑都會被走到。
+aggregate_adjudication_level: BATTALION
+factions:
+  - { id: BLUE, display_name: 藍軍（第 1 機步旅，守）, color: "#3b7dd8" }
+  - { id: RED, display_name: 紅軍（第 3 裝甲旅，攻）, color: "#d83b3b" }
+relations:
+  - [BLUE, RED, HOSTILE]
+# WP-C4a 晝夜：H 時 04:00 攻擊發起，tick 80（05:20）日出。
+# 用**想定參數**而非天文計算是刻意的：兵推要的是「這場在夜裡打還是白天打」。
+day_night:
+  start_min: 240 # tick 0 ＝ 04:00
+  sunrise_min: 320 # 05:20 日出 → tick 80 天亮
+  sunset_min: 1110 # 18:30 日落（本場跑不到，列出來是為了讓宣告完整）
+# WP-B5.2 申請單配額（**整局總量**，不是每日——SimClock 沒有「模擬日」概念，
+# 硬做每日重置會是假的）。FIRE_SUPPORT 給 10 張是計算過的：本場曲射火力必須經核准，
+# 給太多等於沒有配額、給太少則 FSO 一開場就沒事做。
+request_quotas:
+  FIRE_SUPPORT: 10
+  AIR_RECON: 2
+  RESUPPLY_VOUCHER: 6
+# WP-B5.3 曲射火協：ARTILLERY/MISSILE 的 ENGAGE 與**所有** FIRE_MISSION 都須掛已核准的
+# FIRE_SUPPORT 申請單。這是 FSO ↔ COMMANDER 那條互動能不能被評量的前提——
+# 沒開這個開關，FSO 席位在這場演習裡跟「有 ENGAGE 權限的人」沒有差別。
+indirect_fire_requires_approval: true
+# WP-C10.5 陣地變換：砲兵打滿 N 次火力任務後自動位移，避免被反砲兵火力找到。
+# 計的是**火力任務次數**不是發數（發數由下令者自填，不是穩定的單位）。
+# 只有能自走且**未標 fixed** 的砲會被排程 → 本場只咬到紅軍的自走砲連（R-FA-A）。
+# 這個不對稱是刻意的：守方砲兵已構工、有掩體與偽裝，換陣地反而放棄防護；
+# 攻方砲兵在開闊地伴隨前進，被反砲兵抓到就沒有第二次機會。
+survivability_move:
+  enabled: true
+  missions_before_move: 2
+  min_km: 1.0
+  max_km: 2.5
+# ⚠ **`strength_below` 的 value 是「該陣營所有單位 strength 的總和」，不是百分比。**
+#    這是本 codebase 最容易寫錯的一個地方：`ai_loop/victory.build_trigger_context` 與
+#    `scenario/session_msel.make_context_fn` 都是把每個單位的 strength **相加**
+#    （每單位開局 100），所以 18 個單位的紅軍開局總戰力是 1800，不是 100。
+#    **已實測**：開局讀 `GET /state` 逐單位加總得 BLUE 1700 / RED 1800。
+#    寫 `value: 30` 以為是「跌破三成」的話，實際上是要求打到只剩 0.3 個單位——
+#    等於整場都不會判勝負。本檔一律用絕對總量，並在每條旁邊附上換算。
+victory_conditions:
+  # 藍軍：撐過 H+1 小時，且把紅軍打到總戰力低於 1100（＝ 1800 的 61%，折損約四成）
+  # ——攻勢頓挫即算守成。DSL 沒有 not，「守住某地」寫不出來，故改寫成攻方戰力門檻。
+  #
+  # `time` 那一項不是裝飾：勝負監視器是**獨立於 tick 的輪詢**，若在熱狀態播種完成前
+  # 就評估，各陣營戰力和會是 0，`strength_below` 立刻成立 → 開局瞬間判定藍軍獲勝。
+  # 加一道時間下限把那個窗口關掉，順帶表達「守方至少要撐一小時才算守成」。
+  - faction: BLUE
+    condition:
+      type: all
+      of:
+        - { type: time, at_tick: 60 }
+        - { type: strength_below, faction: RED, value: 1100 }
+  # 紅軍：任一單位進入 高鐵雲林站—旅指揮所地區（作戰目標），或把藍軍打到總戰力低於 850
+  # （＝ 1700 的一半）。目標框西界 120.392 在**全部紅軍起始位置以東**
+  # （起始最東為 R-1-1／R-2-1 的 120.302，相距約 9.2 km），故開局不會誤觸。
+  - faction: RED
+    condition:
+      type: any
+      of:
+        - { type: unit_in_region, faction: RED, bbox: [120.392, 23.716, 120.452, 23.766] }
+        - type: all
+          of:
+            - { type: time, at_tick: 60 }
+            - { type: strength_below, faction: BLUE, value: 850 }
+# WP-A3 禁射區。幾何一律 GeoJSON 的 [lng, lat] 順序——寫反了執行期一個目標都攔不到，
+# 而載入器算不出 h3 格時會直接拒載（安全機制的沉默失效比缺功能危險）。
+# 圓半徑取 ≥ 700 m、多邊形取 ≥ 1.3 km 見方，確保在 res-8（約 0.46 km²/格）下算得出格。
+#
+# ⚠ **四個區都刻意不包含任何一個單位的起始位置**。理由見 joint-defense 的教訓：
+#   若把部隊放進硬阻擋區，那支部隊就變成無敵——安全機制被拿來當戰術掩護，
+#   比沒有保護還糟。每個座標都對照過（最近的是 B-ENG，距醫院圓心 1.43 km）。
+no_strike_zones:
+  # 醫院：硬阻擋，且**位於兩條軸線之間的主要防禦地帶正面**。紅軍的攻擊準備射擊只要
+  # 把散布圈往中間修，就會踩進來——這是給攻方的約束，而且是最難閃的那一種。
+  - name: 虎尾鎮立醫院
+    zone_class: NO_STRIKE
+    geometry: { type: circle, center: [120.330, 23.737], radius_m: 800 }
+  # 安置中心：硬阻擋，位於**紅軍北翼後方**。藍軍要對紅軍北軸線做縱深射擊就得在保護區
+  # 邊緣做射擊修正。雙方各有一個「敵人躲在保護區旁」的難題是刻意的，規則不該只綁一方。
+  - name: 二崙鄉平民安置中心
+    zone_class: NO_STRIKE
+    geometry: { type: circle, center: [120.268, 23.768], radius_m: 700 }
+  # 取水口：不硬擋、升白軍確認。位於南軸線南側，堤防同時是紅軍南翼的天然掩蔽——
+  # 用 RESTRICTED_FIRE 而非 NO_STRIKE，才不會讓紅軍只要貼著堤防走就無敵。
+  - name: 虎尾溪自來水取水口暨堤防
+    zone_class: RESTRICTED_FIRE
+    geometry:
+      type: polygon
+      ring:
+        [
+          [120.286, 23.700],
+          [120.304, 23.700],
+          [120.304, 23.712],
+          [120.286, 23.712],
+        ]
+  # 高鐵站區變電所：不硬擋、升白軍確認。**與紅軍作戰目標框重疊是刻意的**——
+  # 「要奪佔但不准隨便打壞」正是本場給紅軍指揮官的兩難（同 battalion-defense 的大壩）。
+  - name: 高鐵雲林站區暨變電所
+    zone_class: RESTRICTED_FIRE
+    geometry:
+      type: polygon
+      ring:
+        [
+          [120.396, 23.722],
+          [120.416, 23.722],
+          [120.416, 23.738],
+          [120.396, 23.738],
+        ]
+files:
+  orbat:
+    BLUE: orbat/blue.yaml
+    RED: orbat/red.yaml
+  msel: msel.yaml
+  roe: roe.yaml
+  overrides_dir: overrides

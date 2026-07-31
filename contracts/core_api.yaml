@@ -773,6 +773,64 @@ components:
         lng: { type: number }
         health: { type: number, description: "效能%（0–100）" }
         strength: { type: number, description: 戰力點（人員/平台數量級） }
+    AarStats:
+      type: object
+      description: >-
+        AAR 統計指標。**`attempts` 與 `engagements_fired` 刻意分成兩個欄位**：
+        「下令交火幾次」與「真的射出去幾次」是兩件事，
+        用一個數字承載兩種語意正是 WP-D6.2 那個 bug 的成因。
+      required:
+        [
+          total_events,
+          engagements,
+          attempts,
+          engagements_fired,
+          hits,
+          hit_rate,
+          total_damage,
+          guardrail_blocks,
+          damage_by_faction,
+          event_counts,
+          stats_version,
+        ]
+      properties:
+        total_events: { type: integer }
+        engagements:
+          type: integer
+          description: 交戰事件總數（個體＋聚合，含被拒的）
+        attempts:
+          type: integer
+          description: 個體交戰的裁決次數（含 REJECTED）——「下令交火幾次」
+        engagements_fired:
+          type: integer
+          description: >-
+            其中真的射出去的次數（`attempts` 扣掉 REJECTED）。**這是命中率的分母**：
+            超射程/無彈/無視線/ROE 不准打都是一發未發，不該用來稀釋火力效益。
+        hits:
+          type: integer
+          description: >-
+            裁決結果為 HIT 的個體交戰數。判定依 `ai_decision.status`
+            （裁決層 `Resolution` 的值域）——齊射與聯合兵種路徑只寫這個鍵。
+            ⚠ 齊射/聯合兵種走期望值，其 HIT 的定義是「造成了戰力損失」，
+            不是彈著命中；以這兩條路徑為主的局，本欄實質是**有效交戰數**。
+        hit_rate: { type: number, description: hits ÷ engagements_fired }
+        total_damage: { type: number, description: 全場戰損總量（雙方相加） }
+        guardrail_blocks: { type: integer }
+        damage_by_faction:
+          type: object
+          additionalProperties: { type: number }
+          description: >-
+            各陣營**承受**的總戰損。聚合交戰按 `initiator_loss`/`target_loss` 雙側分別歸帳
+            （其 `damage_calc` 是雙方相加，直接用會把攻方傷亡記到守方頭上）；
+            面射擊按 `losses_by_unit` 逐單位歸帳。
+        event_counts:
+          type: object
+          additionalProperties: { type: integer }
+        stats_version:
+          type: integer
+          description: >-
+            統計口徑版本。v1 的分子只認單發路徑、分母含被拒交戰、聚合戰損雙側都記在守方；
+            v2（WP-D6.2）三者皆已修正。**跨版本的數字不可比**——舊封存包沒有這個欄位。
     StateSnapshotView:
       type: object
       description: >-
@@ -1071,6 +1129,29 @@ components:
         platform_count: { type: integer, description: 實際生效的建制數（明示 attributes → 人數 → 依級別導出） }
         attributes: { type: object }
         restart_required: { type: boolean, default: false, description: 本次編輯是否有需重啟 runner 才生效的項目（unit_level） }
+    ScenarioBundle:
+      type: object
+      required: [scenario]
+      description: |
+        想定包。各鍵對應 `scenarios/examples/<name>/` 目錄下的一個檔案／子目錄。
+        **新增鍵時載入器（`core/app/scenario/loader.py`）要同步讀，否則就是靜默丟資料。**
+      properties:
+        scenario: { type: object, description: "scenario.yaml（見 contracts/scenario.schema.json）" }
+        orbat: { type: object, description: "{faction: orbat.yaml 內容}（見 contracts/orbat.schema.json）" }
+        msel: { type: [object, "null"], description: "msel.yaml（狀況腳本）" }
+        roe: { type: [object, "null"], description: "roe.yaml（各陣營交戰規則：預設火力政策與禁用武器）" }
+        overrides:
+          type: [object, "null"]
+          description: "overrides/ 目錄；目前只有 mobility_matrix（想定級機動覆寫）"
+          properties:
+            mobility_matrix: { type: object }
+    ScenarioSaved:
+      type: object
+      required: [id, name, version]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        version: { type: string }
     EquipmentStateEdit:
       type: object
       required: [current_state]
@@ -1240,6 +1321,18 @@ components:
         resolved_at_tick: { type: [integer, "null"] }
         target_unit_id: { type: [string, "null"], description: ENGAGE 目標單位 }
         target_h3: { type: [string, "null"], description: MOVE 目的地 hex }
+        issuer_id:
+          type: [string, "null"]
+          description: >-
+            下令者的使用者 id。**行動後檢討要追究「這道逆襲令是作戰官還是指揮官下的」，
+            靠的就是這一欄**——Order 表一直存著 issuerId，但過去沒有任何讀取端回它，
+            於是四席位演習的分工在 AAR 上完全不可評量。
+        payload:
+          type: [object, "null"]
+          description: >-
+            下令當時的原始載荷。**FIRE_MISSION 打的是座標**，
+            target_unit_id / target_h3 兩欄皆為 null——不回 payload 的話，
+            一筆「有人想砲擊醫院」的 REJECTED 紀錄說得出是誰，卻說不出打哪裡。
         parent_order_id:
           type: [string, "null"]
           description: >-
@@ -2505,9 +2598,46 @@ paths:
               schema: { $ref: "#/components/schemas/AarReplayStates" }
         "403": { description: Forbidden }
         "404": { description: Session not found }
+  /sessions/{id}/aar/stats:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getAarStats
+      description: >-
+        AAR 統計指標（§14.2）。**分子/分母的口徑見 `AarStats.stats_version`**——
+        WP-D6.2 改過一次語意，跨版本的數字不可直接相比。
+        存取控制與其他 AAR 端點相同；非全知觀測者取到的是**經迷霧投影後**的事件流，
+        故其戰損數字本來就會比全知少（面射擊的逐單位戰損會被剝掉）。
+      responses:
+        "200":
+          description: AAR metrics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AarStats" }
+        "403": { description: Forbidden }
+        "404": { description: Session not found }
   /scenarios:
     get: { operationId: listScenarios, responses: { "200": { description: Scenarios } } }
-    post: { operationId: uploadScenario, responses: { "201": { description: Validated & stored } } }
+    post:
+      operationId: uploadScenario
+      security: [{ bearerAuth: [] }]
+      description: |
+        存一份想定包（存前全量驗證，錯誤帶精確路徑）。限統裁/管理。
+
+        **請求體的鍵集必須與載入器讀的一致**——`roe` 與 `overrides` 曾經不在宣告裡，
+        於是走 HTTP 存進來的想定，交戰規則與機動覆寫會靜默消失且無錯誤訊息。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScenarioBundle" }
+      responses:
+        "200":
+          description: Validated & stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScenarioSaved" }
+        "403": { description: Not an exercise director, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Scenario invalid (precise path in message), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /scenarios/{sid}:
     parameters: [{ $ref: "#/components/parameters/ScenarioId" }]
     get:

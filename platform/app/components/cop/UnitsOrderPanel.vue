@@ -10,6 +10,7 @@ import { POSTURE_LABELS, factionColor, healthColor } from '~/composables/useUnit
 // 明示 import 而不靠 Nuxt 自動匯入：自動匯入的型別宣告是 `nuxt prepare` 產生的，
 // 新增的匯出在重新產生之前 `vue-tsc` 看不到——那會表現成一條與程式無關的紅燈。
 import { TEMPO_OPTS, rangeLabel } from '~/composables/useCopOrdering'
+import { precheckLabel } from '~/composables/useLabels'
 import type { UnitView } from '~/composables/useOrders'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useCopOrdering } from '~/composables/useCopOrdering'
@@ -145,7 +146,7 @@ const fratricideTarget = computed(
     </ul>
   </div>
   <PanelLoading v-if="loading" />
-  <div v-else-if="!unitCount" class="empty">（此 session 無可下令單位）</div>
+  <div v-else-if="!unitCount" class="empty">（本推演局無可下令單位）</div>
 </div>
 
 <div v-if="selectedId" class="order" data-testid="order-panel">
@@ -230,12 +231,14 @@ const fratricideTarget = computed(
           v-if="ordering.movePreview.est_attrition > 0"
           class="mv-attr"
           data-testid="move-attrition"
-          title="行軍磨耗（戰力點）＝距離 × 機動 profile 磨耗率 × 節奏倍率。強穿阻礙的隨機加成不含在內。"
+          title="行軍耗損（戰力點）＝距離 × 機動能力磨耗率 × 節奏倍率。強穿阻礙的隨機加成不含在內。"
         >行軍耗損 <b>{{ ordering.movePreview.est_attrition.toFixed(1) }}</b> 戰力</span>
       </div>
       <!-- #80/#81：機動能力 + 實際速度（已含地形/坡度調變） -->
       <div class="mv-row mv-sub">
-        <span :title="`機動 profile（由編裝導出）：${ordering.movePreview.mobility_profile}`">
+        <!-- 原本 tooltip 直接內插 `mobility_profile`，於是滑上去看到的是 `TRACKED`——
+             同一行左邊已經有中文了，代號只是把後端欄位攤給使用者看。 -->
+        <span title="機動能力由編裝導出；速度已含地形與坡度調變">
           <i class="pi pi-forward" /> {{ mobilityLabel(ordering.movePreview.mobility_profile) }}
           <b>{{ ordering.movePreview.speed_kmh.toFixed(1) }}</b> km/h
         </span>
@@ -439,8 +442,11 @@ const fratricideTarget = computed(
         data-testid="engineer-feature-id"
       >
     </label>
+    <!-- 「工兵資格」的權威判準是後端 `is_engineer()`：兵科（branch）為工兵，或舊資料的
+         attributes.unit_kind。**畫面上只講兵科**——那是使用者真的按得到的那一格（單位屬性
+         編輯器的「兵科」下拉），寫欄位名等於叫人去找一個介面上不存在的東西。 -->
     <div class="hint">
-      ⚠ 須工兵單位（ORBAT 的 <code>unit_kind=ENGINEER</code>）且距作業點 500 m 內。
+      ⚠ 須工兵單位（單位屬性的「兵科」設為「工兵」）且距作業點 500 m 內。
       破障/設障各有工時（雷區約 45 分鐘、斷橋約 2 小時），**完工才會改變地圖**。
     </div>
   </template>
@@ -544,9 +550,11 @@ const fratricideTarget = computed(
     <div :class="ordering.precheck.feasible ? 'ok' : 'bad'">
       預檢：{{ ordering.precheck.feasible ? '可行' : '不可行' }}
     </div>
+    <!-- 預檢項目名是後端的內部鍵（`line_of_sight`／`trajectory`…）。逐條印英文等於要參謀
+         自己猜是哪一關沒過——`useLabels.PRECHECK_LABELS` 就是為此建的；查無仍原樣印代號。 -->
     <ul>
       <li v-for="(c, i) in ordering.precheck.checks" :key="i">
-        {{ c.passed ? '✓' : '✗' }} {{ c.name }} <span v-if="c.detail">— {{ c.detail }}</span>
+        {{ c.passed ? '✓' : '✗' }} {{ precheckLabel(c.name) }} <span v-if="c.detail">— {{ c.detail }}</span>
       </li>
     </ul>
   </div>

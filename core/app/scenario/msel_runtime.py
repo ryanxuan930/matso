@@ -177,7 +177,28 @@ class MselRuntime:
         if not self._entries:
             return []  # 沒有 MSEL 的局：完全不動作（既有局零行為變更）
         events: list[LedgerEvent] = []
-        for item in evaluate_msel(self._entries, self._context_fn(tick), self.memory):
+        # **組脈絡與評估條件也要在防護內。**
+        # 這個 try 原本只包住 applier，於是 `_context_fn(tick)` 一炸就整局停擺——
+        # 而那正是真實發生過的事：`session_msel.make_context_fn` 有一行
+        # `dict(...tuples())` 讓每個有 MSEL 的局每 tick 崩潰、tick 恆停在 0。
+        # 註解當時已經寫著「一則注入壞掉不得讓整局停擺」，但防護範圍畫錯了地方。
+        try:
+            triggered = list(evaluate_msel(self._entries, self._context_fn(tick), self.memory))
+        except Exception as err:
+            _LOG.exception("MSEL 脈絡組建或條件評估失敗（tick %s）", tick)
+            return [
+                LedgerEvent(
+                    event_type="MSEL_INJECT_FAILED",
+                    tick=tick,
+                    ai_decision={
+                        "msel_id": "",
+                        "reason": type(err).__name__,
+                        "reason_detail": str(err)[:200],
+                        "stage": "context",
+                    },
+                )
+            ]
+        for item in triggered:
             events.append(_inject_event(item, tick))
             if self._applier is None:
                 continue

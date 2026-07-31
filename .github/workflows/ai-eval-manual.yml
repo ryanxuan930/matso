@@ -1,22 +1,37 @@
-# 真模型 AI eval（SPEC_FULL §19.4）——**手動觸發**。
-# CI 的每次 push 只跑 fallback/replay mock（見 ci.yml 的 "AI eval gate"）；真模型 eval 成本高、
-# 需可達的 vLLM/OpenAI-compatible 端點，故獨立為手動 workflow。
+# 真模型 AI eval（SPEC_FULL §19.4 四門檻）——**手動觸發**。
+# CI 的每次 push 只跑 fallback responder ＝ schema 健檢（見 ci.yml 的 "AI eval schema check"）；
+# 真模型 eval 成本高、需可達的 vLLM/OpenAI-compatible 端點，故獨立為手動 workflow。
 #
-# 前置：需一個可達的模型端點（本機 vLLM 經 self-hosted runner，或臨時開放的 endpoint）。
-# 未提供端點時，runner 退回 fallback responder（僅驗管線，等同 CI）——輸出會標明未跑真模型。
+# ⚠ **沒有端點就直接紅**（runner 以離開碼 2 中止），不再「退回 fallback 然後綠燈」——
+# 一條名為「真模型 eval」卻其實沒碰到模型的綠燈，比沒有這條 workflow 還糟。
+#
+# 順帶錄 fixture：`--record-dir` 會把每個 (prompt→回應) 寫成 ReplayClient 讀得懂的檔案，
+# 跑完由 artifact 下載、commit 進 repo 後，CI 那條就能改用 `--responder replay`
+# （決定性、零網路）真的量品質——這是目前 CI 拿不到品質數字的唯一缺口。
 name: AI Eval (manual, real model)
 
 on:
   workflow_dispatch:
     inputs:
       model_base_url:
-        description: "OpenAI-compatible 端點（留空＝fallback mock，不驗模型品質）"
-        required: false
+        description: "OpenAI-compatible 端點（必填；留空＝本 job 直接失敗，不會假跑）"
+        required: true
         default: ""
       model_name:
-        description: "模型名（vLLM 上的 model/adapter）"
-        required: false
+        description: "模型名（vLLM/Ollama 上的 model 名）"
+        required: true
         default: ""
+      mode:
+        description: "AI 模式（§9.0）。AI_BARE 不計引用正確率（無庫可引）；AI_FULL 才量引用"
+        required: true
+        type: choice
+        options: [AI_BARE, AI_FULL]
+        default: AI_BARE
+      record_fixtures:
+        description: "把回應錄成 replay fixture（供日後 CI 決定性重播）"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   eval:
@@ -28,11 +43,23 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
-      - run: uv run python ops/tools/gen_proto.py
-      # 真模型 responder 的接線（RoleManager + OpenAICompatibleClient → run_evals responder）屬
-      # 部署層；端點就緒後於此注入。目前執行 runner（案例空→schema-only 警告；有案例→fallback）。
-      - name: Run eval
+      # 真模型 responder：RoleManager + OpenAICompatibleClient（--adapter base ＝單一模型，
+      # 不套註冊表的 per-role LoRA 名，否則會拿 opfor-v1 當 model 名去打端點而 404）。
+      - name: Run eval against the real model
         env:
-          OPENAI_BASE_URL: ${{ inputs.model_base_url }}
-          MATSO_LLM_MODEL: ${{ inputs.model_name }}
-        run: uv run python -m matso_ai.evals.run
+          OPENAI_API_KEY: ${{ secrets.MATSO_LLM_API_KEY }}
+        run: |
+          uv run python -m matso_ai.evals.run \
+            --responder openai \
+            --base-url '${{ inputs.model_base_url }}' \
+            --model '${{ inputs.model_name }}' \
+            --mode '${{ inputs.mode }}' \
+            --adapter base \
+            ${{ inputs.record_fixtures && '--record-dir ai/evals/recordings' || '' }}
+      - name: Upload replay fixtures
+        if: ${{ inputs.record_fixtures && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-recordings
+          path: ai/evals/recordings
+          if-no-files-found: warn

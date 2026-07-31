@@ -8,7 +8,7 @@
  * 故 `editor.drawLabel` 可直接 v-model，型別由 composable 的回傳型別保證。
  */
 import { factionColor } from '~/composables/useUnits'
-import { featureDisplayColor, ZONE_CLASSES } from '~/composables/useMapFeatures'
+import { FEATURE_KINDS, featureDisplayColor, ZONE_CLASSES } from '~/composables/useMapFeatures'
 import type { UnwrapNestedRefs } from 'vue'
 import type { useMapEditor } from '~/composables/useMapEditor'
 
@@ -32,6 +32,15 @@ defineProps<{
 }>()
 
 defineEmits<{ (e: 'toggle-hidden', id: string): void }>()
+
+/**
+ * 標註類別的中文。**沿用繪製下拉的同一份 `FEATURE_KINDS`**，不另立對照表——
+ * 清單與編輯區過去直接印 `kind`，於是沒取名的標註在清單上顯示成 `OBSTACLE`。
+ * 另抄一份到 useLabels 只會讓兩邊漂移；查無仍原樣回傳（未來新增類別時看得到那個代號）。
+ */
+function featureKindLabel(kind: string): string {
+  return FEATURE_KINDS.find((k) => k.value === kind)?.label ?? kind
+}
 
 /** WP-C2 障礙型別。與 `core/app/adjudication/obstacles.py` 的 `ObstacleType` 一致。 */
 const OBSTACLE_TYPES = [
@@ -160,7 +169,7 @@ const OBSTACLE_TYPES = [
       @click="editor.onFeatureClick({ id: f.id })"
     >
       <span class="fdot" :style="{ background: featureDisplayColor(f) }" />
-      <span class="fname">{{ f.label || f.kind }}</span>
+      <span class="fname">{{ f.label || featureKindLabel(f.kind) }}</span>
       <!-- #92 歸屬陣營：共同層標「共同」，否則以該陣營色點+代號標示 -->
       <span
         class="fown"
@@ -191,7 +200,7 @@ const OBSTACLE_TYPES = [
 </div>
 <!-- 選取特徵的屬性編輯（#11）：名稱/顏色/備註/高度 → PATCH。 -->
 <div v-if="editor.selectedFeature" class="me-edit" data-testid="feature-edit">
-  <div class="me-sub">編輯：{{ editor.selectedFeature.kind }}</div>
+  <div class="me-sub">編輯：{{ featureKindLabel(editor.selectedFeature.kind) }}</div>
   <!-- #99 整形操作說明（控制點是地圖上的互動，面板裡看不到 → 需明講怎麼用）。
        #99b 未解鎖時顯示上鎖狀態＋解鎖鈕，讓「為什麼拖不動」有答案。 -->
   <div v-if="editor.canEditSelectedFeature" class="me-hint" data-testid="reshape-hint">
@@ -267,7 +276,7 @@ const OBSTACLE_TYPES = [
     <i class="pi pi-ban" />
     {{
       editor.editFeatZone === 'NO_STRIKE'
-        ? '此區內的目標不得射擊：AI 的交戰令會被護欄 G4 剔除，人員下令一律被拒。'
+        ? '此區內的目標不得射擊：AI 的交戰令會被護欄剔除，人員下令一律被拒。'
         : '此區內的目標需確認才可射擊：AI 令保留但升白軍確認，人員須明確勾選確認且會留痕。'
     }}
   </div>
