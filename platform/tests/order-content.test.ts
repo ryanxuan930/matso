@@ -139,3 +139,29 @@ test('還在進行中的階段不編一個時長出來', () => {
   assert.match(page, /leg\.duration_ticks != null/)
   assert.match(page, /（仍在此階段）/)
 })
+
+test('AAR 型別走契約生成，不再手抄 interface（G5）', () => {
+  /**
+   * 抓的病：`useAar.ts` 曾經手寫 `AarReplay`／`AarReplayStates`／`AarReport`／`AarStats`
+   * 四份 interface，而契約與 `types/api.ts` 早就有（或本輪補上）對應的定義。
+   * 契約先行做到一半、前端沒接：後端改個欄位名，型別檢查照樣過，畫面靜默變空白。
+   *
+   * ⚠ `AarStats` 是**刻意的例外**：它從契約推導但把 `stats_version` 放寬成 optional，
+   * 因為欄位缺席正是要示警的情況（前端新、後端容器舊）。這條同時釘住那個例外，
+   * 免得後人「順手統一」把它改回必填而讓版本落差偵測失效。
+   */
+  const src = readSrc('composables/useAar.ts')
+  for (const name of ['AarReplay', 'AarReplayStates', 'AarReport']) {
+    assert.match(
+      src,
+      new RegExp(`export type ${name} = components\\['schemas'\\]\\['${name}'\\]`),
+      `${name} 沒有走契約生成型別`,
+    )
+  }
+  assert.ok(!/export interface Aar/.test(src), 'useAar.ts 仍有手寫的 Aar* interface')
+  assert.match(
+    src,
+    /Omit<components\['schemas'\]\['AarStats'\], 'stats_version'> & \{\s*stats_version\?: number/,
+    'AarStats 的刻意放寬不見了——版本落差偵測會失效',
+  )
+})

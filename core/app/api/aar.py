@@ -27,6 +27,49 @@ from app.stream.faction_filter import is_omniscient
 router = APIRouter(prefix="/api/v1/sessions", tags=["aar"])
 
 
+class AarTimelineFrameView(BaseModel):
+    """時間軸重播的一格：有事件的 tick 與該 tick 的事件型別。"""
+
+    tick: int
+    event_types: list[str] = Field(default_factory=list)
+
+
+class AarBookmarkView(BaseModel):
+    """時間軸書籤——值得跳過去看的關鍵時刻（交戰、收場等）。"""
+
+    seq: int
+    tick: int
+    label: str
+
+
+class AarReplayView(BaseModel):
+    frames: list[AarTimelineFrameView] = Field(default_factory=list)
+    bookmarks: list[AarBookmarkView] = Field(default_factory=list)
+    total_events: int = 0
+    max_tick: int = 0
+
+
+class AarParagraphView(BaseModel):
+    """敘事段落。`cited_seqs` 是它引用的帳本 seq——**查核就是查這些 seq 存不存在**。"""
+
+    text: str
+    cited_seqs: list[int] = Field(default_factory=list)
+
+
+class AarCitationsView(BaseModel):
+    """引用查核結果。`valid=False` 代表敘事引用了帳本裡沒有的 seq（捏造）。"""
+
+    valid: bool = True
+    invalid_seqs: list[int] = Field(default_factory=list)
+
+
+class AarReportView(BaseModel):
+    summary: str = ""
+    paragraphs: list[AarParagraphView] = Field(default_factory=list)
+    lessons: list[str] = Field(default_factory=list)
+    citations: AarCitationsView = Field(default_factory=AarCitationsView)
+
+
 class AarReplayChangeView(BaseModel):
     """單一單位在該 tick 的變動。**只列真的變了的欄位**，未列＝沿用前一狀態。
 
@@ -162,7 +205,7 @@ def _unit_faction(db: Session, session_id: str) -> dict[str, str]:
     return dict(rows)
 
 
-@router.get("/{session_id}/aar/replay")
+@router.get("/{session_id}/aar/replay", response_model=AarReplayView)
 def get_replay(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),
@@ -319,7 +362,7 @@ def get_mission_timelines(
     return [t.to_dict() for t in timelines]
 
 
-@router.get("/{session_id}/aar/report")
+@router.get("/{session_id}/aar/report", response_model=AarReportView)
 def get_report(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),

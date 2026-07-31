@@ -12,12 +12,7 @@ import type { components } from '~/types/api'
 export type MissionTimeline = components['schemas']['MissionTimeline']
 export type MissionLeg = components['schemas']['MissionLeg']
 
-export interface AarReplay {
-  frames: Array<{ tick: number; event_types: string[] }>
-  bookmarks: Array<{ seq: number; tick: number; label: string }>
-  total_events: number
-  max_tick: number
-}
+export type AarReplay = components['schemas']['AarReplay']
 /**
  * 地圖重播（WP-D6.1）：靜態底本 + 逐 tick 差異。
  *
@@ -32,33 +27,22 @@ export type AarReplayStates = components['schemas']['AarReplayStates']
 export type AarReplayUnit = components['schemas']['AarReplayUnit']
 export type AarReplayChange = components['schemas']['AarReplayChange']
 
-export interface AarStats {
-  total_events: number
-  /** 交戰事件總數（個體＋聚合，含被拒的）。 */
-  engagements: number
-  /** 個體交戰的裁決次數（含被拒）——「下令交火幾次」。 */
-  attempts: number
-  /**
-   * 其中真的射出去的次數（`attempts` 扣掉 REJECTED）。**這是命中率的分母**：
-   * 超射程／無彈／無視線／ROE 不准打都是一發未發，拿去稀釋火力效益毫無意義。
-   */
-  engagements_fired: number
-  hits: number
-  /** hits ÷ engagements_fired。 */
-  hit_rate: number
-  total_damage: number
-  guardrail_blocks: number
-  damage_by_faction: Record<string, number>
-  event_counts: Record<string, number>
-  /**
-   * 統計口徑版本（WP-D6.2 起）。舊封存包沒有這一欄＝v1，其命中率只認單發路徑、
-   * 分母含被拒交戰、聚合戰損整包記在守方——**與 v2 的數字不可直接相比**。
-   *
-   * 契約標為 required，這裡**刻意放寬成 optional**：欄位缺席正是要示警的那個情況
-   * （前端更新了、後端容器還是舊的）。把它宣告成必有，等於讓型別替後端背書。
-   */
+/**
+ * AAR 統計指標。**從契約推導，但刻意放寬 `stats_version` 為 optional。**
+ *
+ * 其餘十欄走生成型別，後端改欄位會直接反映過來。唯獨 `stats_version` 不跟：
+ * 契約把它標為 required，而**欄位缺席正是要示警的那個情況**——前端更新了、
+ * 後端容器還是舊的，回來的封存包沒有這一欄。宣告成必有等於讓型別替後端背書，
+ * 而 `aarStatsVersionNote()` 就再也偵測不到版本落差。
+ *
+ * 口徑差異（WP-D6.2）：v1 的命中率只認單發路徑、分母含被拒交戰、聚合戰損整包記在守方
+ * ——**與 v2 的數字不可直接相比**。分母是 `engagements_fired`（`attempts` 扣掉 REJECTED）：
+ * 超射程／無彈／無視線／ROE 不准打都是一發未發，拿去稀釋火力效益毫無意義。
+ */
+export type AarStats = Omit<components['schemas']['AarStats'], 'stats_version'> & {
   stats_version?: number
 }
+
 /** 本前端所預期的統計口徑；與後端回的 `stats_version` 不符時畫面要講出來。 */
 export const AAR_STATS_VERSION = 2
 
@@ -93,12 +77,7 @@ export function aarStatsVersionNote(stats: AarStats | null): string {
   if (v == null) return `此局統計以舊口徑（v1）產生，與 v${AAR_STATS_VERSION} 的數字不可直接相比。`
   return `此局統計口徑為 v${v}，本頁預期 v${AAR_STATS_VERSION}——數字不可直接相比。`
 }
-export interface AarReport {
-  summary: string
-  paragraphs: Array<{ text: string; cited_seqs: number[] }>
-  lessons: string[]
-  citations: { valid: boolean; invalid_seqs: number[] }
-}
+export type AarReport = components['schemas']['AarReport']
 
 /** 引用查核攤平結果（見 `auditCitations`）。 */
 export interface CitationAudit {

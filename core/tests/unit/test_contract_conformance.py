@@ -61,12 +61,14 @@ _NOT_PART_OF_THE_API = {
 _CONTRACT_ONLY: set[tuple[str, str]] = set()
 
 # 實作有、契約沒有＝前端拿不到型別。
-_IMPL_ONLY = {
-    ("GET", "/api/v1/sessions/{}/aar/export"),
-    ("GET", "/api/v1/sessions/{}/aar/replay"),
-    ("GET", "/api/v1/sessions/{}/aar/report"),
-    # /aar/stats 已於 WP-D6.2 補進契約（新增 attempts / engagements_fired / stats_version 時）
-}
+#
+# **2026-07-31 清空**（G5）。最後三條是 AAR 的 replay／report／export：
+# 前兩條回裸 dict，先在後端補 pydantic model 才有東西可以宣告；
+# export 回的是**檔案**（JSON 陣列或 CSV 文字），契約描述的是下載不是物件。
+#
+# ⚠ 兩份清單都空了不代表以後不會再有——這四條閘門（ghost／untyped／只能變短／
+# 2xx 必須有 schema）才是防線，清單只是它們裝上去那一刻的欠帳快照。
+_IMPL_ONLY: set[tuple[str, str]] = set()
 
 
 def _norm(path: str) -> str:

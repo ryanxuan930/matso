@@ -882,6 +882,52 @@ components:
         name: { type: string, minLength: 1 }
         category: { type: string, description: KINETIC / SENSOR / COMMS / LOGISTICS / DRONE }
         base_stats: { type: object }
+    AarTimelineFrame:
+      type: object
+      required: [tick, event_types]
+      properties:
+        tick: { type: integer }
+        event_types: { type: array, items: { type: string } }
+    AarBookmark:
+      type: object
+      description: 值得跳過去看的關鍵時刻（交戰、收場等）。
+      required: [seq, tick, label]
+      properties:
+        seq: { type: integer }
+        tick: { type: integer }
+        label: { type: string }
+    AarReplay:
+      type: object
+      required: [frames, bookmarks, total_events, max_tick]
+      properties:
+        frames: { type: array, items: { $ref: "#/components/schemas/AarTimelineFrame" } }
+        bookmarks: { type: array, items: { $ref: "#/components/schemas/AarBookmark" } }
+        total_events: { type: integer }
+        max_tick: { type: integer }
+    AarParagraph:
+      type: object
+      description: 敘事段落。`cited_seqs` 是它引用的帳本 seq——查核就是查這些 seq 存不存在。
+      required: [text, cited_seqs]
+      properties:
+        text: { type: string }
+        cited_seqs: { type: array, items: { type: integer } }
+    AarCitations:
+      type: object
+      description: >-
+        引用查核結果。`valid=false` ＝敘事引用了帳本裡沒有的 seq（捏造）——
+        在檢討報告裡，一句沒有帳本支撐的話比沒有那句話危險得多。
+      required: [valid, invalid_seqs]
+      properties:
+        valid: { type: boolean }
+        invalid_seqs: { type: array, items: { type: integer } }
+    AarReport:
+      type: object
+      required: [summary, paragraphs, lessons, citations]
+      properties:
+        summary: { type: string }
+        paragraphs: { type: array, items: { $ref: "#/components/schemas/AarParagraph" } }
+        lessons: { type: array, items: { type: string } }
+        citations: { $ref: "#/components/schemas/AarCitations" }
     AarReplayStates:
       type: object
       description: >-
@@ -2768,6 +2814,57 @@ paths:
         "403": { description: 非本陣營的計畫 }
         "409": { description: 該目標已執行過（一個預劃目標只打一次） }
         "422": { description: 物理預檢不可行（射程/無曲射武器/火協未核准…） }
+  /sessions/{id}/aar/replay:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getAarReplay
+      security: [{ bearerAuth: [] }]
+      description: >-
+        時間軸重播的骨架：有事件的 tick 清單 + 書籤。地圖上的狀態走
+        `/aar/replay/states`（那條資料量大得多，分開拿）。
+        存取控制與迷霧投影與其他 AAR 端點相同。
+      responses:
+        "200":
+          description: Replay timeline
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AarReplay" }
+        "403": { description: Forbidden }
+  /sessions/{id}/aar/report:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getAarReport
+      security: [{ bearerAuth: [] }]
+      description: >-
+        AAR 敘事報告（§14.3）+ **引用查核**。每個段落都帶它引用的帳本 seq，
+        `citations.valid=false` 代表敘事引用了帳本裡不存在的 seq——
+        在兵推的檢討報告裡，一句沒有帳本支撐的話比沒有那句話危險得多。
+      responses:
+        "200":
+          description: Narrative report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AarReport" }
+        "403": { description: Forbidden }
+  /sessions/{id}/aar/export:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: exportAar
+      security: [{ bearerAuth: [] }]
+      description: >-
+        帳本匯出（JSON／CSV）。`anonymize=true` 時把單位真名換成 UNIT-N 並**省略**
+        `ai_decision`／`reasoning_chain`／`detail`——那三欄含 CoT 與座標，
+        足以把匿名標籤還原回真實單位。
+      parameters:
+        - { name: fmt, in: query, required: false, schema: { type: string, enum: [json, csv], default: json } }
+        - { name: anonymize, in: query, required: false, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: 匯出檔（**不是 JSON 物件而是檔案內容**——CSV 時為 text/csv）
+          content:
+            application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } }
+            text/csv: { schema: { type: string } }
+        "403": { description: Forbidden }
   /sessions/{id}/aar/replay/states:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

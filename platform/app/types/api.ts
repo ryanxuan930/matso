@@ -1067,6 +1067,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/aar/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 時間軸重播的骨架：有事件的 tick 清單 + 書籤。地圖上的狀態走 `/aar/replay/states`（那條資料量大得多，分開拿）。 存取控制與迷霧投影與其他 AAR 端點相同。 */
+        get: operations["getAarReplay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/aar/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description AAR 敘事報告（§14.3）+ **引用查核**。每個段落都帶它引用的帳本 seq， `citations.valid=false` 代表敘事引用了帳本裡不存在的 seq—— 在兵推的檢討報告裡，一句沒有帳本支撐的話比沒有那句話危險得多。 */
+        get: operations["getAarReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/aar/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 帳本匯出（JSON／CSV）。`anonymize=true` 時把單位真名換成 UNIT-N 並**省略** `ai_decision`／`reasoning_chain`／`detail`——那三欄含 CoT 與座標， 足以把匿名標籤還原回真實單位。 */
+        get: operations["exportAar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/aar/replay/states": {
         parameters: {
             query?: never;
@@ -1887,6 +1944,38 @@ export interface components {
             /** @description KINETIC / SENSOR / COMMS / LOGISTICS / DRONE */
             category: string;
             base_stats: Record<string, never>;
+        };
+        AarTimelineFrame: {
+            tick: number;
+            event_types: string[];
+        };
+        /** @description 值得跳過去看的關鍵時刻（交戰、收場等）。 */
+        AarBookmark: {
+            seq: number;
+            tick: number;
+            label: string;
+        };
+        AarReplay: {
+            frames: components["schemas"]["AarTimelineFrame"][];
+            bookmarks: components["schemas"]["AarBookmark"][];
+            total_events: number;
+            max_tick: number;
+        };
+        /** @description 敘事段落。`cited_seqs` 是它引用的帳本 seq——查核就是查這些 seq 存不存在。 */
+        AarParagraph: {
+            text: string;
+            cited_seqs: number[];
+        };
+        /** @description 引用查核結果。`valid=false` ＝敘事引用了帳本裡沒有的 seq（捏造）—— 在檢討報告裡，一句沒有帳本支撐的話比沒有那句話危險得多。 */
+        AarCitations: {
+            valid: boolean;
+            invalid_seqs: number[];
+        };
+        AarReport: {
+            summary: string;
+            paragraphs: components["schemas"]["AarParagraph"][];
+            lessons: string[];
+            citations: components["schemas"]["AarCitations"];
         };
         /** @description 地圖重播的完整資料：`units` 是靜態底本（含 tick 0 基準位置）， `frames` 只列**有變動的 tick 與有變動的單位**（帳本本身就是這個形狀）。 前端從基準累加到 scrubTick 即得該時刻全貌。 */
         AarReplayStates: {
@@ -5078,6 +5167,99 @@ export interface operations {
             };
             /** @description 物理預檢不可行（射程/無曲射武器/火協未核准…） */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getAarReplay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Replay timeline */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AarReplay"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getAarReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Narrative report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AarReport"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    exportAar: {
+        parameters: {
+            query?: {
+                fmt?: "json" | "csv";
+                anonymize?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 匯出檔（**不是 JSON 物件而是檔案內容**——CSV 時為 text/csv） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                    "text/csv": string;
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
