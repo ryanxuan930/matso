@@ -122,15 +122,28 @@ def tick_supply(
     days = elapsed * tick_rate_ms / _MS_PER_DAY
     drained = any(updated[c].on_hand != lv.on_hand for c, lv in levels.items())
     if not drained and not _is_starving(updated):
-        # **連時間戳都不寫**：完全沒有消耗的局不該每 tick 推一次 STATE_DIFF。
-        return None
+        # 這一 tick 一格都沒扣到。**要分清楚是哪一種「沒扣到」**：
+        #
+        # (a) 編制中的類別**消耗率全是 0** → 這些格子永遠不會動，經過多少時間都一樣。
+        #     連時間戳都不寫，完全沒有消耗的局不該每 tick 推一次 STATE_DIFF。
+        # (b) 率不是 0，只是**存量已經見底** → 時鐘必須繼續走。
+        #
+        # (b) 過去也走 `return None`，而判斷「還在餓」的 `_is_starving` **只看 Class I**。
+        # 於是沒有宣告口糧的單位（例如只帶維修件的支援單位）一旦 Class IX 見底，
+        # `supply_tick` 就永遠凍在那一刻。補給點之後把它補滿，下一次結算拿凍住的起點
+        # 算經過時間，把整場累積的時間債一次追討——實測 100000 tick（≈69 模擬日）的債
+        # 讓剛補滿的 20 點料件在**一個 tick 內全部蒸發**，而且沒有任何事件說明發生了什麼。
+        # 指揮官只會看到補給車白跑一趟。
+        if all(daily_consumption(c, rates) <= 0 for c, lv in levels.items() if lv.declared):
+            return None
+        return {SUPPLY_TICK_KEY: now_tick}
 
     patch: dict[str, Any] = {SUPPLY_TICK_KEY: now_tick}
     if drained:
         patch[SUPPLY_KEY] = write_levels(updated)
     # **已經見底的單位即使這一 tick 扣不動任何東西，斷補天數仍要繼續累積**——
     # 否則懲罰會凍在剛見底的那一刻，「斷補愈久愈打不動」這個階梯就只走得到第一階。
-    patch[STARVED_DAYS_KEY] = _starved_days(state, updated, days)
+    patch[STARVED_DAYS_KEY] = _starved_days(state, levels, updated, days, rates)
     return patch
 
 
@@ -141,18 +154,44 @@ def _is_starving(levels: dict[SupplyClass, SupplyLevel]) -> bool:
 
 
 def _starved_days(
-    state: dict[str, Any], levels: dict[SupplyClass, SupplyLevel], days: float
+    state: dict[str, Any],
+    before: dict[SupplyClass, SupplyLevel],
+    after: dict[SupplyClass, SupplyLevel],
+    days: float,
+    rates: dict[str, float] | None,
 ) -> float:
-    """斷補天數：Class I 見底就累加，補到一次就歸零。
+    """斷補天數：Class I 見底後**真正空著的那段時間**才累加，補到一次就歸零。
 
     只看 Class I——口糧斷了才是「斷補」；維修件（IX）見底影響的是修復，不是即刻戰力。
+
+    ## 只算區間裡空著的部分，否則結果會隨結算頻率漂
+
+    這裡曾經是「區間結束時是空的 → 把**整段** `days` 都算成斷補」，不問它是第幾分鐘見底的。
+    於是同一個想定會因為 `tick_supply` 多久跑一次而得到不同的斷補曲線：
+    滿載 3 DOS 被切斷，**逐 tick 結算**第 4 日才掉到 ×0.9（見底那一刻只累積了一個 tick 的量），
+    **一天結算一次**卻在第 3 日就掉——因為見底的那一次結算把整整一天都記成餓著。
+
+    生產跑的是逐 tick，所以畫面是對的；但任何粗粒度的重播、補算、或測試都會得到另一條曲線，
+    而「同樣的輸入得到同樣的結果」是這個引擎最基本的承諾。改成用消耗率反推見底時刻：
+    區間開始時有 `on_hand` 份、每日吃 `rate` 份 → 撐 `on_hand / rate` 天，
+    剩下的 `days - on_hand / rate` 才是餓著的時間。
     """
     raw = state.get(STARVED_DAYS_KEY)
     current = float(raw) if isinstance(raw, (int, float)) else 0.0
-    rations = levels.get(SupplyClass.I)
+    rations = after.get(SupplyClass.I)
     if rations is None or not rations.declared:
         return 0.0
-    return round(current + days, 4) if rations.on_hand <= 0.0 else 0.0
+    if rations.on_hand > 0.0:
+        return 0.0
+    rate = daily_consumption(SupplyClass.I, rates)
+    had = before[SupplyClass.I].on_hand if SupplyClass.I in before else 0.0
+    # 率是 0 而存量已經是 0 → 整段都餓著（它永遠不會自己補回來）。
+    lasted = had / rate if rate > 0 else 0.0
+    # **不四捨五入**（曾經是 4 位小數）。這是逐次結算累加出來的量，而 1 分鐘/tick 的局
+    # 每 tick 只加 1/1440 ＝ 0.000694——進位到 0.0007 是每次多算 0.8%，
+    # 於是階梯提早 11 個 tick 觸發，長時間斷補還會繼續累積偏差。
+    # 同一個理由見 `refit_wiring._apply_repair` 對 `strength` 的處理。
+    return current + max(0.0, days - lasted)
 
 
 def supply_effectiveness(state: dict[str, Any]) -> float:

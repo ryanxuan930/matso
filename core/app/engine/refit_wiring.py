@@ -142,7 +142,7 @@ def refit_tick(
                     )
                 )
             continue
-        events.extend(_apply_repair(hot, unit_id, state, tick, tick_rate_ms, repair_per_day))
+        events.extend(_apply_repair(db, hot, unit_id, state, tick, tick_rate_ms, repair_per_day))
     return events
 
 
@@ -199,9 +199,16 @@ def _blocked_reason(
 
 
 def _apply_repair(
-    hot: Any, unit_id: str, state: dict[str, Any], tick: int, tick_rate_ms: int, per_day: float
+    db: Any,
+    hot: Any,
+    unit_id: str,
+    state: dict[str, Any],
+    tick: int,
+    tick_rate_ms: int,
+    per_day: float,
 ) -> list[Any]:
     from app.adjudication.effectiveness import effectiveness_pct
+    from app.models.tables import TacticalUnit
     from app.state.ledger import LedgerEvent
 
     raw_last = state.get(REFIT_TICK_KEY)
@@ -223,9 +230,18 @@ def _apply_repair(
         return []
     strength = float(state.get("strength") or 0.0) + gained
     auth = float(state.get("authorized_strength") or 100.0) or 100.0
+    health = effectiveness_pct(strength / auth)
     levels[SupplyClass.IX] = SupplyLevel(
         max(0.0, parts.on_hand - gained * PARTS_PER_POINT), parts.capacity
     )
+    # **DB 也要寫**，與交戰／移動／火力那三個寫入端一致。
+    # 只寫熱狀態的話，`GET /units` 讀的是 `TacticalUnit.current_strength`（DB），
+    # 於是整補完成後**單位清單與資訊卡上的戰力不會變**，要等下一次 checkpoint
+    # （預設 600 tick）才追上——操作員把部隊撤回後方修了一整天，畫面說它還是殘破的。
+    unit = db.get(TacticalUnit, unit_id)
+    if unit is not None:
+        unit.current_strength = strength
+        unit.health_status = health
     hot.update_unit(
         unit_id,
         {
@@ -234,7 +250,7 @@ def _apply_repair(
             # 進位就多修七成，而 `REFIT_PROGRESS` 事件與畫面都看不出異常。
             # 熱狀態的 `strength` 在交戰/移動/火力那三個寫入端本來就都是直接寫浮點。
             "strength": strength,
-            "health": effectiveness_pct(strength / auth),
+            "health": health,
             SUPPLY_KEY: write_levels(levels),
             REFIT_TICK_KEY: tick,
         },

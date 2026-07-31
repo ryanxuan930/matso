@@ -425,7 +425,15 @@ def test_a_company_at_sixty_percent_is_restored_in_about_four_simulated_days(
 ) -> None:
     """**錨點**：戰力 60%（損失 40 點）的部隊退到後方整補，約 4 個模擬日恢復滿編。
 
-    走 `sim_runtime._refit_tick`（tick loop 呼叫的那一個，自己開 DB session）。
+    走 `sim_runtime._refit_tick`（tick loop 呼叫的那一個，自己開 DB session），
+    而且**與 `_supply_tick` 交錯呼叫，照 tick loop 真正的順序**。
+
+    ⚠ 這一點是必要的而不是講究：修復與日常保養**共用同一份 Class IX**
+    （前者 `PARTS_PER_POINT`，後者 `DAILY_CONSUMPTION[IX]`）。只跑 `_refit_tick`
+    的話料件只被扣一邊，於是「4 日恢復滿編」在測試裡成立、在真的推演裡不成立——
+    生產接線下 4 日只到 96.4 然後卡在 NO_PARTS。這正是本 repo 最常見的那種綠燈：
+    **測試餵給函式的資料，不是引擎真的會產生的資料。**
+
     ⚠ 也順帶釘住「第一個 tick 只計時不修」——[JCATS-A p.27]「絕非申請後直接恢復戰力」。
     """
     world = seed_world(session_factory)
@@ -444,19 +452,36 @@ def test_a_company_at_sixty_percent_is_restored_in_about_four_simulated_days(
     def factions(_uid: str) -> str:
         return "BLUE"  # 全場友軍 → 不會被 ENEMY_NEAR 擋下
 
-    started = _refit_tick(session_factory, hot, world.session_id, factions, 0, _MIN, REPAIR_PER_DAY)
+    def tick(t: int) -> list[object]:
+        """tick loop 的真實順序：先補給結算，再整補。"""
+        _supply_tick(hot, t, _MIN, {})
+        return _refit_tick(
+            session_factory, hot, world.session_id, factions, t, _MIN, REPAIR_PER_DAY
+        )
+
+    started = tick(0)
     assert [e.event_type for e in started] == ["REFIT_STARTED"]
     assert hot.get_unit(world.blue_unit_id)["strength"] == 60.0, "申請後不會直接恢復戰力"
 
     # 3 日後：60 + 30 = 90（尚未滿編）。4 日後：夾在 100。
-    _refit_tick(session_factory, hot, world.session_id, factions, _DAY * 3, _MIN, REPAIR_PER_DAY)
+    tick(_DAY * 3)
     assert hot.get_unit(world.blue_unit_id)["strength"] == pytest.approx(90.0, abs=1e-2)
 
-    _refit_tick(session_factory, hot, world.session_id, factions, _DAY * 4, _MIN, REPAIR_PER_DAY)
+    tick(_DAY * 4)
     assert hot.get_unit(world.blue_unit_id)["strength"] == 100.0
-    # 料件是硬上限，而且真的被扣了：40 點 × 0.5 ＝ 20。
+    # 料件是硬上限，而且**兩邊都真的扣了**：修復 40 點 × 0.5 ＝ 20，
+    # 外加 4 個模擬日的日常保養 4 × 0.5 ＝ 2。共用同一份 Class IX。
     parts = read_levels(hot.get_unit(world.blue_unit_id))[SupplyClass.IX]
-    assert parts.on_hand == pytest.approx(40.0 - 40.0 * PARTS_PER_POINT, abs=1e-2)
+    repair_draw = 40.0 * PARTS_PER_POINT
+    upkeep_draw = 4.0 * DAILY_CONSUMPTION[SupplyClass.IX]
+    assert parts.on_hand == pytest.approx(40.0 - repair_draw - upkeep_draw, abs=1e-2)
+
+    # **DB 也要跟上**：`GET /units` 讀的是 `TacticalUnit.current_strength`，
+    # 只寫熱狀態的話畫面上那支部隊修完了還是殘破的（要等 600 tick 後的 checkpoint）。
+    with session_factory() as db:
+        restored = db.get(TacticalUnit, world.blue_unit_id)
+        assert restored is not None
+        assert restored.current_strength == pytest.approx(100.0, abs=1e-2)
 
 
 def test_repair_still_progresses_when_a_tick_is_one_second(

@@ -174,6 +174,87 @@ def test_only_rations_drive_starvation_not_repair_parts() -> None:
     assert patch is not None and patch[STARVED_DAYS_KEY] == 0.0
 
 
+def test_the_starvation_curve_does_not_depend_on_how_often_we_settle() -> None:
+    """**同樣的輸入要得到同樣的結果**，不管 `tick_supply` 多久跑一次。
+
+    `_starved_days` 曾經是「區間結束時是空的 → 把**整段** elapsed 都算成斷補」，
+    不問它是第幾分鐘見底的。於是滿載 3 DOS 被切斷這個想定：
+
+    - 逐 tick 結算 → 第 4 個模擬日才掉到 ×0.9（見底那一刻只記了一個 tick 的量）
+    - 一天結算一次 → 第 3 日就掉（見底的那次結算把整整一天都記成餓著）
+
+    生產跑逐 tick 所以畫面是對的，但重播、補算、粗粒度測試都會走出另一條曲線——
+    而這個引擎最基本的承諾就是同輸入同結果（紅線 1 的精神）。
+
+    另一半是**不四捨五入**：每 tick 只加 1/1440 ＝ 0.000694，進位到 4 位小數
+    是每次多算 0.8%，階梯會提早 11 個 tick 觸發。
+    """
+    from app.engine.supply_wiring import supply_effectiveness
+
+    def first_degradation_day(step_ticks: int) -> float:
+        hot = InMemoryHotState()
+        hot.put_unit("u1", {SUPPLY_KEY: {"I": [3.0, 3.0]}, SUPPLY_TICK_KEY: 0})
+        tick = 0
+        while tick <= _DAY_TICKS * 6:
+            tick += step_ticks
+            patch = tick_supply(hot, "u1", tick, _TICK_MS)
+            if patch:
+                hot.update_unit("u1", patch)
+            if supply_effectiveness(hot.get_unit("u1")) < 1.0:
+                return tick / _DAY_TICKS
+        raise AssertionError("六個模擬日都沒有掉效能——這條斷言沒有意義")
+
+    per_tick = first_degradation_day(1)
+    per_six_hours = first_degradation_day(_DAY_TICKS // 4)
+    per_day = first_degradation_day(_DAY_TICKS)
+
+    # 滿載 3 DOS、每日吃 1 → 第 3 日見底，再餓滿一日 → 第 4 日踏上第一階。
+    assert per_tick == pytest.approx(4.0, abs=1e-3)
+    assert per_six_hours == pytest.approx(per_tick, abs=1e-3)
+    assert per_day == pytest.approx(per_tick, abs=1e-3)
+
+
+def test_the_supply_clock_keeps_running_while_a_unit_sits_empty() -> None:
+    """見底期間**時鐘一定要繼續走**，否則補給到位的瞬間會被追討整場的時間債。
+
+    `tick_supply` 過去在「這一 tick 什麼都沒扣」時連 `supply_tick` 都不寫，
+    而判斷「還在餓」的 `_is_starving` **只看 Class I**。於是沒有宣告口糧的單位
+    （例如只帶維修件的支援單位）一旦 Class IX 見底，時鐘就凍在那一刻。
+
+    後果在補給到位時才爆：下一次結算拿凍住的起點算經過時間，把中間累積的
+    全部時間債一次追討——剛補滿的料件在**一個 tick 內全部蒸發**，
+    而且沒有任何事件說明發生了什麼。指揮官只會看到補給車白跑一趟。
+
+    這裡刻意用「只有 IX、沒有 I」的單位：有口糧的單位見底後 `_is_starving` 為真、
+    每 tick 都會寫 patch，時鐘自然會走——洞只在另一半。
+    """
+    hot = InMemoryHotState()
+    hot.put_unit("u1", {SUPPLY_KEY: {"IX": [0.5, 20.0]}, SUPPLY_TICK_KEY: 0})
+    rates = {"IX": 0.5}
+
+    # 第一天：0.5 點吃完見底。
+    first = tick_supply(hot, "u1", _DAY_TICKS, _TICK_MS, rates)
+    assert first is not None
+    hot.update_unit("u1", first)
+    assert hot.get_unit("u1")[SUPPLY_KEY]["IX"][0] == 0.0
+
+    # 空著再過幾天——扣不動任何東西，但時鐘要跟上。
+    for day in (2, 3, 50):
+        patch = tick_supply(hot, "u1", _DAY_TICKS * day, _TICK_MS, rates)
+        if patch is not None:
+            hot.update_unit("u1", patch)
+        assert hot.get_unit("u1")[SUPPLY_TICK_KEY] == _DAY_TICKS * day, (
+            f"第 {day} 天時鐘停在 {hot.get_unit('u1')[SUPPLY_TICK_KEY]}"
+        )
+
+    # 補給到位 → 下一天只該吃掉一天份，不是把前面 50 天一起補扣。
+    hot.update_unit("u1", {SUPPLY_KEY: {"IX": [20.0, 20.0]}})
+    after = tick_supply(hot, "u1", _DAY_TICKS * 51, _TICK_MS, rates)
+    assert after is not None
+    hot.update_unit("u1", after)
+    assert hot.get_unit("u1")[SUPPLY_KEY]["IX"][0] == pytest.approx(19.5)
+
+
 # ---- 再訂購水位 ----
 
 
