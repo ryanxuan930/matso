@@ -1,5 +1,16 @@
 // AAR 儀表板 API（O8）——重播/統計/敘事/匯出。
 import { apiFetch } from '~/composables/useApi'
+import type { components } from '~/types/api'
+
+/**
+ * 任務時間軸。**用契約生成的型別，不再手抄一份**。
+ *
+ * ⚠ 本檔其餘的 AAR 型別（`AarReplay`／`AarStats`／`AarReport`…）都還是手寫 interface
+ * ——那是 UI 盤點 P4 點名的漂移：後端改個欄位名，畫面靜默變空白而所有閘門都是綠的。
+ * 這一條是把它們搬回契約的第一個。
+ */
+export type MissionTimeline = components['schemas']['MissionTimeline']
+export type MissionLeg = components['schemas']['MissionLeg']
 
 export interface AarReplay {
   frames: Array<{ tick: number; event_types: string[] }>
@@ -155,6 +166,14 @@ export const aarReplay = (id: string) => apiFetch<AarReplay>(`/sessions/${id}/aa
 export const aarReplayStates = (id: string) =>
   apiFetch<AarReplayStates>(`/sessions/${id}/aar/replay/states`)
 export const aarStats = (id: string) => apiFetch<AarStats>(`/sessions/${id}/aar/stats`)
+/**
+ * 任務時間軸（WP-A2）——每道任務走過哪些階段、各花了多久。
+ *
+ * **67 條業務端點裡唯一一條完全沒接的**：curl 就有真資料，畫面上零蹤影。
+ * 任務級下令是這個系統最貴的功能，而「執行得好不好」過去沒有任何量化畫面。
+ */
+export const aarMissions = (id: string) =>
+  apiFetch<MissionTimeline[]>(`/sessions/${id}/aar/missions`)
 export const aarReport = (id: string) => apiFetch<AarReport>(`/sessions/${id}/aar/report`)
 /**
  * AAR 匯出下載（#10）——以帶 Bearer 的 apiFetch 取回內容（自動續 token），再以 Blob 觸發下載。

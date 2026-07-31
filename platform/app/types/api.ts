@@ -1161,6 +1161,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/aar/missions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 任務時間軸（WP-A2）——每道任務走過哪些階段、各花了多久。 **從帳本重建**而不是查任務當前狀態：當前狀態只回答「現在到哪一階段」， 而 AAR 要回答「它怎麼走到這裡的」；何況已結束的局根本沒有當前狀態可查 （記憶活在 runner 行程）。存取控制與迷霧投影與其他 AAR 端點相同。 */
+        get: operations["getMissionTimelines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/aar/stats": {
         parameters: {
             query?: never;
@@ -1569,6 +1588,25 @@ export interface components {
             rounds_per_mission?: number;
             /** @description 是否為曲射武器（火力任務只有曲射打得到）。權威為後端的 INDIRECT_CATEGORIES——前端不得再抄一份類別表。 */
             indirect_fire?: boolean;
+        };
+        MissionLeg: {
+            phase: components["schemas"]["MissionPhase"];
+            from_tick: number;
+            /** @description null＝局結束時仍在這個階段（尚未離開） */
+            to_tick: number | null;
+            /** @description null＝同上（還沒結束就算不出時長） */
+            duration_ticks: number | null;
+            note: string;
+        };
+        MissionTimeline: {
+            order_id: string;
+            mission_type: string;
+            unit_id: string | null;
+            /** @description 任務是否以失敗告終 */
+            failed: boolean;
+            /** @description 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。 */
+            errors: number;
+            legs: components["schemas"]["MissionLeg"][];
         };
         LedgerEntry: {
             /** @description 帳本序號（append-only，單調遞增） */
@@ -5132,6 +5170,35 @@ export interface operations {
             };
             /** @description Session not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getMissionTimelines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mission timelines */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissionTimeline"][];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

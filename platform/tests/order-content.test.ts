@@ -112,3 +112,30 @@ test('兩個面板都真的接上了 renderer', () => {
   assert.match(c2, /requestParamsSummary\(r\.params/)
   assert.match(c2, /v-if="paramsText\(r\)"/, '樣板沒有真的呼叫')
 })
+
+test('AAR 頁面真的接上了任務時間軸', () => {
+  /**
+   * 抓的病：`/aar/missions` 是 67 條業務端點裡**唯一一條完全沒接的**——
+   * curl 就有真資料，畫面上零蹤影。任務級下令是這個系統最貴的功能，
+   * 而「執行得好不好」過去沒有任何量化畫面。
+   */
+  const page = readSrc('pages/session/[id]/aar.vue')
+  assert.match(page, /aarMissions\(sessionId\)/, '沒有真的去拉資料')
+  assert.match(page, /data-testid="aar-missions"/)
+  assert.match(page, /data-testid="aar-mission-leg"/)
+  // 評估失敗次數要看得見——一道壞任務不該拖垮整局，但也不該無聲無息。
+  assert.match(page, /data-testid="aar-mission-errors"/)
+
+  const composable = readSrc('composables/useAar.ts')
+  assert.match(composable, /aar\/missions/)
+  // 型別要走契約生成，不再手抄——那正是 P4 點名的漂移。
+  assert.match(composable, /components\['schemas'\]\['MissionTimeline'\]/)
+})
+
+test('還在進行中的階段不編一個時長出來', () => {
+  // `to_tick`/`duration_ticks` 為 null ＝局結束時仍在該階段。
+  // 印 0 或空白都會被讀成「這一階段瞬間完成」。
+  const page = readSrc('pages/session/[id]/aar.vue')
+  assert.match(page, /leg\.duration_ticks != null/)
+  assert.match(page, /（仍在此階段）/)
+})

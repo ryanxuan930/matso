@@ -59,7 +59,6 @@ _CONTRACT_ONLY = {
 # 實作有、契約沒有＝前端拿不到型別。
 _IMPL_ONLY = {
     ("GET", "/api/v1/sessions/{}/aar/export"),
-    ("GET", "/api/v1/sessions/{}/aar/missions"),
     ("GET", "/api/v1/sessions/{}/aar/replay"),
     ("GET", "/api/v1/sessions/{}/aar/report"),
     # /aar/stats 已於 WP-D6.2 補進契約（新增 attempts / engagements_fired / stats_version 時）

@@ -7,6 +7,7 @@ import {
   aarReplay,
   aarReplayStates,
   aarReport,
+  aarMissions,
   aarStats,
   aarStatsVersionNote,
   auditCitations,
@@ -14,9 +15,11 @@ import {
   type AarReplayStates,
   type AarReport,
   type AarStats,
+  type MissionTimeline,
 } from '~/composables/useAar'
 import { useAarReplay } from '~/composables/useAarReplay'
 import { unitLevelLabel } from '~/composables/useUnits'
+import { missionPhaseLabel, missionTypeLabel } from '~/composables/useOrders'
 
 const route = useRoute()
 const sessionId = route.params.id as string
@@ -28,17 +31,25 @@ const report = ref<AarReport | null>(null)
 const scrubTick = ref(0)
 const error = ref('')
 const loading = ref(true) // 後端彙整/敘事可能耗時 → 顯示載入動畫，避免誤判系統故障（補充 1）
+/**
+ * 任務時間軸（WP-A2）。**這是 67 條業務端點裡唯一一條完全沒接的**：
+ * curl 就有真資料，畫面上零蹤影。任務級下令是這個系統最貴的功能，
+ * 而「執行得好不好」過去沒有任何量化畫面。
+ */
+const missions = ref<MissionTimeline[]>([])
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    ;[replay.value, replayStates.value, stats.value, report.value] = await Promise.all([
-      aarReplay(sessionId),
-      aarReplayStates(sessionId),
-      aarStats(sessionId),
-      aarReport(sessionId),
-    ])
+    ;[replay.value, replayStates.value, stats.value, report.value, missions.value] =
+      await Promise.all([
+        aarReplay(sessionId),
+        aarReplayStates(sessionId),
+        aarStats(sessionId),
+        aarReport(sessionId),
+        aarMissions(sessionId),
+      ])
   } catch (e) {
     error.value = `讀取 AAR 失敗：${(e as { message?: string }).message ?? e}`
   } finally {
@@ -52,6 +63,16 @@ const hitRateLabel = computed(() => aarHitRateLabel(stats.value))
 const statsVersionNote = computed(() => aarStatsVersionNote(stats.value))
 // 地圖重播：拖時間軸＝本地重算（見 composable 說明），播放/倍速在那裡。
 const { playing, speed, unitsAt, rosterAt, toggle, stop } = useAarReplay(replayStates, scrubTick)
+
+/**
+ * 任務執行單位的番號。取自重播底本（`replayStates.units`）——那是本頁唯一有番號的來源。
+ * 查不到就印 id 前 8 碼：整串 UUID 會把一行擠爆，而前 8 碼仍足以在帳本裡比對。
+ */
+function unitLabel(id: string | null | undefined): string {
+  if (!id) return ''
+  const hit = replayStates.value?.units?.find((u) => u.id === id)
+  return hit?.designation || id.slice(0, 8)
+}
 /**
  * 引用查核明細（D-aar）。**沒有它，「有捏造」三個字等於把整份報告作廢**
  * ——統裁看不出是哪一段被 AI 編出來，只能整份不採信。
@@ -143,6 +164,36 @@ onMounted(load)
           <li v-for="(n, t) in stats.event_counts" :key="t">{{ t }}：{{ n }}</li>
         </ul>
       </template>
+    </section>
+
+    <section v-if="missions.length" data-testid="aar-missions">
+      <h2>任務執行（{{ missions.length }} 道）</h2>
+      <p class="hint">
+        每道任務走過哪些階段、各花了多久——由帳本重建。
+        <b>評估失敗次數</b>非零代表那道任務在執行期出過錯（不會拖垮整局，但要看得見）。
+      </p>
+      <ul class="mission-list">
+        <li v-for="m in missions" :key="m.order_id" data-testid="aar-mission">
+          <div class="m-head">
+            <span class="m-type">{{ missionTypeLabel(m.mission_type) }}</span>
+            <span class="m-unit">{{ unitLabel(m.unit_id) }}</span>
+            <span v-if="m.failed" class="m-failed" data-testid="aar-mission-failed">✗ 未達成</span>
+            <span v-if="m.errors" class="m-errors" data-testid="aar-mission-errors">
+              ⚠ 評估失敗 {{ m.errors }} 次
+            </span>
+          </div>
+          <ol class="m-legs">
+            <li v-for="(leg, i) in m.legs" :key="i" data-testid="aar-mission-leg">
+              <span class="l-phase">{{ missionPhaseLabel(leg.phase) }}</span>
+              <span class="l-span">T{{ leg.from_tick }}<template v-if="leg.to_tick != null"> → T{{ leg.to_tick }}</template></span>
+              <!-- 還在該階段（局結束時尚未離開）→ 不編一個時長出來。 -->
+              <span v-if="leg.duration_ticks != null" class="l-dur">{{ leg.duration_ticks }} tick</span>
+              <span v-else class="l-dur dim">（仍在此階段）</span>
+              <span v-if="leg.note" class="l-note">{{ leg.note }}</span>
+            </li>
+          </ol>
+        </li>
+      </ul>
     </section>
 
     <section v-if="replay" data-testid="aar-timeline">
@@ -283,6 +334,19 @@ onMounted(load)
 </template>
 
 <style scoped>
+.mission-list { list-style: none; margin: 0; padding: 0 }
+.mission-list > li { border-left: 2px solid var(--p-surface-600); margin: 8px 0; padding-left: 8px }
+.m-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap }
+.m-type { font-weight: 600 }
+.m-unit { opacity: .8 }
+.m-failed { color: var(--p-red-400) }
+.m-errors { color: var(--p-orange-400); font-size: 12px }
+.m-legs { margin: 4px 0 0; padding-left: 18px; font-size: 12px }
+.m-legs li { display: flex; gap: 8px; flex-wrap: wrap }
+.l-phase { min-width: 5em }
+.l-dur { opacity: .75 }
+.l-note { opacity: .6 }
+
 .aar { max-width: 900px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
 .aar-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .aar-bar h1 { font-size: 1.25rem; margin: 0; }

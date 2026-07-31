@@ -507,6 +507,27 @@ components:
         ammo_remaining: { type: [integer, "null"] }
         rounds_per_mission: { type: integer, description: "一次火力任務的準則發數；0＝未宣告，下令面板沿用自己的預設。" }
         indirect_fire: { type: boolean, description: "是否為曲射武器（火力任務只有曲射打得到）。權威為後端的 INDIRECT_CATEGORIES——前端不得再抄一份類別表。" }
+    MissionLeg:
+      type: object
+      required: [phase, from_tick, to_tick, duration_ticks, note]
+      properties:
+        phase: { $ref: "#/components/schemas/MissionPhase" }
+        from_tick: { type: integer }
+        to_tick: { type: [integer, "null"], description: "null＝局結束時仍在這個階段（尚未離開）" }
+        duration_ticks: { type: [integer, "null"], description: "null＝同上（還沒結束就算不出時長）" }
+        note: { type: string }
+    MissionTimeline:
+      type: object
+      required: [order_id, mission_type, unit_id, failed, errors, legs]
+      properties:
+        order_id: { type: string }
+        mission_type: { type: string }
+        unit_id: { type: [string, "null"] }
+        failed: { type: boolean, description: 任務是否以失敗告終 }
+        errors:
+          type: integer
+          description: 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。
+        legs: { type: array, items: { $ref: "#/components/schemas/MissionLeg" } }
     LedgerEntry:
       type: object
       required: [seq, tick, event_type, superseded]
@@ -2713,6 +2734,23 @@ paths:
               schema: { $ref: "#/components/schemas/AarReplayStates" }
         "403": { description: Forbidden }
         "404": { description: Session not found }
+  /sessions/{id}/aar/missions:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getMissionTimelines
+      security: [{ bearerAuth: [] }]
+      description: >-
+        任務時間軸（WP-A2）——每道任務走過哪些階段、各花了多久。
+        **從帳本重建**而不是查任務當前狀態：當前狀態只回答「現在到哪一階段」，
+        而 AAR 要回答「它怎麼走到這裡的」；何況已結束的局根本沒有當前狀態可查
+        （記憶活在 runner 行程）。存取控制與迷霧投影與其他 AAR 端點相同。
+      responses:
+        "200":
+          description: Mission timelines
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MissionTimeline" } }
+        "403": { description: Forbidden }
   /sessions/{id}/aar/stats:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

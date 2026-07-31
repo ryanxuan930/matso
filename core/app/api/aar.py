@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,32 @@ from app.models.enums import UserRole
 from app.stream.faction_filter import is_omniscient
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["aar"])
+
+
+class MissionLegView(BaseModel):
+    """任務時間軸上的一段。`to_tick`/`duration_ticks` 為 None ＝局結束時仍在這個階段。"""
+
+    phase: str
+    from_tick: int
+    to_tick: int | None = None
+    duration_ticks: int | None = None
+    note: str = ""
+
+
+class MissionTimelineView(BaseModel):
+    """一道任務怎麼走完的（WP-A2）。
+
+    這個端點過去回的是**裸 `list[dict]`**——FastAPI 一個欄位都不驗，契約裡也沒有它，
+    於是前端型別只能人手抄；後端改個欄位名，畫面就靜默變空白而所有閘門都是綠的。
+    宣告出來之後 `test_contract_conformance` 才管得到它。
+    """
+
+    order_id: str
+    mission_type: str
+    unit_id: str | None = None
+    failed: bool = False
+    errors: int = 0
+    legs: list[MissionLegView] = Field(default_factory=list)
 
 
 def _aar_visible_factions(db: Session, session_id: str, observer: str) -> list[str]:
@@ -224,7 +251,7 @@ def get_stats(
     }
 
 
-@router.get("/{session_id}/aar/missions")
+@router.get("/{session_id}/aar/missions", response_model=list[MissionTimelineView])
 def get_mission_timelines(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),
