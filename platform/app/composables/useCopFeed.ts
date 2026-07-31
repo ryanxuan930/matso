@@ -18,9 +18,12 @@
  * target_health_after、from、to、mode、winners、observation、rounds、estimated_losses、
  * is_estimate、error_band、cause、shooter_faction）。
  *
- * **`LedgerEvent.detail` 完全不下發。** 所以像 `MOVE_HALTED_FUEL` 的 `reason`、
- * `MOVE_BLOCKED` 的 `cell`、`RESUPPLY_FAILED` 的失敗原因，前端**拿不到**——
- * 那些敘述只能講到事件型別本身保證的程度。這裡刻意不去「補完」看起來該有的細節：
+ * `LedgerEvent.detail` 過去**完全不下發**，所以 `MOVE_HALTED_FUEL` 的剩油量、
+ * `MOVE_ATTRITION` 的里程與機動 profile、觸雷打到哪一道障礙，前端一概拿不到。
+ * 現在 `broadcaster._DETAIL_KEYS` 轉發了一份白名單（見 `detailsOf`），
+ * **但 `lat` / `lng` 刻意不在其中**——下發會繞過 WP-C5 的位置凍結。
+ *
+ * 白名單之外的鍵仍然拿不到。這裡刻意不去「補完」看起來該有的細節：
  * 在兵推系統裡編造一個聽起來合理的原因，比留白危險得多。
  */
 import { commsLabel } from '~/composables/useUnits'
@@ -175,6 +178,74 @@ function whyOf(payload: Record<string, unknown>): string {
   return reasonLabel(payload?.reason)
 }
 
+/** 機動 profile 與行軍節奏的中文（未知代號原樣印，不編一個出來）。 */
+const PROFILE_LABELS: Record<string, string> = {
+  FOOT: '徒步',
+  WHEELED: '輪型',
+  TRACKED: '履帶',
+}
+const TEMPO_LABELS: Record<string, string> = {
+  CAUTIOUS: '謹慎',
+  NORMAL: '常速',
+  FORCED: '強行軍',
+}
+/** 工兵作業別（`obstacle_wiring` 的 `detail.action`）。 */
+const ENGINEER_ACTION_LABELS: Record<string, string> = {
+  BREACH: '破障',
+  EMPLACE: '設障',
+}
+
+function num(v: unknown, digits = 1): string | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : undefined
+}
+
+/**
+ * 事件的**具體內容**——走了多遠、剩多少油、掉了多少戰力、破的是哪一道障礙。
+ *
+ * 這些鍵住在 `LedgerEvent.detail`。後端曾經**完全不下發 detail**，於是移動、工兵、
+ * 後勤事件的「為什麼」在整個系統裡沒有任何操作員取得得到的路徑：即時串流沒有、
+ * AAR 畫面沒有、匯出檔也沒有。`broadcaster._DETAIL_KEYS` 已經把安全的那些轉發出來
+ * （`lat`/`lng` 刻意不在其中——那會繞過 WP-C5 的位置凍結），本函式是消費端。
+ *
+ * **只印真的收到的欄位**，缺的一律略過。「行進耗損 −3.2」與
+ * 「行進耗損 −3.2（2.4 km · 履帶 · 強行軍）」差的是指揮官能不能判斷
+ * 那是地形磨的還是自己催出來的。
+ */
+function detailsOf(payload: Record<string, unknown>): string {
+  const bits: string[] = []
+  const km = num(payload?.distance_km)
+  if (km) bits.push(`${km} km`)
+  const profile = typeof payload?.profile === 'string' ? payload.profile : ''
+  if (profile) bits.push(PROFILE_LABELS[profile] ?? profile)
+  const tempo = typeof payload?.tempo === 'string' ? payload.tempo : ''
+  if (tempo) bits.push(TEMPO_LABELS[tempo] ?? tempo)
+  const before = num(payload?.strength_before)
+  const after = num(payload?.strength_after)
+  if (before && after) bits.push(`戰力 ${before}→${after}`)
+  const fuel = num(payload?.fuel_remaining)
+  if (fuel) bits.push(`剩油 ${fuel}`)
+  const burn = num(payload?.fuel_burn_per_km)
+  if (burn) bits.push(`每公里 ${burn}`)
+  // 障礙：想定給的 label 是人話（「1 號雷區」），沒有就退回 id 前 8 碼。
+  const label = typeof payload?.label === 'string' ? payload.label : ''
+  const feature = typeof payload?.feature_id === 'string' ? payload.feature_id : ''
+  if (label || feature) bits.push(label || feature.slice(0, 8))
+  // 工兵在場與否會改變觸雷機率與強穿代價——這一格是「為什麼傷得比較輕」的答案。
+  if (payload?.engineer === true) bits.push('工兵在場')
+  // 工兵作業別。`SESSION_CONTROL` 也有 `action`，但它在上面就 return 了，不會走到這裡。
+  const action = typeof payload?.action === 'string' ? payload.action : ''
+  if (action) bits.push(ENGINEER_ACTION_LABELS[action] ?? action)
+  const legs = payload?.legs
+  if (typeof legs === 'number' && legs > 1) bits.push(`${legs} 段路線`)
+  const eta = payload?.eta_tick
+  if (typeof eta === 'number') bits.push(`預計 T${eta} 完成`)
+  const issuedFuel = num(payload?.fuel)
+  if (issuedFuel) bits.push(`撥油 ${issuedFuel}`)
+  const issuedAmmo = payload?.ammo
+  if (typeof issuedAmmo === 'number') bits.push(`撥彈 ${issuedAmmo}`)
+  return bits.join(' · ')
+}
+
 export function useCopFeed(units: () => UnitView[]) {
   /**
    * ID → 番號。查不到（他軍單位、已離場單位、MSEL 生成的新單位還沒進清單）時
@@ -298,7 +369,11 @@ export function useCopFeed(units: () => UnitView[]) {
       const tail = tgt ? ` → ${tgt}` : ''
       const d = payload?.damage
       const dmg = d != null ? ` −${Number(d).toFixed(1)}` : ''
-      return `${head}${label}${ot}${tail}${why ? `（${why}）` : ''}${dmg}`
+      // 原因與細節分開括：原因回答「為什麼」，細節回答「多少／哪一個」。
+      // 兩者常同時存在（`MOVE_HALTED_FUEL` 有 reason 也有剩油量），塞進同一括號會糊掉。
+      const detail = detailsOf(payload)
+      const extra = `${why ? `（${why}）` : ''}${detail ? `［${detail}］` : ''}`
+      return `${head}${label}${ot}${tail}${extra}${dmg}`
     }
     // 安全退路：**新增事件型別時要回來補 EVENT_LABELS**，不是靠這一行撐著。
     // 除了「後端先上線、前端隨後跟上」的空窗期，還有一種永遠補不完的情況：
