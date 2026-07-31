@@ -306,6 +306,13 @@
 | V2.1 exit ✅ armor-breakthrough 迷你 CPX | SPEC_V2 §7 V2.1 exit | 新想定（35 單位）+ `ops/tools/cpx_acceptance.py` 七環驗收：演習專案→四席位編組→白軍 MSEL 誘導→火協審批→禁射區護欄→事件鏈可評量 | ✅ **7/7 達成**。第一次跑 1/7——**含 MSEL 的局每 tick 崩潰、tick 恆 0**（`dict(...tuples())` 缺 `.all()`；WP-B2 標 ✅ 但從沒在有 MSEL 的局跑過，所有測試都餵假的 context_fn）。修完補事件鏈（`OrderResponse` 的 `issuer_id`/`payload` + `ORDER_REJECTED`/`REQUEST_SUBMITTED`/`REQUEST_DECIDED` 三種帳本事件）與禁射區區名 |
 | SPEC_V2 全面盤點 ✅ | — | 8 agent 逐卡查證 43 張卡的**程式實際狀態**（非讀文件）+ 排定開發順序 | ✅ [docs/SPEC_V2_AUDIT.md](docs/SPEC_V2_AUDIT.md)。22 未開始 / 8 部分 / 9 完成 / **4 張假 ✅**。最嚴重：**CI 的 AI eval gate 結構上不可能變紅**，量的是 jsonschema 有沒有裝好 |
 | Phase 0 修好量尺與假 ✅ | 盤點結論 | eval gate 可紅化／D6.2 AAR 統計分子分母／A1 迷霧補洞／C2 破障工時時間尺度 | ✅ 四軌 + 對抗式查證。查證抓到 4 HIGH，含 **A1 補洞自己引進的回歸**（中立陣營被自動接戰）與三條「mutation 打在純函數沒打在接線」 |
+| UI-P0 想定編輯器靜默刪資料 | [docs/UI_GAPS.md](docs/UI_GAPS.md) | `importScenario`/`exportScenario` 只認 `{scenario,orbat,msel}`，開啟出貨想定再存回去 **roe / overrides / equipment 全部消失**且零警告 | 未做（`S`，**最優先——這是資料破壞**） |
+| UI-P1 事件回饋最後一哩 | 同上 | `LedgerEvent.detail` 不轉發（WS 與 AAR 匯出皆無）→ `REASON_LABELS` 五條翻譯永遠不會被觸發；`ORDER_REJECTED`/`ORDER_RESTRICTED_FIRE_OVERRIDE`/`REQUEST_SUBMITTED`/`REQUEST_DECIDED` 只寫 DB 不進串流 | 未做（`M`） |
+| UI-P2 下令可操作性 | 同上 | 席位不過濾令型（送出才被 `ORDER_SEAT_DENIED` 擋）＋ 9 個送不出的 payload 欄位（含 FIRE_MISSION 因確認 UI 綁在 ENGAGE 分支而變成絕對禁射）＋ 破障令要手打障礙 id | 未做（`S×7`） |
+| UI-P3 檢討可用性 | 同上 | `/aar/missions` 是唯一完全沒接的業務端點；令與申請單的內容無 renderer（火協鏈在畫面上是斷的）；`/ledger` 契約有實作沒有（DB 21 萬筆） | 未做（`S+M`） |
+| UI-P4 契約漂移（併 G5） | 同上 | `_IMPL_ONLY` 11 條前端型別全手抄、`_CONTRACT_ONLY` 7 條按下去 404。⚠ G5 既有驗收條件是壞的，接手前先改 | 未做（`M`） |
+| UI-P5 統裁回饋 | 同上 | 寫入路徑幾乎無缺口、**讀取路徑到處是洞**：暫停狀態無權威來源、`total_submitted`、回滾點 3799 筆塞原生 select、MSEL 只印 id、`/metrics` 零消費端 | 未做（`S/M`） |
+| UI-P6 想定資產層 | 同上 | ROE section + 機動覆寫（併卡）、ORBAT 編裝（分水嶺）、條件 DSL 補四種（白軍扣發鈕已備、劇本產不出 manual 事件） | 未做（`M/L`） |
 
 ---
 
