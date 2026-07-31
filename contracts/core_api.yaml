@@ -507,6 +507,34 @@ components:
         ammo_remaining: { type: [integer, "null"] }
         rounds_per_mission: { type: integer, description: "一次火力任務的準則發數；0＝未宣告，下令面板沿用自己的預設。" }
         indirect_fire: { type: boolean, description: "是否為曲射武器（火力任務只有曲射打得到）。權威為後端的 INDIRECT_CATEGORIES——前端不得再抄一份類別表。" }
+    LedgerEntry:
+      type: object
+      required: [seq, tick, event_type, superseded]
+      properties:
+        seq: { type: integer, description: 帳本序號（append-only，單調遞增） }
+        tick: { type: integer }
+        event_type: { type: string }
+        initiator_id: { type: [string, "null"] }
+        target_id: { type: [string, "null"] }
+        damage_calc:
+          type: [number, "null"]
+          description: 傷亡量。**迷霧型別（面射擊）對非全知者為 null**，與 WS feed 同一條規則。
+        ai_decision: { type: object, additionalProperties: true, description: 裁決結構化欄位（已過迷霧投影） }
+        detail: { type: object, additionalProperties: true, description: 非證據性診斷欄（不入 hash chain） }
+        superseded:
+          type: boolean
+          description: >-
+            是否屬於白軍回滾棄置的世代（WP-E1／ADR 007）。事件不刪（證據保全），
+            但它描述的是一條已不存在的時間軸——統計時要排除，稽核時要看得到。
+    LedgerPage:
+      type: object
+      required: [events, next_after_seq, has_more]
+      properties:
+        events: { type: array, items: { $ref: "#/components/schemas/LedgerEntry" } }
+        next_after_seq:
+          type: [integer, "null"]
+          description: 下一頁的 after_seq（＝本頁最後一筆的 seq）；本頁為空時為 null。
+        has_more: { type: boolean, description: 是否還有下一頁 }
     MessageKind:
       type: string
       description: 信文種類（[JCATS-F p.10–14] C2 工件）。REQUEST/APPROVAL 會帶 ref_id 指向申請單。
@@ -2449,8 +2477,22 @@ paths:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:
       operationId: queryLedger
-      description: "?after_seq=&types=  分頁、faction-scoped 投影"
-      responses: { "200": { description: Events } }
+      security: [{ bearerAuth: [] }]
+      description: >-
+        帳本查詢（事後爭議裁決）。**與 AAR 走同一套迷霧投影**（`aar/fog.project_events`）
+        與同一套存取規則：參與者只看得到自己陣營看得到的事件，全知/ANALYST 不受限。
+        與 AAR 的差別在於**回滾棄置的世代也回**（`superseded=true` 標示）——
+        AAR 是敘事、要一條連貫的時間軸；這裡是稽核、要完整證據。
+      parameters:
+        - { name: after_seq, in: query, required: false, schema: { type: integer, minimum: 0 }, description: 只回 seq 大於此值者（分頁游標；帳本 append-only 所以 seq 單調） }
+        - { name: types, in: query, required: false, schema: { type: string }, description: "逗號分隔的 event_type 白名單；省略＝全部" }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }, description: 單頁筆數上限 }
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LedgerPage" }
   /sessions/{id}/messages:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

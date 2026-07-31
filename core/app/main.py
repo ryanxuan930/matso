@@ -23,6 +23,7 @@ from app.api import (
     inject_router,
     install_error_handlers,
     intel_router,
+    ledger_router,
     lobby_router,
     map_features_router,
     movement_router,
@@ -119,6 +120,7 @@ app.include_router(relations_router)
 app.include_router(inject_router)
 app.include_router(control_router)
 app.include_router(aar_router)
+app.include_router(ledger_router)
 app.include_router(ws_router)
 
 

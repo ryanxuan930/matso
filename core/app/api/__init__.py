@@ -11,6 +11,7 @@ from app.api.exercises import router as exercises_router
 from app.api.fire_plans import router as fire_plans_router
 from app.api.inject import router as inject_router
 from app.api.intel import router as intel_router
+from app.api.ledger import router as ledger_router
 from app.api.lobby import router as lobby_router
 from app.api.map_features import router as map_features_router
 from app.api.movement import router as movement_router
@@ -38,6 +39,7 @@ __all__ = [
     "inject_router",
     "install_error_handlers",
     "intel_router",
+    "ledger_router",
     "lobby_router",
     "map_features_router",
     "movement_router",

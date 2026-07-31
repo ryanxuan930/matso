@@ -53,7 +53,6 @@ _CONTRACT_ONLY = {
     ("GET", "/api/v1/sessions/{}/aar"),  # 實作拆成 /aar/stats、/aar/report 等
     ("GET", "/api/v1/sessions/{}/ai/tasks/{}"),
     ("POST", "/api/v1/sessions/{}/ai/consult"),
-    ("GET", "/api/v1/sessions/{}/ledger"),  # 契約裡躺了很久，從來沒實作
     ("POST", "/api/v1/sessions/{}/injects"),  # 實作是單數 /inject
 }
 

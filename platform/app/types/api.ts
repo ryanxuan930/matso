@@ -916,7 +916,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description ?after_seq=&types=  分頁、faction-scoped 投影 */
+        /** @description 帳本查詢（事後爭議裁決）。**與 AAR 走同一套迷霧投影**（`aar/fog.project_events`） 與同一套存取規則：參與者只看得到自己陣營看得到的事件，全知/ANALYST 不受限。 與 AAR 的差別在於**回滾棄置的世代也回**（`superseded=true` 標示）—— AAR 是敘事、要一條連貫的時間軸；這裡是稽核、要完整證據。 */
         get: operations["queryLedger"];
         put?: never;
         post?: never;
@@ -1569,6 +1569,33 @@ export interface components {
             rounds_per_mission?: number;
             /** @description 是否為曲射武器（火力任務只有曲射打得到）。權威為後端的 INDIRECT_CATEGORIES——前端不得再抄一份類別表。 */
             indirect_fire?: boolean;
+        };
+        LedgerEntry: {
+            /** @description 帳本序號（append-only，單調遞增） */
+            seq: number;
+            tick: number;
+            event_type: string;
+            initiator_id?: string | null;
+            target_id?: string | null;
+            /** @description 傷亡量。**迷霧型別（面射擊）對非全知者為 null**，與 WS feed 同一條規則。 */
+            damage_calc?: number | null;
+            /** @description 裁決結構化欄位（已過迷霧投影） */
+            ai_decision?: {
+                [key: string]: unknown;
+            };
+            /** @description 非證據性診斷欄（不入 hash chain） */
+            detail?: {
+                [key: string]: unknown;
+            };
+            /** @description 是否屬於白軍回滾棄置的世代（WP-E1／ADR 007）。事件不刪（證據保全）， 但它描述的是一條已不存在的時間軸——統計時要排除，稽核時要看得到。 */
+            superseded: boolean;
+        };
+        LedgerPage: {
+            events: components["schemas"]["LedgerEntry"][];
+            /** @description 下一頁的 after_seq（＝本頁最後一筆的 seq）；本頁為空時為 null。 */
+            next_after_seq: number | null;
+            /** @description 是否還有下一頁 */
+            has_more: boolean;
         };
         /**
          * @description 信文種類（[JCATS-F p.10–14] C2 工件）。REQUEST/APPROVAL 會帶 ref_id 指向申請單。
@@ -4641,7 +4668,14 @@ export interface operations {
     };
     queryLedger: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 只回 seq 大於此值者（分頁游標；帳本 append-only 所以 seq 單調） */
+                after_seq?: number;
+                /** @description 逗號分隔的 event_type 白名單；省略＝全部 */
+                types?: string;
+                /** @description 單頁筆數上限 */
+                limit?: number;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["SessionId"];
@@ -4655,7 +4689,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["LedgerPage"];
+                };
             };
         };
     };
