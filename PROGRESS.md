@@ -587,32 +587,32 @@ uv run python ops/tools/live_system_check.py --starve-days 1.0
 不是當掉。`--starve-days 3.0` 走完整階梯（×0.9→×0.75→×0.5）要 ~37 分鐘。
 跑之前要先 `cd ops/compose && docker compose up -d --wait`。
 
-### ⏸ C7 有未結的查證，**優先於下面的 UI 批次**
+### ✅ 本輪已完成（2026-07-31 → 08-01）
 
-C7 的 workflow 兩個對抗式查證 agent 只回了一個就收工，**第二份隨關機消失、要重跑**。
-已回的那份找到 **11 條**（1 條已修、3 條 HIGH、4 條 MEDIUM、3 條 LOW），全數抄錄在
-`docs/worklog/supply-classes.md` 的「⏸ 中斷點」一節，含探針輸出。
+**C7 十一條查證全數裁定**（7 修、2 不成立、2 註解誇大）——最嚴重的是補給點撥交不守恆
+（10 份撥出 30 份，等於補給點庫存不是真的約束、打擊敵後勤失去意義）與斷補曲線
+**隨結算頻率漂**（同一想定逐 tick 算第 4 日掉、每日算第 3 日掉）。
 
-最嚴重的是**補給點撥交不守恆**：3 個單位同 tick 各領 10.0（共 30.0），補給點只掉 10.0——
-20 份憑空生出。這條若成立，C7.2「打擊敵後勤」整個失去意義，因為補給點庫存不是真的約束。
+**UI 盤點 P0–P5 全數落地**：
+- P0 想定編輯器停止靜默刪 ROE／機動覆寫／單位編裝
+- P1 戰況 feed 印出 detail（里程／剩油／觸雷障礙）＋ 補給撥交量
+- P2 席位過濾下令選單、五個送不出的參數、破障改地圖挑
+- P3 `/ledger` 實作、令與申請單內容 renderer、任務時間軸接線
+- P4／G5 **契約漂移 19 → 0**，新增「2xx 必須有 schema」閘門，修掉壞掉的驗收條件
+- P5 暫停狀態可見、AI 失控保護餘量、回滾點上限、MSEL 待命清單語意化
 
-另外兩條 HIGH 是活系統的 `repair_per_day` 是 0（與 `refit_wiring` 的 10.0 打架），
-以及 `supply_daily_rates` 空表讓**系統設定頁對統裁說謊**（畫面寫「未列出＝不消耗」，實際在消耗）
-且 **B4 參數凍結簽證封不住真正生效的消耗率**。
+**活體驗收 16/16**（完整斷補階梯 ×0.9→×0.75→×0.5 實測通過）。
 
-⚠ 除已修的那條，其餘我都**還沒獨立確認**——回來逐條自己跑探針再動手。
+### 下一步
 
-### 下一步（依序，前三批不互相阻擋）
+**P6 資產層**（`docs/UI_GAPS.md`）——想定編輯器要能獨立產出一份能打的想定：
+1. **ORBAT 編裝**（`L`，分水嶺）：編輯器目前產不出帶編裝的單位，
+   而沒有編裝的單位打不了仗。這是「編輯器能不能獨立用」的關鍵。
+2. 條件 DSL 補 `manual` / `after_ticks_of` / `held_for` / `contact_established`
+   ——白軍控制台的「扣發／跳過」按鈕已經做好了，**只差劇本產不出對應的 manual 事件**。
+3. ROE section + 機動覆寫的**編輯介面**（P0 只做到「不刪掉」，還不能編）。
 
-1. **UI-P0｜想定編輯器靜默刪資料**（`platform/app/composables/useScenarioEditor.ts`）——
-   **唯一一條正在毀壞使用者資料的**：編輯器載入既有想定再存回，`roe` / `overrides` /
-   `equipment` 三塊會被丟掉。API 層（`api/scenarios.py` 的 `ScenarioBundle`）已經修好了，
-   洞在前端的 bundle 組裝。先做這條。
-2. **UI-P1 前端半**（`platform/app/composables/useCopFeed.ts`）——後端 `broadcaster.py` 的
-   `_DETAIL_KEYS` 已經把 fuel_remaining / distance_km / strength_before/after 等轉發出來了，
-   feed 還沒渲染。純前端。
-3. **UI-P2**——席位過濾令型選單 + 九個送不出的 payload 欄位 + 破障令的地圖選點。
-4. 之後照 `docs/UI_GAPS.md` 的 P3–P6（89 項、七批），與 `docs/SPEC_V2_AUDIT.md` 的 Phase 2–5。
+之後回 `docs/SPEC_V2_AUDIT.md` 的 Phase 2–5。
 
 ### 開機後要先做的事
 
