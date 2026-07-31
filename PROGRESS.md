@@ -585,6 +585,21 @@ uv run python ops/tools/live_system_check.py --starve-days 1.0
 不是當掉。`--starve-days 3.0` 走完整階梯（×0.9→×0.75→×0.5）要 ~37 分鐘。
 跑之前要先 `cd ops/compose && docker compose up -d --wait`。
 
+### ⏸ C7 有未結的查證，**優先於下面的 UI 批次**
+
+C7 的 workflow 兩個對抗式查證 agent 只回了一個就收工，**第二份隨關機消失、要重跑**。
+已回的那份找到 **11 條**（1 條已修、3 條 HIGH、4 條 MEDIUM、3 條 LOW），全數抄錄在
+`docs/worklog/supply-classes.md` 的「⏸ 中斷點」一節，含探針輸出。
+
+最嚴重的是**補給點撥交不守恆**：3 個單位同 tick 各領 10.0（共 30.0），補給點只掉 10.0——
+20 份憑空生出。這條若成立，C7.2「打擊敵後勤」整個失去意義，因為補給點庫存不是真的約束。
+
+另外兩條 HIGH 是活系統的 `repair_per_day` 是 0（與 `refit_wiring` 的 10.0 打架），
+以及 `supply_daily_rates` 空表讓**系統設定頁對統裁說謊**（畫面寫「未列出＝不消耗」，實際在消耗）
+且 **B4 參數凍結簽證封不住真正生效的消耗率**。
+
+⚠ 除已修的那條，其餘我都**還沒獨立確認**——回來逐條自己跑探針再動手。
+
 ### 下一步（依序，前三批不互相阻擋）
 
 1. **UI-P0｜想定編輯器靜默刪資料**（`platform/app/composables/useScenarioEditor.ts`）——

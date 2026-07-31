@@ -79,6 +79,110 @@ C7.2（補給線/補給點）、C7.3（修復/人員補充）另開卡。
 小編成會被 `ceil` 整個吃掉——7 支步槍 ×0.9 ＝ 6.3 → 仍然 ceil 成 7，於是**拿掉生產程式碼那一行
 測試照樣綠**。建制數要夠大（測試用 70/20）差異才浮得出來。活體檢查用 90 發不是 9 發，同一個理由。
 
+## ⏸ 中斷點（2026-07-31 12:55 收工）——回來從這裡接
+
+### workflow 停在哪
+
+C7 的多 agent workflow（`wf_466a04d0-08a`）六個 agent：
+**3 個建置軌（10:11–10:16 全回）＋ 1 個活體驗收（12:13 回）＋ 2 個對抗式查證**。
+查證只回了**一個**，第二個還在飛就收工了——**那份結果已隨關機消失，回來要重跑**。
+
+已回的那份找到 11 條。下面全數抄錄，因為 workflow 記錄不會留到下次開機。
+
+⚠ **除了第 1 條，其餘我都還沒獨立確認**。查證 agent 附了探針輸出，看起來紮實，
+但本 repo 這一週已經有查證 agent 把「純函數對的」誤報成「接線對的」的前例——
+**回來要逐條自己跑一次探針再動手**，不要照單全收。
+
+### 1. ✅ 已修（commit 4b68d8c）
+
+`adjudicator._resolve_combined` 沒乘 `supply_effectiveness`。探針數字：
+
+```
+VOLLEY(單武器):          吃飽掉 6.3760  斷補5日掉 1.5940  比值 0.2500
+COMBINED(>=2武器未指名):  吃飽掉 5.8256  斷補5日掉 5.8256  比值 1.0000  ← 完全無效
+```
+
+### 2. ❗ HIGH｜補給點撥交不守恆（`engine/supply_wiring.py` `draw_from`）
+
+庫存 10.0 的補給點、3 個 `on_hand=0/capacity=10` 的同陣營單位、**同一 tick**：
+
+```
+ISSUED_TOTAL: 30.0                 ← 帳本 RESUPPLIED 事件加總
+UNIT_ON_HAND: {u1: 10.0, u2: 10.0, u3: 10.0}
+POINT_STOCK: 10.0 → 0.0            ← 只掉 10.0
+```
+
+**20.0 份 Class I 憑空生出。** 這條若成立，C7.2「打擊敵後勤」整個失去意義——
+補給點的庫存不是真的約束。**優先級最高**。
+
+### 3. ❗ HIGH｜整補率活系統是 0（`sim_params.py` vs `refit_wiring.py`）
+
+`refit_wiring.REPAIR_PER_DAY = 10.0`（校準軌宣稱「整補真的發生」），
+但活系統 `GET /system/config` 回 `repair_per_day: 0.0`。兩個數字誰生效要查清楚。
+
+### 4. ❗ HIGH｜`supply_daily_rates: {}` 的語義衝突
+
+活系統回空表。而 `system-settings.vue:343-351` 對操作員寫著「**未列出的補給類別＝不消耗**」，
+同一局的 `B-3-A` 卻是 `I 2.725/3.0`（確實在消耗）。**畫面對統裁說謊。**
+
+連帶：WP-B4 參數凍結簽證封存的是 `to_config()` 的 `supply_daily_rates`＝空表——
+**簽證封不住真正生效的消耗率**，那正是簽證存在的理由。
+
+### 5. ❗ MEDIUM｜整補錨點在生產接線下不成立（`refit_wiring.py`）
+
+```
+A. 只跑 _refit_tick（＝校準軌測試的形狀）
+   day=4 strength=100.000
+B. 生產接線（_supply_tick + _refit_tick 同時跑）
+   day=4 strength=96.363
+   day=5 strength=96.363  ← 卡住，NO_PARTS
+```
+
+測試 `test_supply_calibration.py:439` 給的是 `IX=40.0`（不是錨點宣稱的 20），
+且整個函式沒呼叫過 `_supply_tick`。**又一次「測試餵的不是引擎真的會產生的資料」。**
+
+### 6. ❗ MEDIUM｜`supply_tick` 停止前進 → 補給後料件瞬間蒸發
+
+```
+tick 1440   supply_tick=1440
+tick 2880   supply_tick=1440   ← 不再前進
+tick 100000 supply_tick=1440
+# auto_resupply 補回滿載 20.0 後，於 tick 101440 結算：
+{'supply_tick': 101440, 'supply': {'IX': [0.0, 20.0]}}   ← 20 點在一個 tick 內消失
+```
+
+### 7. ❗ MEDIUM｜斷補階梯實際是第 4 日才掉，不是第 3 日
+
+`supply.py` 的註解寫「滿載 3 DOS → 第 3 個模擬日耗盡 → 走階梯」，探針：
+
+```
+首次效能下降 tick 5748 ＝模擬日 3.9917
+day=3 on_hand=0.0（見底）
+```
+
+day 3 見底、day 4 才掉效能。**差一天**。是註解要改還是初值要改，回來決定。
+
+### 8. ❗ MEDIUM｜整補不寫 DB `current_strength`（`refit_wiring.py:229-241`）
+
+只寫熱狀態，DB 要等下次 checkpoint。與 `adjudicator`/`movement`/`fire_wiring` 的做法不一致。
+
+### 9–11. LOW
+
+- `contracts/scenario.schema.json` 的 `supply_points.stock` 是 `additionalProperties: false` 且只列 I/IX，
+  與新增的 `parse_class`（認商品名）矛盾——契約擋在前面，`{"FUEL": …}` 仍進不來。
+- `sim_runtime.py:914` 註解說 `repair_per_day=0`（預設），與 `refit_wiring.py:57` 的 `10.0` 打架（同第 3 條）。
+- **活體驗收沒清乾淨**：`VERIFY_C7_ARMOR`（`2d335019…`）還留在 DB 裡，回來手動刪。
+
+### 回來要跑的
+
+```bash
+cd ops/compose && docker compose up -d --wait
+uv run python ops/tools/live_system_check.py --starve-days 3.0
+```
+
+⚠ `--starve-days 3.0` 走完整階梯（×0.9→×0.75→×0.5）要 **~37 分鐘牆鐘**（斷補要累積真的模擬時間，
+不是當掉）。收工前最後一輪只跑了 `1.0`（16/16 綠），**完整階梯尚未在修完 C16 後重跑過**。
+
 ## 中斷續作指引
 
 - **下一步第一件事**：C7.2（再訂購水位與補給線、`SUPPLY_POINT`、打擊敵後勤）。
