@@ -29,7 +29,26 @@ export interface EditorUnit {
   parent?: string
   fixed?: boolean // 固定單位（指揮部等）：不接受 MOVE 令、不會被派去移動或機動交戰
   branch?: string // 兵科：決定地圖符號的圖示（步兵斜線/裝甲橢圓/砲兵圓點…）。UNKNOWN＝通用框
+  /**
+   * 本檔未建模的單位欄位（`equipment`、`attributes`、`authorized_strength`…）。
+   * **匯入時原樣收起、匯出時原樣攤回**——理由同 `ScenarioModel.passthrough`：
+   * 編輯器只管得到 7 個欄位，而 `orbat.schema.json` 的單位遠不只 7 個。
+   * 不收的話，一支帶著完整編裝與補給宣告的單位在編輯器裡開一次再存回去，
+   * 就只剩番號與座標——而畫面上完全看不出東西掉了。
+   */
+  passthrough?: Record<string, unknown>
 }
+
+/** 編輯器**明確建模**的單位鍵（snake_case，＝ bundle 裡的形狀）。其餘走單位的 `passthrough`。 */
+const MODELLED_UNIT_KEYS = new Set([
+  'designation',
+  'unit_level',
+  'lat',
+  'lng',
+  'parent',
+  'fixed',
+  'branch',
+])
 export interface EditorRelation { a: string; b: string; relation: RelationValue }
 export interface EditorMsel { id: string; once: boolean; trigger: Condition; inject: InjectAction }
 export interface EditorVictory { faction: string; condition: Condition }
@@ -126,7 +145,23 @@ export interface ScenarioModel {
    * 否則舊值會留在 passthrough，使用者在 UI 清空該設定時被舊值靜默復活。
    */
   passthrough?: Record<string, unknown>
+  /**
+   * **bundle 頂層**未建模的區段，原樣帶著（目前是 `roe` 與 `overrides`）。
+   *
+   * ⚠ 與上面那個 `passthrough` 是兩件事，別合併：那個救的是 `scenario` **裡面**的鍵，
+   * 這個救的是 `scenario` 的**兄弟**。`roe`（陣營交戰規則，例如「本局禁用 MLRS」）
+   * 與 `overrides`（機動覆寫矩陣）都是 bundle 的頂層區段，
+   * 於是「scenario 內部的未知鍵會自動存活」這個保證對它們完全不適用——
+   * 用編輯器開一個有 ROE 禁令的想定再存回去，**禁令整段消失且沒有任何錯誤訊息**。
+   *
+   * 後端的 `api/scenarios.ScenarioBundle` 已經修好會收這兩段（它一度也在丟），
+   * 洞剩在這裡：前端根本沒把它們放進送出去的 bundle。
+   */
+  bundlePassthrough?: Record<string, unknown>
 }
+
+/** bundle 頂層由編輯器**明確處理**的區段。其餘走 `bundlePassthrough`。 */
+const MODELLED_BUNDLE_KEYS = new Set(['scenario', 'orbat', 'msel'])
 
 /** 編輯器**明確建模**的 scenario 鍵。其餘一律走 `passthrough`。 */
 const MODELLED_SCENARIO_KEYS = new Set([
@@ -214,7 +249,7 @@ function exportSurvivability(
 }
 
 /** 編輯器模型 → scenario package bundle（scenario/orbat/msel 三段，後端 loader 可讀的 JSON）。 */
-export function exportScenario(m: ScenarioModel): {
+export function exportScenario(m: ScenarioModel): Record<string, unknown> & {
   scenario: Record<string, unknown>
   orbat: Record<string, unknown>
   msel: Record<string, unknown>
@@ -268,6 +303,10 @@ export function exportScenario(m: ScenarioModel): {
         units: m.units
           .filter((u) => u.faction === f)
           .map((u) => ({
+            // **先攤開單位的 passthrough**，明確欄位在後面覆蓋——同 scenario 的處理。
+            // 編輯器只管 7 個欄位，`equipment`／`attributes`／`authorized_strength` 等
+            // 全靠這裡活著。
+            ...(u.passthrough ?? {}),
             designation: u.designation,
             unit_level: u.unitLevel,
             ...(u.lat !== undefined ? { lat: u.lat } : {}),
@@ -283,7 +322,9 @@ export function exportScenario(m: ScenarioModel): {
   const msel = {
     events: m.msel.map((e) => ({ id: e.id, once: e.once, trigger: e.trigger, inject: e.inject })),
   }
-  return { scenario, orbat, msel }
+  // bundle 頂層的未建模區段（`roe`／`overrides`）攤在最前面，
+  // 三個明確區段在後面覆蓋——順序與上面兩處 passthrough 一致。
+  return { ...(m.bundlePassthrough ?? {}), scenario, orbat, msel }
 }
 
 /** 匯入端的數值守則：想定裡的字串數字（YAML 手寫常見）也吃，其餘一律當沒填。 */
@@ -332,15 +373,23 @@ function importSurvivability(raw: unknown): EditorSurvivabilityMove | undefined 
 }
 
 /** bundle → 編輯器模型（匯入；exportScenario 的逆）。 */
-export function importScenario(bundle: {
-  scenario: Record<string, unknown>
-  orbat?: Record<string, { faction: string; units: Array<Record<string, unknown>> }>
-  msel?: { events?: Array<{ id: string; once?: boolean; trigger: Condition; inject: InjectAction }> }
-}): ScenarioModel {
+export function importScenario(
+  bundle: Record<string, unknown> & {
+    scenario: Record<string, unknown>
+    orbat?: Record<string, { faction: string; units: Array<Record<string, unknown>> }>
+    msel?: {
+      events?: Array<{ id: string; once?: boolean; trigger: Condition; inject: InjectAction }>
+    }
+  },
+): ScenarioModel {
   const s = bundle.scenario
   const units: EditorUnit[] = []
   for (const ob of Object.values(bundle.orbat ?? {})) {
     for (const u of ob.units) {
+      const unitRest: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(u)) {
+        if (!MODELLED_UNIT_KEYS.has(key)) unitRest[key] = value
+      }
       units.push({
         faction: ob.faction,
         designation: u.designation as string,
@@ -350,8 +399,13 @@ export function importScenario(bundle: {
         parent: u.parent as string | undefined,
         fixed: u.fixed as boolean | undefined,
         branch: (u.branch as string | undefined) ?? 'UNKNOWN',
+        ...(Object.keys(unitRest).length ? { passthrough: unitRest } : {}),
       })
     }
+  }
+  const bundlePassthrough: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(bundle)) {
+    if (!MODELLED_BUNDLE_KEYS.has(key)) bundlePassthrough[key] = value
   }
   // 由 bundle.msel.events 重建 EditorMsel[]（once 缺省 → true，對齊後端 loader）。
   const msel: EditorMsel[] = (bundle.msel?.events ?? []).map((e) => ({
@@ -400,5 +454,6 @@ export function importScenario(bundle: {
       : {}),
     ...(survivabilityMove ? { survivabilityMove } : {}),
     ...(Object.keys(passthrough).length ? { passthrough } : {}),
+    ...(Object.keys(bundlePassthrough).length ? { bundlePassthrough } : {}),
   }
 }

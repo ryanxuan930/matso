@@ -178,3 +178,60 @@ test('晝夜只填一半時不得寫出半殘的宣告', () => {
   } as ScenarioModel
   assert.equal('day_night' in exportScenario(half).scenario, false)
 })
+
+test('bundle 頂層的 roe / overrides 要能存活一次 roundtrip', () => {
+  // 抓的病（UI-P0）：`passthrough` 只保住 `scenario` **裡面**的未知鍵，而 `roe`
+  // （陣營交戰規則，例如「本局禁用 MLRS」）與 `overrides`（機動覆寫矩陣）是
+  // `scenario` 的**兄弟**，在 bundle 的頂層。於是「未知鍵自動存活」這個保證對它們
+  // 完全不適用——用編輯器開一個有 ROE 禁令的想定再存回去，禁令整段消失，
+  // 而且畫面上完全看不出東西掉了。統裁以為鎖住了 MLRS，實際上沒有。
+  //
+  // 後端的 `api/scenarios.ScenarioBundle` 已經修好會收這兩段，洞剩在前端。
+  const roe = { BLUE: { forbidden_weapons: ['MLRS'] } }
+  const overrides = { mobility_matrix: { MOUNTAIN: { FOOT: 2.5 } } }
+  const loaded = importScenario({ ...exportScenario(fullyConfigured()), roe, overrides })
+
+  assert.deepEqual(loaded.bundlePassthrough?.roe, roe)
+  assert.deepEqual(loaded.bundlePassthrough?.overrides, overrides)
+
+  const saved = exportScenario(loaded)
+  assert.deepEqual(saved.roe, roe, 'ROE 在存回去時消失了')
+  assert.deepEqual(saved.overrides, overrides, '機動覆寫在存回去時消失了')
+})
+
+test('單位上編輯器沒建模的欄位（編裝/補給宣告）要能存活一次 roundtrip', () => {
+  // 同一個病的另一半：`importScenario` 只挑 7 個單位欄位，其餘一律丟。
+  // 一支帶著完整編裝與補給宣告的單位在編輯器裡開一次再存回去，就只剩番號與座標——
+  // 而 ORBAT 樹上看起來一切正常。
+  const equipment = [{ template: 'M1A2', quantity: 14 }]
+  const attributes = { supply: { I: [3, 3] } }
+  const bundle = {
+    ...exportScenario(fullyConfigured()),
+    orbat: {
+      BLUE: {
+        faction: 'BLUE',
+        units: [
+          {
+            designation: '1-1 裝甲連',
+            unit_level: 'COMPANY',
+            lat: 23.7,
+            lng: 120.3,
+            equipment,
+            attributes,
+            authorized_strength: 87,
+          },
+        ],
+      },
+    },
+  }
+  const unit = exportScenario(importScenario(bundle)).orbat as Record<
+    string,
+    { units: Array<Record<string, unknown>> }
+  >
+
+  const saved = unit.BLUE!.units[0]!
+  assert.deepEqual(saved.equipment, equipment, '編裝在 roundtrip 中消失了')
+  assert.deepEqual(saved.attributes, attributes, '補給宣告在 roundtrip 中消失了')
+  assert.equal(saved.authorized_strength, 87)
+  assert.equal(saved.designation, '1-1 裝甲連') // 建模欄位仍以模型為準
+})
