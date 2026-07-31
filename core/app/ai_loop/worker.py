@@ -34,6 +34,7 @@ from app.ai_loop.orders_bridge import (
 )
 from app.ai_loop.world_view import (
     allied_units,
+    contacts_from_intel,
     faction_granularity,
     projected_snapshot,
     recent_events,
@@ -157,7 +158,10 @@ def run_decision_cycle(
     tick: int = 0,
     no_strike_hexes: frozenset[str] = frozenset(),
     restricted_fire_hexes: frozenset[str] = frozenset(),
-    enemy_visibility: EnemyVisibility = ground_truth_enemies,
+    # fail-closed 預設：漏傳就退到迷霧，不是退到全知。
+    # 唯一的生產建構端（orchestrator）本來就明傳，改這裡不影響行為——
+    # 但下一個接 FactionWorkerDeps 的人漏了那一行時，後果是「看得比較少」而不是「全知」。
+    enemy_visibility: EnemyVisibility = contacts_from_intel,
     citation_verifier: CitationVerifier | None = None,
     event_sink: Any = None,
 ) -> DecisionOutcome:
@@ -251,7 +255,10 @@ class FactionWorkerDeps:
     no_strike_hexes: frozenset[str] = frozenset()
     restricted_fire_hexes: frozenset[str] = frozenset()
     tick_source: Callable[[], int] = lambda: 0
-    enemy_visibility: EnemyVisibility = ground_truth_enemies
+    # fail-closed 預設：漏傳就退到迷霧，不是退到全知。
+    # 唯一的生產建構端（orchestrator）本來就明傳，改這裡不影響行為——
+    # 但下一個接 FactionWorkerDeps 的人漏了那一行時，後果是「看得比較少」而不是「全知」。
+    enemy_visibility: EnemyVisibility = contacts_from_intel
     citation_verifier: CitationVerifier | None = None
     # WP-A3：護欄攔截事件的落帳出口（LedgerWriter）。None＝不落帳（測試/合成想定）。
     event_sink: Any = None

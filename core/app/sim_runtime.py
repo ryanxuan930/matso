@@ -743,6 +743,11 @@ class SimManager:
                     hot,
                     gateway=_engage_gateway(),
                     relations=relations,
+                    # ai_ground_truth 對照開關要讀得到。過去這裡不傳，planner 只能
+                    # `getattr(hot, "_redis")` 借 RedisHotState 的**私有屬性**——
+                    # 有人重構 hot_state 就靜默失效，而方向是 fail-closed（退到迷霧），
+                    # 於是「開關存得進去、讀不回來、測試全綠」。
+                    redis_client=client,
                 ),
                 movement=UnitMovementSystem(
                     session_id=session_id,

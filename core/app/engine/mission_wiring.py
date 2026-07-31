@@ -232,16 +232,14 @@ class LiveMissionPlanner:
     def _redis_client(self) -> Any:
         """讀 ai_config 用的 Redis client。
 
-        ⚠ 建構這個 planner 的是 `sim_runtime`，它手上有 client 卻沒有傳進來，
-        而本卡不得改那個檔。故退而由熱狀態借用：活執行期的 `hot` 就是 `RedisHotState`，
-        它握著同一條連線。借不到（單元測試的 `InMemoryHotState`）→ None →
-        `ground_truth_enabled` 回 False ＝ 走迷霧，安全側。
-        **正解是讓 `sim_runtime` 明傳 `redis_client=`**（建構子已備好該參數），
-        那一行改動屬另一張卡。
+        生產端（`sim_runtime`）**明傳** `redis_client=`。這裡不再退而借用
+        `hot._redis`——借私有屬性的話，有人重構 `hot_state` 就會靜默失效，
+        而方向是 fail-closed（退到迷霧），於是「開關存得進去、讀不回來、測試全綠」，
+        沒有任何地方看得出對照實驗根本沒開起來。
+
+        沒傳（單元測試）→ None → `ground_truth_enabled` 回 False ＝ 走迷霧，安全側。
         """
-        if self._redis is not None:
-            return self._redis
-        return getattr(self._hot, "_redis", None)
+        return self._redis
 
     def _enemy_visibility(self) -> Callable[..., list[dict[str, Any]]]:
         """本局的敵情來源：預設**真實偵測投影**，`ai_ground_truth=true` 才退回全知。
@@ -264,6 +262,32 @@ class LiveMissionPlanner:
                 self._enemy_vis = contacts_from_intel
         return self._enemy_vis
 
+    def _may_engage(self, faction: str, enemy: dict[str, Any]) -> bool:
+        """這個 contact 可不可以被任務分解**自動**接戰。
+
+        ## 為什麼需要這一層（A1 補洞引進的回歸）
+
+        舊的 `ground_truth_enemies` 自己有一道 `is_hostile` 過濾；換成
+        `contacts_from_intel` 之後那道過濾消失了——它的模組說明白紙黑字寫著
+        「`relations` 不參與」，而偵測 sweep 只排除 ALLIED（NEUTRAL 是**看得到**的）。
+        於是宣告為中立的陣營會進 `known_enemies`，`_enemies_within` 只看有沒有
+        `unit_id`，SEIZE 就對中立方自動下 ENGAGE。
+
+        物理預檢確實會拒（中立一律拒），所以打不到人——但**任務會卡在 ENGAGING
+        階段對著一個永遠打不到的目標**，比浪費一道令嚴重得多。
+
+        ## 政策：只排除「已確認非敵對」的，不排除「還沒認出來」的
+
+        DETECTED 等級的 contact 沒有 `faction` 欄位（那正是迷霧的本義）。
+        把未識別的一律排除會讓 A2 在迷霧下完全不能動作，等於廢掉 A2；
+        而放行未識別的並不危險——子令仍要過預檢、ROE 與護欄，那三層才是權威。
+        分解器的責任只是**不要明知故犯**。
+        """
+        target = enemy.get("faction")
+        if not isinstance(target, str) or not target:
+            return True  # 尚未識別陣營 → 交給下游三道閘門判
+        return self._relations.is_hostile(faction, target)
+
     def _world_view(self, faction: str) -> dict[str, Any]:
         from app.ai_loop.worker import load_unit_meta
         from app.ai_loop.world_view import faction_granularity
@@ -279,6 +303,7 @@ class LiveMissionPlanner:
             self._relations,
             faction_granularity(snapshot, unit_meta, faction),
         )
+        enemies = [e for e in enemies if self._may_engage(faction, e)]
         return build_faction_context(
             faction=faction,
             tick=0,

@@ -102,7 +102,14 @@ def test_load_unit_meta(session_factory: sessionmaker[Session]) -> None:
 # ---- 決策週期端到端 ----
 
 
-def _cycle(world, db, decider, orders_issuer=None):  # type: ignore[no-untyped-def]
+def _cycle(world, db, decider, orders_issuer=None, enemy_visibility=None):  # type: ignore[no-untyped-def]
+    """跑一輪決策。
+
+    ⚠ `enemy_visibility` **要明傳**。它的預設值已改為 fail-closed（迷霧），
+    生產端（orchestrator）也一律明傳——測試若靠預設值，測的就不是任何真實組態。
+    要驗全知那一側就自己把 `ground_truth_enemies` 傳進來，讓意圖寫在測試裡。
+    """
+    kw = {} if enemy_visibility is None else {"enemy_visibility": enemy_visibility}
     return run_decision_cycle(
         session_id=world.session_id,
         faction="BLUE",
@@ -114,16 +121,25 @@ def _cycle(world, db, decider, orders_issuer=None):  # type: ignore[no-untyped-d
         relations=_relations(),
         mode=AiMode.AI_BARE,
         issuer_id=orders_issuer or world.blue_issuer_id,
+        **kw,
     )
 
 
 def test_cycle_submits_move_and_sees_enemy(session_factory: sessionmaker[Session]) -> None:
+    """對照實驗那一側：明確要求 ground truth 敵情時，context 裡就該有 RED。
+
+    **明傳 `ground_truth_enemies` 是刻意的**——這條驗的是「開了全知開關會怎樣」，
+    而不是「預設會怎樣」。預設已改為 fail-closed（迷霧），靠預設值寫的測試
+    會在別人調整預設時默默改變自己在測什麼。
+    """
+    from app.ai_loop.worker import ground_truth_enemies
+
     world = seed_world(session_factory)
     decider = _StubDecider(
         [{"unit_id": world.blue_unit_id, "order_type": "MOVE", "target_h3": "8a2a1072b59ffff"}]
     )
     with session_factory() as db:
-        outcome = _cycle(world, db, decider)
+        outcome = _cycle(world, db, decider, enemy_visibility=ground_truth_enemies)
         assert outcome.turn.accepted is True
         assert len(outcome.bridge.submitted) == 1
         order = db.get(Order, outcome.bridge.submitted[0])

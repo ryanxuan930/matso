@@ -6,6 +6,8 @@ p.13 工事構築須符合實際工時。
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from app.adjudication.obstacles import (
@@ -630,3 +632,32 @@ def test_road_is_cut_only_for_an_unbreached_bridge_demo() -> None:
     assert road_is_cut([ob("MINEFIELD"), ob("WIRE"), ob("TANK_DITCH")]) is False
     # 沒有障礙 / 未宣告型別 → 中性
     assert road_is_cut([]) is False
+
+
+def test_the_production_wiring_really_passes_the_session_tick_rate(
+    session_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**守的是最外層那道接線，不是純函數。**
+
+    這張卡在修的 bug 就是「純函數對了、接線沒把 tick_rate_ms 傳下去」。
+    而其他測試都是自己呼叫 `drain_engineer_orders(db, sid, tick, tick_rate_ms)`
+    ——測試自己把參數傳進去，於是**把第 4 個引數從 `sim_runtime._engineer_tick`
+    拿掉，全套 2197 條測試一條都不紅**。同一個形狀的洞在同一張卡裡又開了一次。
+
+    這條打在 `sim_runtime._engineer_tick`：攔住 `drain_engineer_orders`，
+    斷言它收到的 tick_rate_ms 就是呼叫端給的那一個。
+    """
+    from app import sim_runtime
+
+    seen: dict[str, object] = {}
+
+    def spy(db: object, session_id: str, tick: int, tick_rate_ms: int) -> list[object]:
+        seen.update(session_id=session_id, tick=tick, tick_rate_ms=tick_rate_ms)
+        return []
+
+    monkeypatch.setattr(sim_runtime, "drain_engineer_orders", spy)
+    sim_runtime._engineer_tick(session_factory, "sid-x", 7, 1_000)
+
+    assert seen == {"session_id": "sid-x", "tick": 7, "tick_rate_ms": 1_000}, (
+        f"接線沒把該局的 tick_rate_ms 傳下去，實得 {seen}——破障工時會退回寫死的 1 分鐘/tick"
+    )

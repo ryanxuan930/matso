@@ -88,10 +88,20 @@ def _issue_seize(db, world) -> None:  # type: ignore[no-untyped-def]
 def _run(db, world, hot, *, redis_client: Any = None, ticks: int = 3):  # type: ignore[no-untyped-def]
     from _order_fakes import FakeGateway
 
+    from app.factions.session_store import load_session_relations
     from app.models.tables import Order
 
+    # ⚠ **關係矩陣要從 DB 載，不能用預設值**。`LiveMissionPlanner` 的
+    # `relations or FactionRelations()` 預設是「全 HOSTILE」——那對敵我識別而言是
+    # fail-open，測試若照預設走，任何「不可打中立/盟軍」的斷言都會恆綠。
+    # 生產端（`sim_runtime.py:745`）是明傳的，測試就要照同一個形狀。
     planner = LiveMissionPlanner(
-        db, world.session_id, hot, gateway=FakeGateway(), redis_client=redis_client
+        db,
+        world.session_id,
+        hot,
+        gateway=FakeGateway(),
+        relations=load_session_relations(db, world.session_id),
+        redis_client=redis_client,
     )
     for t in range(1, ticks + 1):
         planner.plan(_now(t))
@@ -202,4 +212,41 @@ def test_an_unreadable_ai_config_falls_back_to_fog_not_to_omniscience(session_fa
     assert not [s for s in subs if s.order_type == "ENGAGE"], (
         "ai_config 讀取失敗時退回了全知敵情——預設方向反了"
     )
+    db.close()
+
+
+def test_a_neutral_faction_is_never_auto_engaged(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """**接上迷霧不可以把敵我識別一起丟掉。**
+
+    舊的 `ground_truth_enemies` 自己有一道 `is_hostile` 過濾。換成
+    `contacts_from_intel` 之後那道過濾消失了——它的模組說明寫著「`relations` 不參與」，
+    而偵測 sweep 只排除 ALLIED，NEUTRAL 是**看得到**的。於是宣告為中立的陣營會進
+    `known_enemies`，`_enemies_within` 只看有沒有 `unit_id`，SEIZE 就對中立方下 ENGAGE。
+
+    物理預檢確實會拒（中立一律拒），所以打不到人——但**任務會卡在 ENGAGING 階段
+    對著一個永遠打不到的目標**。上面四條測試全部用預設 relations（未宣告＝全 HOSTILE），
+    這條路徑一次都沒走到。
+    """
+    from app.models import WargameSession
+
+    world, db, hot = _seed(session_factory)
+    # 明確宣告 BLUE↔RED 為中立（預設是 HOSTILE，不宣告就測不到這條）。
+    # 走 `WargameSession.faction_relations` 這個持久化欄位，與想定載入器同一條路——
+    # 直接塞 FactionRelations 物件的話，測的就是我自己組的東西而不是引擎讀得到的。
+    session = db.get(WargameSession, world.session_id)
+    assert session is not None
+    session.faction_relations = [["BLUE", "RED", "NEUTRAL"]]
+    db.commit()
+
+    assert _sweep_once(db, world, hot) == 1, "中立方仍應被偵測到（sweep 只排除盟軍）"
+    _issue_seize(db, world)
+    subs = _run(db, world, hot)
+
+    engages = [s for s in subs if s.order_type == "ENGAGE"]
+    assert not engages, (
+        f"對中立陣營自動下了 ENGAGE（{[s.payload for s in engages]}）"
+        "——接上迷霧時把敵我識別一起丟掉了"
+    )
+    # 與第一條同理：要證明任務確實走到了接敵判斷點，否則這條是廢的。
+    assert [s for s in subs if s.order_type == "POSTURE"], "任務沒走到接敵判斷點"
     db.close()
