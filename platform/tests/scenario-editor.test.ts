@@ -192,7 +192,10 @@ test('bundle 頂層的 roe / overrides 要能存活一次 roundtrip', () => {
   const overrides = { mobility_matrix: { MOUNTAIN: { FOOT: 2.5 } } }
   const loaded = importScenario({ ...exportScenario(fullyConfigured()), roe, overrides })
 
-  assert.deepEqual(loaded.bundlePassthrough?.roe, roe)
+  // ⚠ `roe` 已於 P6 升級為**一級欄位**（可編輯），所以不再走 passthrough；
+  // `overrides` 仍是 passthrough（尚無編輯介面）。**兩者的 roundtrip 保證不變**——
+  // 那才是這條測試要守的東西，欄位住哪裡是實作細節。
+  assert.deepEqual(loaded.roe, roe)
   assert.deepEqual(loaded.bundlePassthrough?.overrides, overrides)
 
   const saved = exportScenario(loaded)
@@ -287,4 +290,39 @@ test('編裝範本一律從軍械庫清單挑，不讓人手打', () => {
   assert.match(src, /fetchEquipmentTemplates\(\)/, '沒有去抓軍械庫範本')
   assert.match(src, /:options="templateNames"/, '範本欄位不是下拉——會變成手打')
   assert.match(src, /data-testid="equip-no-templates"/, '沒有範本時要說明，不是給一個空下拉')
+})
+
+test('ROE 可編輯，而且未宣告與宣告了空的分得開', () => {
+  /**
+   * P0 只做到「開了想定再存回去不會把 `roe` 弄丟」，還**不能編**。
+   * 而 ROE 是統裁對「這一局怎麼打」的唯一約束手段——寫不出來就只能靠口頭宣布，
+   * 事後檢討也無從評量。
+   */
+  const withRoe: ScenarioModel = {
+    ...emptyScenario(),
+    roe: {
+      default_fire_policy: { BLUE: 'SMALL_ARMS_ONLY' },
+      weapon_restrictions: [{ forbid_categories: ['MISSILE'], reason: '本次演習不驗證飛彈鏈' }],
+    },
+  }
+  const saved = exportScenario(withRoe)
+  assert.deepEqual((saved.roe as Record<string, unknown>).default_fire_policy, {
+    BLUE: 'SMALL_ARMS_ONLY',
+  })
+  assert.equal(importScenario(saved).roe?.weapon_restrictions?.[0]?.reason, '本次演習不驗證飛彈鏈')
+
+  // 沒宣告 ROE 的想定不該長出一個空的 roe 區段——那會讓讀的人以為作者設定過。
+  assert.ok(!('roe' in exportScenario(emptyScenario())))
+})
+
+test('武器禁令缺理由要在存檔前擋下來，不是等後端載入時才報', () => {
+  // `roe.schema.json` 把 `reason` 設成必填，說明寫著「無理由的限制在事後檢討時無法評量」。
+  // 後端只會在**載入時**報錯，那時候作者已經離開編輯器了。
+  const src = readFileSync(
+    fileURLToPath(new URL('../app/pages/scenario-editor.vue', import.meta.url)),
+    'utf8',
+  )
+  assert.match(src, /roeIssues/, '沒有存檔前檢查')
+  assert.match(src, /缺「理由」/)
+  assert.match(src, /data-testid="roe-issues"/, '檢查結果沒有顯示出來')
 })

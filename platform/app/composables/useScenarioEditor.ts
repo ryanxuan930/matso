@@ -63,6 +63,28 @@ const MODELLED_UNIT_KEYS = new Set([
 /** 一件編裝。`ammo` 省略＝用範本預設攜行量。 */
 export interface EditorEquipment { template: string; quantity?: number; ammo?: number }
 export interface EditorRelation { a: string; b: string; relation: RelationValue }
+
+/**
+ * 一條武器禁令（`roe.schema.json` 的 `weapon_restrictions[]`）。
+ *
+ * `reason` **必填**——schema 的說明寫著「AAR 要能回答『為什麼這場不准用飛彈』；
+ * 無理由的限制在事後檢討時無法評量」。編輯器照這條走：沒填理由就擋下存檔。
+ * `faction` 省略＝全陣營適用。`forbid_categories` 與 `forbid_templates` 至少要有一項。
+ */
+export interface EditorWeaponRestriction {
+  faction?: string
+  forbid_categories?: string[]
+  forbid_templates?: string[]
+  reason: string
+}
+/** 想定的交戰規則（bundle 的 `roe` 區段）。 */
+export interface EditorRoe {
+  version?: string
+  default_fire_policy?: Record<string, string>
+  weapon_restrictions?: EditorWeaponRestriction[]
+}
+export const FIRE_POLICIES: string[] = ['FREE', 'SMALL_ARMS_ONLY', 'ANTI_ARMOR_HOLD']
+export const FORBIDDABLE_CATEGORIES: string[] = ['KINETIC', 'MISSILE', 'ARTILLERY', 'DRONE']
 export interface EditorMsel { id: string; once: boolean; trigger: Condition; inject: InjectAction }
 export interface EditorVictory { faction: string; condition: Condition }
 
@@ -171,10 +193,15 @@ export interface ScenarioModel {
    * 洞剩在這裡：前端根本沒把它們放進送出去的 bundle。
    */
   bundlePassthrough?: Record<string, unknown>
+  /**
+   * 交戰規則（bundle 的 `roe` 區段）。**未宣告＝這一局沒有 ROE 限制**，
+   * 與「宣告了但清空」不同——後者是作者刻意把限制拿掉，AAR 讀得出差別。
+   */
+  roe?: EditorRoe
 }
 
 /** bundle 頂層由編輯器**明確處理**的區段。其餘走 `bundlePassthrough`。 */
-const MODELLED_BUNDLE_KEYS = new Set(['scenario', 'orbat', 'msel'])
+const MODELLED_BUNDLE_KEYS = new Set(['scenario', 'orbat', 'msel', 'roe'])
 
 /** 編輯器**明確建模**的 scenario 鍵。其餘一律走 `passthrough`。 */
 const MODELLED_SCENARIO_KEYS = new Set([
@@ -347,7 +374,7 @@ export function exportScenario(m: ScenarioModel): Record<string, unknown> & {
   }
   // bundle 頂層的未建模區段（`roe`／`overrides`）攤在最前面，
   // 三個明確區段在後面覆蓋——順序與上面兩處 passthrough 一致。
-  return { ...(m.bundlePassthrough ?? {}), scenario, orbat, msel }
+  return { ...(m.bundlePassthrough ?? {}), scenario, orbat, msel, ...(m.roe ? { roe: m.roe } : {}) }
 }
 
 /** 匯入端的數值守則：想定裡的字串數字（YAML 手寫常見）也吃，其餘一律當沒填。 */
@@ -481,5 +508,6 @@ export function importScenario(
     ...(survivabilityMove ? { survivabilityMove } : {}),
     ...(Object.keys(passthrough).length ? { passthrough } : {}),
     ...(Object.keys(bundlePassthrough).length ? { bundlePassthrough } : {}),
+    ...(bundle.roe && typeof bundle.roe === 'object' ? { roe: bundle.roe as EditorRoe } : {}),
   }
 }

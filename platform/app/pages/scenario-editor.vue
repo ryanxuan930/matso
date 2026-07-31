@@ -10,6 +10,8 @@ import {
   emptyScenario,
   exportScenario,
   importScenario,
+  FIRE_POLICIES,
+  FORBIDDABLE_CATEGORIES,
   type EditorEquipment,
   type EditorRequestQuotas,
   type EditorUnit,
@@ -220,6 +222,49 @@ onMounted(() => {
     .catch(() => {
       templates.value = []
     })
+})
+
+// ---- 交戰規則 ROE（P6）----
+//
+// P0 只做到「開了想定再存回去不會把 roe 弄丟」，還**不能編**。
+// 而 ROE 是統裁對「這一局怎麼打」的唯一約束手段——寫不出來就只能靠口頭宣布，
+// 事後檢討也無從評量（`roe.schema.json` 把 `reason` 設成必填就是這個道理）。
+
+function ensureRoe() {
+  if (!model.value.roe) model.value.roe = {}
+  return model.value.roe
+}
+function addRestriction() {
+  const r = ensureRoe()
+  if (!r.weapon_restrictions) r.weapon_restrictions = []
+  r.weapon_restrictions.push({ forbid_categories: [], reason: '' })
+}
+function removeRestriction(i: number) {
+  model.value.roe?.weapon_restrictions?.splice(i, 1)
+}
+function setFirePolicy(faction: string, policy: string) {
+  const r = ensureRoe()
+  const cur = { ...(r.default_fire_policy ?? {}) }
+  // 選回 FREE ＝引擎預設 → **不寫這個鍵**（而不是寫一個 FREE 進去）。
+  // 想定是給人讀的文件，寫一堆等同預設的宣告會讓讀的人以為那是刻意設定。
+  const next = Object.fromEntries(
+    Object.entries(cur).filter(([k]) => k !== faction).concat(policy === 'FREE' ? [] : [[faction, policy]]),
+  )
+  r.default_fire_policy = Object.keys(next).length ? next : undefined
+}
+/**
+ * ROE 的存檔前檢查。**`reason` 沒填就擋**——schema 說明寫著
+ * 「無理由的限制在事後檢討時無法評量」，而後端只會在載入時報錯，
+ * 那時候作者已經離開編輯器了。
+ */
+const roeIssues = computed<string[]>(() => {
+  const out: string[] = []
+  for (const [i, w] of (model.value.roe?.weapon_restrictions ?? []).entries()) {
+    if (!w.reason.trim()) out.push(`第 ${i + 1} 條武器禁令缺「理由」`)
+    if (!(w.forbid_categories?.length || w.forbid_templates?.length))
+      out.push(`第 ${i + 1} 條武器禁令沒有指定任何類別或範本`)
+  }
+  return out
 })
 
 // ---- 編裝（P6：編輯器能不能獨立產出一份能打的想定的分水嶺）----
@@ -972,6 +1017,66 @@ async function saveToServer() {
       </div>
     </section>
 
+    <!-- 交戰規則（P6）。統裁對「這一局怎麼打」的唯一約束手段；
+         `reason` 必填是 schema 明訂的——AAR 要回答「為什麼這場不准用飛彈」。 -->
+    <section data-testid="roe-section">
+      <h2>交戰規則 ROE</h2>
+      <p class="hint">
+        未宣告＝這一局沒有 ROE 限制。<b>火力政策</b>是未於令面指定時的預設；
+        <b>武器禁令</b>被禁的武器不會開火（裁決層擋，不是提示）。
+      </p>
+      <div class="roe-policies">
+        <label v-for="f in factionIds" :key="f" class="roe-policy">
+          {{ f }}
+          <Select
+            :model-value="model.roe?.default_fire_policy?.[f] ?? 'FREE'"
+            :options="FIRE_POLICIES"
+            size="small"
+            :data-testid="`roe-policy-${f}`"
+            @update:model-value="(v: string) => setFirePolicy(f, v)"
+          />
+        </label>
+      </div>
+      <h3 class="roe-h3">
+        武器禁令
+        <Button size="small" text data-testid="add-restriction" @click="addRestriction">＋</Button>
+      </h3>
+      <div
+        v-for="(w, i) in model.roe?.weapon_restrictions ?? []"
+        :key="i"
+        class="roe-row"
+        data-testid="roe-restriction"
+      >
+        <Select
+          v-model="w.faction"
+          :options="factionIds"
+          size="small"
+          show-clear
+          placeholder="全陣營"
+          data-testid="roe-faction"
+        />
+        <MultiSelect
+          v-model="w.forbid_categories"
+          :options="FORBIDDABLE_CATEGORIES"
+          size="small"
+          placeholder="禁用類別"
+          data-testid="roe-categories"
+          class="roe-cats"
+        />
+        <InputText
+          v-model="w.reason"
+          size="small"
+          placeholder="理由（必填——AAR 要回答為什麼）"
+          data-testid="roe-reason"
+          class="roe-reason"
+        />
+        <Button size="small" text severity="danger" data-testid="roe-remove" @click="removeRestriction(i)">✕</Button>
+      </div>
+      <ul v-if="roeIssues.length" class="roe-issues" data-testid="roe-issues">
+        <li v-for="(msg, i) in roeIssues" :key="i">⚠ {{ msg }}</li>
+      </ul>
+    </section>
+
     <section data-testid="msel-section">
       <h2>MSEL 事件 <Button data-testid="add-msel" size="small" text @click="addMsel">＋</Button></h2>
       <p class="hint">觸發條件成立時注入事件；「一次」勾選為邊緣觸發（僅觸一次），取消則每個成立的 tick 都觸。</p>
@@ -1036,6 +1141,14 @@ async function saveToServer() {
 </template>
 
 <style scoped>
+.roe-policies { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.5rem }
+.roe-policy { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8125rem; color: #94a3b8 }
+.roe-h3 { font-size: 0.875rem; margin: 0.5rem 0 0.25rem }
+.roe-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.2rem 0 }
+.roe-cats { min-width: 12rem }
+.roe-reason { flex: 1; min-width: 14rem }
+.roe-issues { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: 0.8125rem; color: #f87171 }
+
 .equip-btn {
   background: none; border: 1px dashed #334155; border-radius: 4px;
   color: #94a3b8; font-size: 0.75rem; padding: 2px 6px; cursor: pointer;
