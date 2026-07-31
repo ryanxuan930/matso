@@ -116,7 +116,7 @@ COMBINED(>=2武器未指名):  吃飽掉 5.8256  斷補5日掉 5.8256  比值 1.
 | 8 | MEDIUM | ✅ **成立**，已修——整補不寫 DB，`GET /units` 讀 DB 所以畫面看不到修復 |
 | 9 | LOW | ⚠️ 部分成立：程式碼沒錯，是註解誇大。已改註解 |
 | 10 | LOW | ✅ 成立，已改註解 |
-| 11 | LOW | 待清（`VERIFY_C7_ARMOR` 局） |
+| 11 | LOW | ❌ 不成立：`VERIFY_C7_ARMOR` 已被活體驗收自己清掉，DB 裡只剩使用者的 6 局 |
 
 ### 2. ❗ HIGH｜補給點撥交不守恆（`engine/supply_wiring.py` `draw_from`）
 
