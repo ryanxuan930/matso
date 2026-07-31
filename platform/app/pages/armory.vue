@@ -126,6 +126,8 @@ const resupplyRate = ref(20)
 const logCrew = ref(2)
 // DRONE 專屬
 const droneKind = ref('RECON')
+/** 死欄位的提示語——集中一份，免得每個欄位各寫各的。 */
+const UNIMPLEMENTED_HINT = '此欄位目前沒有任何引擎消費端：存得進去，但推演時不影響任何結果。'
 const enduranceTicks = ref(120)
 const cruiseSpeed = ref(25)
 const serviceCeiling = ref(3000)
@@ -749,7 +751,12 @@ async function doDeleteTemplate() {
             <div class="row">
               <label>飛行速度（m/s） <input v-model.number="flightSpeed" type="number"></label>
               <label>最小接戰距離（m） <input v-model.number="minEngageRange" type="number"></label>
-              <label>抗反制 0–1 <input v-model.number="cmResistance" type="number" step="0.05" min="0" max="1"></label>
+              <!-- `countermeasure_resistance` 在 core/app 零消費端：填了、存了，推演時毫無影響。
+                   比照編輯器對 WEGO/IGO_UGO 的做法明講，別讓使用者以為自己調到了什麼。 -->
+              <label :title="UNIMPLEMENTED_HINT">
+                抗反制 0–1<span class="dim">（未實作）</span>
+                <input v-model.number="cmResistance" type="number" step="0.05" min="0" max="1">
+              </label>
               <label class="chk"><input v-model="topAttack" type="checkbox"> 頂攻模式</label>
             </div>
             <div class="row">
@@ -889,8 +896,14 @@ async function doDeleteTemplate() {
           </div>
         </template>
 
-        <!-- 無人機 -->
+        <!-- 無人機。**整組欄位在 core/app 都沒有消費端**——沒有無人機子系統，
+             這些值存進 baseStats 之後不影響任何裁決、偵測或移動。
+             照樣讓人編（想定作者需要記錄編裝），但要說清楚。 -->
         <template v-else-if="category === 'DRONE' && editMode === 'form'">
+          <p class="unimpl" data-testid="armory-drone-unimplemented">
+            ⚠ 無人機子系統<b>尚未實作</b>：以下欄位會存進裝備範本，但推演期間不影響任何裁決、
+            偵測或移動。現階段作為編裝紀錄使用。
+          </p>
           <div class="row">
             <label>無人機類型
               <select v-model="droneKind" data-testid="armory-drone-kind">
@@ -959,6 +972,14 @@ async function doDeleteTemplate() {
 </template>
 
 <style scoped>
+.unimpl {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-left: 3px solid #fb923c;
+  background: #fb923c14;
+}
+
 .armory {
   max-width: 60rem;
   margin: 0 auto;

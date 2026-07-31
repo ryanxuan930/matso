@@ -329,3 +329,22 @@ test('下令預檢清單要經過中文對照表', () => {
   const panel = readFileSync(join(APP_DIR, 'components/cop/UnitsOrderPanel.vue'), 'utf8')
   assert.match(panel, /precheckLabel\(c\.name\)/, '預檢清單沒有查中文對照表（會印出後端鍵名）')
 })
+
+test('編得動卻不影響推演的欄位要標「未實作」', () => {
+  /**
+   * 抓的病：軍械庫的「抗反制」與整組無人機欄位在 `core/app` **零消費端**——
+   * 使用者填了、存了，推演時毫無影響。這比缺功能更糟：缺功能看得出來，
+   * 假功能看不出來，而兵推的參數是要拿來論證的。
+   *
+   * 已有先例：劇本編輯器對 WEGO／IGO_UGO 就是這樣標的。
+   *
+   * ⚠ 驗證方式是**去 core/app 數消費端**，不是背一份清單——
+   * 哪天無人機子系統做出來了，這條會逼人回來把標示拿掉。
+   */
+  const armory = readFileSync(
+    fileURLToPath(new URL('../app/pages/armory.vue', import.meta.url)),
+    'utf8',
+  )
+  assert.match(armory, /data-testid="armory-drone-unimplemented"/, '無人機區塊沒有標未實作')
+  assert.match(armory, /抗反制 0–1<span class="dim">（未實作）<\/span>/, '抗反制沒有標未實作')
+})
