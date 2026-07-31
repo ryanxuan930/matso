@@ -76,6 +76,39 @@ def feed_damage(event_type: str, damage_calc: float | None) -> float | None:
     return damage_calc
 
 
+# `LedgerEvent.detail` 裡可以下發給操作員的鍵（見 `build_event_envelope` 的說明）。
+# **`lat` / `lng` 刻意不在此**——那是單位真實座標，下發會繞過 WP-C5 的位置凍結。
+_DETAIL_KEYS: tuple[str, ...] = (
+    # 為什麼會這樣：移動受阻/停駛、工兵作業中止、補給撥交失敗的原因碼。
+    # 前端 `REASON_LABELS` 早就備好中文了。
+    "reason",
+    # 用什麼走的（徒步/輪型/履帶）與行軍節奏——「強行軍磨掉的」與「地形磨掉的」是兩件事。
+    "profile",
+    "tempo",
+    # 行進耗損：走了多遠、掉了多少戰力。少了這三個，`MOVE_ATTRITION` 只是一個名詞。
+    "distance_km",
+    "strength_before",
+    "strength_after",
+    # 觸雷/強穿：踩到的是哪一個障礙、是工兵破的還是硬穿的。
+    "feature_id",
+    "label",
+    "engineer",
+    # 油料：停駛當下還剩多少、每公里燒多少——指揮官據此決定要不要派油罐車。
+    "fuel_remaining",
+    "fuel_burn_per_km",
+    # 工兵作業：破障還是設障、預計何時完成。
+    "action",
+    "eta_tick",
+    # 路線規劃：繞了幾段（`MOVE_ROUTE_PLANNED` 少了它就看不出 A* 有沒有繞路）。
+    "legs",
+    # 補給撥交的實際量。
+    "fuel",
+    "ammo",
+    # 關聯回哪一道令——feed 上點得回去。
+    "order_id",
+)
+
+
 def build_event_envelope(
     event: LedgerEvent, faction_for: FactionLookup | None = None
 ) -> dict[str, Any]:
@@ -116,6 +149,23 @@ def build_event_envelope(
     ):
         if isinstance(event.ai_decision, dict) and k in event.ai_decision:
             payload[k] = event.ai_decision[k]
+    # `LedgerEvent.detail` 過去**一個字都不轉發**，於是引擎最會講話的那一半事件
+    # （移動、工兵、後勤）到了 COP 只剩一個型別名。最能說明問題的證據：
+    # `useCopFeed.ts` 的 `REASON_LABELS` 裡有五條翻譯——OUT_OF_FUEL / IMPASSABLE_TERRAIN /
+    # MARCH / FORCED_CROSSING / TARGET_GONE——**在 feed 上永遠不可能被觸發**，
+    # 因為那些 reason 全住在 `detail` 裡。有人認真寫了翻譯，只是線沒接上。
+    #
+    # ⚠ **為什麼是白名單而不是整包轉發**：`detail` 裡有 `lat`/`lng`
+    # （`movement.py` 的每一步都寫），那是**單位的真實座標**。整包送出去會繞過
+    # WP-C5 的位置凍結——斷聯敵軍的即時真實座標就這樣漏出去，而 STATE_DIFF 那一側
+    # 費了大力氣在 `public_diff` 把它剝掉。同一個檔案上面那份 `ai_decision` 白名單
+    # 也是同一條紀律（`cause`/`shooter_faction` 那兩行的註解就是上次學到的教訓）。
+    #
+    # 新增 detail 鍵時要回來想一次「這個鍵給不給操作員看」，答案是「不給」也很好——
+    # 但要是**想給卻忘了加**，症狀就是畫面上少一句話而沒有任何人會發現。
+    for k in _DETAIL_KEYS:
+        if isinstance(event.detail, dict) and k in event.detail:
+            payload.setdefault(k, event.detail[k])
     envelope: dict[str, Any] = {"v": 1, "seq": 0, "type": "EVENT", "payload": payload}
     audience = event_audience(event, faction_for)
     if audience is not None:

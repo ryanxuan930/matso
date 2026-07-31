@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from functools import lru_cache
+from typing import Any
 
 import grpc
 from fastapi import Depends
@@ -136,10 +137,23 @@ def get_order_service(
     # （`not is_hostile(...)`）只有在打**自己陣營**時才成立——`is_hostile("BLUE","GREEN")`
     # 在預設矩陣裡是 True。結果：**人類指揮官一直可以對盟軍下 ENGAGE 並通過預檢**，
     # 而 AI 路徑（`orders_bridge.py` 有傳 relations）反而擋得住。恰好倒過來。
+    # **落帳與廣播是兩件事**：`LedgerWriter` 全檔沒有一行 redis，寫進帳本的事件不會
+    # 自己出現在戰況 feed 上。`ORDER_REJECTED` 與 `ORDER_RESTRICTED_FIRE_OVERRIDE`
+    # 過去因此只活在 DB 裡——前端的中文標籤備好了，一次都不會被渲染。
+    # 而這兩件事（有人想打禁射區、有人明知而為）正是統裁**當下**最該看到的。
+    settings = get_settings()
+
+    def _publish(event_type: str, payload: dict[str, Any], faction: str | None) -> None:
+        from app.cache import make_redis
+        from app.stream.publish import publish_event
+
+        publish_event(make_redis(settings.redis_url), session_id, event_type, payload, faction)
+
     return OrderService(
         db,
         gateway,
         tick_source=lambda: _live_tick(session_id),
         relations=load_session_relations(db, session_id),
         event_sink=LedgerWriter(default_session_factory()),
+        publisher=_publish,
     )

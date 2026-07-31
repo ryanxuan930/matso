@@ -43,6 +43,7 @@ class OrderService:
         tick_source: Callable[[], int] = lambda: 0,
         relations: FactionRelations | None = None,
         event_sink: Any = None,
+        publisher: Callable[[str, dict[str, Any], str | None], None] | None = None,
     ) -> None:
         self._db = db
         self._gateway = gateway
@@ -50,6 +51,18 @@ class OrderService:
         self._relations = relations  # None → 全 HOSTILE（O7 scenario 載入實際矩陣）
         # WP-A3：限制射擊區 override 的留痕出口（LedgerWriter）。None＝不落帳（測試/舊呼叫端）。
         self._event_sink = event_sink
+        # **落帳與廣播是兩件事。** `LedgerWriter` 全檔沒有一行 redis——寫進帳本的事件
+        # 不會自己出現在戰況 feed 上。過去這兩種事件因此只活在 DB 裡：
+        # 前端的中文標籤備好了，一次都不會被渲染。
+        # `(event_type, payload, faction)` → 推播；None＝不推（測試/合成想定）。
+        self._publisher = publisher
+
+    def _broadcast(self, event_type: str, payload: dict[str, Any], faction: str | None) -> None:
+        """把事件推上戰況 feed。**推播失敗不可以讓下令失敗**——令的結果已經在回應裡了。"""
+        if self._publisher is None:
+            return
+        with contextlib.suppress(Exception):
+            self._publisher(event_type, payload, faction)
 
     def submit(
         self,
@@ -126,8 +139,19 @@ class OrderService:
                         )
                     ],
                 )
+                # 明知而為的射擊要**當場**讓同陣營看到，不是等 AAR 才追究。
+                self._broadcast(
+                    "ORDER_RESTRICTED_FIRE_OVERRIDE",
+                    {
+                        "tick": order.issued_at_tick or 0,
+                        "initiator_id": req.unit_id,
+                        "order_id": order.id,
+                        "issuer_id": issuer_id,
+                    },
+                    validated.unit.faction,
+                )
 
-        if not precheck.feasible and self._event_sink is not None:
+        if not precheck.feasible:
             # **人工下令被護欄擋下也要落帳。**
             # `GUARDRAIL_INTERVENTION` 只給 AI 護欄用，於是 `/aar/stats` 的
             # guardrail_blocks 對人工下令結構性恆為 0——一筆「有人想砲擊醫院」的
@@ -139,29 +163,48 @@ class OrderService:
             # 而拒絕本身已經寫進 Order 列（status=REJECTED + precheck）——帳本是給
             # 行動後檢討用的**第二份**紀錄。第二份寫不成不該毀掉第一份的送達。
             failed = [c.name for c in precheck.checks if not c.passed]
-            with contextlib.suppress(Exception):
-                self._event_sink.append(
-                    session_id,
-                    [
-                        LedgerEvent(
-                            event_type="ORDER_REJECTED",
-                            tick=order.issued_at_tick or 0,
-                            initiator_id=req.unit_id,
-                            target_id=str(req.payload.get("target_unit_id") or "") or None,
-                            ai_decision={
-                                "order_id": order.id,
-                                "issuer_id": issuer_id,
-                                "order_type": order.order_type,
-                                "failed_checks": failed,
-                                "reason": precheck.reason or "",
-                                # FIRE_MISSION 打的是座標，target_id 為 None——把落點帶上，
-                                # 否則帳本上看得到「被禁射區擋下」卻看不到擋在哪裡。
-                                "target_lat": req.payload.get("target_lat"),
-                                "target_lng": req.payload.get("target_lng"),
-                            },
-                        )
-                    ],
-                )
+            if self._event_sink is not None:
+                with contextlib.suppress(Exception):
+                    self._event_sink.append(
+                        session_id,
+                        [
+                            LedgerEvent(
+                                event_type="ORDER_REJECTED",
+                                tick=order.issued_at_tick or 0,
+                                initiator_id=req.unit_id,
+                                target_id=str(req.payload.get("target_unit_id") or "") or None,
+                                ai_decision={
+                                    "order_id": order.id,
+                                    "issuer_id": issuer_id,
+                                    "order_type": order.order_type,
+                                    "failed_checks": failed,
+                                    "reason": precheck.reason or "",
+                                    # FIRE_MISSION 打的是座標，target_id 為 None——把落點帶上，
+                                    # 否則帳本上看得到「被禁射區擋下」卻看不到擋在哪裡。
+                                    "target_lat": req.payload.get("target_lat"),
+                                    "target_lng": req.payload.get("target_lng"),
+                                },
+                            )
+                        ],
+                    )
+            # **人工下令被護欄擋下要當場看得到。** 一筆「有人想砲擊醫院」
+            # 只寫進 Order 列與帳本的話，統裁要等到檢討會才知道——而那正是
+            # 他當下最該介入的時刻。受眾限同陣營（敵軍不該知道我方被什麼擋住）。
+            #
+            # ⚠ 這一段**刻意不掛在 `event_sink is not None` 底下**：落帳與廣播是
+            # 兩個獨立的出口，把廣播綁在帳本上等於重犯這張卡在修的那個錯。
+            self._broadcast(
+                "ORDER_REJECTED",
+                {
+                    "tick": order.issued_at_tick or 0,
+                    "initiator_id": req.unit_id,
+                    "order_id": order.id,
+                    "order_type": order.order_type,
+                    "reason": (failed[0] if failed else ""),
+                    "reason_detail": precheck.reason or "",
+                },
+                validated.unit.faction,
+            )
 
         if not precheck.feasible:
             raise PrecheckFailedError(

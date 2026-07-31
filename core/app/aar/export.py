@@ -45,6 +45,14 @@ def _row(e: AarEvent, anon: dict[str, str] | None) -> dict[str, Any]:
         # 完整匯出含 ai_decision / CoT；匿名化時一律省略（可能含敏感文字）。
         row["ai_decision"] = e.ai_decision
         row["reasoning_chain"] = e.reasoning_chain
+        # `detail` 過去一併被漏掉，於是移動/工兵/後勤事件的「為什麼」
+        # ——油量剩多少、卡在哪一格、觸到哪一張雷區、耗損是行軍磨的還是強穿付的代價——
+        # **在整個系統裡沒有任何操作員取得得到的路徑**：即時串流沒有、AAR 畫面沒有、
+        # 匯出檔也沒有。分析要拿原始資料出去跑，這一欄是最有訊息量的一欄。
+        #
+        # 匿名化時省略的理由與 ai_decision 同：`detail` 帶 lat/lng 與 order_id，
+        # 那些足以把匿名標籤還原回真實單位，匿名匯出就失去意義了。
+        row["detail"] = e.detail
     return row
 
 

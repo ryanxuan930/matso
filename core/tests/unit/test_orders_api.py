@@ -136,3 +136,47 @@ def test_delete_unknown_order_404(session_factory: sessionmaker[Session]) -> Non
     r = client.delete(f"/api/v1/sessions/{world.session_id}/orders/nope", headers=_auth(world))
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "ORDER_NOT_FOUND"
+
+
+def test_a_blocked_order_reaches_the_live_feed(session_factory: sessionmaker[Session]) -> None:
+    """**落帳與廣播是兩件事。**
+
+    `ORDER_REJECTED` 的 sink 是 `LedgerWriter`，而 `state/ledger.py` 全檔沒有一行 redis
+    ——只寫 DB 的話，一筆「有人想砲擊醫院」要等到檢討會才看得到，而那正是統裁
+    **當下**最該介入的時刻。前端的中文標籤備好了，一次都不會被渲染。
+
+    這條打在 `OrderService` 的 publisher 接線上：下令被預檢擋下時，
+    推播必須被呼叫、帶著同陣營受眾與失敗的檢查項。
+    """
+    from _order_fakes import FakeGateway
+
+    from app.errors import PrecheckFailedError
+    from app.orders.schemas import OrderRequest, OrderType
+    from app.orders.service import OrderService
+
+    world = seed_world(session_factory)
+    sent: list[tuple[str, dict[str, object], str | None]] = []
+
+    with session_factory() as db:
+        svc = OrderService(
+            db,
+            FakeGateway(reachable=False, visible=False),  # 預檢一定不過
+            publisher=lambda t, p, f: sent.append((t, p, f)),
+        )
+        with pytest.raises(PrecheckFailedError):
+            svc.submit(
+                world.session_id,
+                OrderRequest(
+                    unit_id=world.blue_unit_id,
+                    order_type=OrderType.MOVE,
+                    payload={"to_h3": "8a2a1072b59ffff", "mobility_profile": "FOOT"},
+                ),
+                world.blue_issuer_id,
+            )
+
+    assert sent, "下令被擋下卻沒有推播——戰況 feed 上看不到任何東西"
+    event_type, payload, faction = sent[0]
+    assert event_type == "ORDER_REJECTED"
+    assert payload["order_type"] == "MOVE"
+    assert payload["reason"], "沒帶失敗的檢查項，feed 上只會印「指令被拒」而說不出為什麼"
+    assert faction == "BLUE", f"受眾應限同陣營（敵軍不該知道我方被什麼擋住），實得 {faction}"
