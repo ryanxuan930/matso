@@ -165,3 +165,36 @@ test('AAR 型別走契約生成，不再手抄 interface（G5）', () => {
     'AarStats 的刻意放寬不見了——版本落差偵測會失效',
   )
 })
+
+test('AI 失控保護的餘量要看得見（P5）', async () => {
+  /**
+   * 抓的病：runaway 守衛（O11.8）觸發時 AI worker **直接停止決策**，
+   * 而畫面上只會表現成「AI 忽然不動了」。白軍要的是**事前**看得到快到上限，
+   * 不是事後翻 log 找 runaway 警告。
+   *
+   * 過去 `total_submitted` 後端有送、前端型別也有，但 `describeAiStatus` 沒帶出來，
+   * 而**上限根本沒進遙測**——就算讀了累計數也不知道分母是多少。
+   */
+  const { describeAiStatus } = await import('~/composables/useAiStatus')
+  const row = describeAiStatus({
+    faction: 'RED',
+    state: 'idle',
+    seconds_until_next: 10,
+    heartbeat_s: 45,
+    total_submitted: 480,
+    max_total_orders: 500,
+  } as never)
+
+  assert.equal(row.totalSubmitted, 480)
+  assert.equal(row.maxTotalOrders, 500)
+  assert.equal(row.ordersUntilGuard, 20)
+
+  // 上限未知 → **不編一個數字出來**（畫面寧可不顯示也不要顯示錯的餘量）。
+  const noCap = describeAiStatus({
+    faction: 'BLUE', state: 'idle', seconds_until_next: 5, total_submitted: 3,
+  } as never)
+  assert.equal(noCap.ordersUntilGuard, null)
+
+  const page = readSrc('pages/session/[id]/autonomy.vue')
+  assert.match(page, /ai-guard-\$\{a\.faction\}/, '自主主控台沒有渲染失控保護餘量')
+})

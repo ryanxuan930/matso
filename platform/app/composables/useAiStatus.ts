@@ -96,6 +96,17 @@ export interface AiStatusDetail {
   cycles: number | null
   /** 上一週期落單數（**是道數不是時間**——後端 last_submitted = len(bridge.submitted)）。 */
   lastSubmitted: number | null
+  /**
+   * 本局累計落單數，以及失控保護的上限。
+   *
+   * 這個守衛（O11.8）觸發時 AI worker **直接停止決策**，而畫面上只會表現成
+   * 「AI 忽然不動了」。白軍需要的是**事前**看得到「快到上限了」，
+   * 不是事後才去翻 log 找 runaway 警告。
+   */
+  totalSubmitted: number | null
+  maxTotalOrders: number | null
+  /** 距失控保護還剩幾道；上限未知時為 null（不編一個數字出來）。 */
+  ordersUntilGuard: number | null
   /** 心跳（秒），供 UI 說明門檻由來。 */
   heartbeatS: number
 }
@@ -111,6 +122,8 @@ export function describeAiStatus(f: AiFactionStatus): AiStatusDetail {
   const heartbeatS
     = typeof f.heartbeat_s === 'number' && f.heartbeat_s > 0 ? f.heartbeat_s : DEFAULT_HEARTBEAT_S
   const thinking = f.state === 'thinking'
+  const total = typeof f.total_submitted === 'number' ? f.total_submitted : null
+  const cap = typeof f.max_total_orders === 'number' ? f.max_total_orders : null
   const elapsed = typeof f.thinking_since_s === 'number' ? f.thinking_since_s : null
   // 後端只回「距下一次決策」；上一次決策的時間 = 心跳 − 剩餘倒數（idle 時才有意義）。
   const since
@@ -127,6 +140,9 @@ export function describeAiStatus(f: AiFactionStatus): AiStatusDetail {
     sinceLastDecision: since === null ? null : formatCountdown(since),
     cycles: typeof f.cycles === 'number' ? f.cycles : null,
     lastSubmitted: typeof f.last_submitted === 'number' ? f.last_submitted : null,
+    totalSubmitted: total,
+    maxTotalOrders: cap,
+    ordersUntilGuard: total !== null && cap !== null ? Math.max(0, cap - total) : null,
     heartbeatS,
   }
 }

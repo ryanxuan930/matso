@@ -355,6 +355,7 @@ async def run_faction_worker(
                 # 只有 idle 那一瞬間才有數字。
                 "last_submitted": last_submitted,
                 "total_submitted": total_submitted,
+                "max_total_orders": max_total_orders,
             },
         )
         try:
@@ -372,6 +373,7 @@ async def run_faction_worker(
                     "cycles": cycles,
                     "last_submitted": last_submitted,
                     "total_submitted": total_submitted,
+                    "max_total_orders": max_total_orders,
                     "fallback": outcome.turn.fallback_used,
                 },
             )
@@ -415,6 +417,7 @@ async def run_faction_worker(
                     "cycles": cycles,
                     "last_submitted": last_submitted,
                     "total_submitted": total_submitted,
+                    "max_total_orders": max_total_orders,
                     "fallback": True,
                 },
             )

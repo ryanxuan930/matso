@@ -273,6 +273,18 @@ onMounted(async () => {
             <span class="acount">
               累計決策 <b :data-testid="`ai-cycles-${a.faction}`">{{ a.cycles ?? '—' }}</b> 次
               ・ 上一次下達 <b :data-testid="`ai-last-${a.faction}`">{{ a.lastSubmitted ?? '—' }}</b> 道
+              ・ 累計 <b :data-testid="`ai-total-${a.faction}`">{{ a.totalSubmitted ?? '—' }}</b> 道
+            </span>
+            <!-- 失控保護（O11.8）：觸發時 AI worker **直接停止決策**，畫面上只會表現成
+                 「AI 忽然不動了」。白軍要的是事前看得到，不是事後翻 log 找 runaway 警告。 -->
+            <span
+              v-if="a.ordersUntilGuard !== null"
+              class="aguard"
+              :class="{ near: a.ordersUntilGuard <= 50 }"
+              :data-testid="`ai-guard-${a.faction}`"
+              :title="`失控保護上限 ${a.maxTotalOrders} 道；超過即停止決策`"
+            >
+              距失控保護還剩 <b>{{ a.ordersUntilGuard }}</b> 道
             </span>
           </div>
         </section>
@@ -310,6 +322,9 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.aguard { font-size: 12px; opacity: .8 }
+.aguard.near { color: #fbbf24; opacity: 1; font-weight: 600 }
+
 .autonomy { max-width: 46rem; margin: 0 auto; padding: 2rem 1rem; color: #e2e8f0; }
 header { display: flex; align-items: baseline; justify-content: space-between; }
 h1 { margin: 0; font-size: 1.5rem; }

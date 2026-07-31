@@ -1538,6 +1538,8 @@ export interface components {
             last_submitted?: number | null;
             /** @description 本局累計送出的指令數（判斷「這個 AI 到底有沒有在動」看這個） */
             total_submitted?: number | null;
+            /** @description 失控保護的**上限**：累計送出超過它，AI worker 會直接停止決策（O11.8 runaway 守衛）。 少了這一欄，前端就算讀到 `total_submitted` 也不知道離停機還有多遠—— 而那是白軍需要**事前**看到的東西，不是事後才發現 AI 不動了。 */
+            max_total_orders?: number | null;
             /** @description 累計決策週期數 */
             cycles?: number | null;
         };

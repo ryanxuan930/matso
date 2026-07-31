@@ -147,6 +147,9 @@ def _faction_status(faction: str, raw: Any, now: float) -> dict[str, Any]:
         # 累計送出令數。**與 `last_submitted` 一起帶**：後者只說「上一週期」，
         # 白軍要判斷「這個 AI 到底有沒有在動」看的是累計值。
         "total_submitted": p.get("total_submitted"),
+        # 失控保護的**分母**。少了它，前端就算讀到累計數也不知道離上限還有多遠——
+        # 而這個守衛觸發時 AI 會直接停止決策，白軍需要事先看得到。
+        "max_total_orders": p.get("max_total_orders"),
         "cycles": p.get("cycles"),
     }
     if state == "thinking":
