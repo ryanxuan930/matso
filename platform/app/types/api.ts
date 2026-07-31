@@ -1161,6 +1161,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/config/test-llm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 測試 LLM 後端連線（如 Ollama：`POST {base}/v1/chat/completions`）。 **不寫任何設定**——只回連得上與否，讓管理者在存檔前先確認。 */
+        post: operations["testLlmConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/orbat-permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description 本局開放「自編編裝」的陣營清單。空＝只有白軍能編。 */
+        get: operations["getOrbatPermissions"];
+        /** @description 設定開放自編的陣營（限白軍/統裁）。陣營代號逐一驗證，非法即 422。 */
+        put: operations["setOrbatPermissions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/units/{unit_id}/reposition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 白軍地圖狀態編輯：直接把單位搬到指定座標。**不落帳**—— 它不是推演中發生的事，是統裁在調整佈署。位置同時寫 DB 與命令通道 （熱狀態的唯一寫入者是 kernel，API 行程不能直接改）。 */
+        post: operations["repositionUnit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/aar/missions": {
         parameters: {
             query?: never;
@@ -1608,6 +1665,26 @@ export interface components {
             /** @description 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。 */
             errors: number;
             legs: components["schemas"]["MissionLeg"][];
+        };
+        OrbatPermissions: {
+            /** @description 開放自編編裝的陣營代號。**空陣列＝只有白軍能編**（預設）。 */
+            factions: string[];
+        };
+        RepositionRequest: {
+            lat: number;
+            lng: number;
+        };
+        TestLlmRequest: {
+            base_url: string;
+            model: string;
+            /** @description 省略＝沿用已存的金鑰（本端點不回寫設定，金鑰僅用於本次測試）。 */
+            api_key?: string | null;
+        };
+        TestLlmResult: {
+            ok: boolean;
+            /** @description 成功時為模型回覆摘要；失敗時為可讀的錯誤原因 */
+            detail: string;
+            latency_ms?: number | null;
         };
         /** @description 命令已排入佇列的回執（白軍 MSEL 扣板機/跳過）。**不是「已生效」**—— API 行程不能直接改 runtime 的記憶（不同行程，熱狀態有 in-process mirror）， 實際套用發生在 runner 的下一個 tick。 */
         QueuedAck: {
@@ -5179,6 +5256,126 @@ export interface operations {
             };
             /** @description Session not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    testLlmConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestLlmRequest"];
+            };
+        };
+        responses: {
+            /** @description 測試結果（連不上也是 200——那是測試結果，不是本 API 出錯） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestLlmResult"];
+                };
+            };
+            /** @description 僅管理者 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getOrbatPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Permissions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbatPermissions"];
+                };
+            };
+        };
+    };
+    setOrbatPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrbatPermissions"];
+            };
+        };
+        responses: {
+            /** @description Permissions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbatPermissions"];
+                };
+            };
+            /** @description 僅白軍可設定 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repositionUnit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionId"];
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositionRequest"];
+            };
+        };
+        responses: {
+            /** @description 搬移後的單位 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnitView"];
+                };
+            };
+            /** @description 僅白軍/統裁可搬移 */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

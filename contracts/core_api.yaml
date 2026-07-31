@@ -528,6 +528,36 @@ components:
           type: integer
           description: 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。
         legs: { type: array, items: { $ref: "#/components/schemas/MissionLeg" } }
+    OrbatPermissions:
+      type: object
+      required: [factions]
+      properties:
+        factions:
+          type: array
+          items: { type: string }
+          description: 開放自編編裝的陣營代號。**空陣列＝只有白軍能編**（預設）。
+    RepositionRequest:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+    TestLlmRequest:
+      type: object
+      required: [base_url, model]
+      properties:
+        base_url: { type: string }
+        model: { type: string }
+        api_key:
+          type: [string, "null"]
+          description: 省略＝沿用已存的金鑰（本端點不回寫設定，金鑰僅用於本次測試）。
+    TestLlmResult:
+      type: object
+      required: [ok, detail]
+      properties:
+        ok: { type: boolean }
+        detail: { type: string, description: 成功時為模型回覆摘要；失敗時為可讀的錯誤原因 }
+        latency_ms: { type: [integer, "null"] }
     QueuedAck:
       type: object
       additionalProperties: { type: string }
@@ -2749,6 +2779,76 @@ paths:
               schema: { $ref: "#/components/schemas/AarReplayStates" }
         "403": { description: Forbidden }
         "404": { description: Session not found }
+  /system/config/test-llm:
+    post:
+      operationId: testLlmConnection
+      security: [{ bearerAuth: [] }]
+      description: >-
+        測試 LLM 後端連線（如 Ollama：`POST {base}/v1/chat/completions`）。
+        **不寫任何設定**——只回連得上與否，讓管理者在存檔前先確認。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TestLlmRequest" }
+      responses:
+        "200":
+          description: 測試結果（連不上也是 200——那是測試結果，不是本 API 出錯）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestLlmResult" }
+        "403": { description: 僅管理者 }
+  /sessions/{id}/orbat-permissions:
+    parameters: [{ $ref: "#/components/parameters/SessionId" }]
+    get:
+      operationId: getOrbatPermissions
+      security: [{ bearerAuth: [] }]
+      description: 本局開放「自編編裝」的陣營清單。空＝只有白軍能編。
+      responses:
+        "200":
+          description: Permissions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrbatPermissions" }
+    put:
+      operationId: setOrbatPermissions
+      security: [{ bearerAuth: [] }]
+      description: 設定開放自編的陣營（限白軍/統裁）。陣營代號逐一驗證，非法即 422。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrbatPermissions" }
+      responses:
+        "200":
+          description: Permissions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrbatPermissions" }
+        "403": { description: 僅白軍可設定 }
+  /sessions/{id}/units/{unit_id}/reposition:
+    parameters:
+      - { $ref: "#/components/parameters/SessionId" }
+      - { name: unit_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: repositionUnit
+      security: [{ bearerAuth: [] }]
+      description: >-
+        白軍地圖狀態編輯：直接把單位搬到指定座標。**不落帳**——
+        它不是推演中發生的事，是統裁在調整佈署。位置同時寫 DB 與命令通道
+        （熱狀態的唯一寫入者是 kernel，API 行程不能直接改）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepositionRequest" }
+      responses:
+        "200":
+          description: 搬移後的單位
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UnitView" }
+        "403": { description: 僅白軍/統裁可搬移 }
   /sessions/{id}/aar/missions:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:

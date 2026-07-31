@@ -23,15 +23,22 @@ export function updateEquipmentTemplate(tid: string, body: TemplateEdit): Promis
 export async function deleteEquipmentTemplate(tid: string): Promise<void> {
   await apiFetch<unknown>(`/equipment-templates/${tid}`, { method: 'DELETE' })
 }
-// 各軍自編權限（白軍開放哪些陣營可自行編裝）——限白軍讀寫。
-export function fetchOrbatPermissions(sessionId: string): Promise<{ factions: string[] }> {
-  return apiFetch<{ factions: string[] }>(`/sessions/${sessionId}/orbat-permissions`)
+/**
+ * 各軍自編權限（白軍開放哪些陣營可自行編裝）——限白軍讀寫。
+ *
+ * 型別走契約生成的 `OrbatPermissions`，不再就地寫 `{ factions: string[] }`——
+ * 那種行內型別是 P4 那一批漂移的縮影：後端加一個欄位，前端永遠不會知道。
+ */
+export type OrbatPermissions = components['schemas']['OrbatPermissions']
+
+export function fetchOrbatPermissions(sessionId: string): Promise<OrbatPermissions> {
+  return apiFetch<OrbatPermissions>(`/sessions/${sessionId}/orbat-permissions`)
 }
 export function setOrbatPermissions(
   sessionId: string,
   factions: string[],
-): Promise<{ factions: string[] }> {
-  return apiFetch<{ factions: string[] }>(`/sessions/${sessionId}/orbat-permissions`, {
+): Promise<OrbatPermissions> {
+  return apiFetch<OrbatPermissions>(`/sessions/${sessionId}/orbat-permissions`, {
     method: 'PUT',
     body: { factions },
   })
