@@ -528,6 +528,13 @@ components:
           type: integer
           description: 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。
         legs: { type: array, items: { $ref: "#/components/schemas/MissionLeg" } }
+    QueuedAck:
+      type: object
+      additionalProperties: { type: string }
+      description: >-
+        命令已排入佇列的回執（白軍 MSEL 扣板機/跳過）。**不是「已生效」**——
+        API 行程不能直接改 runtime 的記憶（不同行程，熱狀態有 in-process mirror），
+        實際套用發生在 runner 的下一個 tick。
     LedgerEntry:
       type: object
       required: [seq, tick, event_type, superseded]
@@ -2645,7 +2652,11 @@ paths:
         命令排入佇列由 runner 於下一 tick 套用——**API 行程不能直接改 runtime 的記憶**
         （不同行程，且熱狀態有 in-process mirror）。
       responses:
-        "202": { description: 已排入（下一 tick 生效） }
+        "202":
+          description: 已排入（下一 tick 生效）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueuedAck" }
         "403": { description: 非白軍/統裁 }
   /sessions/{id}/msel/{entry_id}/skip:
     parameters:
@@ -2656,7 +2667,11 @@ paths:
       description: >-
         白軍決定不發這個狀況（WP-B2c）。**記著而不是刪掉**——AAR 要看得出「原定 vs 實際」。
       responses:
-        "202": { description: 已排入 }
+        "202":
+          description: 已排入（下一 tick 生效）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueuedAck" }
         "403": { description: 非白軍/統裁 }
   /sessions/{id}/fire-plans:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
@@ -2769,7 +2784,17 @@ paths:
         "403": { description: Forbidden }
         "404": { description: Session not found }
   /scenarios:
-    get: { operationId: listScenarios, responses: { "200": { description: Scenarios } } }
+    get:
+      operationId: listScenarios
+      security: [{ bearerAuth: [] }]
+      description: 已存想定清單（限統裁/管理）。供編輯器「載入既有想定」與 lobby 開局選單。
+      responses:
+        "200":
+          description: Scenarios
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ScenarioSaved" } }
+        "403": { description: Not an exercise director }
     post:
       operationId: uploadScenario
       security: [{ bearerAuth: [] }]

@@ -18,35 +18,19 @@ export interface AarReplay {
   total_events: number
   max_tick: number
 }
-/** 地圖重播（WP-D6.1）：靜態底本 + 逐 tick 差異。 */
-export interface AarReplayUnit {
-  id: string
-  designation?: string
-  faction: string
-  unit_level?: string
-  is_fixed?: boolean
-  /** 滿編戰力；null 時後端不導出效能%（只給 strength）。 */
-  authorized_strength?: number | null
-  /** tick 0 基準位置——**近似值**：帳本沒有部署事件，白軍地圖狀態編輯也不落帳。
-   *  取該單位最早一筆有座標的事件；從沒動過的單位取 DB 現值（精確）。 */
-  base_lat?: number | null
-  base_lng?: number | null
-  base_health: number
-}
-export interface AarReplayChange {
-  unit_id: string
-  lat?: number
-  lng?: number
-  /** 效能%（0–100）。與 strength **量綱不同不可互換**。 */
-  health?: number
-  /** 戰力點（人員/平台數量級）。 */
-  strength?: number
-}
-export interface AarReplayStates {
-  units: AarReplayUnit[]
-  frames: Array<{ tick: number; event_types?: string[]; changes: AarReplayChange[] }>
-  max_tick: number
-}
+/**
+ * 地圖重播（WP-D6.1）：靜態底本 + 逐 tick 差異。
+ *
+ * ⚠ 這三個型別**曾經在這裡被手寫一份**，而契約（`AarReplayStates` / `AarReplayUnit` /
+ * `AarReplayFrame`）與生成的 `types/api.ts` 早就有了——`apiFetch<AarReplayStates>`
+ * 綁的是手寫那份。契約先行的紀律做到一半、前端沒接：後端改個欄位名，
+ * 型別檢查照樣過，畫面靜默變空白。UI 盤點把這條列為 P4 最尖銳的單一發現。
+ *
+ * 改成一律 re-export 生成型別。要改形狀就去改契約——那才是唯一的權威。
+ */
+export type AarReplayStates = components['schemas']['AarReplayStates']
+export type AarReplayUnit = components['schemas']['AarReplayUnit']
+export type AarReplayChange = components['schemas']['AarReplayChange']
 
 export interface AarStats {
   total_events: number

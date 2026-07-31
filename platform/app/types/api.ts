@@ -1206,6 +1206,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description 已存想定清單（限統裁/管理）。供編輯器「載入既有想定」與 lobby 開局選單。 */
         get: operations["listScenarios"];
         put?: never;
         /**
@@ -1607,6 +1608,10 @@ export interface components {
             /** @description 階段評估失敗次數。一道壞任務不該拖垮整局，**但要看得見**。 */
             errors: number;
             legs: components["schemas"]["MissionLeg"][];
+        };
+        /** @description 命令已排入佇列的回執（白軍 MSEL 扣板機/跳過）。**不是「已生效」**—— API 行程不能直接改 runtime 的記憶（不同行程，熱狀態有 in-process mirror）， 實際套用發生在 runner 的下一個 tick。 */
+        QueuedAck: {
+            [key: string]: string;
         };
         LedgerEntry: {
             /** @description 帳本序號（append-only，單調遞增） */
@@ -4961,7 +4966,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["QueuedAck"];
+                };
             };
             /** @description 非白軍/統裁 */
             403: {
@@ -4984,12 +4991,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 已排入 */
+            /** @description 已排入（下一 tick 生效） */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["QueuedAck"];
+                };
             };
             /** @description 非白軍/統裁 */
             403: {
@@ -5253,6 +5262,15 @@ export interface operations {
         responses: {
             /** @description Scenarios */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioSaved"][];
+                };
+            };
+            /** @description Not an exercise director */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

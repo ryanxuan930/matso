@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.deps import get_db, get_settings
 from app.main import app
-from app.models import User
+from app.models import TacticalEventLog, User
 from app.models.enums import UserRole
 
 
@@ -125,3 +125,50 @@ def test_stats_response_matches_the_contract(session_factory: sessionmaker[Sessi
     missing = set(schema.get("required", [])) - set(body)
     assert not missing, f"回應少了契約宣告為必填的欄位：{sorted(missing)}；實得 {sorted(body)}"
     assert json.dumps(body)  # 可序列化（封存包要用）
+
+
+def test_replay_changes_never_carry_null_keys(session_factory: sessionmaker[Session]) -> None:
+    """**只列真的變了的欄位**——`null` 會讓地圖重播靜默壞掉。
+
+    前端的累加邏輯是 `if (c.lat !== undefined) cur.lat = c.lat`。
+    後端一旦改送 `null`，那個判斷變成 true，座標被設成 null——單位不是消失，
+    是被畫到 null 座標。`response_model` 加上去時若忘了 `exclude_none`，
+    症狀就是這個，而所有型別檢查照樣綠。
+    """
+    world = seed_world(session_factory)
+    # **一定要真的種出有變動的影格**——沒有事件的話 `frames` 是空的，
+    # 下面的迴圈一次都不跑，這條測試就變成空轉（拿掉 `exclude_none` 也不會紅）。
+    # 只給座標、不給戰力：這樣 `health`/`strength` 才會是 None，才驗得到那個洞。
+    with session_factory() as db:
+        for seq, (lat, lng) in enumerate([(23.70, 120.30), (23.71, 120.31)], start=1):
+            db.add(
+                TacticalEventLog(
+                    session_id=world.session_id,
+                    seq=seq,
+                    tick=seq * 10,
+                    event_type="UNIT_MOVED",
+                    initiator_id=world.blue_unit_id,
+                    weather_snapshot={},
+                    terrain_modifier=1.0,
+                    ai_decision={},
+                    detail={"lat": lat, "lng": lng},
+                    prev_hash="",
+                    self_hash=f"h{seq}",
+                )
+            )
+        db.commit()
+
+    client = _client(session_factory)
+    tok = order_token(world.cmdr_user_id, UserRole.COMMANDER)
+
+    r = client.get(f"/api/v1/sessions/{world.session_id}/aar/replay/states", headers=_hdr(tok))
+    assert r.status_code == 200
+    body = r.json()
+    changed = [c for f in body["frames"] for c in f["changes"]]
+    assert changed, "沒有種出任何變動——這條斷言會空轉"
+    for frame in body["frames"]:
+        for change in frame["changes"]:
+            nulls = [k for k, v in change.items() if v is None]
+            assert not nulls, f"變動裡出現 null 鍵（前端會誤讀成「有值」）：{nulls}"
+    # 底本則相反：`base_lat` 等**可以**是 null（那是「這個單位沒有基準座標」的真實資訊）。
+    assert isinstance(body["units"], list)

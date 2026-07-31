@@ -27,6 +27,53 @@ from app.stream.faction_filter import is_omniscient
 router = APIRouter(prefix="/api/v1/sessions", tags=["aar"])
 
 
+class AarReplayChangeView(BaseModel):
+    """單一單位在該 tick 的變動。**只列真的變了的欄位**，未列＝沿用前一狀態。
+
+    ⚠ 端點必須以 `response_model_exclude_none=True` 送出。前端的累加邏輯判的是
+    `c.lat !== undefined`——一旦改送 `null`，那個判斷會變成 true 而把座標設成 null，
+    地圖重播就**靜默壞掉**（單位不是消失，是被畫到 null 座標）。
+    """
+
+    unit_id: str
+    lat: float | None = None
+    lng: float | None = None
+    health: float | None = None  # 效能%（0–100）
+    strength: float | None = None  # 戰力點——與 health **量綱不同不可互換**
+
+
+class AarReplayFrameView(BaseModel):
+    tick: int
+    event_types: list[str] = Field(default_factory=list)
+    changes: list[AarReplayChangeView] = Field(default_factory=list)
+
+
+class AarReplayUnitView(BaseModel):
+    """重播底本的單位（靜態屬性 + tick 0 基準狀態）。"""
+
+    id: str
+    designation: str | None = None
+    faction: str
+    unit_level: str | None = None
+    is_fixed: bool = False
+    authorized_strength: float | None = None
+    base_lat: float | None = None
+    base_lng: float | None = None
+    base_health: float = 100.0
+
+
+class AarReplayStatesView(BaseModel):
+    """地圖重播的完整資料。
+
+    這個端點過去回**裸 `dict`**——契約裡的 `AarReplayStates` 從來沒有被對照過後端，
+    它可以整段說謊而沒有任何閘門會發現。宣告出來之後 FastAPI 每次回應都會驗。
+    """
+
+    units: list[AarReplayUnitView] = Field(default_factory=list)
+    frames: list[AarReplayFrameView] = Field(default_factory=list)
+    max_tick: int = 0
+
+
 class MissionLegView(BaseModel):
     """任務時間軸上的一段。`to_tick`/`duration_ticks` 為 None ＝局結束時仍在這個階段。"""
 
@@ -131,7 +178,12 @@ def get_replay(
     }
 
 
-@router.get("/{session_id}/aar/replay/states")
+@router.get(
+    "/{session_id}/aar/replay/states",
+    response_model=AarReplayStatesView,
+    # 見 `AarReplayChangeView` 的警語：改送 null 會讓地圖重播靜默壞掉。
+    response_model_exclude_none=True,
+)
 def get_replay_states(
     session_id: str,
     user: CurrentUser = Depends(get_current_user),

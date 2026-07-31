@@ -1155,7 +1155,7 @@ SPEC_FULL §9.3 的 Proposers/Challenger/Aggregator。**開工門檻**：F1–F3
 | G2 | **Tailwind 決策**：main.css 未接線（盤點）。二擇一：接上並漸進採用，或移除相依——**建議移除**（全站已是 scoped CSS 慣例，留著只是假象相依） | 無 tailwind 相依或已實際生效，二者擇一落地 |
 | G3 | **E2E 補齊**：white-cell、AAR、autonomy、scenario-editor、armory、accounts、system-settings、地圖編輯/整形各至少 1 條 happy path；WP 新功能隨卡附 e2e | Playwright 綠；CI 納入 |
 | G4 | **白軍控制台成熟化**：ROLLBACK 的 `window.prompt` 換正式 UI（tick 選擇器＋書籤）；單位 attributes 裸 JSON 換結構化表單；事件流換 AAR 同款格式化元件；加 WP-B2 待命注入面板 | 盤點三醜點清除 |
-| G5 | **契約型別全面化**：useAar/autonomy/system-settings/scenarios 的手寫 interface 改走 `types/api.ts`（缺的端點先補 core_api.yaml——契約先行）；`useConditionDsl` 與後端 DSL 的 schema 由 contracts 單一來源生成 | `rg "interface.*View" app/` 無契約外重複定義 |
+| G5 | **契約型別全面化**：useAar/autonomy/system-settings/scenarios 的手寫 interface 改走 `types/api.ts`（缺的端點先補 core_api.yaml——契約先行）；`useConditionDsl` 與後端 DSL 的 schema 由 contracts 單一來源生成 | `uv run pytest core/tests/unit/test_contract_conformance.py` 全綠，且 `_IMPL_ONLY`／`_CONTRACT_ONLY` 兩份漂移清單清空 |
 | G6 | **i18n 骨架**：字串抽 locale 檔（zh-TW 為預設），不急翻譯——先讓硬編碼停止增生 | 新增程式碼可用 t()；存量漸進 |
 
 另收盤點雜項：demo 殘留（`?units=N`/`?demo=1`/`currentTick=100`）移到顯式 dev 旗標後；
@@ -1253,6 +1253,13 @@ F5 訓後評量（依賴 B5/C10 事件鏈 + D6 重播）
 C8 MRM 聚合解聚（依賴 C7 帳目）
 E5 負載測試/LOD；F2 語料擴充；F4 MoA（門檻制）
 H1 多站 ADR+PoC；H2 DIS/HLA ADR；G5/G6 收尾
+
+> ⚠ **G5 的舊驗收條件（`rg "interface.*View" app/` 無契約外重複定義）是壞的，已於 2026-07-31 更換。**
+> 它現在只抓得到 2 筆（`autonomy.vue`），因為本 repo 的手寫型別大多不叫 `*View`
+> ——叫 `AarStats`／`OwnUnit`／`Contact`／`EditorUnit`／`ScenarioModel`。
+> 照舊條件做，**改兩個 interface 名字就能宣告 G5 完成**，而 9 個檔、40+ 個手寫 API 型別、
+> 十幾條契約漂移一條都沒動。這是本 repo 招牌病的上游成因：驗收條件是機械的，
+> 但機械得不對地方。新條件改用閘門本身當標準——閘門會隨程式碼一起演進，grep 字串不會。
 ```
 
 里程碑驗收（每期收尾跑一次完整演習劇本）：

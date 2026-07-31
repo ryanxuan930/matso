@@ -124,6 +124,53 @@ def test_the_known_drift_list_only_shrinks() -> None:
     assert not stale_untyped, f"這些已經修好了，請從 _IMPL_ONLY 刪掉：{sorted(stale_untyped)}"
 
 
+def test_every_implemented_endpoint_declares_a_response_schema() -> None:
+    """**光是路徑在契約裡不算數**——2xx 沒有 content schema 就等於沒宣告。
+
+    ## 為什麼要有這條
+
+    上面三條只比對**路徑**。於是這種寫法可以完全通過：
+
+        /scenarios:
+          get: { operationId: listScenarios, responses: { "200": { description: Scenarios } } }
+
+    路徑在契約裡、閘門全綠，而 `openapi-typescript` 對它只生得出 `unknown`——
+    前端只好手寫一份 `ScenarioItem[]`。**「路徑在契約裡」給了假的安全感**，
+    而那正是 UI 盤點 P4 那一整批手寫型別的上游成因。
+
+    ## 只管**實作了**的端點
+
+    契約有、實作沒有的殘骸由 `test_no_new_spec_ghosts` 管——那是另一種病
+    （前端按下去吃 404），要求一個不存在的端點宣告 response schema 沒有意義。
+
+    ## 沒有豁免清單
+
+    裝這條的當下只有 3 筆缺口（`GET /scenarios` 與 MSEL 的 fire/skip），一次補完。
+    留豁免清單的成本是它會腐爛——`_CONTRACT_ONLY`／`_IMPL_ONLY` 那兩份已經證明了
+    清單需要另一條「只能變短」的閘門去守。缺口小到補得完的時候就別留清單。
+    """
+    spec = yaml.safe_load(_CONTRACT.read_text(encoding="utf-8"))
+    implemented = _app_ops()
+    missing: list[tuple[str, str]] = []
+    for path, item in (spec.get("paths") or {}).items():
+        for method, op in (item or {}).items():
+            if method not in _METHODS:
+                continue
+            key = (method.upper(), _norm(_PREFIX + path))
+            if key not in implemented:
+                continue
+            responses = (op or {}).get("responses") or {}
+            success = [c for c in responses if str(c).startswith("2")]
+            # 204 No Content 沒有 body 是**正確的**，不是漏宣告。
+            if success and all(str(c) == "204" for c in success):
+                continue
+            if not success or all(not (responses[c] or {}).get("content") for c in success):
+                missing.append(key)
+    assert not missing, (
+        f"這些端點的 2xx 沒有 content schema——前端只生得出 unknown，只好手寫型別：{sorted(missing)}"
+    )
+
+
 def test_the_gate_actually_sees_endpoints() -> None:
     """前提檢查：兩邊都要撈得到東西，否則上面三條全是假綠。"""
     assert len(_contract_ops()) > 40
