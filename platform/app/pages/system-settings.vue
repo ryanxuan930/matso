@@ -342,7 +342,9 @@ onMounted(async () => {
           </div>
           <h3 class="sim-h3">每日消耗率（份 / 模擬日）</h3>
           <p class="hint">
-            未列出的補給類別＝<strong>不消耗</strong>。要讓部隊會餓、會缺彈、會沒油，這裡就得有值。
+            此處顯示的是<strong>真正生效的值</strong>（未調整過即為系統校準值）。
+            補給日（Class I）以「攜行天數」計，故 1.0 ＝ 每模擬日耗掉一天份。
+            部隊要真的會餓，還得在想定裡替該單位<strong>宣告補給</strong>——沒宣告的單位不消耗。
           </p>
           <div class="grid2">
             <label v-for="cls in SUPPLY_CLASSES" :key="cls">

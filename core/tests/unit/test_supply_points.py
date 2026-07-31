@@ -159,6 +159,47 @@ def test_destroying_a_point_cuts_the_supply_line(session_factory) -> None:  # ty
     db.close()
 
 
+def test_a_supply_point_cannot_issue_more_than_it_holds(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """**帳目守恆**：同一 tick 內多個單位來拉，撥出去的總量不得超過庫存。
+
+    `auto_resupply` 在迴圈**外**載入 `points`，迴圈內每個單位都拿**同一個 `SupplyPoint`
+    物件**去 `draw_from`。而 `draw_from` 只把扣減後的庫存寫進 `row.attributes`（DB），
+    從不更新記憶體裡那份 `point.stock`——於是第二、第三個單位看到的還是**原始庫存**。
+
+    後果不是「多給了一點」而是**這張卡的價值歸零**：規格說補給點的意義是
+    「讓『打擊敵後勤』成為可行戰法」，而如果庫存不是真的約束，打掉它就不痛不癢。
+    庫存 10 份的補給點可以無限量供應，只要來拉的單位夠多。
+
+    測 `auto_resupply` 而不是 `draw_from`：`draw_from` 單獨看是對的（它照著收到的
+    `point.stock` 算），洞長在「呼叫端重複使用同一個物件」這個互動上。
+    """
+    from _order_fakes import seed_world
+
+    world = seed_world(session_factory)
+    db = session_factory()
+    row = _add_point(db, world.session_id, stock={"I": 10.0})
+    db.commit()
+
+    hot = InMemoryHotState()
+    hungry = ["u-1", "u-2", "u-3"]
+    for uid in hungry:
+        hot.put_unit(uid, {SUPPLY_KEY: {"I": [0.0, 10.0]}})  # 各自想要 10 份
+
+    events = auto_resupply(db, hot, world.session_id, lambda _u: ("BLUE", _LAT, _LNG), tick=1)
+
+    issued_total = sum(
+        sum(e.ai_decision["issued"].values()) for e in events if e.ai_decision is not None
+    )
+    received_total = sum(read_levels(hot.get_unit(uid))[SupplyClass.I].on_hand for uid in hungry)
+    db.refresh(row)
+    stock_after = float(row.attributes["stock"]["I"])
+
+    assert issued_total == 10.0, f"補給點只有 10 份，卻撥出 {issued_total} 份"
+    assert received_total == 10.0, f"單位總共收到 {received_total} 份，憑空多出來"
+    assert stock_after == 0.0
+    db.close()
+
+
 def test_a_point_outside_the_blast_survives(session_factory) -> None:  # type: ignore[no-untyped-def]
     from _order_fakes import seed_world
 

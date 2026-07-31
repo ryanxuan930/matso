@@ -911,7 +911,9 @@ class SimManager:
                 if sup:
                     await asyncio.to_thread(_emit, sup)
                 # WP-C7.3 整補：戰損單位在補給點旁、無敵情、有料件時逐 tick 恢復。
-                # `repair_per_day=0`（預設）→ 第一行就回空 list，既有局零成本。
+                # `repair_per_day <= 0` → 第一行就回空 list。**但預設已不是 0**
+                # （`refit_wiring.REPAIR_PER_DAY = 10.0`）——既有局的零成本保證來自
+                # 「沒宣告 `supply` 的單位沒有 Class IX 水位、修不動」，不是來自率是 0。
                 rf = await asyncio.to_thread(
                     _refit_tick,
                     self._factory,

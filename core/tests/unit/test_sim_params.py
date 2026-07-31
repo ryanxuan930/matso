@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.adjudication.supply import SupplyClass, daily_consumption
 from app.movement import params as mp
 from app.sim_params import DEFAULTS, SimParams, parse_sim_params, to_config
 
@@ -147,12 +148,39 @@ def test_weather_refresh_ticks_may_be_zero() -> None:
 
 
 def test_a_broken_supply_rate_drops_only_that_class() -> None:
-    """壞值不該讓整份消耗率表變成空（那等於全軍忽然不用吃飯）。"""
+    """壞值只丟該鍵——既不該清空整表，也不該沖掉**校準預設**（那等於全軍忽然不用吃飯）。"""
     rates = parse_sim_params(
         {"supply_daily_rates": {"FOOD": 1.5, "AMMO": "很多", "FUEL": -1}}
     ).supply_daily_rates
 
-    assert rates == {"FOOD": 1.5}
+    assert rates["FOOD"] == 1.5  # 合法覆寫留著
+    assert "AMMO" not in rates and "FUEL" not in rates  # 字串與負值整鍵丟掉
+    assert rates["I"] == 1.0 and rates["IX"] == 0.5  # 校準預設沒被覆寫掉
+
+
+def test_the_seal_hashes_the_consumption_rates_that_are_actually_in_force() -> None:
+    """WP-B4 參數凍結簽證**必須**雜湊到真正生效的消耗率。
+
+    這張表過去預設是空 dict（＝「沒有人覆寫」），而真正生效的 Class I 1.0／IX 0.5
+    躺在 `supply.DAILY_CONSUMPTION` 裡。於是 `to_config` 投影出 `{}`，簽證就對這兩個
+    係數**完全沒有記錄**——改掉它們不會讓任何一份既有簽證失效。而「把當下在跑的參數釘住」
+    正是簽證存在的唯一理由，漏掉保真係數等於簽了一份不涵蓋標的物的合約。
+
+    同一個空表也讓設定頁把每一格畫成 0 並寫著「未列出＝不消耗」，
+    而同一局的單位確確實實在消耗——**畫面對統裁說謊**。
+
+    斷言打在 `to_config`（簽證真正拿去雜湊的東西）而不是 `SimParams` 欄位。
+    """
+    projected = to_config(parse_sim_params({}))["supply_daily_rates"]
+
+    assert projected["I"] == daily_consumption(SupplyClass.I)
+    assert projected["IX"] == daily_consumption(SupplyClass.IX)
+    # 覆寫要蓋得過去，且蓋完仍是完整的表（不是只剩被覆寫的那一格）。
+    overridden = to_config(parse_sim_params({"supply_daily_rates": {"I": 2.5}}))[
+        "supply_daily_rates"
+    ]
+    assert overridden["I"] == 2.5
+    assert overridden["IX"] == daily_consumption(SupplyClass.IX)
 
 
 # ---- 該局的 tick 長度：想定宣告 > 系統設定 ----

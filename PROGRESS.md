@@ -565,6 +565,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - **[事件 schema 議題]** TICK_OVERRUN 等引擎事件目前把結構化診斷塞進 `aiDecision` JSON 欄（schema 無中性欄）。事件類型變多前（O3 起），應檢討於 TacticalEventLog 加一個中性 `detail` JSON 欄（需 prisma migrate + ADR）。
 - **[O3.4 待辦]** 子系統（movement 等）實際寫入單位熱狀態的路徑未定；O1.4 只讓 Kernel 持有 hot_state 並 drain/broadcast，diff 現階段為空亦正確。single-writer 原則下子系統應經 Kernel 更新。
 - **[O1.4 已交付]** RedisBroadcaster 只到 Redis 落地（ring buffer/pub-sub）；WS 客戶端 fan-out（訂閱、faction 過濾、推前端）屬 O4.3。
+- **[Backlog｜設定頁凍結所有預設]**（2026-07-31 於 C7 查證時發現）`PUT /system/config` 收的是 `sim` 的**完整快照**，設定頁存檔時把全部 24 欄一起回寫。於是「有人打開過設定頁按了儲存」＝把當時的每一個預設值永久釘死在該安裝上，日後任何校準變更都靜默失效。本次就是它讓 WP-C7.3 整補完全沒開起來（`repair_per_day` 卡在校準前的 0.0），而**單元測試全綠**——測試走的是程式碼預設，看不到 DB 裡那份快照。修法方向：PATCH 語義（只回寫使用者真的動過的欄位），或在回應中區分「使用者設定值 vs 系統預設值」讓設定頁只送前者。屬設定頁的卡，不屬 C7。
 - **[裝配提醒]** 真實裝配 Kernel 時：event_sink=LedgerWriter、hot_state=RedisHotState、broadcaster=RedisBroadcaster、wall_clock=app.runtime.PerfCounterClock。
 
 ## ▶ 續作指引（2026-07-31 收工｜開機後從這裡讀起）

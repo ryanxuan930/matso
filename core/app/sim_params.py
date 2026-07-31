@@ -28,10 +28,14 @@ from sqlalchemy.orm import Session
 
 from app.adjudication import formation as _formation
 from app.adjudication import obstacles as _obs
+from app.adjudication import supply as _supply
 from app.adjudication import suppression as _sup
 from app.engine import refit_wiring as _refit
 from app.engine import weather_wiring as _wx
 from app.movement import params as _mp
+
+# 校準過的每日消耗率，投影成 `{類別字串: 率}`（`SimParams` 的表用字串鍵——它要能進 JSON）。
+_DEFAULT_RATES: dict[str, float] = {c.value: v for c, v in _supply.DAILY_CONSUMPTION.items()}
 
 _CONFIG_KEY = "sim"
 
@@ -102,12 +106,18 @@ class SimParams:
     # 這是中性預設：既有局位元不變、golden 不必重錄。
     weather_refresh_ticks: int = _wx.DEFAULT_REFRESH_TICKS
     # --- 後勤（WP-C7.1）---
-    # 每模擬日消耗率 {類別: 份/日}。**空 dict ＝未覆寫 ＝ 用 `supply.DAILY_CONSUMPTION`
-    # 的校準值**（Class I 1.0 DOS/日、IX 0.5 點/日），不是「全 0」。
-    # 既有局不受影響靠的是「沒宣告 `supply` 就不消耗」，不是靠把率壓成 0。
-    # ⚠ 因此本欄的預設投影（`to_config`）看不到那兩個真正生效的係數，
-    # 參數凍結簽證（WP-B4）也就沒有雜湊到它們——修法要一併改前端設定頁的語義，記在回報。
-    supply_daily_rates: dict[str, float] = field(default_factory=dict)
+    # 每模擬日消耗率 {類別: 份/日}。**這張表一律是「真正生效的值」，不是「使用者覆寫了什麼」。**
+    #
+    # 曾經預設是空 dict（＝未覆寫，由 `supply.DAILY_CONSUMPTION` 兜底），結果同一件事被記了兩份：
+    # 1. `to_config` 投影出空表 → **參數凍結簽證（WP-B4）雜湊不到真正生效的消耗率**，
+    #    而「把當下在跑的參數釘住」正是簽證存在的唯一理由。
+    # 2. 設定頁照著空表把每一格畫成 0，旁邊寫「未列出＝不消耗」——**畫面對統裁說謊**，
+    #    因為同一局的單位確確實實在消耗（`B-3-A` 的 Class I 一路從 3.0 掉下來）。
+    #
+    # 改成解析時就把校準預設併進來：覆寫只是覆寫其中幾格，表本身永遠完整。
+    # 既有局不受影響靠的仍是「沒宣告 `supply` 就一個鍵都不寫」（見 `engine/supply_wiring`），
+    # 從來就不是靠把率壓成 0——中性不該用「把物理關掉」去換。
+    supply_daily_rates: dict[str, float] = field(default_factory=lambda: dict(_DEFAULT_RATES))
     # WP-C7.3 每模擬日恢復的戰力點（校準值見 `refit_wiring.REPAIR_PER_DAY`）。
     # 0 ＝不修復；想定要關掉整補就明確寫 0。
     repair_per_day: float = _refit.REPAIR_PER_DAY
@@ -142,7 +152,9 @@ def parse_sim_params(raw: object) -> SimParams:
 
     interval = _int("sensor_interval_ticks", DEFAULTS.sensor_interval_ticks)
     # WP-C7.1 每日消耗率：**只收數字**，壞值整鍵丟掉（不讓一個字串把整份率表變成空）。
-    rates: dict[str, float] = {}
+    # 從校準預設起手再疊覆寫——覆寫的語義是「改其中幾格」，不是「換掉整張表」。
+    # 這樣 `to_config` 投影出去的永遠是**真正生效的值**，簽證才雜湊得到（見欄位註解）。
+    rates: dict[str, float] = dict(_DEFAULT_RATES)
     raw_rates = raw.get("supply_daily_rates")
     if isinstance(raw_rates, dict):
         for cls, value in raw_rates.items():

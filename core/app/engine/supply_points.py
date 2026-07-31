@@ -70,8 +70,12 @@ def read_point(row: Any) -> SupplyPoint | None:
         for key, value in raw_stock.items():
             # 兩套字彙都收（見 `adjudication/supply.COMMODITY_ALIASES`）：想定作者從軍械庫
             # 學到的是 FUEL/AMMO/WATER_FOOD/BATTERY，本模組講的是 Class 編號。
-            # 過去認不得就**靜靜丟掉**——寫 `{"FUEL": 1000}` 的補給點會變成空庫存、
-            # `usable` 是 False，畫面上一個補給點好端端地在那裡卻永遠撥不出東西。
+            #
+            # ⚠ 這是**縱深防禦而不是修一個活著的缺陷**：走想定與 API 的補給點進不來別的字彙
+            # （`scenario.schema.json` 的 `stock` 是 `additionalProperties: false` 只列 I/IX，
+            # `api/map_features` 也擋下未知鍵並回 `MAP_FEATURE_SUPPLY_POINT_STOCK`）。
+            # 這裡收的是**繞過那兩道的來源**：MSEL 注入、直接寫 DB、以及舊資料。
+            # 對那些來源，認不得就靜靜丟掉會讓補給點好端端在圖上卻永遠撥不出東西。
             supply_class = parse_class(key)
             if supply_class is None:
                 continue
@@ -133,6 +137,20 @@ def draw_from(
 
     庫存不足時給一部分而不是整批拒絕——那才是真實的補給點行為，
     而且「拉到一半」正是指揮官需要看見的訊號（這個補給點快空了）。
+
+    ## 扣減**必須同時寫回傳入的 `point`**，不能只寫 DB
+
+    `auto_resupply` 在迴圈外載入一次 `points`，迴圈內每個缺補給的單位都拿**同一個
+    `SupplyPoint` 物件**進來。只更新 `row.attributes` 的話，第二、第三個單位讀到的
+    還是原始庫存——庫存 10 份的補給點被三個單位各領走 10 份，**20 份憑空生出**，
+    而 DB 最後只記得最後一次寫入（10 − 10 ＝ 0）。
+
+    這不是「多給了一點」的精度問題，是**這張卡的價值歸零**：規格說補給點的意義在於
+    「讓『打擊敵後勤』成為可行戰法」，而庫存若不是真的約束，打掉它就不痛不癢。
+
+    就地改 dict 而不是換一個新的：`SupplyPoint` 是 `frozen=True`，欄位重指派會炸；
+    而且就地改正好讓 `usable`（`any(v > 0)`）跟著變——領空的補給點在同一迴圈的
+    下一個單位那裡就自動不再被 `nearest_usable` 選中，不必另外通知誰。
     """
     from app.models.tables import MapFeature
 
@@ -148,6 +166,8 @@ def draw_from(
             stock[supply_class] = available - take
             issued[supply_class] = take
     if issued:
+        point.stock.clear()
+        point.stock.update(stock)
         # ⚠ JSON 欄位要**整包換掉**才會被 SQLAlchemy 視為 dirty（同 WP-C2 的教訓）。
         attrs = dict(row.attributes or {})
         attrs["stock"] = {c.value: round(v, 4) for c, v in sorted(stock.items())}
