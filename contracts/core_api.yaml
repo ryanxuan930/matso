@@ -44,16 +44,6 @@ components:
       in: path
       required: true
       schema: { type: string }
-    TaskId:
-      name: tid
-      in: path
-      required: true
-      schema: { type: string }
-    PluginName:
-      name: name
-      in: path
-      required: true
-      schema: { type: string }
     ScenarioId:
       name: sid
       in: path
@@ -2517,20 +2507,6 @@ paths:
               schema: { $ref: "#/components/schemas/OrderResponse" }
         "404": { description: Order not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: Order not cancellable (illegal transition), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-  /sessions/{id}/ai/consult:
-    parameters: [{ $ref: "#/components/parameters/SessionId" }]
-    post:
-      operationId: aiConsult
-      description: "{role, query} → 202 + task_id（非同步；逾時 doctrine fallback）"
-      responses: { "202": { description: Task queued } }
-  /sessions/{id}/ai/tasks/{tid}:
-    parameters:
-      - { $ref: "#/components/parameters/SessionId" }
-      - { $ref: "#/components/parameters/TaskId" }
-    get: { operationId: aiTaskStatus, responses: { "200": { description: Task status/result } } }
-  /sessions/{id}/injects:
-    parameters: [{ $ref: "#/components/parameters/SessionId" }]
-    post: { operationId: mselInject, description: White Cell only, responses: { "201": { description: Injected } } }
   /sessions/{id}/ledger:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:
@@ -2760,9 +2736,6 @@ paths:
         "403": { description: 非本陣營的計畫 }
         "409": { description: 該目標已執行過（一個預劃目標只打一次） }
         "422": { description: 物理預檢不可行（射程/無曲射武器/火協未核准…） }
-  /sessions/{id}/aar:
-    parameters: [{ $ref: "#/components/parameters/SessionId" }]
-    get: { operationId: getAAR, responses: { "200": { description: AAR report } } }
   /sessions/{id}/aar/replay/states:
     parameters: [{ $ref: "#/components/parameters/SessionId" }]
     get:
@@ -2932,8 +2905,3 @@ paths:
       operationId: deleteScenario
       description: "刪除想定；限統裁/管理"
       responses: { "204": { description: Deleted } }
-  /admin/plugins:
-    get: { operationId: listPlugins, responses: { "200": { description: Plugin registry } } }
-  /admin/plugins/{name}/toggle:
-    parameters: [{ $ref: "#/components/parameters/PluginName" }]
-    post: { operationId: togglePlugin, responses: { "200": { description: Toggled } } }

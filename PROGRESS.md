@@ -565,6 +565,7 @@ pre-commit install / eslint / vue-tsc / core `GET /healthz` 200 / frontend `GET 
 - **[事件 schema 議題]** TICK_OVERRUN 等引擎事件目前把結構化診斷塞進 `aiDecision` JSON 欄（schema 無中性欄）。事件類型變多前（O3 起），應檢討於 TacticalEventLog 加一個中性 `detail` JSON 欄（需 prisma migrate + ADR）。
 - **[O3.4 待辦]** 子系統（movement 等）實際寫入單位熱狀態的路徑未定；O1.4 只讓 Kernel 持有 hot_state 並 drain/broadcast，diff 現階段為空亦正確。single-writer 原則下子系統應經 Kernel 更新。
 - **[O1.4 已交付]** RedisBroadcaster 只到 Redis 落地（ring buffer/pub-sub）；WS 客戶端 fan-out（訂閱、faction 過濾、推前端）屬 O4.3。
+- **[Backlog｜未建功能：外掛管理 API 與 AI 諮詢]**（2026-07-31 自契約移出）契約裡曾宣告 `GET /admin/plugins`、`POST /admin/plugins/{name}/toggle`、`POST /sessions/{id}/ai/consult`、`GET /sessions/{id}/ai/tasks/{tid}` 四條，**實作從來不存在**。已從契約刪除——契約描述的是 API 現在是什麼，而 openapi-typescript 會照著它生出一按下去就 404 的型別（「契約說謊比缺功能難查」）。功能本身的意圖記在這裡：外掛管理目前只有 `matso_sdk` 這個程式庫層，沒有 HTTP 管理面；AI 諮詢（參謀問 AI、非同步回覆 + 逾時退回準則）未實作，前端的 AI 狀態列走的是另一條 `/ai-status`。要做的時候重新開卡並**先補契約**。
 - **[Backlog｜設定頁凍結所有預設]**（2026-07-31 於 C7 查證時發現）`PUT /system/config` 收的是 `sim` 的**完整快照**，設定頁存檔時把全部 24 欄一起回寫。於是「有人打開過設定頁按了儲存」＝把當時的每一個預設值永久釘死在該安裝上，日後任何校準變更都靜默失效。本次就是它讓 WP-C7.3 整補完全沒開起來（`repair_per_day` 卡在校準前的 0.0），而**單元測試全綠**——測試走的是程式碼預設，看不到 DB 裡那份快照。修法方向：PATCH 語義（只回寫使用者真的動過的欄位），或在回應中區分「使用者設定值 vs 系統預設值」讓設定頁只送前者。屬設定頁的卡，不屬 C7。
 - **[裝配提醒]** 真實裝配 Kernel 時：event_sink=LedgerWriter、hot_state=RedisHotState、broadcaster=RedisBroadcaster、wall_clock=app.runtime.PerfCounterClock。
 

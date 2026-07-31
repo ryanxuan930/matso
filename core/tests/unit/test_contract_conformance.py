@@ -47,14 +47,18 @@ _NOT_PART_OF_THE_API = {
 # ---- 既有漂移（裝閘門當下的實況）。**這份清單只能變短。** ----
 
 # 契約有、實作沒有＝規格殘骸。前端照契約生型別然後在執行期吃 404。
-_CONTRACT_ONLY = {
-    ("GET", "/api/v1/admin/plugins"),
-    ("POST", "/api/v1/admin/plugins/{}/toggle"),
-    ("GET", "/api/v1/sessions/{}/aar"),  # 實作拆成 /aar/stats、/aar/report 等
-    ("GET", "/api/v1/sessions/{}/ai/tasks/{}"),
-    ("POST", "/api/v1/sessions/{}/ai/consult"),
-    ("POST", "/api/v1/sessions/{}/injects"),  # 實作是單數 /inject
-}
+#
+# **2026-07-31 清空。** 六條全數確認沒有任何前端呼叫端（純規格殘骸），已從契約刪除：
+#   - `/admin/plugins` + toggle：外掛管理 HTTP API 從未實作（`matso_sdk` 是程式庫不是 API）
+#   - `/sessions/{id}/aar`：實作早已拆成 `/aar/stats`、`/aar/report`、`/aar/replay` 等
+#   - `/sessions/{id}/ai/consult` + `/ai/tasks/{tid}`：AI 諮詢從未實作；
+#     前端的 AI 狀態走 `/ai-status`（那條契約有、實作也有）
+#   - `/sessions/{id}/injects`（複數）：**同一條路徑的重複宣告**，
+#     實作與另一份完整規格都在單數 `/sessions/{id}/inject`
+#
+# 未建的功能屬於 SPEC/TASKS，不屬於 API 契約——契約描述的是 API **現在是什麼**，
+# 而 openapi-typescript 會照著它生出一按下去就 404 的型別。已記入 PROGRESS Backlog。
+_CONTRACT_ONLY: set[tuple[str, str]] = set()
 
 # 實作有、契約沒有＝前端拿不到型別。
 _IMPL_ONLY = {

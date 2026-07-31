@@ -850,63 +850,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sessions/{id}/ai/consult": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description {role, query} → 202 + task_id（非同步；逾時 doctrine fallback） */
-        post: operations["aiConsult"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sessions/{id}/ai/tasks/{tid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-                tid: components["parameters"]["TaskId"];
-            };
-            cookie?: never;
-        };
-        get: operations["aiTaskStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sessions/{id}/injects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description White Cell only */
-        post: operations["mselInject"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/sessions/{id}/ledger": {
         parameters: {
             query?: never;
@@ -1124,24 +1067,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sessions/{id}/aar": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getAAR"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/sessions/{id}/aar/replay/states": {
         parameters: {
             query?: never;
@@ -1294,40 +1219,6 @@ export interface paths {
         post?: never;
         /** @description 刪除想定；限統裁/管理 */
         delete: operations["deleteScenario"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/admin/plugins": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listPlugins"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/admin/plugins/{name}/toggle": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: components["parameters"]["PluginName"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["togglePlugin"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2480,8 +2371,6 @@ export interface components {
         EquipmentId: string;
         TemplateId: string;
         FeatureId: string;
-        TaskId: string;
-        PluginName: string;
         ScenarioId: string;
     };
     requestBodies: never;
@@ -4725,67 +4614,6 @@ export interface operations {
             };
         };
     };
-    aiConsult: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Task queued */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    aiTaskStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-                tid: components["parameters"]["TaskId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Task status/result */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    mselInject: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Injected */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     queryLedger: {
         parameters: {
             query?: {
@@ -5207,26 +5035,6 @@ export interface operations {
             };
         };
     };
-    getAAR: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description AAR report */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     getAarReplayStates: {
         parameters: {
             query?: never;
@@ -5561,44 +5369,6 @@ export interface operations {
         responses: {
             /** @description Deleted */
             204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    listPlugins: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Plugin registry */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    togglePlugin: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: components["parameters"]["PluginName"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Toggled */
-            200: {
                 headers: {
                     [name: string]: unknown;
                 };
