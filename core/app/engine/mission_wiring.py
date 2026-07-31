@@ -54,13 +54,20 @@ from app.ai_loop.context import build_faction_context
 from app.ai_loop.world_view import projected_snapshot
 from app.engine.clock import SimTime
 from app.factions.relations import FactionRelations
-from app.orders.mission import MissionPayload, MissionPhase, MissionState
+from app.orders.mission import (
+    MISSION_STATE_KEY,
+    MissionPayload,
+    MissionPhase,
+    MissionState,
+)
 from app.orders.mission_runtime import ActiveMission, MissionMemory, evaluate
 from app.state.ledger import LedgerEvent
 
 _LOG = logging.getLogger(__name__)
 
-STATE_KEY = "_mission_state"
+# 權威定義在 `orders/mission.py`（那裡才是這個鍵的形狀的擁有者）；此處保留別名，
+# 既有呼叫端與測試不必改。
+STATE_KEY = MISSION_STATE_KEY
 
 # 任務令進到這些階段就結束了（不再評估、不再產子令）。
 _TERMINAL = (MissionPhase.COMPLETE, MissionPhase.FAILED)

@@ -21,6 +21,7 @@ from app.errors import IllegalOrderTransitionError, OrderNotFoundError, Precheck
 from app.factions import FactionRelations
 from app.models.enums import OrderStatus
 from app.models.tables import Order, TacticalUnit
+from app.orders.mission import MISSION_STATE_KEY
 from app.orders.precheck import PhysicsGateway, precheck_error_code, run_precheck
 from app.orders.schemas import (
     EngagePayload,
@@ -323,6 +324,19 @@ def _precheck_of(order: Order) -> PrecheckResult | None:
     return PrecheckResult.model_validate(order.precheck) if order.precheck else None
 
 
+def _mission_phase_of(order_type: str, payload: dict[str, Any]) -> str | None:
+    """任務令當前的階段。非 MISSION 令、或 runtime 還沒評估過 → None。
+
+    進度由 `mission_runtime` 每 tick 寫回 `payload[MISSION_STATE_KEY]`；
+    這裡只讀不算——階段的權威在引擎，API 只是把它照實回出去。
+    """
+    if order_type != OrderType.MISSION.value:
+        return None
+    raw = payload.get(MISSION_STATE_KEY)
+    phase = raw.get("phase") if isinstance(raw, dict) else None
+    return str(phase) if phase else None
+
+
 def _to_response(order: Order, precheck: PrecheckResult | None) -> OrderResponse:
     payload = order.payload or {}
     tgt = payload.get("target_unit_id")
@@ -345,4 +359,5 @@ def _to_response(order: Order, precheck: PrecheckResult | None) -> OrderResponse
             if order.order_type == OrderType.MISSION.value and payload.get("mission_type")
             else None
         ),
+        mission_phase=_mission_phase_of(order.order_type, payload),
     )

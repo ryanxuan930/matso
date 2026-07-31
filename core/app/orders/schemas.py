@@ -178,3 +178,11 @@ class OrderResponse(BaseModel):
     # WP-A2：分解自哪一道 MISSION 令。None＝直接下的令。
     parent_order_id: str | None = None
     mission_type: str | None = None  # 僅 MISSION 令有值
+    # 任務走到哪個階段（PLANNED / MOVING / ENGAGING / CONSOLIDATING / …），每 tick 由
+    # `mission_runtime` 評估後寫回令的 payload。
+    #
+    # ⚠ 契約早就宣告了這一欄、前端 `OrdersPanel.phaseLabel()` 也早就畫好了
+    # （那裡的註解寫著「後端一填就會自己亮起來」）——**只有後端沒填**。
+    # 於是指令列上的任務令看不出它是還在機動還是已經接敵，
+    # 而那正是任務級下令與逐令微操最大的差別。
+    mission_phase: str | None = None

@@ -430,3 +430,52 @@ def test_a_cancel_landing_inside_the_tick_is_not_overwritten(session_factory) ->
     )
     check.close()
     db.close()
+
+
+def test_the_mission_phase_reaches_the_orders_api(session_factory) -> None:  # type: ignore[no-untyped-def]
+    """任務走到哪一階段，指令列上要看得到。
+
+    ## 為什麼這條測試打在 API 而不是引擎
+
+    引擎一直有把階段寫回 `payload[STATE_KEY]`（上面那條測試就在驗），
+    契約 `OrderResponse.mission_phase` 也早就宣告了，前端
+    `OrdersPanel.phaseLabel()` 甚至已經畫好——**只有 `_to_response` 沒填**。
+    前端註解當時寫著「後端一填就會自己亮起來」，而那句話從寫下來到現在都還是真的。
+
+    所以守門要打在**回應體**上：階段有沒有從引擎一路走到 API。
+    只驗 payload 的話，這個洞可以永遠存在而測試全綠。
+
+    ⚠ 階段刻意**跑真的 planner 產生**，不手搭 payload——手搭的只證明
+    「這個形狀讀得出來」，證明不了「引擎真的會產生這種資料」。
+    """
+    from _order_fakes import FakeGateway, seed_world
+
+    from app.models.tables import Order
+    from app.orders.service import OrderService
+
+    world = seed_world(session_factory)
+    db = session_factory()
+    hot = InMemoryHotState()
+    hot.put_unit(world.blue_unit_id, {"lat": 23.75, "lng": 121.25, "alive": True})
+    resp = _issue_mission(db, world)
+
+    # 下令當下還沒跑過 runtime → 沒有階段可回（不是「PLANNED」，是「還沒評估」）。
+    assert resp.mission_phase is None
+
+    _planner(db, world, hot).plan(_now(1))
+
+    listed = {
+        o.id: o
+        for o in OrderService(db, FakeGateway()).list_orders(
+            world.session_id, "BLUE", omniscient=True
+        )
+    }
+    mission = listed[resp.id]
+    assert mission.mission_phase, "任務跑起來了，指令列上卻看不出它走到哪一階段"
+    assert mission.mission_phase == db.get(Order, resp.id).payload[STATE_KEY]["phase"], (
+        "API 回的階段與引擎寫的不一致"
+    )
+
+    # 非 MISSION 令不該有階段（別讓那一欄變成到處都是的雜訊）。
+    assert all(o.mission_phase is None for o in listed.values() if o.order_type != "MISSION")
+    db.close()

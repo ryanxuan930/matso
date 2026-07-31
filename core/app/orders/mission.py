@@ -30,6 +30,14 @@ class MissionType(enum.StrEnum):
     MOVE_MARCH = "MOVE_MARCH"
 
 
+# 任務進度存在 `Order.payload` 的哪一個鍵。
+#
+# 放在這裡而不是接線層：鍵裡裝的是本模組定義的 `MissionState` 形狀，
+# 而**讀它的人不只有引擎**——`orders/service.py` 要靠它把當前階段回給前端
+# （`OrderResponse.mission_phase`），而 orders 層不該往 engine 層 import。
+MISSION_STATE_KEY = "_mission_state"
+
+
 class MissionPhase(enum.StrEnum):
     """任務階段。**單調前進**——除了任何階段都可以掉進 FAILED。"""
 
@@ -186,6 +194,7 @@ def offset_latlng(lat: float, lng: float, bearing: float, distance_m: float) -> 
 
 
 __all__ = [
+    "MISSION_STATE_KEY",
     "DefendParams",
     "LatLng",
     "MarchParams",
