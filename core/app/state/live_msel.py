@@ -73,7 +73,7 @@ def apply_msel_cmds(runtime: Any, cmds: list[dict[str, Any]]) -> int:
     return applied
 
 
-def publish_pending(client: redis.Redis, session_id: str, pending: list[str]) -> None:
+def publish_pending(client: redis.Redis, session_id: str, pending: list[dict[str, Any]]) -> None:
     """把「還有哪些狀況待發」寫給白軍控制台看。純顯示，晚一個 tick 無所謂。"""
     try:
         client.set(msel_pending_key(session_id), json.dumps(pending))
@@ -81,7 +81,7 @@ def publish_pending(client: redis.Redis, session_id: str, pending: list[str]) ->
         _LOG.debug("session %s: MSEL 待命清單寫入失敗", session_id)
 
 
-def read_pending(client: redis.Redis, session_id: str) -> list[str]:
+def read_pending(client: redis.Redis, session_id: str) -> list[dict[str, Any]]:
     """讀待命清單（API 端）。讀不到 → 空清單（該局沒在跑或沒有 MSEL）。"""
     try:
         raw = client.get(msel_pending_key(session_id))
@@ -93,7 +93,10 @@ def read_pending(client: redis.Redis, session_id: str) -> list[str]:
         loaded = json.loads(raw)
     except (ValueError, TypeError):
         return []
-    return [str(x) for x in loaded] if isinstance(loaded, list) else []
+    if not isinstance(loaded, list):
+        return []
+    # 舊格式（純 id 字串）也吃：runner 尚未更新的局，畫面退回只顯示 id 而不是整段消失。
+    return [x if isinstance(x, dict) else {"id": str(x), "event_type": ""} for x in loaded]
 
 
 __all__ = [

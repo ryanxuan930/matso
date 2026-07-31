@@ -12,6 +12,8 @@ API 行程碰不到它（而且熱狀態有 in-process mirror，外部直寫會�
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
@@ -40,7 +42,7 @@ def list_pending(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> dict[str, list[str]]:
+) -> dict[str, list[dict[str, Any]]]:
     """待命注入清單。該局沒在跑（runner 沒發布）→ 空清單，不是錯誤。"""
     _require_white_cell(db, session_id, user)
     return {"pending": read_pending(make_redis(settings.redis_url), session_id)}

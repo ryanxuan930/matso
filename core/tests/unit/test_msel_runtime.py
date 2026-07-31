@@ -177,7 +177,10 @@ def test_white_cell_can_fire_and_skip() -> None:
     )
     now = type("T", (), {"tick": 3})()
     assert rt.check(now) == []  # manual 不會自己成立
-    assert rt.pending() == ["m1", "m2"]
+    # **待命清單帶事件型別**：白軍要決定「現在要不要扣這個板機」，
+    # 而一排 `m1` / `m2` 說不出那是「敵增援」還是「橋梁被炸」。
+    assert [p["id"] for p in rt.pending()] == ["m1", "m2"]
+    assert all(p["event_type"] for p in rt.pending()), "缺事件型別＝統裁看不出這是什麼狀況"
 
     rt.skip("m2")  # 白軍決定不發這個狀況
     rt.fire_manually("m1")

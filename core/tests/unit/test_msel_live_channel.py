@@ -17,6 +17,7 @@ from app.state.live_msel import (
     apply_msel_cmds,
     drain_msel_cmds,
     msel_cmd_key,
+    msel_pending_key,
     publish_pending,
     push_msel_cmd,
     read_pending,
@@ -120,8 +121,30 @@ def test_unknown_action_is_ignored() -> None:
 
 def test_pending_list_round_trips() -> None:
     r = _FakeRedis()
-    publish_pending(r, "s1", ["m1", "m2"])  # type: ignore[arg-type]
-    assert read_pending(r, "s1") == ["m1", "m2"]  # type: ignore[arg-type]
+    publish_pending(  # type: ignore[arg-type]
+        r, "s1", [{"id": "m1", "event_type": "ENEMY_REINFORCEMENT"}, {"id": "m2", "event_type": ""}]
+    )
+    assert read_pending(r, "s1") == [  # type: ignore[arg-type]
+        {"id": "m1", "event_type": "ENEMY_REINFORCEMENT"},
+        {"id": "m2", "event_type": ""},
+    ]
+
+
+def test_pending_list_still_reads_the_old_id_only_format() -> None:
+    """**舊格式要照樣讀得懂。**
+
+    升級時 runner 與 API 不會同時換掉（API 先起、runner 幾秒後重啟）。
+    那段時間 Redis 裡躺的還是純 id 陣列——讀不懂就整段消失，
+    白軍的待命清單會憑空變空而不是少一個欄位。
+    """
+    import json
+
+    r = _FakeRedis()
+    r.set(msel_pending_key("s1"), json.dumps(["m1", "m2"]))
+    assert read_pending(r, "s1") == [  # type: ignore[arg-type]
+        {"id": "m1", "event_type": ""},
+        {"id": "m2", "event_type": ""},
+    ]
 
 
 def test_reading_pending_for_a_dead_session_is_empty_not_an_error() -> None:

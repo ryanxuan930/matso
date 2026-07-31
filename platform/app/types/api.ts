@@ -956,7 +956,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description 白軍待命注入清單（WP-B2c）。回**尚未觸發也未被跳過**的 MSEL 事件 id。 限白軍/統裁——這是整場演習的腳本，不是任何一方看得到的東西。 */
+        /**
+         * @description 白軍待命注入清單（WP-B2c）。回**尚未觸發也未被跳過**的 MSEL 條目。 限白軍/統裁——這是整場演習的腳本，不是任何一方看得到的東西。
+         *     ⚠ 過去只回 id 字串陣列。統裁看到的是一排 `msel-003` / `msel-007`， 而他要決定的是「現在要不要扣這個板機」——畫面說不出那是「敵增援」還是「橋梁被炸」。 現在帶 `inject.event_type` 與 `faction`（想定作者本來就要填的欄位，不必改 schema）。
+         */
         get: operations["listMselPending"];
         put?: never;
         post?: never;
@@ -1685,6 +1688,14 @@ export interface components {
             /** @description 成功時為模型回覆摘要；失敗時為可讀的錯誤原因 */
             detail: string;
             latency_ms?: number | null;
+        };
+        MselPendingEntry: {
+            /** @description 想定裡的 MSEL 條目 id */
+            id: string;
+            /** @description 這則注入會產生的事件型別——**統裁判讀「這是什麼狀況」的唯一依據**。 */
+            event_type: string;
+            /** @description 注入的目標陣營（未指定為 null） */
+            faction?: string | null;
         };
         /** @description 命令已排入佇列的回執（白軍 MSEL 扣板機/跳過）。**不是「已生效」**—— API 行程不能直接改 runtime 的記憶（不同行程，熱狀態有 in-process mirror）， 實際套用發生在 runner 的下一個 tick。 */
         QueuedAck: {
@@ -4989,7 +5000,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        pending: string[];
+                        pending: components["schemas"]["MselPendingEntry"][];
                     };
                 };
             };

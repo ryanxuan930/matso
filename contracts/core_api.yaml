@@ -586,6 +586,15 @@ components:
         ok: { type: boolean }
         detail: { type: string, description: 成功時為模型回覆摘要；失敗時為可讀的錯誤原因 }
         latency_ms: { type: [integer, "null"] }
+    MselPendingEntry:
+      type: object
+      required: [id, event_type]
+      properties:
+        id: { type: string, description: 想定裡的 MSEL 條目 id }
+        event_type:
+          type: string
+          description: 這則注入會產生的事件型別——**統裁判讀「這是什麼狀況」的唯一依據**。
+        faction: { type: [string, "null"], description: 注入的目標陣營（未指定為 null） }
     QueuedAck:
       type: object
       additionalProperties: { type: string }
@@ -2731,8 +2740,12 @@ paths:
     get:
       operationId: listMselPending
       description: >-
-        白軍待命注入清單（WP-B2c）。回**尚未觸發也未被跳過**的 MSEL 事件 id。
+        白軍待命注入清單（WP-B2c）。回**尚未觸發也未被跳過**的 MSEL 條目。
         限白軍/統裁——這是整場演習的腳本，不是任何一方看得到的東西。
+
+        ⚠ 過去只回 id 字串陣列。統裁看到的是一排 `msel-003` / `msel-007`，
+        而他要決定的是「現在要不要扣這個板機」——畫面說不出那是「敵增援」還是「橋梁被炸」。
+        現在帶 `inject.event_type` 與 `faction`（想定作者本來就要填的欄位，不必改 schema）。
       responses:
         "200":
           description: Pending MSEL entries
@@ -2742,7 +2755,7 @@ paths:
                 type: object
                 required: [pending]
                 properties:
-                  pending: { type: array, items: { type: string } }
+                  pending: { type: array, items: { $ref: "#/components/schemas/MselPendingEntry" } }
         "403": { description: 非白軍/統裁 }
   /sessions/{id}/msel/{entry_id}/fire:
     parameters:

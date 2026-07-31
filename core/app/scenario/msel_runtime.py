@@ -231,10 +231,20 @@ class MselRuntime:
         """白軍決定不發這個狀況。**記著而不是刪掉**——AAR 要看得出「原定 vs 實際」。"""
         self.memory.skipped.add(entry_id)
 
-    def pending(self) -> list[str]:
-        """尚未觸發也未被跳過的條目（供白軍控制台列「待命注入」）。"""
+    def pending(self) -> list[dict[str, Any]]:
+        """尚未觸發也未被跳過的條目（供白軍控制台列「待命注入」）。
+
+        **回的是 `{id, event_type, faction}` 而不是裸 id。** 白軍控制台上一排
+        `msel-003` / `msel-007` 對統裁沒有任何意義——他要決定「現在要不要扣這個板機」，
+        而畫面說不出那是「敵增援」還是「橋梁被炸」。
+        `inject.event_type` 是想定作者本來就要填的欄位，不必新增 schema 就有語意。
+        """
         return [
-            e.id
+            {
+                "id": e.id,
+                "event_type": str(e.inject.get("event_type") or ""),
+                "faction": e.inject.get("faction"),
+            }
             for e in sorted(self._entries, key=lambda x: x.id)
             if e.id not in self.memory.fired_at and e.id not in self.memory.skipped
         ]

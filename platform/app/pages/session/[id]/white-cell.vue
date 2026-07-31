@@ -4,6 +4,7 @@ import { UNKNOWN_REASON, streamStatusLabel } from '~/composables/useLabels'
 import { useSessionStreamStore } from '~/stores/sessionStream'
 import type { UnitView } from '~/composables/useOrders'
 import { apiFetch } from '~/composables/useApi'
+import { EVENT_LABELS } from '~/composables/useCopFeed'
 import {
   checkpointLabel,
   eventAudience,
@@ -22,6 +23,17 @@ import {
   injectActionIssues,
   type InjectAction,
 } from '~/composables/useConditionDsl'
+import type { components } from '~/types/api'
+
+type MselPendingEntry = components['schemas']['MselPendingEntry']
+
+/**
+ * 注入事件型別 → 人話。查不到就原樣印代號——**MSEL 可以注入自訂 event_type**
+ * （想定作者寫在檔案裡的字串），那本來就不可能事先列進標籤表，原樣印才是正確行為。
+ */
+function eventLabel(type: string): string {
+  return EVENT_LABELS[type] ?? type
+}
 
 const route = useRoute()
 const sessionId = route.params.id as string
@@ -265,12 +277,12 @@ async function togglePerm(f: string) {
  * 清單本身也是 runner 每 tick 發布的，所以按完會慢一拍才更新——這裡照實顯示，
  * 不做樂觀更新假裝已經發了。
  */
-const mselPending = ref<string[]>([])
+const mselPending = ref<MselPendingEntry[]>([])
 const mselBusy = ref('')
 
 async function loadMsel() {
   try {
-    const r = await apiFetch<{ pending: string[] }>(`/sessions/${sessionId}/msel`)
+    const r = await apiFetch<{ pending: MselPendingEntry[] }>(`/sessions/${sessionId}/msel`)
     mselPending.value = r.pending
   } catch {
     mselPending.value = []
@@ -495,15 +507,19 @@ watch(viewpoint, loadUnits)
       <p class="wc-hint">
         <code>manual</code> 型狀況須於此扣發才會發生。跳過將<b>記入事件帳本</b>——
         行動後檢討要看得出「原定」與「實際」的差異。
-        清單只給得出腳本條目編號：後端不供應內容（會注入什麼、觸發條件為何），須查該局想定。
+        清單帶注入的<b>事件型別</b>（那則注入會發生什麼事）；觸發條件與詳細載荷仍須查該局想定。
       </p>
       <ul data-testid="wc-msel-pending">
-        <li v-for="id in mselPending" :key="id" class="wc-msel">
-          <code>{{ id }}</code>
-          <button :disabled="mselBusy === id" data-testid="wc-msel-fire" @click="mselAct(id, 'fire')">
+        <!-- 帶事件型別：一排 `msel-003` 對統裁沒有意義，他要決定的是「現在要不要扣這個板機」。 -->
+        <li v-for="m in mselPending" :key="m.id" class="wc-msel">
+          <code>{{ m.id }}</code>
+          <span class="wc-msel-what" data-testid="wc-msel-what">
+            {{ eventLabel(m.event_type) }}<template v-if="m.faction"> · {{ m.faction }}</template>
+          </span>
+          <button :disabled="mselBusy === m.id" data-testid="wc-msel-fire" @click="mselAct(m.id, 'fire')">
             扣發
           </button>
-          <button :disabled="mselBusy === id" data-testid="wc-msel-skip" @click="mselAct(id, 'skip')">
+          <button :disabled="mselBusy === m.id" data-testid="wc-msel-skip" @click="mselAct(m.id, 'skip')">
             跳過
           </button>
         </li>
@@ -542,6 +558,8 @@ watch(viewpoint, loadUnits)
 </template>
 
 <style scoped>
+.wc-msel-what { opacity: .85; font-size: 12px }
+
 .cp-note { margin: 2px 0; font-size: 11px; opacity: .7 }
 
 .wc { max-width: 1000px; margin: 0 auto; padding: 1rem; color: #e2e8f0; }
